@@ -71,6 +71,7 @@ checks it before extracting (DEPLOY §2).
 |---|---|
 | `VERIFY.txt` | two release lines, then the canonical procedure (§3) |
 | `RELEASE.txt`, `NOTES.txt` | below; `--notes FILE` verbatim, also the tag message |
+| `LICENSE` | the repository's Apache-2.0 text: every recipient of the image gets a copy (its section 4(a)) |
 | `SECURITY.md` | the repository's (§11), which VERIFY.txt and the rotation steps cite |
 | `transition.txt`, `transition.txt.sig` | only in the old key's last bundle (§4) |
 | `image/<stem>.tar.gz` | `docker save deltasleuth:<v>`, Python `GzipFile(filename="", mtime=0)`, level 9 |
@@ -80,7 +81,7 @@ checks it before extracting (DEPLOY §2).
 | `source/deltasleuth-<v>-src.tar.gz` | `git archive --format=tar --prefix=deltasleuth-<v>/ HEAD -- $SHIPPED`, gzipped the same way |
 | `SHA256SUMS`, `.sig`, `release-key.pem` | unlisted, as in packs: sorted coreutils lines of every other file; DER ECDSA P-256/SHA-256 (`PackSigner.sign`); SPKI |
 
-`SHIPPED = README.md SECURITY.md pyproject.toml uv.lock deltasleuth web deploy docs/mvp docs/guide mocks examples`
+`SHIPPED = LICENSE README.md SECURITY.md pyproject.toml uv.lock deltasleuth web deploy docs/mvp docs/guide mocks examples`
 leaves out `docs/architecture*`, `docs/bench`, `tests` and `tools`; `docs/guide` is the
 user guide ([FIRSTRUN.md](FIRSTRUN.md) §10). Git-ignored site
 files (`.env`, `deploy/docker-compose.site.yml`, `deploy/config/*.yaml`, `deploy/secrets/`) never
@@ -273,7 +274,8 @@ ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
 COPY deploy/uv-requirements.txt /tmp/
 RUN pip install --no-cache-dir --root-user-action=ignore --require-hashes -r /tmp/uv-requirements.txt
 WORKDIR /app
-COPY pyproject.toml uv.lock README.md ./
+# LICENSE: the installed package's dist-info holds it, so the image carries its licence text.
+COPY pyproject.toml uv.lock README.md LICENSE ./
 # Dependencies first, so this layer survives code changes. --no-cache: the image keeps no download cache.
 RUN uv sync --frozen --no-dev --no-install-project --no-cache
 COPY deltasleuth/ deltasleuth/
@@ -317,6 +319,11 @@ LABEL org.opencontainers.image.title=DeltaSleuth org.opencontainers.image.versio
   and aarch64 wheel. `Dockerfile.dockerignore` gains `!deploy/uv-requirements.txt`. PyPI lists three
   such wheels: `manylinux_2_17` x86_64, `manylinux_2_17` aarch64 and `manylinux_2_28` aarch64, which
   pip takes on arm64 (checked).
+- **The licence text.** `Dockerfile.dockerignore` sends `LICENSE` (`!LICENSE`), and the `venv` stage
+  copies it before it installs the project: hatchling puts it in the package's `dist-info/licenses/`,
+  and `/app/LICENSE` reaches the runtime stage with `/app`. hatchling builds without the file and says
+  nothing, with or without `license-files` in `pyproject.toml` (checked), so `pyproject.toml` names
+  none: the `COPY` is what fails when the context lacks the file.
 - **`release.PROCEDURE`** is read from `tools/release-procedure.txt`, as `pack.PROCEDURE` is from
   `templates/pack-procedure.txt`: its lines exceed ruff's 110 characters.
 - **No `# syntax=` line,** because that line would pull an image.
@@ -927,7 +934,8 @@ The steps of `build`:
    as two commands, after the failed check's output. Then the tree must still be clean with HEAD at the
    revision: `the tree changed during the build (HEAD <12>…, 1 path changed): nothing was released`.
 9. **Assemble:**
-   1. Write `RELEASE.txt`, `VERIFY.txt`, `NOTES.txt`, `SECURITY.md`, any transition, and `SHA256SUMS`.
+   1. Write `RELEASE.txt`, `VERIFY.txt`, `NOTES.txt`, `LICENSE`, `SECURITY.md`, any transition, and
+      `SHA256SUMS`.
    2. Append the register line, then write the signature and the PEM.
    3. Self-check with `signing.verifies` and a re-hash.
    4. Write the transport tar in staging, move it and the folder into `DIR`, then, unless another
@@ -1153,9 +1161,9 @@ VEX status.
 
 | File | Tests |
 |---|---|
-| `tests/unit/test_release_tool.py` (CliRunner; `release.ROOT` a temporary git repository; stub `docker`, `syft`, `grype` and `uv` on `PATH` following a scenario and logging argv, cwd and environment; real git and openssl) | `test_keygen_writes_an_encrypted_key_and_the_procedure` (and its hash on the printed line); `test_keygen_refuses_a_git_working_tree_or_a_synced_folder`; `test_build_writes_the_bundle` (files, `SECURITY.md` at the root, sorted sums, the signature verifies, digests match the archive, gzip mtime 0, only `SHIPPED` in the source and no site file, both VEX products with the digest purl, the register before the signature, the tag on the revision after the rename); `test_every_refusal_leaves_nothing` (every §9 message, the e-mail, scanner versions, a vendored file without a decision, a pip-audit skip, the procedure hash, a changed base id and a commit made during the build among them); `test_no_pull_push_login_or_secret_in_argv`; `test_scanners_run_isolated` (with a hostile `$HOME/.grype.yaml`, a `.grype.yaml` in the cwd and `GRYPE_ONLY_NOTFIXED=true` set: each scanner gets `-c <staging>/empty.yaml`, the staging cwd and only §7's variables); `test_no_host_path_in_the_bundle`; `test_packaging_is_deterministic`; `test_gate` (vendored decisions included); `test_sbom_completeness` (Debian, dpkg, python, PyPI, npm); `test_rescan_applies_todays_triage`; `test_sign_accepts_advisories_and_refuses_sums`; `test_real_syft_and_grype`, under the same hostile setup, skipped without the tools or a database |
+| `tests/unit/test_release_tool.py` (CliRunner; `release.ROOT` a temporary git repository; stub `docker`, `syft`, `grype` and `uv` on `PATH` following a scenario and logging argv, cwd and environment; real git and openssl) | `test_keygen_writes_an_encrypted_key_and_the_procedure` (and its hash on the printed line); `test_keygen_refuses_a_git_working_tree_or_a_synced_folder`; `test_build_writes_the_bundle` (files, `LICENSE` and `SECURITY.md` at the root, sorted sums, the signature verifies, digests match the archive, gzip mtime 0, only `SHIPPED` in the source and no site file, both VEX products with the digest purl, the register before the signature, the tag on the revision after the rename); `test_every_refusal_leaves_nothing` (every §9 message, the e-mail, scanner versions, a vendored file without a decision, a pip-audit skip, the procedure hash, a changed base id and a commit made during the build among them); `test_no_pull_push_login_or_secret_in_argv`; `test_scanners_run_isolated` (with a hostile `$HOME/.grype.yaml`, a `.grype.yaml` in the cwd and `GRYPE_ONLY_NOTFIXED=true` set: each scanner gets `-c <staging>/empty.yaml`, the staging cwd and only §7's variables); `test_no_host_path_in_the_bundle`; `test_packaging_is_deterministic`; `test_gate` (vendored decisions included); `test_sbom_completeness` (Debian, dpkg, python, PyPI, npm); `test_rescan_applies_todays_triage`; `test_sign_accepts_advisories_and_refuses_sums`; `test_real_syft_and_grype`, under the same hostile setup, skipped without the tools or a database |
 | `tests/unit/test_release_tamper.py` (`tools()`, `steps()` and `run_step()` from `tests/unit/reports/packs.py`; sha256sum, shasum, LibreSSL; a docker stub) | `test_the_untouched_bundle_passes_its_own_procedure`; `test_each_tamper_fails_its_step` (the §3 list, the consistent swap after a pass elsewhere included); `test_deploy_quotes_the_procedure` |
-| `tests/unit/deploy/test_config_examples.py` | `test_dockerfile_pins_every_base_by_digest` (every `FROM`, directly or through a pinned `ARG` default; `release.INDEX` is the `PYTHON` default's digest; `release.BASES` holds one manifest digest per platform); `test_runtime_stage_holds_no_installer`; `test_uv_requirements_reach_the_build`; `test_compose_runs_the_release_hardened`; `test_site_example_restores_todays_secrets` (base plus site example give today's `app.secrets`); `test_deploy_edits_only_the_site_file` (DEPLOY names a tracked compose file only in `COMPOSE_FILE` values, the "never edit" rule and the move's `git diff`); `test_root_p0_cron_adds_dac_override_and_no_file_flag`; changed: `test_deploy_writes_backups_outside_the_checkout` skips the block equal to `release.PROCEDURE` and allows `.env` |
+| `tests/unit/deploy/test_config_examples.py` | `test_dockerfile_pins_every_base_by_digest` (every `FROM`, directly or through a pinned `ARG` default; `release.INDEX` is the `PYTHON` default's digest; `release.BASES` holds one manifest digest per platform); `test_runtime_stage_holds_no_installer`; `test_uv_requirements_reach_the_build`; `test_the_image_carries_the_licence_text`; `test_compose_runs_the_release_hardened`; `test_site_example_restores_todays_secrets` (base plus site example give today's `app.secrets`); `test_deploy_edits_only_the_site_file` (DEPLOY names a tracked compose file only in `COMPOSE_FILE` values, the "never edit" rule and the move's `git diff`); `test_root_p0_cron_adds_dac_override_and_no_file_flag`; changed: `test_deploy_writes_backups_outside_the_checkout` skips the block equal to `release.PROCEDURE` and allows `.env` |
 | `tests/unit/test_release.py` | `test_release_keys_match_security_md`; `test_one_signing_release_key`; `test_the_signing_key_files_this_procedure`; `test_release_keys_are_not_vendor_keys`; `test_triage_is_well_formed` |
 
 As built:

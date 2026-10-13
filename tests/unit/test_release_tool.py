@@ -42,9 +42,9 @@ from tools import release
 
 STEM = "deltasleuth-0.1.0-linux-amd64"
 LISTED = [
-    "NOTES.txt", "RELEASE.txt", "SECURITY.md", "VERIFY.txt", f"image/{STEM}.tar.gz", f"sbom/{STEM}.cdx.json",
-    f"sbom/{STEM}.spdx.json", "sbom/vendored-libraries.txt", "scan/SUMMARY.txt", "scan/grype.json",
-    "scan/pip-audit.json", "scan/vex.openvex.json", "source/deltasleuth-0.1.0-src.tar.gz",
+    "LICENSE", "NOTES.txt", "RELEASE.txt", "SECURITY.md", "VERIFY.txt", f"image/{STEM}.tar.gz",
+    f"sbom/{STEM}.cdx.json", f"sbom/{STEM}.spdx.json", "sbom/vendored-libraries.txt", "scan/SUMMARY.txt",
+    "scan/grype.json", "scan/pip-audit.json", "scan/vex.openvex.json", "source/deltasleuth-0.1.0-src.tar.gz",
 ]  # fmt: skip
 UNLISTED = ["SHA256SUMS", "SHA256SUMS.sig", "release-key.pem"]
 SCANNING = {"PATH", "HOME", "TZ", "GRYPE_DB_CACHE_DIR", "GRYPE_DB_AUTO_UPDATE", "GRYPE_CHECK_FOR_APP_UPDATE",
@@ -160,7 +160,8 @@ def test_build_writes_the_bundle(scratch: Scratch, monkeypatch: pytest.MonkeyPat
     assert sorted(p.relative_to(bundle).as_posix() for p in bundle.rglob("*") if p.is_file()) == sorted(
         LISTED + UNLISTED
     )
-    assert (bundle / "SECURITY.md").read_bytes() == (scratch.root / "SECURITY.md").read_bytes()
+    for name in ("LICENSE", "SECURITY.md"):
+        assert (bundle / name).read_bytes() == (scratch.root / name).read_bytes()
     assert (bundle / "NOTES.txt").read_bytes() == scratch.notes.read_bytes()
     sums = (bundle / "SHA256SUMS").read_bytes()
     assert sums.decode() == "".join(

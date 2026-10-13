@@ -103,9 +103,9 @@ Changes take effect as follows:
 
 A release is one folder, `deltasleuth-<version>-linux-amd64/`, delivered as a tar of it whose sha256 is
 on the transfer ticket. The folder holds the image, its SBOMs, scan and triage (`image/`, `sbom/`,
-`scan/`), the deployment kit (`source/`), `SECURITY.md`, the release notes and the signature. Your key
-register holds the release key's fingerprint and the verification procedure (`procedure.txt`), filed
-once per key ([SECURITY.md](../../SECURITY.md), Verifying a release).
+`scan/`), the deployment kit (`source/`), `LICENSE`, `SECURITY.md`, the release notes and the
+signature. Your key register holds the release key's fingerprint and the verification procedure
+(`procedure.txt`), filed once per key ([SECURITY.md](../../SECURITY.md), Verifying a release).
 
 Install as a non-root user in the `docker` group, on the Docker host, in a folder of your own outside
 the installation's, here `~/releases`. The commands name release 0.1.0:

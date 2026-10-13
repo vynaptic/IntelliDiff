@@ -66,8 +66,8 @@ PROCEDURE = Path(__file__).with_name("release-procedure.txt").read_text(encoding
 FORMAT = "deltasleuth-release/1"
 SYFT, GRYPE = "1.52.0", "0.119.0"  # the approved scanners (§7): build and rescan refuse any other
 # What the source archive, and so the build context, holds (§2): never tests, tools or site files.
-SHIPPED = ("README.md", "SECURITY.md", "pyproject.toml", "uv.lock", "deltasleuth", "web", "deploy",
-           "docs/mvp", "docs/guide", "mocks", "examples")  # fmt: skip
+SHIPPED = ("LICENSE", "README.md", "SECURITY.md", "pyproject.toml", "uv.lock", "deltasleuth", "web",
+           "deploy", "docs/mvp", "docs/guide", "mocks", "examples")  # fmt: skip
 TOOLS = ("docker", "git", "grype", "npm", "syft", "uv")
 POSTGRES = "postgres:16-alpine"  # the smoke test's database, from the local store
 GRYPE_DB = Path.home() / "Library" / "Caches" / "grype" / "db"  # the maintainer's: grype db update fills it
@@ -1007,6 +1007,7 @@ def _build(
               f"VERSION={version} PLATFORM={platform.replace('/', '-')}\n{PROCEDURE}")  # fmt: skip
     files = {"RELEASE.txt": "".join(f"{k}: {v}\n" for k, v in release.items()).encode(),
              "VERIFY.txt": verify.encode(), "NOTES.txt": notes.read_bytes(),
+             "LICENSE": (context / "LICENSE").read_bytes(),
              "SECURITY.md": (context / "SECURITY.md").read_bytes(), **_transition(signer)}  # fmt: skip
     for name, data in files.items():
         dsv.create(bundle / name, data)

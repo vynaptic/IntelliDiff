@@ -18,7 +18,8 @@ ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
 COPY deploy/uv-requirements.txt /tmp/
 RUN pip install --no-cache-dir --root-user-action=ignore --require-hashes -r /tmp/uv-requirements.txt
 WORKDIR /app
-COPY pyproject.toml uv.lock README.md ./
+# LICENSE: the installed package's dist-info holds it, so the image carries its licence text.
+COPY pyproject.toml uv.lock README.md LICENSE ./
 # Dependencies first, so this layer survives code changes. --no-cache: the image keeps no download cache.
 RUN uv sync --frozen --no-dev --no-install-project --no-cache
 COPY deltasleuth/ deltasleuth/

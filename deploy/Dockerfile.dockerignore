@@ -3,6 +3,7 @@
 !pyproject.toml
 !uv.lock
 !README.md
+!LICENSE
 !deltasleuth
 !web
 !deploy/uv-requirements.txt

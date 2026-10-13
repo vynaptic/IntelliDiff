@@ -352,6 +352,17 @@ def test_uv_requirements_reach_the_build(repo_root: Path) -> None:
     assert [path for path in site if _sent(ignore, path)] == []
 
 
+def test_the_image_carries_the_licence_text(repo_root: Path) -> None:
+    """Apache-2.0 section 4(a): the venv stage copies LICENSE before it installs the project, so the
+    package's dist-info holds the text (hatchling leaves it out, silently, when the file is absent), and a
+    release builds from an archive that holds it (RELEASE.md §2, §5)."""
+    stages = _stages((repo_root / "deploy" / "Dockerfile").read_text())
+    venv = next(stage for stage in stages if " AS venv\n" in stage)
+    before, installs, _ = venv.partition("RUN uv sync --frozen --no-dev --no-cache\n")
+    assert installs and "COPY pyproject.toml uv.lock README.md LICENSE ./\n" in before
+    assert "LICENSE" in release.SHIPPED and (repo_root / "LICENSE").is_file()
+
+
 def test_compose_runs_the_release_hardened(repo_root: Path) -> None:
     """app and mocks run the loaded release under the hardening, never building or pulling it; db is as it
     was, and the optional secrets live in the site file (RELEASE.md §6, D7, D8)."""

@@ -827,9 +827,9 @@ from a curl command, the builder's sample key and its unsaved work are held in m
   catalogues it with syft (CycloneDX 1.6, SPDX 2.3), scans it with grype and pip-audit, gates the
   findings on `tools/triage.toml` (OpenVEX), signs `SHA256SUMS` with the release key and tags the
   commit; `rescan` re-applies today's database and triage, and `sign` signs advisories, key
-  transitions and VEX. The bundle ships the image, SBOMs, scan, the source archive (the deployment kit)
-  and `SECURITY.md`; a site verifies it on the Docker host with OpenSSL or LibreSSL and `sha256sum`
-  before `docker load`.
+  transitions and VEX. The bundle ships the image, SBOMs, scan, the source archive (the deployment kit),
+  `LICENSE` and `SECURITY.md`; a site verifies it on the Docker host with OpenSSL or LibreSSL and
+  `sha256sum` before `docker load`.
 - **`docs/mvp/DEPLOY.md`** is the office guide: install a signed release (or build from source,
   unsigned), configure, sign-in with the IdP, the licence (none in this build), migrate, first run, point it at an OpenAI-compatible
   gateway and the real endpoints, upgrade, roll back and re-scan.

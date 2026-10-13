@@ -411,6 +411,7 @@ def scratch(
     dockerfile = (repo_root / "deploy" / "Dockerfile").read_text()
     compose = "services:\n  app: {image: 'deltasleuth:%s'}\n  mocks: {image: 'deltasleuth:%s'}\n"
     files = {
+        "LICENSE": "Apache License, Version 2.0\n",
         "README.md": "# DeltaSleuth\n", "SECURITY.md": "# Security\n\nReport to security@vendor.test.\n",
         "pyproject.toml": '[project]\nname = "deltasleuth"\nversion = "0.1.0"\n'
                           'authors = [{name = "Example Vendor Ltd"}]\n',
