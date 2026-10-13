@@ -137,3 +137,7 @@ lists what comes first).
 Everything a team needs to onboard a service pair (what to send, the commands, how to review the
 draft spec and the adjudication sheet, the exit criteria, troubleshooting) is in
 [docs/mvp/RUNBOOK.md](docs/mvp/RUNBOOK.md).
+
+## Licence
+
+DeltaSleuth is licensed under the Apache License, Version 2.0: see [LICENSE](LICENSE).

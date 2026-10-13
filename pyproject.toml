@@ -4,7 +4,7 @@ version = "0.1.0.dev0"
 description = "DeltaSleuth: black-box parity and discrepancy investigation for any two services"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
-license = "LicenseRef-Proprietary"
+license = "Apache-2.0"
 dependencies = [
     "pydantic>=2.12,<2.14",
     "pyyaml>=6.0.2",

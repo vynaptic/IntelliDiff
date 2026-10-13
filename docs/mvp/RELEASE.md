@@ -299,7 +299,7 @@ CMD ["ds", "serve", "--host", "0.0.0.0", "--port", "8000"]
 ARG VERSION=source REVISION=unknown CREATED=unknown VENDOR=unknown
 LABEL org.opencontainers.image.title=DeltaSleuth org.opencontainers.image.version=$VERSION \
       org.opencontainers.image.revision=$REVISION org.opencontainers.image.created=$CREATED \
-      org.opencontainers.image.vendor=$VENDOR org.opencontainers.image.licenses=LicenseRef-Proprietary
+      org.opencontainers.image.vendor=$VENDOR org.opencontainers.image.licenses=Apache-2.0
 ```
 
 - **Platform manifests.** `release.INDEX` is the index digest above. `release.BASES` holds its
