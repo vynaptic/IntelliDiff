@@ -20,7 +20,7 @@
       "$ref": "#/$defs/metadata"
     },
     "normalizerVersion": {
-      "description": "Version (semver) of the normalizer library the spec was written and approved against. Stored as ds.specs.normalizer_version and covered by content_hash, so a re-diff pins normalization bit for bit (N2). Required. It also versions the canonical encoding used for hashing: sorted member names, Decimal values as type-tagged normalised strings (so the string \"1\" and the number 1 stay different) and NFC strings; RFC 8785 JCS is not used because it forces IEEE-754 doubles. Responses are parsed with duplicate-member detection: a duplicate JSON member name makes the key INCONCLUSIVE with inconclusive_reason duplicate_member_name, never last-one-wins. Such a body is never read by notFound.when or an absence shape: a 2xx stays INCONCLUSIVE duplicate_member_name and a shape-based not-found is INCONCLUSIVE absence_unconfirmed; an absence decided by status alone does not read the body. A run or compare refuses (unsupported) a spec whose normalizerVersion is not the build's; a stored spec still loads for its runs' history.",
+      "description": "Version (semver) of the normalizer library the spec was written and approved against. Stored as ds.specs.normalizer_version and covered by content_hash, so a re-diff pins normalization bit for bit. Required. It also versions the canonical encoding used for hashing: sorted member names, Decimal values as type-tagged normalised strings (so the string \"1\" and the number 1 stay different) and NFC strings; RFC 8785 JCS is not used because it forces IEEE-754 doubles. Responses are parsed with duplicate-member detection: a duplicate JSON member name makes the key INCONCLUSIVE with inconclusive_reason duplicate_member_name, never last-one-wins. Such a body is never read by notFound.when or an absence shape: a 2xx stays INCONCLUSIVE duplicate_member_name and a shape-based not-found is INCONCLUSIVE absence_unconfirmed; an absence decided by status alone does not read the body. A run or compare refuses (unsupported) a spec whose normalizerVersion is not the build's; a stored spec still loads for its runs' history.",
       "$ref": "#/$defs/semver"
     },
     "domainPack": {
@@ -66,7 +66,7 @@
       "$ref": "#/$defs/inferredSchema"
     },
     "schemaDrift": {
-      "description": "Schema guard (built for table sides: docs/mvp/PRECHECKS.md §7): what happens to a run when a table it reads is no longer the one it was planned on, or the one its version's run before it read. It needs no inferredSchema; a spec without a table side may not ask for pause.",
+      "description": "Schema guard (built for table sides): what happens to a run when a table it reads is no longer the one it was planned on, or the one its version's run before it read. It needs no inferredSchema; a spec without a table side may not ask for pause.",
       "$ref": "#/$defs/schemaDrift"
     },
     "compare": {
@@ -95,7 +95,7 @@
       "$ref": "#/$defs/sampling"
     },
     "graph": {
-      "description": "Bulk graph parity over a pair of fact tables (docs/mvp/GRAPH.md): each key is a link fact, whose parts name a member (an entity) and a group (an identifier). After the fact scan (L1), L2 compares each group's member set and classifies the connected components the differing groups touch as split, merge or rearrange.",
+      "description": "Bulk graph parity over a pair of fact tables: each key is a link fact, whose parts name a member (an entity) and a group (an identifier). After the fact scan (L1), L2 compares each group's member set and classifies the connected components the differing groups touch as split, merge or rearrange.",
       "type": "object",
       "additionalProperties": false,
       "required": ["members", "groups"],
@@ -343,7 +343,7 @@
       }
     },
     "domainPack": {
-      "description": "Domain pack reference and its configuration. A pack is optional and needs no core schema change (N8): at install time it seeds its taxonomy codes in ds.taxonomy_codes and registers its config schema (JSON Schema draft 2020-12) with the spec loader under its name and major version.",
+      "description": "Domain pack reference and its configuration. A pack is optional and needs no core schema change: at install time it seeds its taxonomy codes in ds.taxonomy_codes and registers its config schema (JSON Schema draft 2020-12) with the spec loader under its name and major version.",
       "type": "object",
       "additionalProperties": false,
       "required": ["name", "version"],
@@ -357,7 +357,7 @@
           "$ref": "#/$defs/semver"
         },
         "config": {
-          "description": "Pack-specific configuration. This schema only requires an object: the spec loader validates the config (an absent config as {}) against the config schema registered by the installed pack for name@version, and rejects the spec, with the failing paths under domainPack.config, when the pack is not installed or the config does not validate. The entity-linking pack (1.x) registers docs/architecture/packs/entity-linking.config.schema.json ($id https://schemas.deltasleuth.example/packs/entity-linking/v1/config.schema.json); it references core $defs by this schema's $id, so the loader registers both documents in one schema registry.",
+          "description": "Pack-specific configuration. This schema only requires an object: the spec loader validates the config (an absent config as {}) against the config schema registered by the installed pack for name@version, and rejects the spec, with the failing paths under domainPack.config, when the pack is not installed or the config does not validate. The entity-linking pack (1.x) registers deltasleuth/packs/entity_linking/config.schema.json ($id https://schemas.deltasleuth.example/packs/entity-linking/v1/config.schema.json); it references core $defs by this schema's $id, so the loader registers both documents in one schema registry.",
           "type": "object"
         }
       }
@@ -635,7 +635,7 @@
       }
     },
     "keySourceTable": {
-      "description": "Keys read from a table, in one of two forms, never mixed. With side: a table side's population as a hash sample's frame (docs/mvp/SAMPLING.md §3): its relation, table.where and key maps, read to its end in one snapshot as the key census reads it; only as hash_sample.source or a union member, and not when both sides are tables (their scan compares every row). With target and table: a key table, a table, a view or files of their own, neither side's, whose key columns give the keys of a run beside a service side: read to its end in one snapshot when a run is created and at each roll of a rolling soak, a key several rows hold once, in key order, and at most 1,000,000 keys; only as key.source itself, and not when both sides are tables. A key table is a key list, not a census of either side.",
+      "description": "Keys read from a table, in one of two forms, never mixed. With side: a table side's population as a hash sample's frame: its relation, table.where and key maps, read to its end in one snapshot as the key census reads it; only as hash_sample.source or a union member, and not when both sides are tables (their scan compares every row). With target and table: a key table, a table, a view or files of their own, neither side's, whose key columns give the keys of a run beside a service side: read to its end in one snapshot when a run is created and at each roll of a rolling soak, a key several rows hold once, in key order, and at most 1,000,000 keys; only as key.source itself, and not when both sides are tables. A key table is a key list, not a census of either side.",
       "type": "object",
       "additionalProperties": false,
       "required": ["kind"],
@@ -684,7 +684,7 @@
       }
     },
     "keySourceHashSample": {
-      "description": "Hash sample over a frame: a table side's population, a side's paginated key listing, or a union of one of each side (docs/mvp/SAMPLING.md). Each draw adds a nonce of 128 random bits to the salt label, and each key gets u = the first 64 bits of sha256(label ':' nonce U+001F key), read as a fraction of 2^64. With method rate (the default), a key is selected when u is below its effective rate, which is the highest rate among the base rate and the matched stratum buckets. With method bottom_k, each sign-off bucket takes its targetSize keys with the smallest u (see method). The stratum label is written to run_keys.stratum and the sign-off label to run_keys.signoff_stratum, only there: results and findings reach them through the judging query.",
+      "description": "Hash sample over a frame: a table side's population, a side's paginated key listing, or a union of one of each side. Each draw adds a nonce of 128 random bits to the salt label, and each key gets u = the first 64 bits of sha256(label ':' nonce U+001F key), read as a fraction of 2^64. With method rate (the default), a key is selected when u is below its effective rate, which is the highest rate among the base rate and the matched stratum buckets. With method bottom_k, each sign-off bucket takes its targetSize keys with the smallest u (see method). The stratum label is written to run_keys.stratum and the sign-off label to run_keys.signoff_stratum, only there: results and findings reach them through the judging query.",
       "type": "object",
       "additionalProperties": false,
       "required": ["kind", "salt", "source"],
@@ -709,7 +709,7 @@
           "pattern": "^[A-Za-z0-9_.+-]{4,64}$"
         },
         "resolve": {
-          "description": "Retries to resolution (docs/mvp/SAMPLING.md §7): a sign-off member whose reads were never comparable (an error, unstable pagination or a failed recheck) is read again, at most times times, each after delay (plus jitter), within the same cycle. A read that compared is never retried, so a discrepancy is never re-read away.",
+          "description": "Retries to resolution: a sign-off member whose reads were never comparable (an error, unstable pagination or a failed recheck) is read again, at most times times, each after delay (plus jitter), within the same cycle. A read that compared is never retried, so a discrepancy is never re-read away.",
           "type": "object",
           "additionalProperties": false,
           "properties": {
@@ -1220,12 +1220,12 @@
               "items": { "$ref": "#/$defs/keyColumnRef" }
             },
             "where": {
-              "description": "Row filter restricting this side's compared population (docs/mvp/TABLES.md §9): comparisons of a column with literals, IS [NOT] NULL, [NOT] IN, [NOT] BETWEEN, [NOT] [I]LIKE and boolean columns, combined with AND, OR, NOT and parentheses. The loader parses it (invalid_where); a connector renders the parsed tree with its own identifier quoting and bound literals, so no text of the filter reaches a statement. A key whose row the filter selects on one side only is FILTER_MEMBERSHIP, not NOT_FOUND_A/NOT_FOUND_B: the per-key read reads the other side's row whatever its filter.",
+              "description": "Row filter restricting this side's compared population: comparisons of a column with literals, IS [NOT] NULL, [NOT] IN, [NOT] BETWEEN, [NOT] [I]LIKE and boolean columns, combined with AND, OR, NOT and parentheses. The loader parses it (invalid_where); a connector renders the parsed tree with its own identifier quoting and bound literals, so no text of the filter reaches a statement. A key whose row the filter selects on one side only is FILTER_MEMBERSHIP, not NOT_FOUND_A/NOT_FOUND_B: the per-key read reads the other side's row whatever its filter.",
               "type": "string",
               "minLength": 1
             },
             "file": {
-              "description": "A file side (docs/mvp/FILES.md §5), with a files target only: CSV or Parquet files under the target's root, named by a relative path of a closed grammar, their format declared and, for CSV, their dialect. name stays the label reports show. The loader words each problem of it (invalid_file).",
+              "description": "A file side, with a files target only: CSV or Parquet files under the target's root, named by a relative path of a closed grammar, their format declared and, for CSV, their dialect. name stays the label reports show. The loader words each problem of it (invalid_file).",
               "type": "object",
               "additionalProperties": false,
               "required": ["path", "format"],
@@ -1578,7 +1578,7 @@
           "type": "boolean"
         },
         "format": {
-          "description": "The text's own form (as date or timestamp), parsed whole: %Y %m %d %H %M %S %f %z and the characters - / . : T and space (docs/mvp/FILES.md §5).",
+          "description": "The text's own form (as date or timestamp), parsed whole: %Y %m %d %H %M %S %f %z and the characters - / . : T and space.",
           "type": "string"
         },
         "decimalSeparator": {
@@ -2168,7 +2168,7 @@
           "default": ["MISMATCH", "NOT_FOUND_A", "NOT_FOUND_B", "INCONCLUSIVE"]
         },
         "oneShot": {
-          "description": "Fast confirmation for one-shot compares (CLI, REST, UI) and the agent's compare_key. The verdict is returned after this confirmation with confirmation: fast. The full recheck (delay, times, jitter) is then enqueued as a recheck work unit and may later move the result; a higher recheck_count overwrites, and the change is pushed via SSE. Keep delay x times within the one-shot latency target (F1).",
+          "description": "Fast confirmation for one-shot compares (CLI, REST, UI) and the agent's compare_key. The verdict is returned after this confirmation with confirmation: fast. The full recheck (delay, times, jitter) is then enqueued as a recheck work unit and may later move the result; a higher recheck_count overwrites, and the change is pushed via SSE. Keep delay x times within the one-shot latency target.",
           "type": "object",
           "additionalProperties": false,
           "properties": {
@@ -2629,7 +2629,7 @@
       "maxLength": 63
     },
     "canonical": {
-      "description": "Canonical mode. tree (default): the mapped documents are diffed as JSON trees. graph: each side's map must emit a graph/v1 input document {nodes: [...], edges: [...]}. A node is {type, <namespaceField>?, <businessKey fields>, <attributes>}, or {type, source_id, ...} when identity.crosswalk resolves it; an edge is {type, from, to, <qualifier>?, <attributes>}, where from and to are the endpoint's business key (a list for a composite businessKey), or an object {namespace, key} or {source_id}. The projection keys every node by identity.key = [tenant?, type, namespace, business_key] and every edge by [from, type, to, qualifier], sorting the endpoints of undirected edge types, keeps only the elements inside scope, and emits the projected canonical document {nodes: {<nodeType>: [...]}, edges: {<edgeType>: [...]}}. Each typed array is a keyed array: node members carry namespace, business_key (and tenant when identity.key uses it) plus their attributes; edge members carry from, to (maps {type, namespace, business_key}), qualifier and their attributes. The existing keyed-array walk, normalizers, signatures, noise masks and known diffs apply unchanged, and every canonical path (compare.fields, include/exclude, valueFilter, security, noise masks, known diffs) addresses the projected document, for example $.nodes.entity[*].name or $.edges.LINKED_TO[*].hop. graph/v1 is also the fact schema of the P2 L1 Parquet extract (one row per node or edge, with the type as a column), so API-level and bulk parity share code. Graph mode is not a second diff engine and has no isomorphism fallback: a node type without businessKey is a spec error, and a node whose business key is null or empty, or whose source_id does not resolve to exactly one key, makes the key INCONCLUSIVE with inconclusive_reason identity_ambiguous. Nodes and edges are never compared by internal ids (for example a graph store's internal vertex ids) or by JSON position. An emitted element of an undeclared node or edge type inside the declared scope makes that side INCOMPLETE and the key INCONCLUSIVE with inconclusive_reason schema_drift, so evidence that was not compared never yields MATCH.",
+      "description": "Canonical mode. tree (default): the mapped documents are diffed as JSON trees. graph: each side's map must emit a graph/v1 input document {nodes: [...], edges: [...]}. A node is {type, <namespaceField>?, <businessKey fields>, <attributes>}, or {type, source_id, ...} when identity.crosswalk resolves it; an edge is {type, from, to, <qualifier>?, <attributes>}, where from and to are the endpoint's business key (a list for a composite businessKey), or an object {namespace, key} or {source_id}. The projection keys every node by identity.key = [tenant?, type, namespace, business_key] and every edge by [from, type, to, qualifier], sorting the endpoints of undirected edge types, keeps only the elements inside scope, and emits the projected canonical document {nodes: {<nodeType>: [...]}, edges: {<edgeType>: [...]}}. Each typed array is a keyed array: node members carry namespace, business_key (and tenant when identity.key uses it) plus their attributes; edge members carry from, to (maps {type, namespace, business_key}), qualifier and their attributes. The existing keyed-array walk, normalizers, signatures, noise masks and known diffs apply unchanged, and every canonical path (compare.fields, include/exclude, valueFilter, security, noise masks, known diffs) addresses the projected document, for example $.nodes.entity[*].name or $.edges.LINKED_TO[*].hop. graph/v1 is also the fact schema of the L1 Parquet extract (one row per node or edge, with the type as a column), so API-level and bulk parity share code. Graph mode is not a second diff engine and has no isomorphism fallback: a node type without businessKey is a spec error, and a node whose business key is null or empty, or whose source_id does not resolve to exactly one key, makes the key INCONCLUSIVE with inconclusive_reason identity_ambiguous. Nodes and edges are never compared by internal ids (for example a graph store's internal vertex ids) or by JSON position. An emitted element of an undeclared node or edge type inside the declared scope makes that side INCOMPLETE and the key INCONCLUSIVE with inconclusive_reason schema_drift, so evidence that was not compared never yields MATCH.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -2975,7 +2975,7 @@
       }
     },
     "schemaDrift": {
-      "description": "Schema guard for table sides (docs/mvp/PRECHECKS.md §7). At a run's creation, at each scan pass, at a key-list cycle's start, at a resume and after a failed read, each table side's catalogue entry (column names, declared types, classes, nullability, the primary key and the relation's kind) is checked against the one the run was planned on and, at creation, against the one the version's newest earlier run read. A change that alters what the plan's statements read or how a key renders always pauses the run; a new run that would not compare what its predecessor compared is created paused. mode says what any other change does. The inferred-schema guard for service sides (validating each observation against inferredSchema) is not built: schemaDrift acts on table sides only, and the per-key reason schema_drift and the SCHEMA_DRIFT finding stay unused.",
+      "description": "Schema guard for table sides. At a run's creation, at each scan pass, at a key-list cycle's start, at a resume and after a failed read, each table side's catalogue entry (column names, declared types, classes, nullability, the primary key and the relation's kind) is checked against the one the run was planned on and, at creation, against the one the version's newest earlier run read. A change that alters what the plan's statements read or how a key renders always pauses the run; a new run that would not compare what its predecessor compared is created paused. mode says what any other change does. The inferred-schema guard for service sides (validating each observation against inferredSchema) is not built: schemaDrift acts on table sides only, and the per-key reason schema_drift and the SCHEMA_DRIFT finding stay unused.",
       "type": "object",
       "additionalProperties": false,
       "required": ["mode"],

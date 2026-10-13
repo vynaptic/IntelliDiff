@@ -115,7 +115,7 @@ async def test_rows_without_a_key_refuse(on_tables: Tables) -> None:
 
 async def test_lines_that_are_not_rows_refuse(on_tables: Tables, monkeypatch: pytest.MonkeyPatch) -> None:
     """A CSV key file's lines that are not rows of its dialect are in no key list. Its plan counts them
-    (FILES.md D6) and the read refuses by that count, rather than leave their keys out unsaid: the file
+    and the read refuses by that count, rather than leave their keys out unsaid: the file
     itself is e2e/test_files.py's."""
     _, harness = on_tables(SHELVES)
     plan = tables.key_plan

@@ -1,4 +1,4 @@
-"""Ended cycles for readiness's runner tests (docs/mvp/READINESS.md §4), written as the worker's writes
+"""Ended cycles for readiness's runner tests, written as the worker's writes
 leave them: a run's keys, each cycle's results and findings, its counters and its tombstone."""
 
 from __future__ import annotations

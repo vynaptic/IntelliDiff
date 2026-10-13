@@ -13,7 +13,7 @@ class CanonicalError(ValueError):
     def __init__(self, message: str, *, pattern: str | None = None) -> None:
         super().__init__(message)
         # Kept out of the message: member names can be data, and only the caller knows how
-        # patterns are published (§13.1).
+        # patterns are published.
         self.pattern = pattern
 
     def describe(self, render_pattern: Callable[[str], str]) -> str:

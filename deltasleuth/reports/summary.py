@@ -4,11 +4,10 @@ Built from the run's masked rows, the spec's declarations and what the P0 tools 
 directory (``measure.json``, the adjudication sheet and score); no evidence body is read. A run
 that stopped early or cancelled keys is marked PARTIAL, and the adjudication check passes only on
 a score of the sheet the directory holds now (same run, same SHA-256): any other score is stale.
-Without one, it reads the stored adjudication the cycle's sign-off attests (docs/mvp/PACK.md §5).
-The four-eyes section states the spec approval the cycle ran under and its sign-off
-(docs/mvp/APPROVALS.md §4); an ended cycle's labelled accuracy is stated as its labelling stored it
-(docs/mvp/ACCURACY.md §7); a run made in an unlicensed evaluation or a licence's grace says so in the
-warning (docs/mvp/LICENCE.md §10).
+Without one, it reads the stored adjudication the cycle's sign-off attests.
+The four-eyes section states the spec approval the cycle ran under and its sign-off; an ended cycle's
+labelled accuracy is stated as its labelling stored it; a run made in an unlicensed evaluation or a
+licence's grace says so in the warning.
 """
 
 from __future__ import annotations

@@ -1,9 +1,9 @@
-"""A fuzz of Parquet files through the product's own path (docs/mvp/READER.md §15; docs/mvp/FILES.md §14
-point 7): one to five bytes changed in a footer or in the pages before it, of files DuckDB's writer and
-``parquet_tiny`` make here; each mutant the footer walk accepts goes through ``ds target check`` with its
-count, a plan, a scan, a census with its rows without a key and a per-key read, in the process that calls
-this. Its reader's process may end on one; this process must not, and whatever a step meets is a closed
-code: a class's name, never DuckDB's text nor the file's name (``UNSEEN``: what no outcome may hold).
+"""A fuzz of Parquet files through the product's own path: one to five bytes changed in a footer or in the
+pages before it, of files DuckDB's writer and ``parquet_tiny`` make here; each mutant the footer walk
+accepts goes through ``ds target check`` with its count, a plan, a scan, a census with its rows without a
+key and a per-key read, in the process that calls this. Its reader's process may end on one; this process
+must not, and whatever a step meets is a closed code: a class's name, never DuckDB's text nor the file's
+name (``UNSEEN``: what no outcome may hold).
 
 Test-only.
 """
@@ -119,7 +119,7 @@ def mutate(rng: random.Random, data: bytes, pages: bool) -> bytes:
     return body + bytes(foot) + struct.pack("<I", len(foot)) + b"PAR1"
 
 
-CODES = ("Died", "Alone", "Unstarted", "Busy", "Dropped", "Deadline", "Stuck")  # an outage's, of §10
+CODES = ("Died", "Alone", "Unstarted", "Busy", "Dropped", "Deadline", "Stuck")  # an outage's
 UNSEEN = ("NOT CLOSED", "LOST", "FEWER", "TIMED OUT")  # what no outcome may hold
 
 
@@ -135,7 +135,7 @@ def _met(step: str, exc: BaseException, hidden: tuple[str, ...]) -> str:
     if isinstance(exc, tables.ReaderDied) or "the file reader's process ended" in text:
         return f"{step} ReaderDied" if "3 times" in text else f"{step} the reader ended"
     if isinstance(exc, tables.TableError):
-        named = text if text in reader.NAMES or text in CODES else "a text of the contract's"
+        named = text if text in reader.NAMES or text in CODES else "a text of the product's"
         return f"{step} {type(exc).__name__} {named}"
     if (busy := re.search(r"did not take its files' work \(([A-Za-z]+)\)", text)) is not None:
         return f"{step} not ready ({busy[1]})"

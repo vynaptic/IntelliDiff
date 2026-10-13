@@ -1,6 +1,5 @@
--- The MySQL acceptance kit (docs/mvp/ENGINES.md §17): two tables of one database, compared by
--- spec.yaml to the result of expected.json. Run it on the server version you will compare, as an account
--- that may create a database:
+-- The MySQL acceptance kit: two tables of one database, compared by spec.yaml to the result of
+-- expected.json. Run it on the server version you will compare, as an account that may create a database:
 --   mysql --default-character-set=utf8mb4 -h HOST -u ADMIN -p < examples/tables/mysql/seed.sql
 -- It drops and recreates the database ds_kit. Then give the account DeltaSleuth reads with SELECT on it:
 --   CREATE USER 'ds_reader'@'%' IDENTIFIED BY '...';

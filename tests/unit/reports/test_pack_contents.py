@@ -1,4 +1,4 @@
-"""What a pack holds (docs/mvp/PACK.md §2, §6, §7.4): exactly its layout; facts whose hashes the audit rows
+"""What a pack holds: exactly its layout; facts whose hashes the audit rows
 carry; a manifest and a certificate that state everything as observed; params hashed as stored; nothing
 per key but masked values (the canary, PDF streams decompressed), masked keys only in the sheet, the
 key.view rows and the AI answers; this cycle's AI answers only; and what the purge keeps and deletes."""
@@ -160,8 +160,8 @@ async def test_a_pack_holds_its_layout_and_facts_bound_to_audited_hashes(
                   "b": {"role": "new", "target": "svc-b", "relation": None}},
     }  # fmt: skip
     assert manifest["census"] == signoff["attests"]["census"] and manifest["results"]["per_key_results"] == 52
-    # A census pack changes only by its basis and its attests' sample (docs/mvp/SAMPLING.md §11.2); format
-    # 3 adds its labelling, none here (docs/mvp/ACCURACY.md §9).
+    # A census pack changes only by its basis and its attests' sample; format
+    # 3 adds its labelling, none here.
     assert signoff["attests"]["format"] == 3 and signoff["attests"]["sample"] is None
     assert signoff["attests"]["accuracy"] is None and json.loads(files["accuracy/attempts.json"]) == []
     assert manifest["accuracy"] == {"attested": False, "draws": 0, "labelled": 0}
@@ -177,7 +177,7 @@ async def test_a_pack_holds_its_layout_and_facts_bound_to_audited_hashes(
     assert manifest["audit"]["head"]["seq"] == second["audit_seq"] <= head["seq"]
     assert manifest["retention"]["class"] == "standard" and manifest["retention"]["held"] is True
     assert [p["pack_id"] for p in manifest["previous_packs"]] == [first["pack_id"]]
-    # The Enterprise licence signed_cycle installed; an open build's pack names none (LICENCE.md §19).
+    # The Enterprise licence signed_cycle installed; an open build's pack names none.
     named = (await licensed_once(pack_ctx)).licence
     assert (named is None) == (build == "open_build")
     assert manifest["licence"] == (named and {
@@ -249,7 +249,7 @@ async def test_a_pack_holds_its_layout_and_facts_bound_to_audited_hashes(
 
 
 async def test_no_pre_check_row_is_in_a_pack_s_segment(pack_ctx: Context) -> None:
-    """docs/mvp/PRECHECKS.md §9: a table pre-check is observed, never evidence. Its audit rows name its own
+    """A table pre-check is observed, never evidence. Its audit rows name its own
     id, which no row of a run names: a pack issued after one holds nothing of it."""
     signed = await signed_cycle(pack_ctx)
     precheck_id = repo.new_precheck_id()
@@ -276,7 +276,7 @@ async def test_no_pre_check_row_is_in_a_pack_s_segment(pack_ctx: Context) -> Non
 
 
 async def test_drift_rows_pass_the_pack_gate(pack_ctx: Context) -> None:
-    """docs/mvp/PRECHECKS.md §9: what a pack holds of the schema guard is the run's ``schema.drift`` and
+    """What a pack holds of the schema guard is the run's ``schema.drift`` and
     ``paused`` audit rows in its segment, which pass the raw-value gate by construction, under a key
     pattern of digits too: counts are numbers, kinds member names, and their strings closed codes, an id
     and hashes. Nothing issued for a cycle is built from the run's ``guard``: ``coverage.csv`` is byte for
@@ -383,7 +383,7 @@ async def test_create_run_hashes_its_params_as_stored(
 
 
 def test_the_subject_names_each_side_s_engine_and_its_major_and_minor_version_only() -> None:
-    # A pair with a side on MySQL or Oracle: the plan holds each side's engine and server (ENGINES.md §13).
+    # A pair with a side on MySQL or Oracle: the plan holds each side's engine and server.
     tables = {
         "a": {"schema": "APP", "name": "CUSTOMERS", "engine": "oracle", "server": "19.21", "tls": True},
         "b": {"schema": "public", "name": "customers", "engine": "postgresql", "server": "16.4"},
@@ -437,7 +437,7 @@ FILE_SIDE = {
 
 
 def test_the_subject_of_a_file_side_holds_its_files() -> None:
-    """docs/mvp/FILES.md §16: a file side's subject adds its files from the plan (count, bytes, the one
+    """A file side's subject adds its files from the plan (count, bytes, the one
     digest and what it is the SHA-256 of, the stamp's time), which ``ds packs verify`` shows; a pack issued
     before has none."""
     database = {"schema": "public", "name": "customers", "engine": "postgresql", "server": "16.4"}
@@ -481,7 +481,7 @@ def _printed(command: str, files: list[str], root: Path) -> str:
 
 
 async def test_a_pack_says_what_its_files_digest_is_and_how_to_reproduce_it(tmp_path: Path) -> None:
-    """docs/mvp/FILES.md §11, §16: an auditor holds a pack and the single exported file it is about, runs
+    """An auditor holds a pack and the single exported file it is about, runs
     ``sha256sum`` on the file and gets another value than the pack's ``sha256``, which is the SHA-256 of a
     list. So the subject, and with it step 4 of ``ds packs verify`` and of VERIFY.txt, and the certificate's
     census line say what the digest is the SHA-256 of, with the command that prints it from the files; of a
@@ -537,7 +537,7 @@ AT = "2026-10-01T02:20:00.000000Z"
 async def test_a_pack_of_a_file_side_names_its_digest_and_no_file(
     pack_ctx: Context, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """docs/mvp/FILES.md §11, §13, §16: side a read fixed files to their end and hashed them the same. The
+    """Side a read fixed files to their end and hashed them the same. The
     certificate says what it was read from, by the one digest, and how single keys were read; the subject
     and ``facts/plan.json`` hold that digest; no pack file holds the sealed pins, a file's name or a file's
     own digest; side b's lines that were not rows, a repeated key and a writable mount are warned of."""
@@ -597,7 +597,7 @@ async def test_a_pack_of_a_file_side_names_its_digest_and_no_file(
         "SIDE B: 2 KEY(S) ARE HELD BY MORE THAN ONE ROW: each is inconclusive, never paired",
         "SIDE B WAS READ FROM A DIRECTORY DELTASLEUTH COULD WRITE TO",
     ]
-    # No statement of FILES §2's never-claimed list is in the certificate.
+    # No statement a pack never makes of files is in the certificate.
     said = " ".join(line for section in certificate.sections for line in section.lines).lower()
     for never in ("snapshot of", "immutable", "tamper", "every line compared", "keys are unique"):
         assert never not in said.replace("not a certified census", "")
@@ -614,7 +614,7 @@ async def test_a_pack_of_a_file_side_names_its_digest_and_no_file(
 
 
 def test_a_dated_path_trips_the_raw_value_gate(tmp_path: Path) -> None:
-    """docs/mvp/FILES.md §13, D12: the spec's own file.path is spec text, searched by the gate: a dated
+    """The spec's own file.path is spec text, searched by the gate: a dated
     directory holds a number a numeric key pattern reads as a key, and the refusal names its place."""
     from tests.unit.connectors.ducked import csv_table, file_spec, registry
 
@@ -631,7 +631,7 @@ def test_a_dated_path_trips_the_raw_value_gate(tmp_path: Path) -> None:
 
 
 async def test_side_a_with_lines_that_were_not_rows_gets_no_pack(pack_ctx: Context) -> None:
-    """C1 (docs/mvp/FILES.md §11, §15): side a's files held lines that were not rows, so a key on such a
+    """Side a's files held lines that were not rows, so a key on such a
     line that side b lacks is in no result: the cycle is no census and its pack is refused."""
     at = "2026-10-01T02:20:00.000000Z"
     state = {
@@ -655,8 +655,8 @@ async def test_side_a_with_lines_that_were_not_rows_gets_no_pack(pack_ctx: Conte
 async def test_a_sampled_claim_never_says_one_snapshot_of_a_frame_its_engine_could_not_pin(
     pack_ctx: Context, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The frame of a MySQL view is read in a transaction whose snapshot cannot be observed (ENGINES.md
-    # §2, §6): the signed claim once said `a table in one snapshot` beside the census line that said not.
+    # The frame of a MySQL view is read in a transaction whose snapshot cannot be observed: the signed
+    # claim once said `a table in one snapshot` beside the census line that said not.
     documents: list[Document] = []
     render = pack.render_pdf
     monkeypatch.setattr(pack, "render_pdf", lambda document: documents.append(document) or render(document))
@@ -675,10 +675,6 @@ async def test_a_sampled_claim_never_says_one_snapshot_of_a_frame_its_engine_cou
     assert held in claim and claim.replace("pass not observed to be a snapshot", "snapshot") == (
         pack.PROVES_SAMPLED.format(name="test-1", fp=signer.fingerprint, absent="0")
     )
-    # The contract quotes the words that replace the snapshot's (SAMPLING §11.3).
-    said = (Path(__file__).parents[3] / "docs/mvp/SAMPLING.md").read_text().split("### 11.3")[1]
-    said = " ".join(said.split("### 11.4")[0].split())
-    assert "`a table in one pass not observed to be a snapshot`" in said
     certificate = documents[-1]
     titled = {section.title: section for section in certificate.sections}
     assert titled["What the signature proves (observed)"].lines == [claim]
@@ -764,7 +760,7 @@ async def test_the_canary_nothing_raw_reaches_a_pack(pack_ctx: Context, key_file
     assert RAW_KEY not in "".join(
         files[name].decode() for name in files if name.endswith((".json", ".csv", ".tsv"))
     )
-    # Per key, masked keys only in the sheet, the key.view rows and the answers (§2.3): the CSVs have none.
+    # Per key, masked keys only in the sheet, the key.view rows and the answers: the CSVs have none.
     masked = [mask_key(k, signed.spec, pack_ctx.tokeniser).encode() for k in pairs]
     assert sorted(name for name, data in files.items() if any(m in data for m in masked)) == [
         "adjudication/sheet.csv", "annex/ai_answers.json", "audit/chain.tsv",

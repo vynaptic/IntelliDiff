@@ -1,4 +1,4 @@
-"""Raw key-shaped values in text a pack or the audit log carries forever (docs/mvp/PACK.md §2.3).
+"""Raw key-shaped values in text a pack or the audit log carries forever.
 
 Outside tokens (``tok:…``, ``class:…``), a text's words are its runs of characters other than whitespace,
 quotes, brackets and ``, ; = < > |``, without leading or trailing punctuation or symbols; a word's parts are

@@ -13,8 +13,9 @@ organisations, one row per link:
 | `targets.yaml` | The two database targets: a DSN file reference and a budget each. |
 | `spec.yaml` | The composite key is the link, `entity_code\|id_type\|id_value`; `graph` names the entity part (`members`) and the identifier parts (`groups`), with `maxComponent: 20`. Company codes and numbers are not personal data, so the key is a `business_code` and labels show clear. |
 
-The contract is [docs/mvp/GRAPH.md](../../docs/mvp/GRAPH.md); the runbook's
-[Graph parity](../../docs/mvp/RUNBOOK.md#graph-parity) explains the codes.
+A graph spec is a table spec with a `graph` block. The user guide's
+[Compare tables and files](../../docs/user-guide.md#compare-tables-and-files) covers table specs; the
+sections below show what the graph comparison adds.
 
 ## What a run shows
 
@@ -61,8 +62,9 @@ identifiers reach; the PDF's "Graph parity" section says so.
 
 ## Run it
 
-You need PostgreSQL 16 or later, `psql`, and a settings file as in the runbook's
-[Setup](../../docs/mvp/RUNBOOK.md#setup), whose `targets_file` is `examples/graph/targets.yaml`.
+You need PostgreSQL 16 or later, `psql`, and a settings file as
+[docs/deployment.md](../../docs/deployment.md) describes for a run from source, whose `targets_file` is
+`examples/graph/targets.yaml`.
 
 1. Seed the two databases, as a role that may create databases:
 
@@ -71,7 +73,7 @@ You need PostgreSQL 16 or later, `psql`, and a settings file as in the runbook's
    ```
 
 2. Write each DSN to its file, percent-encoding the password (`@` as `%40`). `secrets/` is
-   git-ignored; a read-only role is better (docs/mvp/DEPLOY.md, section 7).
+   git-ignored; a read-only role is better.
 
    ```bash
    mkdir -p -m 700 examples/graph/secrets
@@ -88,7 +90,7 @@ You need PostgreSQL 16 or later, `psql`, and a settings file as in the runbook's
    ```
 
 **In a deployment:** seed the databases on a server the app can reach, and add the secrets
-`crm_links_dsn` and `platform_links_dsn` (docs/mvp/DEPLOY.md, section 7);
+`crm_links_dsn` and `platform_links_dsn` as [docs/deployment.md](../../docs/deployment.md) describes;
 `deploy/config/targets.example.yaml` already declares both targets with these files. Then upload
 `spec.yaml` and start a batch run without keys. With SSO, first request the version's approval on the
 Specs screen and have a `rule_approver` other than you approve it (two for a token upload): its clear

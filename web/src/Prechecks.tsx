@@ -1,4 +1,4 @@
-/** Table pre-checks (docs/mvp/PRECHECKS.md §11), open to every role: what a pre-check is not, the list with each
+/** Table pre-checks, open to every role: what a pre-check is not, the list with each
  *  one's pairs counted by verdict, and one pre-check with its progress, its totals and its pairs worst first, a
  *  verdict filter and the reports; a pair opens its lines, the refusals a run would meet, its schema codes and each
  *  compared column's figures. Operators make one of stored specs, cancel one and start a comparison of a pair's

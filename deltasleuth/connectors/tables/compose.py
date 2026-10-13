@@ -1,5 +1,5 @@
-"""The statements of a table side on an engine other than PostgreSQL (docs/mvp/ENGINES.md §8, §10) and those
-a table pre-check aggregates by (docs/mvp/PRECHECKS.md §4), written once over the engine's primitives, and
+"""The statements of a table side on an engine other than PostgreSQL and those
+a table pre-check aggregates by, written once over the engine's primitives, and
 what their rows are read as.
 
 A statement is fixed text, identifiers and values. Identifiers are the catalogue's spelling, quoted by the
@@ -20,7 +20,7 @@ from deltasleuth.core import jsonio
 from deltasleuth.core.spec import where
 
 Binds = dict[str, Any]
-MAX_LOB_BYTES = 16 * 1024 * 1024  # a row whose large values total more is not fetched (§6)
+MAX_LOB_BYTES = 16 * 1024 * 1024  # a row whose large values total more is not fetched
 
 
 class Dialect(Protocol):
@@ -37,7 +37,7 @@ class Dialect(Protocol):
         """``text`` as a value a column of class ``cls`` is compared with; None when it is not one."""
 
     def key_text(self, column: str, cls: str, declared: str) -> str:
-        """The key column's text, PostgreSQL's ``::text`` of the same value (§8)."""
+        """The key column's text, PostgreSQL's ``::text`` of the same value."""
 
     def order(self, text: str) -> str:
         """What sorts a key text by its code points."""
@@ -49,27 +49,27 @@ class Dialect(Protocol):
         """The keys after the resume bound, by their order expressions."""
 
     def render(self, column: str, cls: str, declared: str) -> str:
-        """The column's value as the text or bytes ``render`` canonicalises (§9)."""
+        """The column's value as the text or bytes ``render`` canonicalises."""
 
     def rendered(self, value: str, cls: str, declared: str) -> str:
         """``render`` of any expression of the column's type: an aggregate of it, say."""
 
     def length(self, column: str, cls: str, declared: str) -> str:
         """A text's length in code points (a ``char``'s without its padding, 0 when blank), bytes' in
-        octets: a table pre-check's (docs/mvp/PRECHECKS.md §4)."""
+        octets: a table pre-check's."""
 
     def distinct(self, column: str, cls: str, declared: str) -> str:
         """What a column's distinct values are counted by: a text's own, binary."""
 
     def lob(self, declared: str) -> bool:
-        """Whether a column of this type may hold a large value (§6)."""
+        """Whether a column of this type may hold a large value."""
 
     def oversize(self, side: Plan, columns: Sequence[str]) -> str:
         """Whether the row's values in these LOB columns total more than ``MAX_LOB_BYTES``."""
 
     def row_hash(self, side: Plan, columns: Sequence[str]) -> str:
         """32 bytes that are equal on two sides only when these columns' rendered values are: a NULL and
-        the boundary between two values stay apart (§10)."""
+        the boundary between two values stay apart."""
 
     def first(self, select: str, count: int, by: int | None = None) -> str:
         """The first ``count`` rows of ``select``, those with the greatest select item ``by`` first: its
@@ -121,7 +121,7 @@ def _patterns(node: where.Node) -> set[int]:
 
 def _filter(d: Dialect, side: Plan, binds: Binds) -> str | None:
     """The side's row filter, each literal typed by the class of the column it is compared with: neither
-    engine's zero-row probe refuses a literal of the wrong type, so it is refused here (§12 P11). A LIKE
+    engine's zero-row probe refuses a literal of the wrong type, so it is refused here. A LIKE
     pattern is no value of its column: it is written as text."""
     if not side.get("where"):
         return None
@@ -185,7 +185,7 @@ def worker_columns(side: Plan) -> list[str]:
 
 def engine_columns(side: Plan) -> list[str]:
     """The compared columns the engine hashes itself, those the plan leaves out of ``digest``: none across
-    engines (§10). In the order of their canonical names, which both sides share."""
+    engines. In the order of their canonical names, which both sides share."""
     return [side["columns"][name] for name in sorted(side["columns"]) if name not in side["digest"]]
 
 
@@ -202,7 +202,7 @@ def _select(d: Dialect, side: Plan, select: Sequence[str], where_: str, order: S
 
 
 def rows(d: Dialect, side: Plan, asked: Mapping[str, Sequence[Sequence[str]]]) -> tuple[str, Binds]:
-    """One arm a key, as TABLES.md §4: its position in ``asked``, the rendered columns, the key texts and
+    """One arm a key: its position in ``asked``, the rendered columns, the key texts and
     whether the filter selects the row, at most two rows, the selected first. An index-friendly ``IN`` of
     the values that may hold the key finds the rows, and each key text must also be the key's part
     exactly: a database's own comparison may find more (another case, an accent, ``007`` for ``7``). A
@@ -284,7 +284,7 @@ def probe(d: Dialect, side: Plan) -> tuple[str, Binds]:
     return d.first(_select(d, side, select, _population(d, side, keys, binds)), 0), binds
 
 
-# A table pre-check's figure of a column (docs/mvp/PRECHECKS.md §4), from the column ``c``, its ``length``
+# A table pre-check's figure of a column, from the column ``c``, its ``length``
 # and what its distinct values are counted by; a minimum and a maximum are ``rendered`` as the column is, a
 # sum as a decimal.
 _FIGURES = {
@@ -326,7 +326,7 @@ def figures(d: Dialect, side: Plan, wanted: Sequence[tuple[str, str | None]]) ->
 def figured(side: Plan, wanted: Sequence[tuple[str, str | None]]) -> Callable[[Rows], list[str | None]]:
     """What reads ``figures``'s one row as texts: a count or a length as its digits, a number as the engine
     renders it, and a date's or a time's minimum and maximum in canonical rendering 1, as PostgreSQL's
-    ``to_jsonb`` writes them, so that two engines' are compared as one (ENGINES.md §9)."""
+    ``to_jsonb`` writes them, so that two engines' are compared as one."""
 
     def read(rows: Rows) -> list[str | None]:
         texts = []
@@ -356,7 +356,7 @@ def _flagged(d: Dialect, side: Plan, columns: Sequence[str]) -> bool:
 
 
 def large(d: Dialect, side: Plan) -> bool:
-    """Whether a per-key row of the side may hold a large value: a compared column is a LOB column (§6)."""
+    """Whether a per-key row of the side may hold a large value: a compared column is a LOB column."""
     return _flagged(d, side, list(side["columns"].values()))
 
 

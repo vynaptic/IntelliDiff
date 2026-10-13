@@ -1,17 +1,16 @@
-"""The table scan (docs/mvp/TABLES.md §5): the key source of a batch or soak run (§11) over two tables.
+"""The table scan: the key source of a batch or soak run over two tables.
 
-Each side streams (key texts, row hash) in code-point order from one read-only snapshot of its engine
-(docs/mvp/ENGINES.md §5), and a side whose keys come out of that order fails the run (§8). A merge
-counts the identical rows and queues every other key for the worker's per-key reads while it goes
-on. It runs synchronously over each fetched batch and awaits only to fetch the next: a task per row
-costs 16x. Progress is checkpointed with the keys found, so a restart, a pause or a lost connection
-resumes after the last saved key and counts nothing twice. The keys found and the point the scan
-resumes after are sealed under the run's data key (docs/mvp/RETENTION.md §3.1); checkpoints are
-numbered, so a scanner saves only on the checkpoint it read. Each pass reads both catalogues on its own
-sessions before a cursor opens (the schema guard's V2, docs/mvp/PRECHECKS.md §7): a table that is no longer
-what the run's plan reads pauses the run there, and the pass ends without failing it (``drift.Tripped``).
-A pass with a file side takes the file reader's one sort before either snapshot opens (docs/mvp/FILES.md
-§10), so no database's snapshot sits idle while the pass waits for another run's sort.
+Each side streams (key texts, row hash) in code-point order from one read-only snapshot of its engine, and a
+side whose keys come out of that order fails the run. A merge counts the identical rows and queues every
+other key for the worker's per-key reads while it goes on. It runs synchronously over each fetched batch and
+awaits only to fetch the next: a task per row costs 16x. Progress is checkpointed with the keys found, so a
+restart, a pause or a lost connection resumes after the last saved key and counts nothing twice. The keys
+found and the point the scan resumes after are sealed under the run's data key; checkpoints are numbered, so
+a scanner saves only on the checkpoint it read. Each pass reads both catalogues on its own sessions before a
+cursor opens (the schema guard's look): a table that is no longer what the run's plan reads pauses the run
+there, and the pass ends without failing it (``drift.Tripped``). A pass with a file side takes the file
+reader's one sort before either snapshot opens, so no database's snapshot sits idle while the pass waits for
+another run's sort.
 """
 
 from __future__ import annotations
@@ -53,9 +52,8 @@ def new_scan() -> dict[str, Any]:
     """A scan's state before it starts (``ds.scans``): ``after`` is the last saved key's parts, sealed
     (None before the first checkpoint and once done), ``checkpoint`` the number of checkpoints saved,
     ``snapshots_a`` and ``_b`` how many snapshots of each side its saved rows were read in, between
-    ``first_at`` and ``last_at`` (a resumed scan opens fresh ones: docs/mvp/PACK.md §1.2). A side whose
-    plan names its engine also gets ``server_a`` or ``_b``, the server version its last pass read
-    (docs/mvp/ENGINES.md §13)."""
+    ``first_at`` and ``last_at`` (a resumed scan opens fresh ones). A side whose
+    plan names its engine also gets ``server_a`` or ``_b``, the server version its last pass read."""
     counters = (
         "rows_a", "rows_b", "skipped_a", "skipped_b", "matched", "candidates", "checkpoint", "snapshots_a",
         "snapshots_b",
@@ -79,7 +77,7 @@ class _Stream:
     """One side's rows in fetched batches: the head row's key, and the digests of one key's rows at once.
 
     A row's digest is its engine's (``connectors.tables.render.digest``): the database's hash of its plain
-    columns, extended with the columns the worker converts (TABLES.md §10, ENGINES.md §10). A row without
+    columns, extended with the columns the worker converts. A row without
     one (a value that does not convert, a row left in its database) comes with a marker instead, which
     its side completes, so the other side never has it.
     """
@@ -109,7 +107,7 @@ class _Stream:
 
     async def head(self) -> Key | None:
         """The key of the next row, None at the end. A key below the one before it, or a first key not
-        after the resume bound, raises ``KeysOutOfOrder`` (ENGINES.md §8): whatever the engine's
+        after the resume bound, raises ``KeysOutOfOrder``: whatever the engine's
         collation did, a mis-sorted side fails the run and never mis-pairs a key."""
         if self._head is None and not self._eof:
             while self._i == len(self._rows):
@@ -146,7 +144,7 @@ class _Stream:
 
 @asynccontextmanager
 async def _snapshot(side: str, target: Target, plan: Plan, after: Key | None) -> AsyncIterator[_Stream]:
-    """A side's snapshot, its catalogue read (V2) and its cursor not yet open."""
+    """A side's snapshot, its catalogue read and its cursor not yet open."""
     engine = planned(side, plan, target)
     async with engine.snapshot(target) as session:
         relation = await engine.describe(session, plan["schema"], plan["name"], side=plan)
@@ -154,11 +152,10 @@ async def _snapshot(side: str, target: Target, plan: Plan, after: Key | None) ->
 
 
 async def scan(ctx: Context, run_id: str) -> str | None:
-    """Scan the run's tables from its last checkpoint to the end, or until the run stops running;
-    the stop condition (``until``, ``maxDuration``) that ends the run, judged at each checkpoint. A file side
-    (docs/mvp/FILES.md §7, §9, §11) counts the keys several of its rows hold (``repeated_x``), must have read
-    exactly the rows its plan counted once read to its end (``RowsMoved``), and records when its files'
-    closing hash agreed (``verified_x``).
+    """Scan the run's tables from its last checkpoint to the end, or until the run stops running; the stop
+    condition (``until``, ``maxDuration``) that ends the run, judged at each checkpoint. A file side counts
+    the keys several of its rows hold (``repeated_x``), must have read exactly the rows its plan counted
+    once read to its end (``RowsMoved``), and records when its files' closing hash agreed (``verified_x``).
 
     Raises what stops it: ``connectors.tables.UNREACHABLE`` when a database is unreachable (the worker
     resumes the scan later, as it does after some of an engine's codes: ``runner.worker``),
@@ -182,7 +179,7 @@ async def scan(ctx: Context, run_id: str) -> str | None:
     found: dict[str, str] = {}  # keys since the last checkpoint: raw -> masked
     async with AsyncExitStack() as stack:
         if any("pinned" in tables[s.value] for s in Side):
-            # The one sort of the file reader (FILES.md §10), before a database side's snapshot opens: none
+            # The one sort of the file reader, before a database side's snapshot opens: none
             # sits idle while this pass waits for another's sort.
             await stack.enter_async_context(duck.SORT.held())
         a, b = [
@@ -194,7 +191,7 @@ async def scan(ctx: Context, run_id: str) -> str | None:
         # When the snapshots opened, not when a file side's sort returned; counted with the rows next saved:
         # a lost pass read none of them.
         opened = utc_now_iso()
-        seen = {"a": a.relation, "b": b.relation}  # V2: before either cursor opens, every cycle and resume
+        seen = {"a": a.relation, "b": b.relation}  # before either cursor opens, every cycle and resume
         if await drift.check(ctx, run, spec, seen, "scan" if after is None else "resume"):
             raise drift.Tripped(run_id)
         await a.open()
@@ -216,7 +213,7 @@ async def scan(ctx: Context, run_id: str) -> str | None:
             text = encode_key(key)
             for side, hashes in rows.items():
                 state[f"rows_{side}"] += len(hashes)
-                if len(hashes) > 1 and "pinned" in tables[side]:  # a file guarantees no uniqueness (FILES §9)
+                if len(hashes) > 1 and "pinned" in tables[side]:  # a file guarantees no uniqueness
                     state[f"repeated_{side}"] += 1
             if not text or len(text.encode()) > MAX_KEY_BYTES:  # no run key can hold it
                 for side, hashes in rows.items():
@@ -245,7 +242,7 @@ async def scan(ctx: Context, run_id: str) -> str | None:
                 raise RowsMoved(f"side {side}: {read:,} rows were read where the plan counted {counted:,}")
             if verified := getattr(stream.session, "verified_at", None):  # a fixed side's closing hash
                 state[f"verified_{side}"] = verified
-    if spec.raw.get("graph"):  # L2: the structure the facts make (GRAPH.md §3), before the scan is done
+    if spec.raw.get("graph"):  # L2: the structure the facts make, before the scan is done
         state["graph"], rows = await graph.analyse(ctx, spec, tables, state)
         async with ctx.pool.connection() as conn:
             await repo.replace_graph_diffs(conn, run_id, cycle, rows)

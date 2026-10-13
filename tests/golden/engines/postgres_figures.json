@@ -1,5 +1,5 @@
 {
- "about": "What PostgreSQL sends for a table pre-check's figures at each level, and for its duplicate keys (docs/mvp/PRECHECKS.md §4): a plain side, and one with a composite key, two key maps, a filter and a typeMap column. Regenerate only with a contract change.",
+ "about": "What PostgreSQL sends for a table pre-check's figures at each level, and for its duplicate keys: a plain side, and one with a composite key, two key maps, a filter and a typeMap column. Regenerate only with a contract change.",
  "plain": {
   "schema": "public",
   "name": "users",

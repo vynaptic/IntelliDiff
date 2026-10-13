@@ -1,4 +1,4 @@
-"""Deterministic structural diff of two canonical sides (§8.1 ``diff`` / ``walk``).
+"""Deterministic structural diff of two canonical sides (``diff`` / ``walk``).
 
 The normalised walk compares ``Canonical.doc`` under the field compare modes; two values a
 tolerance or similarity accepts are still reported, as NORMALIZATION_ONLY / INFO. The raw walk,

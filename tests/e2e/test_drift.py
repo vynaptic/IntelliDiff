@@ -1,8 +1,8 @@
-"""A table that changes under a soak (docs/mvp/PRECHECKS.md §7, §13), on each engine: between the cycles of
+"""A table that changes under a soak, on each engine: between the cycles of
 a soak over two tables a column is added (warned), a key column widened (warned, the soak goes on) and a
 compared column dropped (paused, not failed); retyped, it keeps the run from resuming, and a new run plans
-the table as it is now. With DS_PERF=1 the guard's looks at a scan pass (V2) and at a cycle's start (V3) are
-timed (§12).
+the table as it is now. With DS_PERF=1 the guard's looks at a scan pass and at a cycle's start are
+timed.
 """
 
 from __future__ import annotations
@@ -124,7 +124,7 @@ async def test_a_table_soak_meets_a_table_that_changes_between_its_cycles(
 
 
 # The same table, the same changes, on MySQL and on Oracle (Oracle's unquoted names are upper case). The
-# column comes back as an integer: a number and a text are two families, which their plan refuses (P9).
+# column comes back as an integer: a number and a text are two families, which their plan refuses.
 ENGINE_USERS = {
     "mysql": """
         SET SESSION cte_max_recursion_depth = 100;
@@ -227,7 +227,7 @@ async def test_a_table_soak_meets_a_table_that_changes_between_its_cycles_on_eac
     assert ended["status"] in ("completed", "completed_with_issues") and ended["scan"]["rows_b"] == 20
 
 
-# --- performance (PRECHECKS.md §12): DS_PERF=1 runs it; §12 publishes what it measured --------------------
+# --- performance: DS_PERF=1 runs it ---------------------------------------------------------------------
 
 perf = pytest.mark.skipif(not os.environ.get("DS_PERF"), reason="DS_PERF=1 runs it")
 KINDS = ("int", "text", "numeric(12, 2)", "timestamp")
@@ -241,9 +241,10 @@ WIDE = f"""
 async def test_guard_costs_a_catalogue_read(
     tables: Callable[..., Stack], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The schema guard's looks at two tables of 200 columns: V2, each side's catalogue read on its pass's
-    session and the judgement recorded, at each of a table soak's three passes; V3, a short session a side,
-    its catalogue read and the judgement recorded, at each of a key-list soak's two later cycle starts."""
+    """The schema guard's looks at two tables of 200 columns: at a scan pass, each side's catalogue read on
+    its pass's session and the judgement recorded, at each of a table soak's three passes; at a cycle's
+    start, a short session a side, its catalogue read and the judgement recorded, at each of a key-list
+    soak's two later cycle starts."""
     engine = ENGINES["postgresql"]
     describe, check, cycle_start = engine.describe, drift.check, drift.cycle_start
     described: list[float] = []

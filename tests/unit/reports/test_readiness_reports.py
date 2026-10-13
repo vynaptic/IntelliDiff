@@ -1,6 +1,6 @@
-"""Readiness in a run's reports (docs/mvp/READINESS.md §11): the run report's "Pair readiness (observed)"
+"""Readiness in a run's reports: the run report's "Pair readiness (observed)"
 section in each variant, judged as of the reported cycle so that the database gives it again; a run's
-``readiness.csv`` among ``FORMATS``; the CSVs' escaping; what none of them ever tells (§2); an evidence
+``readiness.csv`` among ``FORMATS``; the CSVs' escaping; what none of them ever tells; an evidence
 pack that holds nothing of readiness, whatever was measured and recorded since; and a pair's brief, one
 page whatever it holds."""
 
@@ -80,7 +80,7 @@ async def test_the_run_section_s_variants(ctx: Context) -> None:
         f"The parity gates of {PAIR} as of cycle 1 of run {listed} (ended "
     ) and section.lines[1].endswith(
         f" UTC), judged on the cycles ended by then under readiness settings {sha12}: the database gives them"
-        " again under the same settings (architecture §10)."
+        " again under the same settings."
     )
     assert section.header == ("Gate", "Required", "Status", "Observed")
     at, spec_id = f"cycle 1 of run {listed}", (await h.run(listed))["spec_id"]
@@ -141,7 +141,7 @@ async def test_the_run_section_is_judged_as_of_its_cycle_and_given_again(ctx: Co
         f"0 of the 2 evidence cycles in a row that {version} needs meet every per-cycle gate (cycle 3 {at}"
         " failed targets)"
     )
-    # What no surface tells (§2): no percentage but the targets gate's, nothing forecast, and no key.
+    # What no surface tells: no percentage but the targets gate's, nothing forecast, and no key.
     texts = [text for section in (first, second, third) for text in _strings(section)]
     header, rows = parse_csv(await FORMATS["readiness.csv"][1](ctx, run_id, None))
     texts += [*header, *(cell for row in rows for cell in row.values())]
@@ -149,7 +149,7 @@ async def test_the_run_section_is_judged_as_of_its_cycle_and_given_again(ctx: Co
     assert [found.group(0) for text in texts if text not in allowed for found in BANNED.finditer(text)] == []
     assert not any("scheduled" in text or "soak" in text for text in texts)
     counted = [text for text in texts if "discrepant or unresolved key(s)" in text]
-    assert len(counted) == 3 and all("suppressed" in text for text in counted)  # N6, and in readiness.csv
+    assert len(counted) == 3 and all("suppressed" in text for text in counted)  # and in readiness.csv
     assert "suppressed" in header and {row["suppressed"] for row in rows} == {"0"}
     assert not any(key in text for text in texts for key in KEYS)
 
@@ -225,7 +225,7 @@ async def _recorded(ctx: Context) -> list[Any]:
 
 
 async def test_a_pack_is_the_same_whatever_readiness_measured_and_recorded(pack_ctx: Context) -> None:
-    """D10: readiness never enters a pack. A pack issued after the worker measured the cycle, recorded its
+    """Readiness never enters a pack. A pack issued after the worker measured the cycle, recorded its
     settings and the pair's state, and a readiness report was downloaded, holds byte for byte the facts,
     exports and audit rows of the one issued before; no file of either names readiness."""
     signed = await signed_cycle(pack_ctx, pairs=samples(52), adjudicate=True)
@@ -250,18 +250,18 @@ async def test_a_pack_is_the_same_whatever_readiness_measured_and_recorded(pack_
     assert not any(b"readiness" in data for name, data in second.items() if not name.endswith(".pdf"))
 
 
-# -- a pair's brief on one page (§11) ---------------------------------------------------------------------
+# -- a pair's brief on one page ---------------------------------------------------------------------
 
 RUN = "R-" + "0123456789ABCDEFGHJKMNPQRS"
 AT = f"cycle 14 of run {RUN}"
-LONGEST = (  # the targets gate's text with each of its parts over, at nine-digit counts (§9, Y4)
+LONGEST = (  # the targets gate's text with each of its parts over, at nine-digit counts
     f"{AT} has 123,456,789 discrepant or unresolved key(s) of 987,654,321 observed whole; its pooled 0.01%"
     " target allows 98,765: 123,358,024 over; 123,456,789 key(s) suppressed (known differences or noise"
     f" only); {AT} has 123,456,789 key(s) absent on both sides, over the 98,765 its 0.01% target allows of"
     f" 987,654,321: the key source is stale; {AT} has 123,456,789 key(s) above the API cap that were not"
     " compared (truncated): declare pagination for that side's fetch in a new version"
 )
-SCHEDULED = (  # the convergence gate's, not met, with a live soak's schedule (§9, Y7)
+SCHEDULED = (  # the convergence gate's, not met, with a live soak's schedule
     f"0 of the 50 evidence cycles in a row that 10.20.30 (spec 123456) needs meet every per-cycle gate ({AT}"
     f" failed targets); cycle 16 of run {RUN} is the earliest that can complete them: it is scheduled to"
     " start about 2026-10-07 14:00 UTC, cycles starting every 1h, and completes them when it ends complete"
@@ -338,7 +338,7 @@ def _pages(pdf: bytes) -> int:
 def test_brief_pdf_is_one_page() -> None:
     """A brief's PDF is one page whatever the brief holds: each list is cut where a line says how many it
     leaves out and where they are, a gate's text where a clause of it ends, so that a schedule keeps its
-    label or is left out whole (§2, N2), and what is still over the page is scaled down, never split."""
+    label or is left out whole, and what is still over the page is scaled down, never split."""
     document = reports.brief_document(_longest(), "I-" + "0" * 26, "open")
     assert document.compact and [section.title for section in document.sections] == [
         f"{'p' * 63} 10.20.30 (spec 123456): not ready, regressed",
@@ -356,7 +356,7 @@ def test_brief_pdf_is_one_page() -> None:
     ]
     told = dict(line.split(" not met: ") for line in lines if " not met: " in line)
     assert list(told) == ["critical", "targets", "convergence", "spec approval", "sign-off", "pack"]
-    cut = LONGEST[: LONGEST.index("; cycle 14")] + "…"  # its first part, with its suppressed count (N6)
+    cut = LONGEST[: LONGEST.index("; cycle 14")] + "…"  # its first part, with its suppressed count
     unscheduled = SCHEDULED[: SCHEDULED.index("; cycle 16")] + "…"
     assert told == dict.fromkeys(told, cut) | {"convergence": unscheduled}
     assert cut.endswith("suppressed (known differences or noise only)…") and len(LONGEST) > 300 > len(cut)

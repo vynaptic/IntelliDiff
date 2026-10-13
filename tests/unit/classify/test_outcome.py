@@ -1,4 +1,4 @@
-"""Per-key outcomes, inconclusive precedence and verdicts (§7.1)."""
+"""Per-key outcomes, inconclusive precedence and verdicts."""
 
 from __future__ import annotations
 
@@ -28,14 +28,14 @@ CHANGED, MISSING = ChangeType.VALUE_CHANGED, ChangeType.MISSING_IN_B
 DOC = {"customerId": "C00000001", "status": "CLOSED"}
 ABSENT, INC, ERR = SideState.absent(), SideState.incomplete, SideState.error
 
-# §7.1 (docs/architecture.md) as a literal on purpose: an expectation derived from
+# The precedence as a literal on purpose: an expectation derived from
 # types.INCONCLUSIVE_PRECEDENCE would agree with any reordering of that tuple.
-SECTION_7_1_ERROR = ("both_error", "error_a", "error_b", "timeout", "rate_limited", "circuit_open")
-SECTION_7_1_INCOMPLETE = (
+ERROR_ORDER = ("both_error", "error_a", "error_b", "timeout", "rate_limited", "circuit_open")
+INCOMPLETE_ORDER = (
     *("truncated", "unstable_pagination", "unparseable", "resource_limit", "schema_drift"),
     *("absence_unconfirmed", "watermark_missing", "duplicate_member_name", "identity_ambiguous"),
 )
-SECTION_7_1 = (*SECTION_7_1_ERROR, *SECTION_7_1_INCOMPLETE, "absent_both", "skipped", "recheck_failed")
+ORDER = (*ERROR_ORDER, *INCOMPLETE_ORDER, "absent_both", "skipped", "recheck_failed")
 
 
 @pytest.fixture
@@ -51,19 +51,19 @@ def run(spec, today, make_canonical):
 
 
 def test_precedence_tuples_are_section_7_1() -> None:
-    assert (ERROR_REASONS, INCOMPLETE_REASONS) == (SECTION_7_1_ERROR, SECTION_7_1_INCOMPLETE)
-    assert INCONCLUSIVE_PRECEDENCE == SECTION_7_1
+    assert (ERROR_REASONS, INCOMPLETE_REASONS) == (ERROR_ORDER, INCOMPLETE_ORDER)
+    assert INCONCLUSIVE_PRECEDENCE == ORDER
 
 
 def test_precedence_over_every_pair_of_reasons(run, stub_differ) -> None:
     def state(reason: str) -> SideState:
-        return ERR(reason) if reason in SECTION_7_1_ERROR else INC(reason)
+        return ERR(reason) if reason in ERROR_ORDER else INC(reason)
 
-    for ra, rb in itertools.product(SECTION_7_1[1:], repeat=2):
+    for ra, rb in itertools.product(ORDER[1:], repeat=2):
         differ = stub_differ()
         r = run(state(ra), state(rb), differ=differ)
-        both_error = ra in SECTION_7_1_ERROR and rb in SECTION_7_1_ERROR
-        expected = "both_error" if both_error else min((ra, rb), key=SECTION_7_1.index)
+        both_error = ra in ERROR_ORDER and rb in ERROR_ORDER
+        expected = "both_error" if both_error else min((ra, rb), key=ORDER.index)
         assert (r.outcome, r.inconclusive_reason, r.first_outcome) == (
             Outcome.INCONCLUSIVE,
             expected,

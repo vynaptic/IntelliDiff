@@ -1,4 +1,4 @@
-"""Firing schedules (docs/mvp/SCHEDULES.md §4, §5): the worker starts a run at each due time, or records
+"""Firing schedules: the worker starts a run at each due time, or records
 why it did not.
 
 ``fire`` judges one schedule's due times against the clock (``decide``, pure): only the newest is ever
@@ -8,10 +8,10 @@ firing is ``create_run`` as ``system:worker``, nothing more: the four-eyes gate,
 refusals are the run's own, and each refusal becomes a closed reason, never its message. The run, the
 schedule's advance and their audit rows commit together, so a kill, a timeout or a lost race leaves the
 time due. A reason that may pass (a live run of the schedule, a listing that failed, an export a file side
-reads that is not ready: docs/mvp/FILES.md §12) is tried again while the window is open (``Retry``); a
+reads that is not ready) is tried again while the window is open (``Retry``); a
 standing one (the auth mode, who saved it, the approval, the licence, an unclosed draw) chains its first
 time, then holds its later times as one range, chained within 24 hours. A
-cron or zone this build cannot load pauses the schedule (T6); ``rezone`` recomputes each active schedule's
+cron or zone this build cannot load pauses the schedule; ``rezone`` recomputes each active schedule's
 next due time once a worker takes the lock, so an upgrade's zone rules apply at the restart.
 """
 
@@ -90,7 +90,7 @@ def decide(row: repo.Row, now: datetime) -> Due | None:
 
 
 def _unloadable(row: repo.Row) -> str | None:
-    """T6: ``zone`` or ``cron`` when this build cannot load the schedule's; else None."""
+    """``zone`` or ``cron`` when this build cannot load the schedule's; else None."""
     try:
         cron.zone(row["time_zone"])
     except cron.CronError:
@@ -166,7 +166,7 @@ async def fire(
 
 def _passing(reason: str, code: str | None) -> bool:
     """A refusal that ends by itself: a live run of the schedule, or of its sample's population, or an
-    export a file side reads that is not ready yet (docs/mvp/FILES.md §12: ``not_started`` with its code)."""
+    export a file side reads that is not ready yet (``not_started`` with its code)."""
     return (
         reason == "overlap"
         or (reason, code) == ("sample", "live")
@@ -175,7 +175,7 @@ def _passing(reason: str, code: str | None) -> bool:
 
 
 async def _refused(ctx: Context, conn: repo.Conn, row: repo.Row) -> Why | None:
-    """Step 3: why the time is not started before a run is created, the first that holds; None: none."""
+    """Why the time is not started before a run is created, the first reason that holds; None: none."""
     if row["auth_mode"] != ctx.settings.auth_mode:
         return "mode", None, {"worker_mode": ctx.settings.auth_mode}
     if not await repo.setter_live(conn, row["set_by"]):
@@ -185,7 +185,7 @@ async def _refused(ctx: Context, conn: repo.Conn, row: repo.Row) -> Why | None:
     if row["runs_spec_id"] is None:
         raise LookupError(f"no spec is named {row['spec_name']}")
     spec = await ctx.spec(conn, row["runs_spec_id"])
-    if spec.sample is not None and spec.sample.method == "bottom_k":  # SAMPLING D7, unattended
+    if spec.sample is not None and spec.sample.method == "bottom_k":  # an unclosed draw, unattended
         for draw in await repo.ledger(conn, spec.sample.population):
             if sample.blocking(draw):
                 return "sample", "unclosed", {"draw_id": draw["draw_id"]}
@@ -193,7 +193,7 @@ async def _refused(ctx: Context, conn: repo.Conn, row: repo.Row) -> Why | None:
 
 
 async def _reason(ctx: Context, exc: Exception) -> Why:
-    """Step 5: what kept a run from being created, as a closed reason: never its message."""
+    """What kept a run from being created, as a closed reason: never its message."""
     kind = {"error_type": type(exc).__name__}
     if isinstance(exc, ScheduleMoved):  # judged once more as the miss is settled: unchanged, it is late
         return "not_started", None, {"error_type": "TimeoutError"}
@@ -252,7 +252,7 @@ async def _settle(
 
 
 async def _late(ctx: Context, row: repo.Row, found: Due, queued: Queued | None) -> repo.Row | None:
-    """Step 2: settle the older due times, and the newest once its window has closed, as ``late``: counted
+    """Settle the older due times, and the newest once its window has closed, as ``late``: counted
     ``down`` ranges, but the time this worker left without a slot while its window was open, which is its
     own row, ``busy``. Each row's ``next`` is the time after its last. The schedule as it then stands, None
     when it moved meanwhile."""
@@ -287,7 +287,7 @@ async def _late(ctx: Context, row: repo.Row, found: Due, queued: Queued | None) 
 async def _miss(ctx: Context, row: repo.Row, found: Due, now: datetime, why: Why) -> None:
     """Settle the newest due time as missed for ``why``. A standing reason chains its first time; each
     later consecutive one joins the range the schedule holds, chained once its first time is 24 hours old
-    or another outcome, or a person's write, follows (step 7)."""
+    or another outcome, or a person's write, follows."""
     reason, code, facts = why
     detail = schedules.missed(row, reason, code, due=found.newest, next=found.next, **facts)
     held, last = row["held"], row["last"] or {}
@@ -316,7 +316,7 @@ async def _chain(ctx: Context, row: repo.Row) -> None:
 
 
 async def _pause(ctx: Context, row: repo.Row, code: str, now: datetime) -> None:
-    """T6: pause the schedule whose zone or cron this build cannot load, as ``system:worker``, and chain
+    """Pause the schedule whose zone or cron this build cannot load, as ``system:worker``, and chain
     the time it leaves unstarted if that time is due at ``now`` (a time not yet due is no missed time: the
     pause's own row says why, ``missed: false``, and is what the notifier then sends, matched by the spec's
     name and the mode it holds), in one transaction; a ``PUT`` that validates, then a resume, clears it."""
@@ -358,8 +358,8 @@ async def _rezone(ctx: Context, row: repo.Row) -> bool:
 
 
 async def rezone(ctx: Context) -> bool:
-    """Recompute each active schedule's next due time from its anchor (§4), each guarded: one this build
-    cannot load is paused (T6), any other fault logged and the schedule left. False when the schedules
+    """Recompute each active schedule's next due time from its anchor, each guarded: one this build
+    cannot load is paused, any other fault logged and the schedule left. False when the schedules
     could not be read: the next sweep tries again. Never raises but its cancellation."""
     try:
         async with ctx.pool.connection() as conn:

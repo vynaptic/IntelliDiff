@@ -3,7 +3,7 @@
 A session is its creator's: questions are stored as typed, so only the creator may read or continue
 it, and anyone else is told it does not exist. Answers are run-level evidence (the report's AI annex).
 Once the run's current cycle is purged no chat starts or asks (410): answers need its evidence.
-``explain`` starts a session and asks it one of the two fixed questions (docs/mvp/CONTRACTS.md §6).
+``explain`` starts a session and asks it one of the two fixed questions.
 """
 
 from __future__ import annotations

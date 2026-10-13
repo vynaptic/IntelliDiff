@@ -1,7 +1,7 @@
-"""Per-key labels stay in the store (docs/mvp/SAMPLING.md §11.5): a sampled key's stratum, sign-off stratum
+"""Per-key labels stay in the store: a sampled key's stratum, sign-off stratum
 and membership reach no per-key output (results, findings, a key's view, discrepancies.csv, retry.csv, the
 report's findings, an agent tool's result) and every other output carries them only in aggregate, as a
-sign-off stratum's counts and bounds. A sampled cycle's labelling reads none (docs/mvp/ACCURACY.md D9)."""
+sign-off stratum's counts and bounds. A sampled cycle's labelling reads none."""
 
 from __future__ import annotations
 
@@ -138,7 +138,7 @@ def test_no_per_key_output_names_a_key_s_labels(open_client: OpenClient, tmp_pat
 
 
 def test_no_labelling_output_of_a_sampled_cycle_names_a_stratum(open_client: OpenClient) -> None:
-    """A labelling reads no stratum label (docs/mvp/ACCURACY.md D9): a sampled cycle's populations are its
+    """A labelling reads no stratum label: a sampled cycle's populations are its
     compared keys, members and contrast alike, and neither the sheet, the score nor a text names a key's
     labels."""
     truth = {"source": "CBS-PROD.account_master", "as_of": "2026-10-01"}

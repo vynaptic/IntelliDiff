@@ -1,4 +1,4 @@
-"""One attempt of a notification (docs/mvp/ALERTS.md §5, §7) against local receivers only: every outcome
+"""One attempt of a notification against local receivers only: every outcome
 code, the address guard (private literals with the flag, never link-local, unspecified, multicast or
 metadata, as a destination, a proxied host or the proxy's answer; a rebinding refused), no proxy from the
 environment, a URL secret never shown, signing keys read at every send, SMTP's modes and one deadline, and
@@ -241,7 +241,7 @@ async def test_a_body_over_its_cap_is_payload_too_large(
     assert len(found.received) == 1
 
 
-# -- the address guard (§7) --------------------------------------------------------------------------------
+# -- the address guard --------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(

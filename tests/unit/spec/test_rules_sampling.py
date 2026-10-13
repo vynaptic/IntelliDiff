@@ -1,5 +1,5 @@
-"""The loader and a hash sample (docs/mvp/SAMPLING.md §2): what it accepts and compiles into
-``CompiledSpec.sample``, each refusal of §2.2 with its message, and specs without a sample unchanged."""
+"""The loader and a hash sample: what it accepts and compiles into
+``CompiledSpec.sample``, each refusal with its message, and specs without a sample unchanged."""
 
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ def _bucket(label: str, size: int | None = 3011, **fields: Any) -> dict[str, Any
 
 @pytest.fixture
 def sampled(minimal_spec: dict[str, Any]) -> dict[str, Any]:
-    """§2.1's example: a union of side a's table and side b's listing, three dimensions, a sign-off label."""
+    """A union of side a's table and side b's listing, three dimensions, a sign-off label."""
     doc = copy.deepcopy(minimal_spec)
     doc["key"] = {"name": "customer_id", "type": "string", "pattern": "^C[0-9]{8}$"}
     doc["sides"]["a"] = {"role": "legacy", "target": "legacy-db",
@@ -289,14 +289,14 @@ def test_a_key_shaped_label_is_warned(sampled: dict[str, Any]) -> None:
     sampled["key"]["source"]["strata"][0]["buckets"][0]["label"] = "d0_12345"
     sampled["key"]["source"]["strata"][0]["buckets"][1]["max"] = 40012345
     sampled["key"]["source"]["strata"][1]["buckets"][0]["values"] = ["Y", "40012346"]
-    shaped = "is shaped like a key of this spec: a pack would refuse it (docs/mvp/PACK.md §2.3)"
+    shaped = "is shaped like a key of this spec: a pack would refuse it"
     assert _issues(sampled) == [
         ("/key/source/salt", "label_key_shaped", "warning",
          "the label cutover-2026 (salt) is shaped like a key of this spec: a pack would refuse it"
-         " (docs/mvp/PACK.md §2.3); rename it"),
+         "; rename it"),
         ("/key/source/strata/0/buckets/0/label", "label_key_shaped", "warning",
          "the label d0_12345 (a bucket of degree) is shaped like a key of this spec: a pack would refuse it"
-         " (docs/mvp/PACK.md §2.3); rename it"),
+         "; rename it"),
         ("/key/source/strata/0/buckets/1/max", "value_key_shaped", "warning",
          f"the value 40012345 (a bucket of degree) {shaped}; bucket without customer keys"),
         ("/key/source/strata/1/buckets/0/values/1", "value_key_shaped", "warning",

@@ -1,4 +1,4 @@
-"""What the loader shares with the builder in the browser (docs/mvp/CONTRACTS.md §7): which request headers
+"""What the loader shares with the builder in the browser: which request headers
 carry a credential, by one fixture that the curl import's tests read too (web/test/building.test.ts), and
 that the builder's starter is a spec the loader takes once each side has its target and request."""
 

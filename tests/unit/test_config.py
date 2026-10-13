@@ -54,7 +54,6 @@ def test_api_token_ref_is_replaced_by_named_tokens(tmp_path: Path) -> None:
     refusal = _refusal(tmp_path, **old)
     assert refusal == (
         "api_token_ref: replaced by named API tokens; remove it and create tokens with 'ds token create'"
-        " (docs/mvp/AUTH.md §5)"
     )
 
 
@@ -128,8 +127,7 @@ PUBLIC_URL = (
      "https://user:pw@ds.example", "ftp://ds.example", "https://ds.example:99999", "ds.example"],
 )  # fmt: skip
 def test_a_public_url_is_an_origin(tmp_path: Path, public_url: str) -> None:
-    # http beyond a loopback host is refused: docs/mvp/AUTH.md §3's exception E1, the plain session cookies
-    # of an http public_url, rests on it.
+    # http beyond a loopback host is refused: the plain session cookies of an http public_url rest on it.
     assert _refusal(tmp_path, auth={"public_url": public_url}) == PUBLIC_URL
 
 
@@ -180,7 +178,7 @@ def test_auth_settings_are_refused_naming_the_field_to_fix(
     assert _refusal(tmp_path, auth=auth) == refusal
 
 
-# -- encryption and retention (docs/mvp/RETENTION.md §8) ---------------------------------------------
+# -- encryption and retention ---------------------------------------------
 
 
 def test_encryption_and_retention_settings_load(tmp_path: Path) -> None:
@@ -200,7 +198,7 @@ def test_encryption_and_retention_settings_load(tmp_path: Path) -> None:
 
 
 def test_precheck_settings_default_and_load(tmp_path: Path) -> None:
-    """docs/mvp/PRECHECKS.md §5: all defaulted, none a secret."""
+    """All defaulted, none a secret."""
     plain = _load(tmp_path).precheck
     assert (plain.sessions_per_target, plain.statement_timeout_s, plain.distinct_max_rows) == (
         1,
@@ -266,7 +264,7 @@ def test_a_relative_secret_reference_is_the_settings_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A relative ``file:`` reference names a file beside the settings, like every other path of the file
-    and whatever the working directory (docs/mvp/FIRSTRUN.md §5): the custody check judges the path
+    and whatever the working directory: the custody check judges the path
     ``read_secret`` reads. An absolute path stays, and a bare ``file:`` is still refused."""
     monkeypatch.chdir(tmp_path.parent)  # another working directory
     (tmp_path / "dsn").write_text("postgresql://u:pw@db/ds\n")
@@ -352,7 +350,7 @@ def test_the_signing_key_must_live_outside_the_volumes(tmp_path: Path, volume: s
     assert refusal == f"packs.signing_key_ref: {INSIDE}"
 
 
-# -- notifications (docs/mvp/ALERTS.md §8, §10) ----------------------------------------------------------
+# -- notifications ----------------------------------------------------------
 
 HOOK = {
     "kind": "webhook",
@@ -498,7 +496,7 @@ def test_the_contract_s_notify_block_loads(tmp_path: Path) -> None:
             _notify(rules=[_rule(), _rule(name="x"), _rule(name="sign-off"), _rule(name="sign-off")]),
             N + "rules.3.name: duplicate rule sign-off",
         ),
-        (  # readiness.changed: a rule for it names the causes it takes (docs/mvp/READINESS.md §8)
+        (  # readiness.changed: a rule for it names the causes it takes
             _notify(rules=[_rule(events=["readiness.changed"])]),
             "notify.rules.0: Value error, readiness.changed needs causes (baseline and config are never"
             " implied)",
@@ -529,7 +527,7 @@ def test_the_contract_s_notify_block_loads(tmp_path: Path) -> None:
             _notify(rules=[_rule(events=["run.failed"], reasons=["cancelled"])]),
             "notify.rules.0: Value error, reasons is only for run.paused, run.stopped and run.finished",
         ),
-        (  # a missed time's reason is no rule's filter (docs/mvp/SCHEDULES.md §8)
+        (  # a missed time's reason is no rule's filter
             _notify(rules=[_rule(events=["schedule.missed"], reasons=["cancelled"])]),
             "notify.rules.0: Value error, reasons is only for run.paused, run.stopped and run.finished",
         ),
@@ -597,7 +595,7 @@ def test_the_contract_s_notify_block_loads(tmp_path: Path) -> None:
             " 'approval.waiting', 'approval.revoked', 'licence.state', 'readiness.changed',"
             " 'schedule.missed', 'schema.drift', 'notify.dead', 'notify.skipped' or 'notify.daily'",
         ),
-        (  # the placeholder of the event that became accuracy.measured (docs/mvp/ACCURACY.md §10)
+        (  # the placeholder of the event that became accuracy.measured
             _notify(rules=[_rule(events=["accuracy.label"])]),
             "notify.rules.0.events.0: Input should be 'cycle.ended', 'sample.judged', 'run.finished',"
             " 'run.failed', 'run.stopped', 'run.paused', 'sample.draw_failed', 'accuracy.measured',"
@@ -617,7 +615,7 @@ def test_notify_settings_are_refused_with_the_contract_s_messages(
 
 
 def test_a_readiness_rule_names_its_causes_and_may_name_programmes_states_and_gates(tmp_path: Path) -> None:
-    """docs/mvp/READINESS.md §8: the reservation is lifted, and ``states`` takes either kind's."""
+    """The reservation is lifted, and ``states`` takes either kind's."""
     keys = {
         "causes": ["cycle", "time"],
         "programmes": ["cutover-*"],
@@ -654,7 +652,7 @@ def test_notification_secrets_stay_outside_the_volumes(tmp_path: Path, setting: 
     assert refusal == f"notify.channels.{name}.{setting}{suffix}: {INSIDE}"
 
 
-# -- cut-over readiness (docs/mvp/READINESS.md §7) -----------------------------------------------------
+# -- cut-over readiness -----------------------------------------------------
 
 Q4 = {
     "name": "cutover-q4",
@@ -697,7 +695,7 @@ def test_the_contract_s_readiness_block_loads_and_turns_the_key_census_on(tmp_pa
     assert readiness.policy(loaded, "customer-links").gates == readiness.Gates(
         "high", 5, "7d", False, (50, 0)
     )
-    # Present (even {}), the worker counts key censuses; absent, only packs do (§4).
+    # Present (even {}), the worker counts key censuses; absent, only packs do.
     absent, empty = _load(tmp_path), _load(tmp_path, readiness={})
     assert (
         absent.readiness is None and empty.readiness.gates.tier is None and empty.readiness.programmes == ()
@@ -713,7 +711,7 @@ def test_the_contract_s_readiness_block_loads_and_turns_the_key_census_on(tmp_pa
 @pytest.mark.parametrize(
     ("doc", "refusal"),
     [
-        (  # Z1
+        (
             _programmes(
                 {"name": "cutover-q4", "pairs": [{"spec": "customer-profile"}]},
                 {"name": "cutover-q1", "pairs": [{"spec": "customer-profile"}]},
@@ -721,25 +719,24 @@ def test_the_contract_s_readiness_block_loads_and_turns_the_key_census_on(tmp_pa
             "readiness: spec customer-profile is in programmes cutover-q4 and cutover-q1: a pair belongs to"
             " one programme",
         ),
-        (  # Z2
+        (
             _programmes({"name": "cutover-q4"}, {"name": "cutover-q4"}),
             "readiness: programme cutover-q4 is named twice",
         ),
-        (  # Z3
+        (
             _programmes({"name": "cutover-q4", "pairs": [{"spec": "customer-profile"}] * 2}),
             "readiness.programmes.0: spec customer-profile is listed twice",
         ),
-        (  # Z4
+        (
             _programmes(tier="low"),
-            "readiness.gates.tier: expected standard or high: readiness targets never go below architecture"
-            " §15's 0.1%",
+            "readiness.gates.tier: expected standard or high: readiness targets never go below 0.1%",
         ),
         (
             _programmes(Q4 | {"gates": {"tier": 0.05}}),
             "readiness.programmes.0.gates.tier: expected standard or high: readiness targets never go below"
-            " architecture §15's 0.1%",
+            " 0.1%",
         ),
-        (  # Z5
+        (
             _programmes(
                 Q4 | {"gates": {"tier": "high"}, "pairs": [{"spec": "x", "gates": {"tier": "standard"}}]}
             ),
@@ -756,10 +753,10 @@ def test_the_contract_s_readiness_block_loads_and_turns_the_key_census_on(tmp_pa
         (
             _programmes(convergence={"cycles": 0}),
             "readiness.gates.convergence.cycles: expected 1 to 50",
-        ),  # Z6
+        ),
         (_programmes(convergence={"cycles": 51}), "readiness.gates.convergence.cycles: expected 1 to 50"),
         (_programmes(convergence={"cycles": "3"}), "readiness.gates.convergence.cycles: expected 1 to 50"),
-        (  # Z7
+        (
             _programmes(fresh={"max_age": "59m"}),
             "readiness.gates.fresh.max_age: expected a duration from 1h to 90d",
         ),
@@ -771,7 +768,7 @@ def test_the_contract_s_readiness_block_loads_and_turns_the_key_census_on(tmp_pa
             _programmes(Q4 | {"gates": {"fresh": {"max_age": 7}}}),
             "readiness.programmes.0.gates.fresh.max_age: expected a duration from 1h to 90d",
         ),
-        (_programmes({"name": "Cutover_Q4"}), f"readiness.programmes.0.name: {SLUG}"),  # Z8
+        (_programmes({"name": "Cutover_Q4"}), f"readiness.programmes.0.name: {SLUG}"),
         (
             _programmes({"name": "q", "pairs": [{"spec": "x" * 64}]}),
             f"readiness.programmes.0.pairs.0.spec: {SLUG}",
@@ -813,8 +810,8 @@ X1 = (
 
 
 def test_files_settings_default_and_load(tmp_path: Path) -> None:
-    """docs/mvp/FILES.md §4: every member defaulted, the spill under the evidence volume unless declared, and
-    the reader's limits on (docs/mvp/READER.md §4)."""
+    """Every member defaulted, the spill under the evidence volume unless declared, and
+    the reader's limits on."""
     from deltasleuth.connectors.tables.manifest import size_bytes
 
     plain = _load(tmp_path)
@@ -837,7 +834,7 @@ def test_files_settings_default_and_load(tmp_path: Path) -> None:
         "roots_under": Path("/srv/exports"),
     }
     assert loaded.spill_dir == Path("/srv/spill")
-    # Binary units, as sampling.temp_buffers reads them; handed to DuckDB as whole MiB (U17).
+    # Binary units, as sampling.temp_buffers reads them; handed to DuckDB as whole MiB.
     assert [size_bytes(s) for s in ("512MB", "2GB", "1TB")] == [512 * 2**20, 2 * 2**30, 2**40]
 
 
@@ -858,7 +855,7 @@ def test_a_mistyped_files_setting_is_named(tmp_path: Path) -> None:
     assert _refusal(tmp_path, files={"memry": "2GB"}).startswith("files.memry: Unexpected keyword argument")
 
 
-# -- the MCP server (docs/mvp/MCP.md §4, §11) ---------------------------------------------------------
+# -- the MCP server ---------------------------------------------------------
 
 
 def test_mcp_is_off_unless_its_block_is_there_and_states_its_data_classes(tmp_path: Path) -> None:

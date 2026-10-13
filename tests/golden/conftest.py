@@ -52,7 +52,7 @@ from deltasleuth.core.types import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-_DEFS = json.loads((REPO_ROOT / "docs/architecture/spec.schema.json").read_text())["$defs"]
+_DEFS = json.loads((REPO_ROOT / "deltasleuth/core/spec/spec.schema.json").read_text())["$defs"]
 _TOP_LEVEL = {"description", "key", "compare", "sides", "targets", "a", "b", "expect"}
 _SIDE_MEMBERS = ("select", "map", "notFound", "success", "truncation", "pagination")
 

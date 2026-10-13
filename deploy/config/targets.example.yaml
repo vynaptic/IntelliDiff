@@ -1,8 +1,8 @@
 # Targets: copy to targets.yaml. A target is an endpoint plus its declared, observable behaviour;
 # specs name target ids only, so this file and the product's list (below) are all DeltaSleuth may call.
-# Credentials: secret_ref and dsn_ref file: paths only (mounted secrets; see docs/mvp/DEPLOY.md).
-# A service can be declared in the product instead, without this file or a restart (DEPLOY section 7,
-# "In the product"); for an id declared in both, this file wins.
+# Credentials: secret_ref and dsn_ref file: paths only (mounted secrets; see docs/deployment.md).
+# A service can be declared in the product instead, on the Targets screen, without this file or a
+# restart; for an id declared in both, this file wins.
 
 targets:
   # Your services: one entry per endpoint. Replace these two with your real pair.
@@ -28,9 +28,9 @@ targets:
     capabilities:
       authoritative_absence: {status: [404]}   # every 404 from this service means "no such order"
 
-  # Your databases: a PostgreSQL table or view per side (docs/mvp/TABLES.md). A database target holds
-  # only its DSN reference and budget; the DSN file is one line, a libpq keyword string or a
-  # postgresql:// URI. examples/tables/spec.yaml names these ids.
+  # Your databases: a PostgreSQL table or view per side. A database target holds only its DSN reference
+  # and budget; the DSN file is one line, a libpq keyword string or a postgresql:// URI.
+  # examples/tables/spec.yaml names these ids.
   crm-legacy:
     dsn_ref: file:/run/secrets/crm_legacy_dsn
     rate_per_s: 50                             # per-key reads per second (a group of up to 200 keys
@@ -39,7 +39,7 @@ targets:
     dsn_ref: file:/run/secrets/platform_users_dsn
     rate_per_s: 50
     max_concurrency: 2
-  # Link facts for graph parity (docs/mvp/GRAPH.md): examples/graph/spec.yaml names these ids.
+  # Link facts for graph parity: examples/graph/spec.yaml names these ids.
   crm-links:
     dsn_ref: file:/run/secrets/crm_links_dsn
     rate_per_s: 50
@@ -49,8 +49,8 @@ targets:
     rate_per_s: 50
     max_concurrency: 2
 
-  # A MySQL or Oracle table or view (docs/mvp/ENGINES.md §4; DEPLOY section 7): host, port, the account
-  # and one-line secret files. examples/tables/mysql and examples/tables/oracle hold an acceptance kit each.
+  # A MySQL or Oracle table or view: host, port, the account and one-line secret files.
+  # examples/tables/mysql and examples/tables/oracle hold an acceptance kit each.
   billing-mysql:
     engine: mysql
     host: mysql.bank.example                   # a DNS name or an IP literal
@@ -74,7 +74,7 @@ targets:
     tls_server_dn: "CN=oracle.bank.example,O=Bank"   # the server certificate's subject, matched exactly
     rate_per_s: 50
     max_concurrency: 2
-  # CSV or Parquet exports in a directory mounted read-only (docs/mvp/FILES.md §4; DEPLOY section 7).
+  # CSV or Parquet exports in a directory mounted read-only.
   # Declared only once the directory is mounted: a root that does not hold stops the service at start.
   # legacy-exports:
   #   engine: files

@@ -1,4 +1,4 @@
-"""Readiness's measures (docs/mvp/READINESS.md §4, §14): what the worker's pass stores of an ended cycle,
+"""Readiness's measures: what the worker's pass stores of an ended cycle,
 once, with its audit row in the same transaction; the bases; how its discrepant keys moved; late, failed
 and excluded cycles; the backfill and its throttle; the purge it waits for, or that it finds started; what
 the store's statements then give the evaluation; and what a pair's brief reads, on one snapshot."""
@@ -600,7 +600,7 @@ async def test_the_worker_measures_and_readiness_never_fails_a_run(
     assert len(await audited(harness)) == 1 and not worker.exception()
 
 
-# -- what the store then gives the evaluation (§14) -------------------------------------------------------
+# -- what the store then gives the evaluation -------------------------------------------------------
 
 
 async def points(h: Harness, pair: str = PAIR) -> list[dict[str, Any]]:

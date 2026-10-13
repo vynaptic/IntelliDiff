@@ -1,4 +1,4 @@
-"""The file reader in the image (docs/mvp/READER.md §3: the image tests of U32 to U37), on Linux under the
+"""The file reader in the image, on Linux under the
 compose hardening. ``DS_IMAGE=<image>`` runs them; nothing is pulled and nothing installed.
 
 The image holds no pytest and no tests: each test is one ``docker run --rm --pull never --network none`` of
@@ -84,7 +84,8 @@ async def scanned(plan):
     async with engine.snapshot(exports) as session:
         return sum([len(batch) async for batch in await engine.scan(session, plan, None)])
 """
-# FILES §17's people written by an unrestricted DuckDB, then a pass over both sides (the test's own text).
+# The performance tests' people written by an unrestricted DuckDB, then a pass over both sides (the test's
+# own text).
 # Run by ``python -c`` that DuckDB takes itself for an interactive one, and prints a progress bar of each
 # statement over two seconds on the output the test reads: turned off.
 TEN_MILLION = """
@@ -197,7 +198,7 @@ ENDED = "the file reader's process ended (%s) with no statement in flight"
 
 
 def test_the_self_test_passes(ran: Callable[..., Any], native: bool) -> None:
-    """U32, U35 and U36: the reader starts with nothing of its parent's, proves its guard, reads and spills;
+    """The reader starts with nothing of its parent's, proves its guard, reads and spills;
     it is replaced when a fault ends it; natively its start saw the data limit hold and sockets denied
     (which stopped nothing the self-test does), and a statement that holds twice a data limit of 512 MiB
     does not complete; no descriptor is inherited. Under emulation its limits are not tried, and the
@@ -216,7 +217,7 @@ def test_the_self_test_passes(ran: Callable[..., Any], native: bool) -> None:
 
 
 def test_a_fault_ends_the_reader_s_process_alone(ran: Callable[..., Any]) -> None:
-    """U33: SIGSEGV sent mid-statement, three times: ``Died``, ``Died`` read apart, then F12; the process
+    """SIGSEGV sent mid-statement, three times: ``Died``, ``Died`` read apart, then ReaderDied; the process
     that read (PID 1 here) lives, and a new reader reads another file."""
     done = ran(
         PLANNED
@@ -253,7 +254,7 @@ asyncio.run(main())
 
 
 def test_the_crafted_page_is_contained(ran: Callable[..., Any], record_property: Callable[..., None]) -> None:
-    """U33: the kept mutant, which travels in the text. Its plan passes; what three scans of it do on this
+    """The kept mutant, which travels in the text. Its plan passes; what three scans of it do on this
     kernel is recorded, never judged: each is a read, a closed refusal or an end of the reader's process.
     The process that read lives, and a clean file is read after."""
     page = base64.b64encode(crafted.PAGE).decode()
@@ -288,7 +289,7 @@ asyncio.run(main())
 
 
 def test_no_reader_outlives_its_parent(ran: Callable[..., Any]) -> None:
-    """U34: the end of its input is the reader's own, whatever ended its parent and whatever it was doing:
+    """The end of its input is the reader's own, whatever ended its parent and whatever it was doing:
     an exit, SIGTERM, SIGKILL while it is idle and in the middle of a sort. Its spill directory goes with
     the next sweep."""
     done = ran(
@@ -339,7 +340,7 @@ print("outlived its parent:", outlived, "| directories left:", left, "| swept:",
 
 
 def test_a_command_leaves_no_reader_behind(ran: Callable[..., Any], native: bool) -> None:
-    """§5, §17: ``ds target check`` of a files target, run three times beside the container's first process
+    """``ds target check`` of a files target, run three times beside the container's first process
     as ``docker compose exec`` runs a command. Each kills and reaps its reader before it exits: none is
     left to the first process, which waits for no process it did not start, as a zombie entry. Each
     command's error output holds its reader's start line, and its first line what that start saw hold."""
@@ -373,7 +374,7 @@ print("exits", exits, "| zombies", states.count("Z"), "| start lines", started, 
 
 
 def test_idle_cursors_hold_no_thread(ran: Callable[..., Any], native: bool) -> None:
-    """U35: 200 open cursors, each with a result half read, add no thread to the reader's process, and the
+    """200 open cursors, each with a result half read, add no thread to the reader's process, and the
     self-test's sort completes beside them: natively under a data limit of 1 GiB, which 200 threads' stacks
     alone would pass."""
     done = ran(
@@ -402,8 +403,8 @@ asyncio.run(main())
 def test_the_default_limit_fits_ten_million_rows(
     ran: Callable[..., Any], native: bool, record_property: Callable[..., None]
 ) -> None:
-    """U35: a pass over 10M rows a side of FILES §17's shape (four columns, Parquet against Parquet, both
-    sides' sorts held at once) under the default ``files`` settings and their data limit completes; the
+    """A pass over 10M rows a side of the performance tests' people (four columns, Parquet against Parquet,
+    both sides' sorts held at once) under the default ``files`` settings and their data limit completes; the
     reader's peak ``VmData`` and resident size are recorded."""
     if not native:
         pytest.skip("a data limit would count the emulator")
@@ -420,7 +421,7 @@ def test_the_default_limit_fits_ten_million_rows(
 
 
 def test_the_reader_leaves_no_core(ran: Callable[..., Any], record_property: Callable[..., None]) -> None:
-    """U37: with DuckDB loaded and a statement running, the reader's core limit is 0 and it is not dumpable:
+    """With DuckDB loaded and a statement running, the reader's core limit is 0 and it is not dumpable:
     SIGSEGV ends it without a core, where a process started beside it with no such restriction leaves one
     (recorded: whether the kernel there writes cores at all)."""
     done = ran(
@@ -466,7 +467,7 @@ manifest.release(work)
 
 
 def test_the_kernel_takes_the_reader_first(ran: Callable[..., Any]) -> None:
-    """U37: in a container of 512 MiB a reader that outgrows it (2 GiB of DuckDB memory, a statement that
+    """In a container of 512 MiB a reader that outgrows it (2 GiB of DuckDB memory, a statement that
     holds about 1 GiB; its data limit lies above the container) is the process the kernel takes: the
     statement is ``Died``, the cause SIGKILL, and the process that read exits 0."""
     done = ran(

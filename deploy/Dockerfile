@@ -1,6 +1,6 @@
 # DeltaSleuth: Node builds the UI and uv the Python environment; the runtime stage holds neither and runs
-# `ds serve` as uid 10001. Base images are pinned by digest (docs/mvp/RELEASE.md §5): change one on
-# purpose, with tools/release.py's INDEX and BASES. Releases: tools/release.py. From source (unsigned):
+# `ds serve` as uid 10001. Base images are pinned by digest: change one on purpose, with tools/release.py's
+# INDEX and BASES. Releases: tools/release.py. From source (unsigned):
 #   docker build -f deploy/Dockerfile -t deltasleuth:source .
 
 # The python:3.13-slim index; a release passes its platform's manifest digest instead (release.BASES).
@@ -35,7 +35,7 @@ RUN python -m pip uninstall --yes --root-user-action=ignore pip \
 WORKDIR /app
 COPY --from=venv /app ./
 COPY --from=web /src/web/dist web/dist/
-# What web/dist bundles, for the SBOM (RELEASE.md §7); outside web/dist, so never served.
+# What web/dist bundles, for the SBOM; outside web/dist, so never served.
 COPY web/package-lock.json web/
 USER 10001:10001
 EXPOSE 8000

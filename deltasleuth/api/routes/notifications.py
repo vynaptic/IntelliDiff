@@ -1,4 +1,4 @@
-"""Alerts and notifications (docs/mvp/ALERTS.md §11): the channels' state and the banners every screen shows,
+"""Alerts and notifications: the channels' state and the banners every screen shows,
 the deliveries, and the only runtime acts, each audited: a test send and sending dead deliveries again
 (operators), and mutes (admins; a mute needs a sign-in at most 15 minutes old). Channels and rules live only
 in the settings: no route creates a destination. Every POST answers 409 while notifications are off.
@@ -20,7 +20,7 @@ FreshAdmin = Annotated[Principal, Depends(require_fresh("admin"))]  # signed in 
 
 
 async def _on(ctx: Ctx) -> None:
-    """409 while notifications are off, before a body is judged (docs/mvp/ALERTS.md §10's order)."""
+    """409 while notifications are off, before a body is judged."""
     notifications.on(ctx.settings)
 
 

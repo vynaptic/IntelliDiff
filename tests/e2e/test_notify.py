@@ -1,4 +1,4 @@
-"""Alerts and notifications end to end (docs/mvp/ALERTS.md §14): a three-cycle soak on the customer mock pair
+"""Alerts and notifications end to end: a three-cycle soak on the customer mock pair
 notifies its first cycle's gaps once, signed, with the cycle's own counts, and nothing for gaps that do not
 change; hanging and failing channels leave the run as it is without notifications; a worker killed mid-send
 delivers at most twice under one webhook-id; and the audit chain still verifies."""

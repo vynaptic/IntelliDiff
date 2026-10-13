@@ -1,4 +1,4 @@
-"""Projection: ``compare.include`` / ``exclude`` by path, then ``compare.valueFilter`` (§5, §7.2).
+"""Projection: ``compare.include`` / ``exclude`` by path, then ``compare.valueFilter``.
 
 Include keeps the selected nodes, the containers on the way to them and the key fields of kept
 keyed members (a member without its key could not be matched). An include reaching inside an

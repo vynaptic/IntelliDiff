@@ -2,31 +2,31 @@
 ## (/etc/deltasleuth/deltasleuth.yaml). Credentials never appear here, only file: references to
 ## secrets mounted under /run/secrets. Relative paths resolve against this file's directory.
 ## As copied it is a trial on one machine: people sign in with an API token (ds token create) at
-## http://localhost:8000, and AI chat is off (docs/guide/01-install-docker.md). An office deployment
-## (docs/mvp/DEPLOY.md section 3) sets public_url and switches on the lines it uses: a line that starts
-## "# " is a setting switched off, and removing those two characters switches it on.
+## http://localhost:8000, and AI chat is off. An office deployment (docs/deployment.md) sets public_url
+## and switches on the lines it uses: a line that starts "# " is a setting switched off, and removing
+## those two characters switches it on.
 
 database_dsn_ref: file:/run/secrets/db_dsn       # postgresql://deltasleuth:<password>@db:5432/deltasleuth
 evidence_dir: /var/lib/deltasleuth/evidence      # response bodies, encrypted and content-addressed (volume)
 workspace_dir: /var/lib/deltasleuth/workspace    # working files (volume)
 targets_file: targets.yaml
-auth:                                            # sign-in and roles (docs/mvp/AUTH.md §8)
+auth:                                            # sign-in and roles
   public_url: http://localhost:8000              # the address people type, exactly; an office: https://<name>, through its TLS proxy
-## Behind the TLS reverse proxy (DEPLOY section 5): the compose gateway, through which nginx on the host connects.
+## Behind the TLS reverse proxy: the compose gateway, through which nginx on the host connects.
 #   trusted_proxies: [172.30.0.1/32]
-## Single sign-on (DEPLOY section 5): the ten lines below, and the oidc_client_secret secret in the site file.
+## Single sign-on: the ten lines below, and the oidc_client_secret secret in the site file.
 ## Without them people sign in with API tokens (tokens mode: trials and CI).
 #   oidc:
-#     issuer: https://login.microsoftonline.com/<tenant-id>/v2.0   # per IdP: DEPLOY section 5
+#     issuer: https://login.microsoftonline.com/<tenant-id>/v2.0   # your identity provider's issuer
 #     client_id: <application-client-id>
-#     client_secret_ref: file:/run/secrets/oidc_client_secret   # or a key: DEPLOY section 3
+#     client_secret_ref: file:/run/secrets/oidc_client_secret   # or, with client_auth: private_key_jwt, client_key_ref
 #     subject_claim: oid
 #     username_claim: preferred_username           # admin-controlled only; email is never used
 #     group_claims: [roles]
 #     roles:                                       # immutable ids only, matched exactly (Entra app role values)
 #       {viewer: [DS.Viewer], operator: [DS.Operator], spec_author: [DS.SpecAuthor],
 #        rule_approver: [DS.RuleApprover], pii_reader: [DS.PiiReader], admin: [DS.Admin]}
-encryption:                                      # required with auth (docs/mvp/RETENTION.md §1): vault both
+encryption:                                      # required with auth: vault both
   kek_ref: file:/run/secrets/kek                 # the keyring: one KEK per line, the last is current
   tokeniser_key_ref: file:/run/secrets/tokeniser # every token derives from it; never inside a volume
 retention:                                       # days raw data is kept after each cycle ends, by the spec's class
@@ -35,17 +35,17 @@ retention:                                       # days raw data is kept after e
 worker: {concurrency: 4, lease_seconds: 120, poll_seconds: 1}
 
 ## ---- optional blocks: remove the leading "# " of the lines you use; each loads as written ----
-## AI chat (docs/mvp/DEPLOY.md section 8): your gateway's profile in llm_profiles.yaml, and the llm_key secret in the site file. Without these three lines AI is off.
+## AI chat: your gateway's profile in llm_profiles.yaml, and the llm_key secret in the site file. Without these three lines AI is off.
 # llm_profiles_file: llm_profiles.yaml
 # llm_profile: gateway
 # llm_environment: prod
-## Testing chat with Claude/OpenAI, dev/test/eval only (DEPLOY section 8): there, also llm_external_data_classes: [production_tokenised]
-## Evidence packs (docs/mvp/DEPLOY.md section 3; needs the single sign-on lines above and a signing key, and in a
-## vendor build the Enterprise licence).
+## Testing chat with Claude/OpenAI, dev/test/eval only: there, also llm_external_data_classes: [production_tokenised]
+## Evidence packs: they need the single sign-on lines above and a signing key, and in a vendor build the
+## Enterprise licence.
 # packs:
 #   installation: prod-eu-1                        # 1 to 63 of a-z, 0-9, '.' and '-': the name the register lists
 #   signing_key_ref: file:/run/secrets/pack_signing_key
-## Alerts (docs/mvp/ALERTS.md §8): channels, then rules that route events to them.
+## Alerts: channels, then rules that route events to them.
 # notify:
 #   label: prod                                    # names this installation in every notification
 #   channels:
@@ -58,7 +58,7 @@ worker: {concurrency: 4, lease_seconds: 120, poll_seconds: 1}
 #     - {name: new-gaps, events: [cycle.ended], channels: [owners-mail], when: {new_root_causes_at_least: 1}}
 #     - {name: run-health, events: [run.paused, run.stopped, run.failed, schedule.missed, notify.dead], channels: [ops-hook]}
 #     - {name: heartbeat, events: [notify.daily], channels: [ops-hook]}
-## Cut-over readiness (docs/mvp/READINESS.md §7): programmes of pairs and their gates. Holds no secret.
+## Cut-over readiness: programmes of pairs and their gates. Holds no secret.
 # readiness:
 #   gates:
 #     tier: standard                               # standard (0.1%) or high (0.01%); never looser
@@ -68,9 +68,9 @@ worker: {concurrency: 4, lease_seconds: 120, poll_seconds: 1}
 #     - name: cutover-q4
 #       pairs:
 #         - {spec: customer-profile, entity: customer}
-## Table pre-checks (docs/mvp/PRECHECKS.md §5): these are the defaults.
+## Table pre-checks: these are the defaults.
 # precheck: {sessions_per_target: 1, statement_timeout_s: 900, distinct_max_rows: 20000000}
-## File sides (docs/mvp/DEPLOY.md section 7): these are the defaults but for memory and spill.
+## File sides: these are the defaults but for memory and spill.
 # files:
 #   memory: 2GB                                    # DuckDB's buffers a process; size the container at this plus 1 GiB
 #   spill: 20GB                                    # the most a process's sorts may write under spill_dir
@@ -79,9 +79,9 @@ worker: {concurrency: 4, lease_seconds: 120, poll_seconds: 1}
 #   max_files: 1000
 #   plan_s: 300
 #   os_limits: true                               # false: no data limit and no socket filter in the reader's process (Linux)
-## The MCP server for your own agents (docs/mvp/DEPLOY.md section 3, docs/mvp/MCP.md §4): off without this
-## block. Holds no secret. Adding production_clear_declared to data_classes also serves the runs whose spec
-## declares clear values or a business-code key: those values then reach the agent's model host.
+## The MCP server for your own agents: off without this block. Holds no secret. Adding
+## production_clear_declared to data_classes also serves the runs whose spec declares clear values or a
+## business-code key: those values then reach the agent's model host.
 # mcp:
 #   data_classes: [aggregates, production_tokenised]   # required: what tool results may carry
 #   http: true                                     # serve POST /v1/mcp in ds serve (ds mcp needs only the block)

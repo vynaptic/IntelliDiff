@@ -1,4 +1,4 @@
-"""Bulk graph parity, L2 (docs/mvp/GRAPH.md §3): which members each group links, and how the
+"""Bulk graph parity, L2: which members each group links, and how the
 components that the differing groups touch split or merge.
 
 Both sides stream one row per group (its size and its member set's hash) in one order, so comparing
@@ -232,7 +232,7 @@ def _contingency(
 def _clusters(
     explored: dict[str, tuple[_Forest, set[Hashable]]], mask: Callable[[str], str]
 ) -> tuple[list[Row], Row]:
-    """The cell components (architecture §8.4): a-components and b-components joined by the members
+    """The cell components: a-components and b-components joined by the members
     they share, oversized ones left out, each coded by how many of each it holds."""
     (a, big_a), (b, big_b) = explored["a"], explored["b"]
     cells, pairs = _Forest(), []

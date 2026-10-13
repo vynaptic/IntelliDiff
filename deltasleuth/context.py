@@ -4,7 +4,7 @@ politeness gate per target for the whole process.
 
 The store is async (psycopg ``AsyncConnectionPool``) throughout this release: the API and the runner
 share one event loop. The keyring and the tokeniser key are ``file:`` secrets named by
-``encryption`` (docs/mvp/RETENTION.md §1); without it (developer mode) they are the workspace's
+``encryption``; without it (developer mode) they are the workspace's
 ``kek`` and ``tokeniser.key``, created only by ``init_workspace`` (``ds init``): a new tokeniser key
 would give every value a new token, and no run could be compared with an older one. The tokeniser
 key also derives the evidence store's observation-id key and the sign-in cookie's key.
@@ -89,7 +89,7 @@ def evidence_id_key(tokeniser_key: bytes) -> bytes:
 
 def login_key(tokeniser_key: bytes) -> bytes:
     """The key of the signed login cookie, ``__Host-ds_login`` or on a plain-http loopback ``public_url``
-    ``ds_login_<port>`` (docs/mvp/AUTH.md §2)."""
+    ``ds_login_<port>``."""
     return hmac.new(tokeniser_key, _LOGIN_LABEL, hashlib.sha256).digest()
 
 
@@ -112,10 +112,10 @@ class Context:
     tokeniser: Tokeniser
     evidence: EvidenceStore
     llm: ProfileRegistry | None  # None: AI off
-    oidc: Oidc | None  # oidc mode's IdP client, which only the server builds (docs/mvp/AUTH.md §2)
+    oidc: Oidc | None  # oidc mode's IdP client, which only the server builds
     keyring: Keyring
     missing_keks: Mapping[str, int] = field(default_factory=dict)  # KEK id -> data keys it wraps
-    kek: str | None = None  # the KEK new data keys are wrapped under (None: the current one), §6.1
+    kek: str | None = None  # the KEK new data keys are wrapped under (None: the current one)
     signer: PackSigner | None = None  # the evidence packs' signing key, which only the server loads
     # target id -> its gate, shared by the worker, compares and key listings: one rate budget
     gates: dict[str, TargetGate] = field(default_factory=dict)
@@ -139,7 +139,7 @@ class Context:
         return sealer
 
     def forget(self, run_id: str) -> None:
-        """Drop the run's cached sealer: its data key was destroyed (docs/mvp/RETENTION.md §5.3)."""
+        """Drop the run's cached sealer: its data key was destroyed."""
         self._sealers.pop(run_id, None)
 
     async def spec(self, conn: repo.Conn, spec_id: int, *, live: bool = False) -> CompiledSpec:
@@ -175,17 +175,17 @@ class Context:
         pool: tuple[int, int] | None = None,
     ) -> AsyncIterator[Context]:
         """Load everything, open the pool, apply pending migrations and load the data keys; close the
-        pool on exit. A files target's root that lies where it may not is refused (docs/mvp/FILES.md §4,
-        T10), and the spill directories of processes that ended are swept (§10).
+        pool on exit. A files target's root that lies where it may not is refused, and the spill directories
+        of processes that ended are swept.
 
         ``oidc`` (the server only) builds the IdP client in oidc mode: it reads the client credential
         and fetches the IdP's discovery document. Other entry points never contact the IdP. ``rewrap``
-        (the server only) moves the data keys onto the current KEK (docs/mvp/RETENTION.md §6.1), and
+        (the server only) moves the data keys onto the current KEK, and
         ``migrating`` (``ds keys migrate``) stops before 007, which refuses legacy plaintext, and
         accepts a leftover ``blobs/sha256/``. ``packs`` (the server) loads the evidence packs' signing key
-        when they are configured (docs/mvp/PACK.md §3.1). ``pool`` (``ds mcp``) is the pool's least and
-        most connections (docs/mvp/MCP.md §5.2); None: the process's own size, with ``mcp.concurrency``
-        more where MCP is served over HTTP (§4).
+        when they are configured. ``pool`` (``ds mcp``) is the pool's least and
+        most connections; None: the process's own size, with ``mcp.concurrency``
+        more where MCP is served over HTTP.
         """
         from deltasleuth.connectors.tables import duck, manifest
 
@@ -197,7 +197,7 @@ class Context:
             if settings.llm_profile not in llm.profiles:
                 raise ContextError(f"llm_profile {settings.llm_profile!r} is not a profile of {llm_file}")
         targets = product.load(settings)
-        if refused := await manifest.opened(settings, targets):  # T10; and the spill swept (FILES.md §10)
+        if refused := await manifest.opened(settings, targets):  # where roots lie; and the spill swept
             raise ContextError("; ".join(refused))
         duck.configure(settings, targets)  # what the process's file reader is built of, at its first use
         auth = settings.auth

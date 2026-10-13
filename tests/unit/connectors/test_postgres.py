@@ -1,4 +1,4 @@
-"""Table sides on a real PostgreSQL (docs/mvp/TABLES.md §3-4): the column plan a run reads by, and the
+"""Table sides on a real PostgreSQL: the column plan a run reads by, and the
 per-key reads of ``TableConnector``.
 """
 
@@ -94,7 +94,7 @@ def targets(pg_dsn: str, tmp_path: Path) -> TargetRegistry:
     return load_targets(tmp_path / "targets.yaml")
 
 
-# --- the column plan (§3) --------------------------------------------------------------------------
+# --- the column plan --------------------------------------------------------------------------
 
 
 async def test_explicit_columns_pair_by_canonical_name(targets: TargetRegistry) -> None:
@@ -312,14 +312,14 @@ async def test_the_engine_describes_a_relation_as_the_catalogue_holds_it(targets
     ]
     assert ci_keys is not None and [c.likeable for c in ci_keys.columns] == [False, True]  # k's collation
     server = users.facts.pop("server")
-    assert re.fullmatch(r"16\.[0-9]+", server)  # the major and minor version only (D10)
+    assert re.fullmatch(r"16\.[0-9]+", server)  # the major and minor version only
     assert users.facts == {
         "kind": "table", "key": ["userid"], "consistency": "snapshot", "tls": False, "charset": "UTF8",
     }  # fmt: skip
     assert [c.nullable for c in users.columns] == [False, True, True, True, True]  # the key's NOT NULL
 
 
-# --- per-key reads (§4) ----------------------------------------------------------------------------
+# --- per-key reads ----------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -358,7 +358,7 @@ async def test_a_key_selecting_two_rows_is_ambiguous(connector: Connect, targets
 
 
 async def test_a_row_is_read_only_by_its_own_key_text(connector: Connect) -> None:
-    # '01' casts to 1, but row 1's key text is '1', so the scan never pairs them either (§4, §5)
+    # '01' casts to 1, but row 1's key text is '1', so the scan never pairs them either
     assert (await connector(USERS).fetch("01", USERS_SIDE)).http_status == 404
 
 
@@ -402,7 +402,7 @@ async def test_a_lost_connection_is_a_connect_error_and_the_next_read_reconnects
     assert (await table.fetch("1", USERS_SIDE)).http_status == 200
 
 
-# --- filters, key maps and type maps in the plan (§9, §10) -------------------------------------------
+# --- filters, key maps and type maps in the plan -------------------------------------------
 
 
 async def test_filter_columns_resolve_as_columns_do(targets: TargetRegistry) -> None:
@@ -536,7 +536,7 @@ async def test_what_the_database_cannot_run_is_refused_when_the_run_is_created(
     assert str(exc.value).startswith(message)
 
 
-# --- per-key and batched reads with filters, key maps and type maps (§9, §10, §12) --------------------
+# --- per-key and batched reads with filters, key maps and type maps --------------------
 
 PREFIX_PAD = {"kind": "prefix_pad", "prefix": "U-", "width": 3, "sideType": "integer"}
 
@@ -688,7 +688,7 @@ async def test_a_key_its_side_cannot_map_back_is_404_without_a_query(
     assert mappable.error_class == "connect_error"  # its read was sent
 
 
-# --- what a table pre-check reads (docs/mvp/PRECHECKS.md §4, §5) ----------------------------------------
+# --- what a table pre-check reads ----------------------------------------
 
 # One row a class holds at its edge: a padded and a blank ``character``, texts that differ by case
 # alone in a case-insensitive collation, an emoji, an empty text, and a numeric that holds NaN.

@@ -136,7 +136,7 @@ async def test_exports_route_findings_and_keep_values_masked(ctx: Context, tmp_p
         "K004",
         "$.status",
     )
-    # An evidence pack's leaves out the key tokens (docs/mvp/PACK.md §2.3); the counts stay.
+    # An evidence pack's leaves out the key tokens; the counts stay.
     (tmp_path / "unkeyed").write_bytes(await write_csv(ctx, run_id, None, "root_causes", keyed=False))
     header, (unkeyed,) = read_csv(tmp_path / "unkeyed")
     assert header == [name for name in ROOT_CAUSE_COLUMNS if name not in ("member_key_tok", "sample_keys")]
@@ -252,7 +252,7 @@ async def test_reports_of_a_table_run_list_its_columns_filters_and_scan_counts(
     assert (coverage["engine_a"], coverage["engine_b"]) == ("mysql", "oracle")
     [line] = [m for m in (await report_document(ctx, other)).meta.splitlines() if m.startswith("Tables: ")]
     assert line.startswith("Tables: side a public.users (mysql), side b public.users_v (oracle); compared")
-    # A file side (docs/mvp/FILES.md §16) has no schema: its format, its files, its lines that were not rows
+    # A file side has no schema: its format, its files, its lines that were not rows
     # and, once scanned, its keys held by several rows.
     files = {"schema": None, "engine": "files", "file": {"path": "users/*.csv", "format": "csv"},
              "file_count": 12, "rejected": 3}  # fmt: skip

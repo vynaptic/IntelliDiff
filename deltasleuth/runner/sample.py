@@ -1,4 +1,4 @@
-"""A hash sample's draws, retries and judgements (docs/mvp/SAMPLING.md §3, §5, §7, §8).
+"""A hash sample's draws, retries and judgements.
 
 A sampled run is created with no keys and a pending draw (``runs.draw``). The worker's draw task (``draw``)
 reads the run's frame from the spec's declared targets only, its sources in order: a table side's
@@ -18,7 +18,7 @@ strata from stored rows (``judge``: counts, the exact decision, the bounds shown
 ``ds.cycles.sample``. Creation and resume refusals are ``SampleRefused``.
 
 Every draw of a population, whatever spec drew it, is on its ledger in commit order (the chain seqs of
-its ``sample.draw`` and ``sample.close`` rows, §9). A draw is signed off only when every earlier draw
+its ``sample.draw`` and ``sample.close`` rows). A draw is signed off only when every earlier draw
 passed or was closed before it (R-a), its own cycle passed (R-b), no later draw failed (R-c) and its keys
 re-hash to its selection (R-d): ``problems``, from stored draws and judgements, never recomputed. A
 person closes a name's ended draws that did not pass with a note of the fix (``close``).
@@ -81,8 +81,8 @@ from deltasleuth.security.crypto import Sealer
 from deltasleuth.security.tokenise import mask_key
 from deltasleuth.store import repo
 
-DRAW_PAUSE = "run_paused_draw"  # its frame refused the draw (W1-W9); a resume draws again, a new nonce
-SAMPLE_PAUSE = "run_paused_sample"  # a soak's boundary after a bottom_k draw that did not pass (D7)
+DRAW_PAUSE = "run_paused_draw"  # its frame refused the draw; a resume draws again, a new nonce
+SAMPLE_PAUSE = "run_paused_sample"  # a soak's boundary after a bottom_k draw that did not pass
 DEDUPE = 10_000  # keys a batch of the frame's temporary table
 WATCH_S = 5.0  # seconds between a frame read's checks that its run still waits for the draw
 MAX_KEY_BYTES = 1024  # a run key
@@ -90,7 +90,7 @@ TRANSIENT = frozenset({*ERROR_REASONS, "unstable_pagination"})  # a read that ma
 _SIX = Decimals(prec=6)
 ETA_WINDOW = 900  # seconds of finished keys a live draw's ETA is paced by
 NOTE_KEY_SHAPED = "the note holds a key-shaped value: write it without customer keys"
-# G9's words for an earlier draw that did not pass (a live one cannot precede a draw of its population, D8).
+# The words for an earlier draw that did not pass (a live one cannot precede a draw of its population).
 _UNPASSED = {"failed": "failed", "incomplete": "ended incomplete", "unjudged": "ended without a judgement",
              "live": "had not ended"}  # fmt: skip
 log = logging.getLogger(__name__)
@@ -98,8 +98,7 @@ Candidate = tuple[Any, Any]  # a source's raw key and strata row (a table's as J
 
 
 class SampleRefused(Exception):
-    """A sampled run refused at creation or resume (docs/mvp/SAMPLING.md §13 R1-R5); ``status`` is the
-    API's answer."""
+    """A sampled run refused at creation or resume; ``status`` is the API's answer."""
 
     def __init__(self, status: int, message: str) -> None:
         super().__init__(message)
@@ -110,11 +109,12 @@ class _Moved(Exception):
     """The run stopped, moved on to another cycle or lost its pending draw while its frame was read."""
 
 
-# -- creation and resume (§5) -------------------------------------------------------------------------
+# -- creation and resume -------------------------------------------------------------------------
 
 
 def refuse(mode: str, keys: object, samples_dir: object, soak: Mapping[str, Any] | None) -> None:
-    """R4, R2 and R3: a hash sample draws its keys from the frame, a new sample each soak cycle, live."""
+    """Refuse what a hash sample's run may not be: it draws its keys from the frame, a new sample each soak
+    cycle, live."""
     if keys is not None:
         raise SampleRefused(422, "a hash sample draws its keys from the frame: run it without --keys")
     if mode == "soak" and not (soak or {}).get("rolling"):
@@ -130,8 +130,8 @@ def refuse(mode: str, keys: object, samples_dir: object, soak: Mapping[str, Any]
 
 
 async def overlapping(conn: repo.Conn, spec: CompiledSpec, *, lock: bool = False) -> None:
-    """R1: a ``bottom_k`` spec draws no sample of a population a live ``bottom_k`` run of any spec samples
-    (D8); ``lock`` judges it under the DSSM lock of each population id, until the transaction ends."""
+    """A ``bottom_k`` spec draws no sample of a population a live ``bottom_k`` run of any spec samples;
+    ``lock`` judges it under the DSSM lock of each population id, until the transaction ends."""
     sample = spec.sample
     if sample is None or sample.method != "bottom_k":
         return
@@ -141,13 +141,13 @@ async def overlapping(conn: repo.Conn, spec: CompiledSpec, *, lock: bool = False
             409,
             f"spec {spec.name} samples the population of live sampled run {run['run_id']} (spec"
             f" {run['spec_name']}, {shared}): stop it before drawing another sample"
-            " (docs/mvp/SAMPLING.md §5)",
+            "",
         )
 
 
 async def refuse_resume(conn: repo.Conn, run: repo.Row) -> None:
-    """R5: a sampled run whose cycle is still to be drawn resumes only once the ``bottom_k`` draw of the
-    cycle before passed or was closed, so the fix and its close precede the next draw (D7)."""
+    """A sampled run whose cycle is still to be drawn resumes only once the ``bottom_k`` draw of the
+    cycle before passed or was closed, so the fix and its close precede the next draw."""
     if run["params"].get("keys_source") != "hash_sample" or run["draw"] is None or run["cycle"] == 1:
         return
     before = await repo.get_draw(conn, run["run_id"], run["cycle"] - 1)
@@ -162,7 +162,7 @@ async def refuse_resume(conn: repo.Conn, run: repo.Row) -> None:
         )
 
 
-# -- the draw (§3, §4, §5) ----------------------------------------------------------------------------
+# -- the draw ----------------------------------------------------------------------------
 
 
 async def draw(ctx: Context, run_id: str) -> None:
@@ -237,7 +237,7 @@ async def _refused(ctx: Context, run_id: str, cycle: int, error: str) -> None:
 
 
 class _Frame:
-    """A run's frame, read source by source into its selection (§3), with each side's census record."""
+    """A run's frame, read source by source into its selection, with each side's census record."""
 
     def __init__(self, ctx: Context, spec: CompiledSpec, run: repo.Row, salt: str) -> None:
         assert spec.sample is not None
@@ -326,12 +326,12 @@ class _Frame:
             "where": plan.get("where"), "rows": rows + skipped, "skipped": skipped, "keys": self._keys[i],
             "unfit": self._unfit[i], "at": utc_iso(moment),
         } | census.engined(plan, server)  # fmt: skip
-        # A file side's record says what it was read from (docs/mvp/FILES.md §11); a frame counts no repeat.
+        # A file side's record says what it was read from; a frame counts no repeat.
         self.records[side] = census.fixed(found, plan, getattr(session, "verified_at", None), None)
 
     async def _listing(self, i: int, member: FrameMember) -> None:
-        """A side's key listing, walked to its end a page at a time; W2 when it lists a key twice, W1 when
-        it was not read completely."""
+        """A side's key listing, walked to its end a page at a time; ``DrawError`` when it lists a key
+        twice, or was not read completely."""
         side = listing_side(member.source)
         connector = connect(self._ctx, self._target(side.target).target_id, self._spec.execution)
         assert isinstance(connector, RestConnector)
@@ -434,7 +434,7 @@ class _Frame:
 
 
 async def _session(ctx: Context) -> psycopg.AsyncConnection:
-    """The draw's own autocommit control-plane session, with its temporary table of frame keys."""
+    """The draw's own autocommit session on the store, with its temporary table of frame keys."""
     conn = await psycopg.AsyncConnection.connect(ctx.pool.conninfo, autocommit=True)
     try:
         await conn.execute(
@@ -482,11 +482,11 @@ def _row(row: Any) -> Mapping[str, Any]:
     return jsonio.parse_json(row)[0] if isinstance(row, str) else row
 
 
-# -- retries to resolution (§7) -----------------------------------------------------------------------
+# -- retries to resolution -----------------------------------------------------------------------
 
 
 def retriable(result: KeyResult, before: KeyResult | None) -> bool:
-    """Whether a sign-off member's final result is read again (§7, D3): INCONCLUSIVE for an error, an unstable
+    """Whether a sign-off member's final result is read again: INCONCLUSIVE for an error, an unstable
     listing or a failed recheck, while no read of this attempt compared: ``before``, the stored result its
     last pass judged (the result itself on a first read), is INCONCLUSIVE for an error or an unstable
     listing. A comparable read stays the stored result, so a key that read MATCH, or found a discrepancy, is
@@ -500,7 +500,7 @@ def retriable(result: KeyResult, before: KeyResult | None) -> bool:
     )
 
 
-# -- judging each stratum (§8) ------------------------------------------------------------------------
+# -- judging each stratum ------------------------------------------------------------------------
 
 
 async def judge(
@@ -515,8 +515,8 @@ async def judge(
 async def ending(
     ctx: Context, conn: repo.Conn, run: repo.Row, spec: CompiledSpec | None = None
 ) -> tuple[repo.Row | None, dict[str, Any] | None]:
-    """The draw of the run's current cycle and the judgement its end stores (§5 Ends): (None, None) for a
-    cycle without a draw. A judgement that raises is logged and left None, the cycle unjudged (§9); the
+    """The draw of the run's current cycle and the judgement its end stores: (None, None) for a
+    cycle without a draw. A judgement that raises is logged and left None, the cycle unjudged; the
     caller's transaction goes on."""
     if run["params"].get("keys_source") != "hash_sample":
         return None, None
@@ -548,7 +548,7 @@ async def judgement(ctx: Context, run_id: str) -> dict[str, Any] | None:
 def judged(
     drawn: Mapping[str, Any], groups: Sequence[Mapping[str, Any]], spec: CompiledSpec, ended: bool = False
 ) -> dict[str, Any]:
-    """A drawn cycle's judgement (§8.1): each sign-off stratum's counters over its members, its exact
+    """A drawn cycle's judgement: each sign-off stratum's counters over its members, its exact
     verdict, the bounds shown and why it failed (``ended``: the judgement its end stores, why an unfinished
     one would not pass too); the contrast keys' counters; ``status`` (passed: every stratum, the cycle
     complete; failed: any; else incomplete) and ``weighted_rate``, never a pooled bound.
@@ -602,7 +602,7 @@ def _stratum(
     times: int,
     ended: bool,
 ) -> dict[str, Any]:
-    """A sign-off stratum's judgement (§8.2) from the draw's record of it and its members' grouped rows:
+    """A sign-off stratum's judgement from the draw's record of it and its members' grouped rows:
     passed once complete within every gate, failed once complete outside one or outside one for certain
     (``why`` says which, as the sign-off's refusals end), else unfinished; ``ended``, the cycle's end, words
     every gate an unfinished stratum does not hold too."""
@@ -611,7 +611,7 @@ def _stratum(
     c, done = count(rows), count([g for g in rows if g["done"]])
     ab, api = c["absent_both"], c["api_uncomparable"]
     ab_f, api_f = done["absent_both"], done["api_uncomparable"]  # final: a first read's recheck may change
-    owed = done["outstanding"]  # done, its one comparable read discrepant: never left out (D3)
+    owed = done["outstanding"]  # done, its one comparable read discrepant: never left out
     n, x = c["compared"] + owed, c["different"] + owed
     unresolved = c["indeterminate"] - ab - api
     final = done["indeterminate"] - ab_f - api_f  # u_f
@@ -672,7 +672,7 @@ def _shown(x: int, n: int, target: Fraction, x_max: int) -> str:
     return sampling.shown(x, n, target, x <= x_max and passes(x, n, target))
 
 
-# -- the ledger, closes and sign-off (§9, §10, §14) ---------------------------------------------------
+# -- the ledger, closes and sign-off ---------------------------------------------------
 
 
 def blocking(draw: Mapping[str, Any]) -> bool:
@@ -683,7 +683,7 @@ def blocking(draw: Mapping[str, Any]) -> bool:
 
 def _around(rows: Sequence[repo.Row], draw_id: str) -> tuple[int | None, list[repo.Row], list[repo.Row]]:
     """The chain seq of the draw's ``sample.draw`` row, and the other ``bottom_k`` draws of its ledger
-    committed before it and after it: none without that row (P2), and never a draw no row names (which
+    committed before it and after it: none without that row, and never a draw no row names (which
     ``_unordered`` refuses)."""
     seq = next(d["draw_seq"] for d in rows if d["draw_id"] == draw_id)
     if seq is None:
@@ -726,10 +726,10 @@ async def problems(
     later: bool = True,
     selection: bool = True,
 ) -> list[str]:
-    """Why a sampled run's ended ``cycle`` cannot be signed off (§10, G1-G11), from its stored draw, judgement
-    and ledger, never recomputed; without ``later``, not R-c (G10), which a pack reads from the final grant;
-    without ``selection``, not R-d, which readiness checks once as it measures the cycle
-    (docs/mvp/READINESS.md §5). Empty for a run without a hash sample."""
+    """Why a sampled run's ended ``cycle`` cannot be signed off, from its stored draw, judgement
+    and ledger, never recomputed; without ``later``, not R-c, which a pack reads from the final grant;
+    without ``selection``, not R-d, which readiness checks once as it measures the cycle. Empty for a run
+    without a hash sample."""
     if run["params"].get("keys_source") != "hash_sample":
         return []
     run_id = run["run_id"]
@@ -761,7 +761,7 @@ async def problems(
     rows = await repo.ledger(conn, drawn["population"])
     found += _unordered(rows, draw_id)
     seq, earlier, after = _around(rows, draw_id)
-    found += [  # R-a (G9)
+    found += [  # R-a
         f"draw {d['draw_id']} (spec {d['spec_name']}, run {d['run_id']} cycle {d['cycle']})"
         f" {_UNPASSED[d['status']]} before draw {draw_id} was made and was not closed before it: close it"
         " with the fix, then sign off a draw made after the close"
@@ -786,8 +786,8 @@ async def _later(
     conn: repo.Conn, after: Sequence[repo.Row], draw_id: str
 ) -> list[tuple[dict[str, Any], str | None]]:
     """R-c over the ledger draws committed after ``draw_id``: each as judged (``{draw_id, status}``) and
-    the G10 refusal it gives, or None. A failed or unjudged one refuses, and a live one with a stratum
-    failed for certain (§8.2); later passes and incomplete or live draws never block."""
+    the refusal it gives, or None. A failed or unjudged one refuses, and a live one with a stratum
+    failed for certain; later passes and incomplete or live draws never block."""
     judged = []
     for d in after:
         status, what = d["status"], None
@@ -810,13 +810,13 @@ async def _later(
 
 async def after(conn: repo.Conn, population: Sequence[str], draw_id: str) -> list[repo.Row]:
     """The other ``bottom_k`` draws of the population's ledger committed after ``draw_id``, as it lists
-    them now: the later draws an evidence pack names at its issue (§11.2)."""
+    them now: the later draws an evidence pack names at its issue."""
     return _around(await repo.ledger(conn, population), draw_id)[2]
 
 
 async def later_draws(conn: repo.Conn, run_id: str, cycle: int) -> list[dict[str, Any]]:
     """The ledger draws committed after the cycle's draw, as R-c judges them now (``{draw_id, status}``):
-    what a sampled sign-off's final approval step records in its ``approval.grant`` row (§9)."""
+    what a sampled sign-off's final approval step records in its ``approval.grant`` row."""
     drawn = await repo.get_draw(conn, run_id, cycle)
     assert drawn is not None
     _, _, after = _around(await repo.ledger(conn, drawn["population"]), drawn["draw_id"])
@@ -830,7 +830,7 @@ def _decimal(value: Fraction) -> str:
 async def attested(
     conn: repo.Conn, run: Mapping[str, Any], cycle: int, spec: CompiledSpec
 ) -> dict[str, Any] | None:
-    """What attests format 2 adds for a sampled cycle (§10): its draw (salt label, nonce, the salt's SHA-256,
+    """What attests format 2 adds for a sampled cycle: its draw (salt label, nonce, the salt's SHA-256,
     its ``sample.draw`` chain row, population, frame, strata and selection), the build's tiers, the ledger
     draws before it as R-a judged them (a close shown only if it preceded the draw), and its stored
     judgement; None for a cycle without a draw. Chain order freezes each fact: later draws, closes and
@@ -865,7 +865,7 @@ async def attested(
 
 
 async def progress(conn: repo.Conn, drawn: Mapping[str, Any], spec: CompiledSpec) -> dict[str, Any]:
-    """A live draw's progress (§14): the judgement its cycle would store now (one grouped query, through
+    """A live draw's progress: the judgement its cycle would store now (one grouped query, through
     ``judged``'s verdict rules: a stratum is failed once certain, its bound interim), each stratum's members
     done and retrying, and an ETA paced by the keys finished in the last ``ETA_WINDOW`` seconds."""
     run_id, cycle = drawn["run_id"], drawn["cycle"]
@@ -885,9 +885,9 @@ async def progress(conn: repo.Conn, drawn: Mapping[str, Any], spec: CompiledSpec
 async def close(conn: repo.Conn, audit: repo.Audit, spec_name: str, note: str, who: Principal) -> list[str]:
     """Close, as the person ``who`` with ``note`` (what was fixed), every ended ``bottom_k`` draw of the
     name's ledger (its newest version's population) that did not pass and is not closed, whatever spec
-    drew it; each audited ``sample.close``. The draws closed. LookupError for an unknown name (C3);
-    SampleRefused for nothing to close (C4) or a note shaped like a key of a spec whose later sign-offs
-    could attest it (C5): the name's newest version, each ledger name's and each closed draw's."""
+    drew it; each audited ``sample.close``. The draws closed. LookupError for an unknown name;
+    SampleRefused for nothing to close or a note shaped like a key of a spec whose later sign-offs
+    could attest it: the name's newest version, each ledger name's and each closed draw's."""
     stored = await repo.newest_spec(conn, spec_name)
     if stored is None:
         raise LookupError(f"spec {spec_name} not found")
@@ -916,7 +916,7 @@ async def close(conn: repo.Conn, audit: repo.Audit, spec_name: str, note: str, w
 
 async def _sharing(conn: repo.Conn, population: Sequence[str]) -> set[str]:
     """The stored spec names whose newest version samples a population overlapping ``population``, drawn
-    or not: each could later sign off a draw whose ledger attests a close note (§9)."""
+    or not: each could later sign off a draw whose ledger attests a close note."""
     names, shared = {row["name"] for row in await repo.list_specs(conn)}, set()
     for name in names:
         stored = await repo.newest_spec(conn, name)
@@ -930,7 +930,7 @@ async def _sharing(conn: repo.Conn, population: Sequence[str]) -> set[str]:
 
 
 def lines(judgement: Mapping[str, Any]) -> list[str]:
-    """A judgement's strata as ``ds run`` prints them (§14)."""
+    """A judgement's strata as ``ds run`` prints them."""
     return [
         f"stratum {s['label']} ({s['tier']}, ≤ {percent(s['target'])}): {s['drawn']:,} drawn of"
         f" {s['frame_keys']:,}, {s['n']:,} compared, {s['x']:,} discrepant, {s['unresolved']:,} unresolved,"

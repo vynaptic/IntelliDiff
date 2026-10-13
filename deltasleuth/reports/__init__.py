@@ -3,8 +3,7 @@
 
 Documents are built as ``render.Document`` and rendered as Markdown, HTML or PDF. ``FORMATS`` is
 every downloadable report by published name, as (media type, render(ctx, run_id, cycle)); a new
-format is one entry. ``readiness.csv`` is the run's pair's readiness points up to the cycle
-(docs/mvp/READINESS.md §11).
+format is one entry. ``readiness.csv`` is the run's pair's readiness points up to the cycle.
 """
 
 from functools import partial

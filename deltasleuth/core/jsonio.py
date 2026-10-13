@@ -235,7 +235,7 @@ def to_serialisable(value: Any, _num: Any = None) -> Any:
 
 def plain(value: Any) -> Any:
     """``value`` with every date and time as ISO-8601 text and every IP address as its text, as the API's
-    answers and an MCP tool's result show them (docs/mvp/MCP.md §7)."""
+    answers and an MCP tool's result show them."""
     if isinstance(value, date):
         return value.isoformat()
     if isinstance(value, ipaddress.IPv4Address | ipaddress.IPv6Address):  # an inet column

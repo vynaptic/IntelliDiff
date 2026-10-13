@@ -1,5 +1,5 @@
 {
- "about": "A PostgreSQL pair as stored and sent before the engine seam (docs/mvp/ENGINES.md D3): the plan of a pair and of a table with a service side, the hash of a run's params holding the pair's, and what each read sends as [cursor, statement, parameters].",
+ "about": "A PostgreSQL pair as stored and sent before the engine seam: the plan of a pair and of a table with a service side, the hash of a run's params holding the pair's, and what each read sends as [cursor, statement, parameters].",
  "pair": {
   "a": {
    "schema": "public",

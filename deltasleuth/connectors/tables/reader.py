@@ -1,10 +1,10 @@
-"""The file reader's process (docs/mvp/READER.md §5 to §7): the one place DuckDB is loaded, and the frames it
+"""The file reader's process: the one place DuckDB is loaded, and the frames it
 and its parent speak.
 
 Run by its path (``python -I -X utf8 reader.py``, none of its parent's variables, its spill directory to
 work in) it is the child of a ``ds`` process: it imports the standard library and ``duckdb`` alone, the
 latter once its first frame has said what to read and it has restricted itself (``restrict``: no core;
-on Linux a data limit, proved, and no socket); it builds the locked instance of FILES.md §10, proves
+on Linux a data limit, proved, and no socket); it builds the locked instance (``connect``), proves
 it, then runs one ``SELECT`` a request, each on a thread started for it, and hands the rows back, one
 batch read ahead where its parent asks for that. A fault or a memory blow-up of DuckDB's ends this process
 and no other. Imported by ``duck``, its parent, it is the
@@ -37,9 +37,9 @@ FRAME_MAX = 128 * 2**20  # a batch of rows'; the child's is its first frame's
 # bounded by them, whatever its bytes say (a column that is all NULL is one byte). No fewer than the 65,535
 # columns a frame can name, so that a row of any width crosses.
 CELLS = 2**20
-NEEDED = ("parquet", "core_functions")  # compiled into the wheel (U2): nothing is ever installed
+NEEDED = ("parquet", "core_functions")  # compiled into the wheel: nothing is ever installed
 # What keeps a file's content between statements, off: the external file cache served a Parquet file's old
-# footer for a file replaced at the same size within the same second (U28); the others are off by default.
+# footer for a file replaced at the same size within the same second; the others are off by default.
 CACHES = ("enable_external_file_cache", "parquet_metadata_cache", "enable_http_metadata_cache")
 GUARD = ("enable_external_access", "lock_configuration", "allowed_directories")  # read back before first use
 KINDS = ("memory", "interrupt", "denied", "io", "fatal", "select", "other")  # what a failure is mapped by
@@ -54,7 +54,7 @@ NAMES = frozenset(
     " SyntaxException TransactionException TypeMismatchException Warning"
     " MemoryError OSError PermissionError Unframed Oversize".split()
 )
-LINUX = sys.platform == "linux"  # where a process limits its data and filters its calls (§7)
+LINUX = sys.platform == "linux"  # where a process limits its data and filters its calls
 PROBE = 64 * 2**20  # the data limit is proved at this, not at the limit itself
 FILTERED = ("aarch64", "x86_64")  # the machines whose socket calls ``FILTER`` knows
 # The socket filter, a seccomp program for both machines (so a translated process is judged by the
@@ -98,7 +98,7 @@ class NotSelect(Exception):
 
 
 class Unguarded(Exception):
-    """The instance is not the locked one (P27): ``code`` is ``lacks`` (extensions of ``NEEDED`` that are not
+    """The instance is not the locked one: ``code`` is ``lacks`` (extensions of ``NEEDED`` that are not
     statically linked), ``unset`` (settings that did not read back as set) or ``probe`` (a read outside the
     roots was not refused); ``names`` are which."""
 
@@ -107,7 +107,7 @@ class Unguarded(Exception):
         self.code, self.names = code, list(names)
 
 
-# -- the frames (READER.md §6) ----------------------------------------------------------------------------
+# -- the frames ----------------------------------------------------------------------------
 
 
 def pack(message: Mapping[str, Any], most: int) -> bytes:
@@ -242,7 +242,7 @@ def bound(tag: str, value: Any) -> Any:
     return bytes.fromhex(value) if tag == "b" else Decimal(value) if tag == "d" else value
 
 
-# -- what the child denies itself (READER.md §7) ------------------------------------------------------------
+# -- what the child denies itself ------------------------------------------------------------
 
 
 def restrict(limit: int | None, filtered: bool) -> tuple[int | None, bool]:
@@ -319,11 +319,11 @@ def _filtered() -> bool:
     return False
 
 
-# -- the locked instance (FILES.md §10), in the child ------------------------------------------------------
+# -- the locked instance, in the child ------------------------------------------------------
 
 
 def connect(spill: str, roots: Sequence[str], memory_mib: int, spill_mib: int, threads: int) -> Any:
-    """A locked connection (FILES.md §10) that reads ``roots`` and spills under ``spill``, the directory its
+    """A locked connection that reads ``roots`` and spills under ``spill``, the directory its
     parent holds for it; ``Unguarded`` when the parquet reader is not compiled in.
     ``max_temp_directory_size`` is set by a statement: given in ``connect``'s configuration it reads back
     and is not enforced (observed on 1.5.5). The extensions are read before the lock: after it
@@ -348,7 +348,7 @@ def connect(spill: str, roots: Sequence[str], memory_mib: int, spill_mib: int, t
         con.close()
         raise Unguarded("lacks", lacking)
     # By statements, the Parquet reader's being no option of ``connect``'s configuration; and after the
-    # extensions were read, since a build that lacks that reader does not know its setting (P27, above).
+    # extensions were read, since a build that lacks that reader does not know its setting (above).
     for cache in CACHES:
         con.execute(f"SET {cache} = false")
     con.execute("SET allowed_directories = $roots", {"roots": [root.rstrip("/") + "/" for root in roots]})
@@ -358,7 +358,7 @@ def connect(spill: str, roots: Sequence[str], memory_mib: int, spill_mib: int, t
 
 
 def prove(con: Any, roots: Sequence[str], probe: str) -> None:
-    """Before first use (FILES.md §10): the three settings of the guard and the caches' read back, and a
+    """Before first use: the three settings of the guard and the caches' read back, and a
     file outside the roots (``probe``) is refused; ``Unguarded`` else. The spill's free space is the
     parent's to check."""
     import duckdb
@@ -386,7 +386,7 @@ def prove(con: Any, roots: Sequence[str], probe: str) -> None:
 
 
 def select(cursor: Any, statement: str, values: Any) -> None:
-    """Send one ``SELECT`` with its bound ``values`` (U3: DuckDB itself runs ``ATTACH``, ``COPY TO`` and
+    """Send one ``SELECT`` with its bound ``values`` (DuckDB itself runs ``ATTACH``, ``COPY TO`` and
     ``EXPORT`` into an allowed directory, so a cursor runs no other statement); ``NotSelect`` else."""
     import duckdb
 
@@ -397,7 +397,7 @@ def select(cursor: Any, statement: str, values: Any) -> None:
 
 
 def refusal(exc: BaseException) -> tuple[str, str]:
-    """A failure's name (of ``NAMES``; ``Error`` for any other) and its kind (FILES.md §10's table), by the
+    """A failure's name (of ``NAMES``; ``Error`` for any other) and its kind, by the
     class that was raised and never its text."""
     import duckdb
 
@@ -419,7 +419,7 @@ def refusal(exc: BaseException) -> tuple[str, str]:
     return name if name in NAMES else "Error", kind
 
 
-# -- the child's loop (READER.md §5) ------------------------------------------------------------------------
+# -- the child's loop ------------------------------------------------------------------------
 
 
 class _Held:
@@ -512,7 +512,7 @@ def _columns(held: _Held, request: Mapping[str, Any]) -> bytes:
 
 
 def _ahead(held: _Held, request: Mapping[str, Any]) -> None:
-    """R9: after a full batch, the next one fetched and packed on the same thread while the parent works on
+    """After a full batch, the next one fetched and packed on the same thread while the parent works on
     the one just sent, and held for the cursor's next fetch; an error met here answers that fetch. One a
     frame has no room for is kept as rows, and crosses as any such batch does."""
     drops, rows = held.drops, []
@@ -577,7 +577,7 @@ def _interrupted(held: _Held, done: threading.Event) -> None:
 
 def _closed(held: _Held) -> None:
     """Close a cursor its parent closed once no request of it is in flight: at once, or by the request that
-    was, as it returns. Its rejects tables go with it (U16)."""
+    was, as it returns. Its rejects tables go with it."""
     if held.closed and held.lock.acquire(blocking=False):
         try:
             cursor, held.cursor = held.cursor, None

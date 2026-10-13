@@ -1,7 +1,8 @@
-"""A sampled cycle's evidence pack (docs/mvp/SAMPLING.md §11): its layout, the attested sample in facts and
+"""A sampled cycle's evidence pack: its layout, the attested sample in facts and
 manifest, the certificate's frame, draw, bounds, hand check, draws and warnings, the sampled claim verbatim,
-the coverage rows of its strata, the audit segment's draw and close rows and the grant's later draws; P1 and
-P2; and the raw-value gate over the new texts. Census packs keep their shape (test_pack_contents)."""
+the coverage rows of its strata, the audit segment's draw and close rows and the grant's later draws; the two
+refusals of a sampled pack; and the raw-value gate over the new texts. Census packs keep their shape
+(test_pack_contents)."""
 
 from __future__ import annotations
 
@@ -11,7 +12,6 @@ import io
 import json
 import re
 from datetime import UTC
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -32,7 +32,6 @@ from tests.unit.store.four_eyes import COMPLETE, FRAME, counters, drawn, sampled
 from .packs import CLOSE_NOTE, files_of, sampled_cycle, sign_off
 
 pytestmark = pytest.mark.db
-DOCS = Path(__file__).parents[3] / "docs" / "mvp"
 LISTED = [
     "VERIFY.txt", "accuracy/attempts.json", "adjudication/attempts.json", "annex/ai_answers.json",
     "audit/chain.tsv", "certificate.pdf", "csv/coverage.csv", "csv/graph.csv", "csv/root_causes.csv",
@@ -79,15 +78,6 @@ async def _problems(ctx: Context, run_id: str) -> list[str]:
         run = await repo.get_run(conn, run_id)
         assert run is not None
         return await pack.problems(ctx, conn, run, 1)
-
-
-def test_the_sampled_claim_is_the_contract_s_verbatim() -> None:
-    section = (DOCS / "SAMPLING.md").read_text().split("### 11.3")[1].split("### 11.4")[0]
-    quoted = " ".join(section[section.index('"') + 1 : section.rindex('"')].split())
-    assert pack.PROVES_SAMPLED.format(name="<name>", fp="<fp>", absent="<absent>") == quoted
-    census = (DOCS / "PACK.md").read_text().split("### 3.4")[1].split("## 4.")[0]
-    kept = " ".join(census[census.index('"') + 1 : census.rindex('"')].split())
-    assert pack.PROVES.format(name="<name>", fp="<fp>") == kept  # census packs keep PACK §3.4's
 
 
 async def test_a_sampled_pack_states_its_frame_draw_bounds_and_the_population_s_draws(
@@ -228,7 +218,7 @@ async def test_a_sampled_pack_states_its_frame_draw_bounds_and_the_population_s_
 async def test_a_failed_sampled_cycle_s_pack_is_built_to_judge_it_and_warns_of_absent_keys(
     pack_ctx: Context, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Two keys absent on both sides of a draw whose strata are compared whole: the cycle fails (G8), yet its
+    """Two keys absent on both sides of a draw whose strata are compared whole: the cycle fails, yet its
     pack is built to judge it and says so; a later draw still live at issue is listed as it stands."""
     documents = _documents(monkeypatch)
     signed = await sampled_cycle(pack_ctx, absent=["C002", "C005"])
@@ -290,7 +280,7 @@ async def test_p2_a_draw_its_sample_draw_row_does_not_match_gets_no_pack(
 
 async def test_a_cycle_that_ended_incomplete_gets_no_pack(pack_ctx: Context) -> None:
     """C001 waited for its retry when the cycle ended: it holds a result, so nothing was cancelled or owed,
-    yet the stored judgement is incomplete, and a sign-off made of it anyway gets no pack (R-b)."""
+    yet the stored judgement is incomplete, and a sign-off made of it anyway gets no pack."""
     signed = await sampled_cycle(pack_ctx, end=False, sign=False)
     async with pack_ctx.pool.connection() as conn:
         waiting = KeyResult("C001", Outcome.INCONCLUSIVE, SideState.error("timeout"), COMPLETE,
@@ -318,7 +308,7 @@ async def test_a_cycle_that_ended_incomplete_gets_no_pack(pack_ctx: Context) -> 
 
 async def test_p2_a_draw_no_sample_draw_row_names_is_refused_beside_another_draw(pack_ctx: Context) -> None:
     """With an earlier draw on the ledger, a draw whose row names another draw has no place to compare:
-    its sign-off is refused (its order unknown) and its pack gets P2, never an error."""
+    its sign-off is refused (its order unknown) and its pack is refused, never an error."""
     signed = await sampled_cycle(pack_ctx, earlier=True, sign=False, audited={"draw_id": repo.new_draw_id()})
     unmatched = (
         f"the sample {signed.draw_id} of cycle 1 of run {signed.run_id} does not match its sample.draw"

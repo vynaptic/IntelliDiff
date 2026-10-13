@@ -166,7 +166,7 @@ async def _document(request: Request) -> tuple[Any, bool]:
 @router.post("/specs", status_code=201)
 async def create_spec(ctx: Ctx, who: SpecAuthor, request: Request) -> Response:
     """Validate, compile and store a spec (once per content); 422 lists every issue, or says why the
-    store would not keep it as uploaded, storing nothing (docs/mvp/APPROVALS.md §6.2). Every upload is
+    store would not keep it as uploaded, storing nothing. Every upload is
     audited: its first uploader is the spec's ``created_by``. The answer names the scopes that gate its
     runs under SSO (``needs``) and its active four-eyes approval, if any."""
     spec = compile_spec((await _document(request))[0], targets=ctx.targets)

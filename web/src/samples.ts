@@ -1,4 +1,4 @@
-/** What the screens say about a sampled run's draws (docs/mvp/SAMPLING.md §9, §14), in the server's words: a
+/** What the screens say about a sampled run's draws, in the server's words: a
  *  stratum's line as `ds run` prints it, the frame, a draw's state and progress, the ledger and what blocks a
  *  sign-off. The server still decides. */
 // Type imports only, so that Node runs the tests of this module without a bundler.

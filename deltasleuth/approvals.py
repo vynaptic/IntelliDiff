@@ -1,4 +1,4 @@
-"""Four-eyes approvals and sign-off (docs/mvp/APPROVALS.md).
+"""Four-eyes approvals and sign-off.
 
 Under SSO a spec version whose content exposes values, suppresses findings or filters what is compared
 (``needs``) runs only under an approval of its content hash by a person who did not write it
@@ -45,8 +45,8 @@ _RULE_FIELDS = ("rule_id", "when", "classification", "reason", "ticket", "expire
 
 
 class ApprovalRequired(Exception):
-    """A run of a spec version that needs a four-eyes approval it lacks (§6.2 messages 1-4): the API
-    answers 409, the CLI exits 2."""
+    """A run of a spec version that needs a four-eyes approval it lacks: the API answers 409, the CLI
+    exits 2."""
 
 
 class ApprovalConflict(Exception):
@@ -54,9 +54,9 @@ class ApprovalConflict(Exception):
 
 
 def needs(spec: CompiledSpec) -> list[str]:
-    """The scopes of the spec's content that gate its runs under SSO (§1.1), in ``SCOPES`` order."""
+    """The scopes of the spec's content that gate its runs under SSO, in ``SCOPES`` order."""
     compare, tables = spec.compare, [side.table for side in spec.sides.values() if side.table is not None]
-    # csv.skip leaves each file's first lines out of what is compared (docs/mvp/FILES.md §5), as a filter does
+    # csv.skip leaves each file's first lines out of what is compared, as a filter does
     skips = [((table.file or {}).get("csv") or {}).get("skip", 0) > 0 for table in tables]
     filters = (
         any(table.where is not None or table.columns is not None for table in tables)
@@ -83,7 +83,7 @@ async def gate(
 
     In oidc mode a stored body that does not re-hash to its content hash is refused; then the active
     approval covering ``needs`` is returned, read FOR SHARE when ``lock`` (a revoke waits for the
-    caller's transaction, §2); without one, None when nothing is needed, else ApprovalRequired. The
+    caller's transaction); without one, None when nothing is needed, else ApprovalRequired. The
     other modes have no approvers: None, and the run is labelled unapproved.
     """
     needed, mode = needs(spec), ctx.settings.auth_mode
@@ -132,7 +132,7 @@ def revoked(spec_id: int, spec: CompiledSpec, approval_id: str) -> ApprovalRequi
 
 def unstorable(value: Any, at: tuple[str | int, ...] = ()) -> str | None:
     """Why the store cannot keep ``value`` as uploaded, so that its stored body would not re-hash to its
-    content hash (§6.2 Upload); None when it can. Checked before a spec version is stored."""
+    content hash; None when it can. Checked before a spec version is stored."""
     if isinstance(value, str) and "\x00" in value:
         return f"spec body holds NUL at {pointer(at)}, which the store cannot keep"
     if isinstance(value, float) and value == 0 and math.copysign(1, value) < 0:
@@ -147,7 +147,7 @@ def unstorable(value: Any, at: tuple[str | int, ...] = ()) -> str | None:
 
 
 async def unstored(conn: repo.Conn, spec_id: int, spec: CompiledSpec) -> str | None:
-    """Why the body stored as ``spec_id`` does not re-hash to ``spec``'s content hash (§6.2 Upload), naming
+    """Why the body stored as ``spec_id`` does not re-hash to ``spec``'s content hash, naming
     where it differs from the upload; None when it does. Checked once stored, in the storing transaction:
     jsonb keeps a float of 1e16 or more as an integer, and the same content maps to an edited row."""
     stored = await repo.get_spec(conn, spec_id)
@@ -202,7 +202,7 @@ def deciders(approval: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 
 async def run_approval(conn: repo.Conn, run: Mapping[str, Any], cycle: int | None = None) -> dict[str, Any]:
-    """The run's spec approval as ``GET /v1/runs/{id}`` shows it (§4) or, given ``cycle``, the one that
+    """The run's spec approval as ``GET /v1/runs/{id}`` shows it or, given ``cycle``, the one that
     cycle ran under, as report.pdf and the P0 summary show it: an ended cycle's ``ds.cycles.approval_id``,
     a live one's the run's (none before ``params["approval"]["from_cycle"]``). Its state
     (``run_state``), the scopes its version needs and the auth mode it started in, who approved it and
@@ -253,7 +253,7 @@ def _decided(
 
 def label(approval: Mapping[str, Any]) -> str:
     """What the Run screen (web/src/four-eyes.ts), report.pdf, the P0 summary and ``ds runs`` say of a
-    run's spec approval (§4), from ``run_approval``."""
+    run's spec approval, from ``run_approval``."""
     state, needed = approval["state"], approval["needs"]
     if state in ("approved", "revoked"):
         revoked = (approval["revoked_at"], approval["revoked_by_name"], approval["reason"])
@@ -311,11 +311,11 @@ async def signoff_problems(
     lock: bool = False,
     later: bool = True,
 ) -> list[str]:
-    """Why the run's ``cycle`` cannot be signed off (§1.2), judging the ended cycle, never the run's
+    """Why the run's ``cycle`` cannot be signed off, judging the ended cycle, never the run's
     status now; empty when it can. ``spec`` is the run's version, compiled. At a decision ``cited`` is
-    the spec approval the request attests, read FOR SHARE when ``lock`` (§2). A sampled cycle's draw
-    discipline follows (docs/mvp/SAMPLING.md §10: G1-G11; without ``later``, not R-c's G10, which a pack
-    reads from the final grant). CyclePurged (410) once the cycle's purge has started."""
+    the spec approval the request attests, read FOR SHARE when ``lock``. A sampled cycle's draw
+    discipline follows (``runner.sample.problems``; without ``later``, not its R-c, which a pack reads
+    from the final grant). CyclePurged (410) once the cycle's purge has started."""
     from deltasleuth.runner import sample  # the runner's modules import this one
     from deltasleuth.runner.purge import refuse_purged
 
@@ -376,10 +376,10 @@ async def signoff_problems(
 
 
 async def attests(conn: repo.Conn, run: Mapping[str, Any], cycle: int, spec: CompiledSpec) -> dict[str, Any]:
-    """What a sign-off request of the ended cycle accepts (§1.2; docs/mvp/PACK.md §1.2, §5), in attests
-    format 3: approving it decides each listed rule and root cause. It fixes the adjudication it attests,
-    the cycle's newest scored by a person, or none, a sampled cycle's draw, ledger and judgement, and the
-    labelling it attests, the cycle's newest labelled by a person, or none (docs/mvp/ACCURACY.md §8)."""
+    """What a sign-off request of the ended cycle accepts, in attests format 3: approving it decides each
+    listed rule and root cause. It fixes the adjudication it attests, the cycle's newest scored by a person,
+    or none, a sampled cycle's draw, ledger and judgement, and the labelling it attests, the cycle's newest
+    labelled by a person, or none."""
     adjudication = await repo.attested_adjudication(conn, run["run_id"], cycle)
     labelling = await repo.attested_labelling(conn, run["run_id"], cycle)
     return await _format_3(conn, run, cycle, spec, adjudication, labelling)
@@ -394,12 +394,12 @@ async def rebuilt(
     match recorded.get("format", 0):
         case 0:  # 008's, so that a sign-off requested before packs is decided as before
             return await _format_0(conn, run, cycle, spec)
-        case 1 | 2 | 3 as number:  # 2: a sampled cycle's draw too (docs/mvp/SAMPLING.md §10)
+        case 1 | 2 | 3 as number:  # 2: a sampled cycle's draw too
             fixed = recorded.get("adjudication")
             adjudication = fixed and await repo.cycle_adjudication(
                 conn, run["run_id"], cycle, fixed["adjudication_id"]
             )
-            if number == 3:  # the labelling too (docs/mvp/ACCURACY.md §8)
+            if number == 3:  # the labelling too
                 named = recorded.get("accuracy")
                 labelling = named and await repo.cycle_labelling(
                     conn, run["run_id"], cycle, named["labelling_id"]
@@ -455,7 +455,7 @@ async def _format_2(
     conn: repo.Conn, run: Mapping[str, Any], cycle: int, spec: CompiledSpec, adjudication: repo.Row | None
 ) -> dict[str, Any]:
     """Format 1 plus ``sample``: a sampled cycle's draw, the ledger draws before it, as R-a judged them,
-    and its stored judgement (docs/mvp/SAMPLING.md §10); None for any other cycle."""
+    and its stored judgement; None for any other cycle."""
     from deltasleuth.runner import sample  # the runner's modules import this one
 
     facts = await _format_1(conn, run, cycle, spec, adjudication)
@@ -471,7 +471,7 @@ async def _format_3(
     labelling: repo.Row | None,
 ) -> dict[str, Any]:
     """Format 2 plus ``labellings``, how many labellings the cycle has, drawn and labelled, and
-    ``accuracy``: the labelling the sign-off attests (docs/mvp/ACCURACY.md §8), its hashes, actors and exact
+    ``accuracy``: the labelling the sign-off attests, its hashes, actors and exact
     counts (its uniform discrepant items'; ``score_sha256`` binds the intervals) and whether its labeller
     started the run or wrote the cited spec approval; None without one."""
     drawn = await repo.list_labellings(conn, run["run_id"], cycle)
@@ -538,8 +538,8 @@ def attests_sha256(facts: Mapping[str, Any]) -> str:
 
 def plan(params: Mapping[str, Any]) -> str:
     """A run's stored ``params`` but its ``approval`` record (which a resume extends) and a file side's sealed
-    pins (docs/mvp/FILES.md §6), as a pack's ``facts/plan.json`` holds them and ``create_run``'s
-    ``plan_sha256`` hashes them (docs/mvp/PACK.md §2.1, §7.4)."""
+    pins, as a pack's ``facts/plan.json`` holds them and ``create_run``'s
+    ``plan_sha256`` hashes them."""
     kept = {name: value for name, value in params.items() if name not in ("approval", "pinned")}
     return jsonio.dumps(kept, sort_keys=True)
 
@@ -547,11 +547,11 @@ def plan(params: Mapping[str, Any]) -> str:
 async def revoke(
     conn: repo.Conn, audit: repo.Audit, approval_id: str, reason: str, *, who: Principal
 ) -> dict[str, Any]:
-    """Revoke an approved approval as ``who`` in the caller's transaction, in order (§2): the approval
+    """Revoke an approved approval as ``who`` in the caller's transaction, in order: the approval
     (its row lock); a spec approval's running runs pause and its queued one-shot runs stop; the approved
     sign-offs citing it are revoked, and the open ones rejected when ``who`` is a person (else a decision
     refuses them); a run left without an approved sign-off loses its sign-off hold. Each revoked
-    sign-off's evidence packs are revoked with it (ds.tg_signoff_packs; docs/mvp/PACK.md §6). Audited
+    sign-off's evidence packs are revoked with it (ds.tg_signoff_packs). Audited
     last. LookupError for an unknown approval, ApprovalConflict for one that is not approved."""
     row = await repo.revoke_approval(conn, approval_id, who.actor, reason)
     if row is None:

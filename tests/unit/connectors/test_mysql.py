@@ -1,4 +1,4 @@
-"""Table sides on a real MySQL (docs/mvp/ENGINES.md §6 to §11): the session, the column plan, per-key
+"""Table sides on a real MySQL: the session, the column plan, per-key
 reads, keys the column cannot hold, and what a scan is read in.
 """
 
@@ -140,7 +140,7 @@ async def connector(targets: TargetRegistry) -> AsyncIterator[Connect]:
         await table.aclose()
 
 
-# --- the session (§6) ------------------------------------------------------------------------------
+# --- the session ------------------------------------------------------------------------------
 
 
 async def test_a_session_is_read_only_in_utc_and_encrypted(targets: TargetRegistry) -> None:
@@ -175,7 +175,7 @@ async def test_a_snapshot_does_not_see_a_later_write(
     assert mysql_server.execute("SELECT COUNT(*) FROM seen", database) == [(1,)]
 
 
-# --- the column plan (§7) --------------------------------------------------------------------------
+# --- the column plan --------------------------------------------------------------------------
 
 
 async def test_a_pair_stores_each_side_s_engine_classes_and_declared_types(targets: TargetRegistry) -> None:
@@ -220,7 +220,7 @@ async def test_a_pair_stores_each_side_s_engine_classes_and_declared_types(targe
         "name": "varchar(100)",
         "status": "char(3)",
     }
-    # Both sides declare both columns alike: the engine hashes them, the worker none (§10).
+    # Both sides declare both columns alike: the engine hashes them, the worker none.
     assert (a["digest"], b["digest"], stored["rendering"]) == ([], [], 1)
 
 
@@ -388,7 +388,7 @@ async def test_an_account_reads_without_tls_when_its_target_allows_it(
     assert relation is not None and relation.facts["tls"] is False
 
 
-# --- per-key reads (§8, §9) ------------------------------------------------------------------------
+# --- per-key reads ------------------------------------------------------------------------
 
 
 def _row(obs: Observation) -> Any:
@@ -542,7 +542,7 @@ async def test_a_lookup_uses_the_key_s_index(targets: TargetRegistry) -> None:
         await session.close()
 
 
-# --- what a scan is read in (§6, §8, §11) ------------------------------------------------------------
+# --- what a scan is read in ------------------------------------------------------------
 
 
 async def test_a_scan_orders_keys_by_code_point_whatever_the_collation(targets: TargetRegistry) -> None:
@@ -585,7 +585,7 @@ async def test_closing_a_session_cancels_its_statement(
     assert mysql_server.execute(running.format(int(thread))) == [(0,)]
 
 
-# --- rows hashed in the engine (§10) -----------------------------------------------------------------
+# --- rows hashed in the engine -----------------------------------------------------------------
 
 
 async def _digests(targets: TargetRegistry, target: str, side: Plan) -> dict[str, bytes]:
@@ -664,7 +664,7 @@ async def test_a_double_is_rendered_whole_in_a_batch_in_a_view_and_in_the_engine
         assert ours["0"] == hashlib.sha256(b'["-2.2062116443042876e-16"]').digest()
 
 
-# --- a filter and a key map behave as PostgreSQL's (§8, §10) -------------------------------------------
+# --- a filter and a key map behave as PostgreSQL's -------------------------------------------
 
 
 async def test_a_char_filter_and_prefix_pad_select_as_on_postgresql(
@@ -694,13 +694,13 @@ async def test_a_char_filter_and_prefix_pad_select_as_on_postgresql(
     assert found["a"] == found["b"] == (["P-001", "P-002"], 3)
 
 
-# --- what a full or cramped server answers (§11) -------------------------------------------------------
+# --- what a full or cramped server answers -------------------------------------------------------
 
 
 async def test_an_account_at_its_connection_limit_is_unreachable(
     mysql_server: MySQLServer, database: str, tmp_path: Path
 ) -> None:
-    # DEPLOY tells the DBA to set the account's max_user_connections: over it the server answers 1226,
+    # A DBA sets the account's max_user_connections: over it the server answers 1226,
     # not the 1203 of its own limit, which once failed a scan at its third try, three sweeps later.
     targets = _as(mysql_server, database, tmp_path, "GRANT SELECT ON {db}.* TO {user}")
     user = targets.get("db-a").database.user  # type: ignore[union-attr]
@@ -773,10 +773,10 @@ async def test_a_sort_that_fills_the_temporary_directory_is_temp_space(
         batches = await MYSQL.scan(session, stored["a"], None)
         with pytest.raises(TableError) as exc:
             await anext(batches)
-    assert (type(exc.value), str(exc.value)) == (TargetTempSpace, "MySQL 3")  # F3, at first sight
+    assert (type(exc.value), str(exc.value)) == (TargetTempSpace, "MySQL 3")  # at first sight
 
 
-# --- the PostgreSQL side of a pair with MySQL (§6) ----------------------------------------------------
+# --- the PostgreSQL side of a pair with MySQL ----------------------------------------------------
 
 
 async def test_the_postgresql_side_of_a_pair_across_engines_is_fetched_by_bytes(
@@ -817,7 +817,7 @@ async def test_the_postgresql_side_of_a_pair_across_engines_is_fetched_by_bytes(
     # 100 rows whose width is not known yet, then as many as hold 4 MiB at the widest row's width.
     assert sizes[0] == 100 and set(sizes[1:-1]) == {41} and sum(sizes) == rows
     assert peak < rows * width / 2
-    # Between two PostgreSQL tables the fetch is what it was (D3), also where the worker hashes a column.
+    # Between two PostgreSQL tables the fetch is what it was, also where the worker hashes a column.
     mapped = {"body": {"as": "string"}}
     both["targets"]["db-a"] = both["targets"]["db-b"]
     (tmp_path / "targets.yaml").write_text(yaml.safe_dump(both))
@@ -828,7 +828,7 @@ async def test_the_postgresql_side_of_a_pair_across_engines_is_fetched_by_bytes(
     assert (await fetched(frozen["b"]))[0] == [rows]
 
 
-# --- what a table pre-check reads (docs/mvp/PRECHECKS.md §4, §5) ----------------------------------------
+# --- what a table pre-check reads ----------------------------------------
 
 # One row a class holds at its edge: a CHAR padded and blank, texts that differ by case alone in the default,
 # case-insensitive collation and by a trailing space alone under its PAD SPACE, an emoji, an empty text, a

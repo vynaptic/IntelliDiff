@@ -19,6 +19,8 @@ deploy/config/*.yaml
 !deploy/config/*.example.yaml
 deploy/docker-compose.site.yml
 /.env
-# A reader's own specs and practice files (docs/guide): they hold a site's endpoints and keys
+# A reader's own specs and practice files (docs/user-guide.md): they hold a site's endpoints and keys
 /my-specs/
 /practice/
+# tools/bench.py's result files
+/bench-results/

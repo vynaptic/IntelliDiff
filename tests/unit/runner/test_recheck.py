@@ -1,4 +1,4 @@
-"""Confirm-on-mismatch (§8.3) on hand-built results: how a recheck judges the first read."""
+"""Confirm-on-mismatch on hand-built results: how a recheck judges the first read."""
 
 from __future__ import annotations
 
@@ -69,7 +69,8 @@ FIRST = result(Outcome.MISMATCH, A1, B1, finding(), obs_a_id="O-a1", obs_b_id="O
 
 
 def test_unchanged_sides_confirm_the_first_read() -> None:
-    # A raw-only change (a normaliser removes it) is not a change of A: §8.3 hashes the normalised document.
+    # A raw-only change (a normaliser removes it) is not a change of A: a recheck hashes the normalised
+    # document.
     judged = confirm(FIRST, result(Outcome.MISMATCH, complete("A1", raw="jitter"), B1, finding()), spec=SPEC)
     assert (judged.outcome, judged.confirmation, judged.drift_reason) == (
         Outcome.MISMATCH,
@@ -154,14 +155,14 @@ def test_the_policy_rechecks_provisional_results_of_its_outcomes() -> None:
 
 
 def test_fixed_files_are_read_once() -> None:
-    """docs/mvp/FILES.md §12 (D13): a recheck reads no side of fixed files again, so none is due where their
+    """A recheck reads no side of fixed files again, so none is due where their
     bytes alone would answer it: between two fixed sides, or when the fixed side is the unusable one (a line
     that was not a row, a key several rows hold). A read that failed read no bytes: it is still due. A result
     both of whose sides read fixed files is final as read (frozen_cut)."""
     policy = RecheckPolicy.from_spec(SPEC.raw)
     a, b, both = {Side.A}, {Side.B}, {Side.A, Side.B}
     assert policy.due(FIRST) and policy.due(FIRST, a) and policy.due(FIRST, b) and not policy.due(FIRST, both)
-    not_rows = SideState.incomplete("unparseable", "no row read holds the key")  # M1
+    not_rows = SideState.incomplete("unparseable", "no row read holds the key")
     ambiguous = SideState.incomplete("identity_ambiguous")
     for unusable in (not_rows, ambiguous):
         on_a = result(Outcome.INCONCLUSIVE, unusable, B1, inconclusive_reason=unusable.reason)

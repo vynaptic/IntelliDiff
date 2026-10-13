@@ -42,21 +42,21 @@ class RunData:
     root_causes: list[Row]  # most probable first
     counters: Row  # the cycle's; empty until it ends
     live: bool  # read from the endpoints, not from sample files
-    graph: list[Row]  # the cycle's graph parity rows (docs/mvp/GRAPH.md §4); none for other runs
+    graph: list[Row]  # the cycle's graph parity rows; none for other runs
     retention_days: int  # of the run's retention class
     expires_at: datetime | None  # when the cycle's retention ends; None while it is live
     approval: Row  # the spec approval the cycle ran under (approvals.run_approval)
     signoffs: list[Row]  # the cycle's sign-off requests, newest first
     adjudication: Row | None = None  # the stored one its requested or approved sign-off attests
-    draw: Row | None = None  # a sampled cycle's draw (docs/mvp/SAMPLING.md §5)
-    sample: Row | None = None  # its judgement, stored when the cycle ended (§8.1); None while it is live
-    labelling: Row | None = None  # the ended cycle's labelling reports state (docs/mvp/ACCURACY.md §10)
+    draw: Row | None = None  # a sampled cycle's draw
+    sample: Row | None = None  # its judgement, stored when the cycle ended; None while it is live
+    labelling: Row | None = None  # the ended cycle's labelling reports state
     labelling_attested: str | None = None  # the requested or approved sign-off attesting it
     labellings: int = 0  # without one: the labellings drawn of the cycle, none of them labelled
 
 
 def retention_line(data: RunData) -> str:
-    """Until when the cycle's raw evidence is kept (docs/mvp/RETENTION.md §4.4)."""
+    """Until when the cycle's raw evidence is kept."""
     run, kept = data.run, f"(retention {data.run['retention']})"
     if run["hold_reason"] is not None:
         return f"Evidence held until released {kept}"
@@ -66,12 +66,12 @@ def retention_line(data: RunData) -> str:
 
 
 def approval_lines(data: RunData) -> list[str]:
-    """What the spec approval the cycle ran under and its sign-off say (docs/mvp/APPROVALS.md §4)."""
+    """What the spec approval the cycle ran under and its sign-off say."""
     return [approvals.label(data.approval), *filter(None, [approvals.signoff_label(data.signoffs)])]
 
 
 def licence_line(data: RunData) -> str | None:
-    """What the licence the run was made under says (docs/mvp/LICENCE.md §10); None without a record."""
+    """What the licence the run was made under says; None without a record."""
     return licence.run_label(data.run)
 
 
@@ -80,7 +80,7 @@ def rank(f: Mapping[str, Any]) -> int:
 
 
 def is_discrepant(f: Mapping[str, Any]) -> bool:
-    """Above INFO and unsuppressed, or suppressed by a ``bug`` rule (a known bug, §7.1)."""
+    """Above INFO and unsuppressed, or suppressed by a ``bug`` rule (a known bug)."""
     return rank(f) > 0 and (not f["suppressed"] or f["rule_classification"] == "bug")
 
 
@@ -90,13 +90,13 @@ def compared_columns(tables: Mapping[str, Any]) -> list[str]:
 
 
 def filters(spec: CompiledSpec) -> dict[str, str]:
-    """Each table side's filter as the spec writes it (TABLES.md §9), by side."""
+    """Each table side's filter as the spec writes it, by side."""
     return {s.value: c.table.where for s, c in spec.sides.items() if c.table is not None and c.table.where}
 
 
 def _engine(side: str, plan: Mapping[str, Any], scan: Mapping[str, Any] | None) -> str:
     """The engine a side's plan names; a file side's with its format, its files, its lines that were not
-    rows and, once scanned, its keys held by several rows (docs/mvp/FILES.md §16)."""
+    rows and, once scanned, its keys held by several rows."""
     if plan.get("engine") != "files":
         return f" ({plan['engine']})" if "engine" in plan else ""
     counts = f"{plan['file_count']:,} file(s), {plan['rejected']:,} line(s) not rows"
@@ -106,7 +106,7 @@ def _engine(side: str, plan: Mapping[str, Any], scan: Mapping[str, Any] | None) 
 
 
 def tables_line(data: RunData) -> str | None:
-    """A table run's plan and scan counts as one line (docs/mvp/TABLES.md §6), each side with the engine
+    """A table run's plan and scan counts as one line, each side with the engine
     its plan names (a file side has no schema); None for other runs."""
     run = data.run
     tables, scan = run["params"].get("tables"), run["scan"]
@@ -166,7 +166,7 @@ async def load_run(ctx: Context, run_id: str, cycle: int | None = None, *, resul
         rows = await repo.pages(repo.list_results, conn, run_id, cycle) if results else []
         findings = await repo.pages(repo.list_findings, conn, run_id, cycle) if results else []
         causes = await repo.list_root_causes(conn, run_id, cycle)
-        run["scan"] = await repo.get_scan(conn, run_id, cycle)  # the reported cycle's (TABLES.md §11)
+        run["scan"] = await repo.get_scan(conn, run_id, cycle)  # the reported cycle's
         live = run["params"].get("samples_dir") is None
         if recount:
             tally = Tally(live=live, recheck_outcomes=RecheckPolicy.from_spec(spec.raw).outcomes)
@@ -180,12 +180,12 @@ async def load_run(ctx: Context, run_id: str, cycle: int | None = None, *, resul
         approval = await approvals.run_approval(conn, run, cycle)
         signoffs = await repo.approval_history(conn, run_id=run_id, cycle=cycle)
         active = next((s for s in signoffs if s["status"] in ("requested", "approved")), None)
-        fixed = active and active["attests"].get("adjudication")  # attests format 1 (docs/mvp/PACK.md §5)
+        fixed = active and active["attests"].get("adjudication")  # attests format 1
         adjudication = fixed and await repo.cycle_adjudication(conn, run_id, cycle, fixed["adjudication_id"])
         drawn = await repo.get_draw(conn, run_id, cycle)
         judged = (await repo.get_cycle(conn, run_id, cycle) or {}).get("sample")
         labelling, attested, unlabelled = None, None, 0
-        if expires is not None:  # an ended cycle's (docs/mvp/ACCURACY.md §10); a live one has none
+        if expires is not None:  # an ended cycle's; a live one has none
             labelling, attested = await accuracy.reported(conn, run_id, cycle, signoffs)
             unlabelled = 0 if labelling else len(await repo.list_labellings(conn, run_id, cycle))
     by_key: dict[str, list[Row]] = defaultdict(list)
@@ -260,8 +260,8 @@ def root_causes_section(data: RunData, top: int = TOP_ROOT_CAUSES) -> Section:
 
 
 def strata_section(data: RunData) -> Section | None:
-    """A sampled cycle's draw and each sign-off stratum's counts, bounds and verdict, as its end stored them
-    (docs/mvp/SAMPLING.md §14), never recounted; None for a cycle without a draw."""
+    """A sampled cycle's draw and each sign-off stratum's counts, bounds and verdict, as its end stored
+    them, never recounted; None for a cycle without a draw."""
     from deltasleuth.core.sampling import percent
 
     drawn, judged = data.draw, data.sample
@@ -278,7 +278,7 @@ def strata_section(data: RunData) -> Section | None:
     ]
     if judged is None and data.expires_at is None:  # live: no ds.cycles row yet
         return Section(title, [*lines, "Bounds are judged when the cycle ends."])
-    if judged is None:  # its judgement raised when it ended (unjudged, docs/mvp/SAMPLING.md §9)
+    if judged is None:  # its judgement raised when it ended (unjudged)
         unjudged = "the cycle ended without a judgement and cannot be signed off: draw again."
         return Section(title, [*lines, f"Judgement: none: {unjudged}"])
     lines += [f"Judgement: {judged['status']}.", "No bound is given for the strata pooled."]
@@ -302,7 +302,7 @@ def strata_section(data: RunData) -> Section | None:
 
 
 def accuracy_section(data: RunData) -> Section | None:
-    """An ended cycle's labelled accuracy (docs/mvp/ACCURACY.md §7): what its labelling says
+    """An ended cycle's labelled accuracy: what its labelling says
     (``accuracy.lines``, whole) and may not be read as (``LIMITS``), or that none was labelled, with how
     many were drawn; None for a live cycle. The labelling is the one its sign-off attests, else the newest
     a person labelled, else the newest labelled."""
@@ -317,7 +317,7 @@ def accuracy_section(data: RunData) -> Section | None:
 
 
 def graph_section(data: RunData) -> Section | None:
-    """Bulk graph parity (docs/mvp/GRAPH.md §4) of a run whose spec has ``graph``; None for others."""
+    """Bulk graph parity of a run whose spec has ``graph``; None for others."""
     if not data.spec.raw.get("graph"):
         return None
     title, g = "Graph parity", (data.run["scan"] or {}).get("graph")
@@ -332,7 +332,7 @@ def graph_section(data: RunData) -> Section | None:
         f"members, {g['groups_different']} differ.",
         f"Components: {g['split']} split, {g['merge']} merge, {g['rearrange']} rearranged, {g['oversized']} "
         "too large to expand.",
-        # A global index needs every component, and L2 expands only the affected ones (GRAPH.md §3).
+        # A global index needs every component, and L2 expands only the affected ones.
         "ARI and VI are not reported: L2 expands only the components the differing groups touch.",
         "Counts are members for a group or an oversized component, and components for a split, merge or "
         "rearrange.",

@@ -13,11 +13,10 @@
 # first.
 # The options are for a second installation on this machine: its own project name, port and subnet. For
 # a first one whose port 8000 is taken, --port N alone is enough.
-# Every step by hand: docs/guide/A1-install-by-hand.md. An office deployment: docs/mvp/DEPLOY.md.
+# This trial, and an office deployment set up by hand: docs/deployment.md.
 
-# The contract is docs/mvp/FIRSTRUN.md section 3: every refusal below carries its label there (U1 to U27
-# before anything is created, V1 to V8 after). No secret and no token reaches the terminal, a variable,
-# a command line or the environment: each goes from the command that makes it straight into its file.
+# No secret and no token reaches the terminal, a variable, a command line or the environment: each goes
+# from the command that makes it straight into its file.
 
 set -eu
 LC_ALL=C
@@ -39,7 +38,7 @@ die() {
     exit 2
 }
 
-# Whether $1 is what Compose takes as a project and Docker as an image name (U3).
+# Whether $1 is what Compose takes as a project and Docker as an image name.
 named() {
     case $1 in '' | *[!a-z0-9_-]*) return 1 ;; esac
     printf '%s\n' "$1" | grep -Eqx '[a-z0-9]+((_|__|-+)[a-z0-9]+)*'
@@ -61,7 +60,7 @@ holds() {
     printf '%s\n' "$1" | sed 's/^[[:blank:]]*//' | grep -Fxq -e "$2"
 }
 
-# Whether the Compose version $1 is older than 2.24.4, or is no version at all (U24).
+# Whether the Compose version $1 is older than 2.24.4, or is no version at all.
 outdated() {
     major=${1#v}
     case $major in [0-9]*.[0-9]*.[0-9]*) ;; *) return 0 ;; esac
@@ -84,7 +83,7 @@ made() {
     printf 'created  %s\n' "$1"
 }
 
-# -- options (U1 to U5) ----------------------------------------------------------------------------
+# -- options ---------------------------------------------------------------------------------------
 
 for arg; do
     case $arg in
@@ -125,7 +124,7 @@ case $subnet in
         ;;
 esac
 
-# -- the folder, the shell and Docker (U6 to U10) --------------------------------------------------
+# -- the folder, the shell and Docker --------------------------------------------------------------
 
 [ -f deploy/docker-compose.yml ] ||
     die 'deploy/docker-compose.yml is not in this folder: cd to the DeltaSleuth checkout, then sh deploy/up.sh'
@@ -133,14 +132,14 @@ esac
     die 'unset COMPOSE_FILE and COMPOSE_PROJECT_NAME in this shell: they override .env'
 for tool in docker openssl; do
     command -v "$tool" > /dev/null 2>&1 ||
-        die "$tool is not installed (docs/guide/01-install-docker.md, section 1)"
+        die "$tool is not installed"
 done
 compose=$(docker compose version --short 2> /dev/null) || die 'docker compose (version 2) is not installed'
 docker info > /dev/null 2>&1 || die 'Docker is not running, or this account may not use it'
 
-# -- what an earlier run left, and links to nothing (U23, U27, U22) --------------------------------
+# -- what an earlier run left, and links to nothing ------------------------------------------------
 
-# A link to a file that is not there exists too (I1): refused here, since "-e" below does not see it.
+# A link to a file that is not there exists too: refused here, since "-e" below does not see it.
 for file in .env "$SITE" "$SETTINGS" deploy/config/targets.yaml deploy/config/llm_profiles.yaml \
     deploy/secrets/db_password deploy/secrets/db_dsn deploy/secrets/kek deploy/secrets/tokeniser "$TOKEN"; do
     if [ -e "$file.new" ] || [ -L "$file.new" ]; then die "$file.new is left by an interrupted run: $AGAIN"; fi
@@ -152,7 +151,7 @@ for file in deploy/secrets/db_password deploy/secrets/db_dsn deploy/secrets/kek 
     [ ! -e "$file" ] || [ -s "$file" ] || die "$file is empty: $AGAIN"
 done
 
-# -- the project: .env's, else --project (U12, U3, U11, U13) ---------------------------------------
+# -- the project: .env's, else --project -----------------------------------------------------------
 
 if [ -e .env ]; then
     files=$(dotenv COMPOSE_FILE) || files=
@@ -160,7 +159,7 @@ if [ -e .env ]; then
     case $files in *[!A-Za-z0-9._/:-]*) files= ;; esac
     case :$files: in
         *:deploy/docker-compose.source.yml:*) ;;
-        *) die '.env has no line COMPOSE_FILE=… that names deploy/docker-compose.source.yml (once, unquoted): this script runs an unsigned build of this checkout for a trial; a loaded release is run as docs/mvp/DEPLOY.md says' ;;
+        *) die '.env has no line COMPOSE_FILE=… that names deploy/docker-compose.source.yml (once, unquoted): this script runs an unsigned build of this checkout for a trial; a loaded release is run as docs/deployment.md says' ;;
     esac
     name=$(dotenv COMPOSE_PROJECT_NAME) || name='?'
     name=${name:-COMPOSE_PROJECT_NAME=deltasleuth}
@@ -173,16 +172,16 @@ if [ -e .env ]; then
 else
     release=$(sed -n 's/^  image: \(deltasleuth:[^[:blank:]]*\).*/\1/p' deploy/docker-compose.yml)
     if [ -n "$release" ] && docker image inspect "$release" > /dev/null 2>&1; then
-        die "the release image $release is loaded on this machine and this folder has no .env: this script runs an unsigned build of this checkout for a trial; a release is run as docs/mvp/DEPLOY.md says (for a trial all the same: cp deploy/env.source.example .env and, for another project than deltasleuth, add a line COMPOSE_PROJECT_NAME=<name> to it; then run this script again)"
+        die "the release image $release is loaded on this machine and this folder has no .env: this script runs an unsigned build of this checkout for a trial; a release is run as docs/deployment.md says (for a trial all the same: cp deploy/env.source.example .env and, for another project than deltasleuth, add a line COMPOSE_PROJECT_NAME=<name> to it; then run this script again)"
     fi
     project=${project:-deltasleuth}
 fi
 
-# -- the address: the settings', else --port (U14, U15, U24) ---------------------------------------
+# -- the address: the settings', else --port -------------------------------------------------------
 
 if [ -e "$SETTINGS" ]; then
     office() {
-        die "$SETTINGS is not a token sign-in trial at a loopback http address ($1): this script sets up a trial only; docs/mvp/DEPLOY.md is the office deployment"
+        die "$SETTINGS is not a token sign-in trial at a loopback http address ($1): this script sets up a trial only; docs/deployment.md is the office deployment"
     }
     grep -q '^auth:' "$SETTINGS" || office 'it has no auth block'
     if grep -q '^  oidc:' "$SETTINGS"; then office 'auth.oidc is on'; fi
@@ -210,7 +209,7 @@ elif [ "$port" != 8000 ] || [ "${subnet:-$SUBNET}" != "$SUBNET" ]; then
 fi
 subnet=${subnet:-$SUBNET}
 
-# -- the keys, and what Docker already holds (U25, U21, U26, U16, U20, U17 to U19) -----------------
+# -- the keys, and what Docker already holds -------------------------------------------------------
 
 # The folder's mode is all that keeps its files private: the containers' users must read them (444).
 if [ -d deploy/secrets ]; then
@@ -268,7 +267,7 @@ if [ ! -e "$SETTINGS" ] && [ ! -e "$SITE" ]; then
     done
 fi
 
-# -- from here on files are made: each as <file>.new, then moved (I1) ------------------------------
+# -- from here on files are made: each as <file>.new, then moved -----------------------------------
 
 new=
 trap '[ -z "$new" ] || rm -f "$new"' EXIT
@@ -361,7 +360,7 @@ for name in db_password db_dsn kek tokeniser; do
     made "$file"
 done
 
-# $1 failed, and Docker or ds has said why (V5).
+# $1 failed, and Docker or ds has said why.
 failed() {
     die "$1 failed (the lines above say why): correct it and run this script again; it keeps what exists"
 }
@@ -373,7 +372,7 @@ printf '== 4/6 Workspace and database\n'
 docker compose run --rm app ds init || failed 'ds init'
 docker compose run --rm app ds migrate || failed 'ds migrate'
 
-# The app is not healthy: its last error line, if it logged one, then V6.
+# The app is not healthy: its last error line, if it logged one, then the refusal.
 unhealthy() {
     docker compose logs --no-log-prefix --tail 40 app 2> /dev/null | grep '^error:' | tail -n 1 >&2
     die 'the app did not become healthy; the line above, if any, is its last error (all of it: docker compose logs --tail 40 app)'
@@ -404,7 +403,7 @@ printf '== 6/6 First token\n'
 if [ -e "$TOKEN" ]; then
     kept "$TOKEN"
     id=$(cut -d_ -f2 < "$TOKEN") # the T- name every list shows: no secret
-    # ds opens here what a start opens: a mistake the running app has not read yet ends the run (V5).
+    # ds opens here what a start opens: a mistake the running app has not read yet ends the run.
     tokens=$(docker compose run --rm -T app ds token list) || failed 'ds token list'
     printf '%s\n' "$tokens" | grep -e "^T-$id " | grep -q -e '  active  ' ||
         printf 'warning: %s\n' "the token in $TOKEN (T-$id) is not an active token of this database (revoked, expired, or another database's) and will be refused: remove the file and run this script again for a new one" >&2
@@ -444,5 +443,5 @@ DeltaSleuth is running: Compose project "$project", an unsigned build of this ch
   You act as      the token "first-run" (role spec_author; it expires at most 90 days after it was made): the audit log names the token, not you
   ds commands     docker compose run --rm -e DS_OPERATOR="\$(id -un)" app ds --help
   Stop, start     docker compose stop        docker compose --profile mocks up -d
-  Every step      docs/guide/A1-install-by-hand.md        The office deployment: docs/mvp/DEPLOY.md
+  Read more       docs/deployment.md (this trial, and the office deployment)
 EOF

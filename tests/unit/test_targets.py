@@ -1,4 +1,4 @@
-"""Targets declared in the product (docs/mvp/DEPLOY.md §7, "In the product"): both lists load and the
+"""Targets declared in the product: both lists load and the
 targets file wins, an invalid list stops the start, an entry is judged as the targets file's and the list
 is trusted for no more than the product writes, each credential lies in a file of its own for the owner
 alone and is kept, replaced or needed again, a failed write leaves the list and its credentials as they

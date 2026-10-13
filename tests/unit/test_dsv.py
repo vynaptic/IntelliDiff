@@ -1,4 +1,4 @@
-"""The vendor tool (docs/mvp/LICENCE.md §14): keygen writes an encrypted key outside any git working tree;
+"""The vendor tool: keygen writes an encrypted key outside any git working tree;
 issue refuses what ``licence.parse`` would and a key no build trusts, and what it writes parses back as
 registered."""
 

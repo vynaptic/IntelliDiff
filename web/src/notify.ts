@@ -1,4 +1,4 @@
-/** What the Notifications screen and every screen's banners say (docs/mvp/ALERTS.md §10, §11), in the words
+/** What the Notifications screen and every screen's banners say, in the words
  *  `ds notify` prints: the feed's cursor, a channel (a SaaS one badged external), a rule, a mute, a delivery and a
  *  test's answer; and who sees the Mute form. The server still decides. */
 // Type imports only, so that Node runs the tests of this module without a bundler.

@@ -1,4 +1,4 @@
-// What the Run screen and the chat say about retention (docs/mvp/RETENTION.md §4.4), from GET /v1/runs/{id}.
+// What the Run screen and the chat say about retention, from GET /v1/runs/{id}.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 

@@ -1,4 +1,4 @@
--- People, sessions, API tokens and an attributable audit log (docs/mvp/AUTH.md).
+-- People, sessions, API tokens and an attributable audit log.
 -- Roles come from the IdP at each sign-in; no table grants them. '[\x01-\x1f\x7f-\x9f]' is every
 -- C0 and C1 control character, spelled out so the check does not depend on the database locale.
 CREATE TABLE ds.users (
@@ -21,7 +21,7 @@ CREATE TABLE ds.api_tokens (
     token_id      text PRIMARY KEY CHECK (token_id ~ '^T-[0-9a-f]{16}$'),
     name          text NOT NULL CHECK (name ~ '^[a-z0-9][a-z0-9._-]{2,63}$'),
     owner         text NOT NULL CHECK (owner <> '' AND length(owner) <= 200 AND owner !~ '[\x01-\x1f\x7f-\x9f]'),
-    owner_user_id text REFERENCES ds.users,       -- the accountable person; required over the API in oidc (§5)
+    owner_user_id text REFERENCES ds.users,       -- the accountable person; required over the API in oidc
     role          text NOT NULL CHECK (role IN ('viewer', 'operator', 'spec_author')),  -- TOKEN_ROLES
     secret_hash   bytea NOT NULL CHECK (octet_length(secret_hash) = 32),              -- sha256(token)
     created_by    text NOT NULL,
@@ -45,7 +45,7 @@ CREATE TABLE ds.sessions (
     roles        text[] NOT NULL CHECK (roles <@ '{viewer,operator,spec_author,rule_approver,pii_reader,admin}'),
     roles_sha256 text CHECK (roles_sha256 ~ '^[0-9a-f]{64}$'),   -- the role mapping it was granted under
     client_addr  inet,
-    auth_time    timestamptz,          -- ID token claims: token creation (§5), step-up
+    auth_time    timestamptz,          -- ID token claims: token creation, step-up
     acr          text,
     amr          text[],
     created_at   timestamptz NOT NULL DEFAULT now(),

@@ -1,4 +1,4 @@
-"""A cycle's counters (§7.1) from its stored results; every identity must hold exactly.
+"""A cycle's counters from its stored results; every identity must hold exactly.
 
 ``total = match + different + indeterminate + cancelled + outstanding``: cancelled keys never got a
 result, and outstanding keys are provisional discrepancies still owed a recheck. File evidence cannot
@@ -7,7 +7,7 @@ many were never re-read). ``compared = match + different``; the mismatch rate is
 ``different / compared`` and coverage ``compared / total``, "unavailable" without a denominator.
 A table scan's identical rows have no result rows: they count as MATCH confirmed ``bulk_exhaustive``.
 ``Tally`` counts a result at a time, for a cycle read in pages; ``count_cycle`` is it over a list.
-``count_groups`` counts the same from grouped rows: a sample's strata (docs/mvp/SAMPLING.md §8.1).
+``count_groups`` counts the same from grouped rows: a sample's strata.
 """
 
 from __future__ import annotations
@@ -141,7 +141,7 @@ def count_groups(groups: Iterable[Row], *, live: bool, recheck_outcomes: Iterabl
     first outcome, confirmation, reasons, truncated sides and ``bug`` flag; a NULL outcome, keys without a
     result), which ``total`` counts; without the counts only findings give (by rule, normalisation only,
     schema drift). ``api_uncomparable`` counts the INCONCLUSIVE keys truncated on a side, whatever their
-    reason: a recheck cannot lift an API cap (docs/mvp/SAMPLING.md D13).
+    reason: a recheck cannot lift an API cap.
 
     Raises ``ReconciliationError`` naming every identity that does not hold.
     """

@@ -1,10 +1,10 @@
-"""Sign-off sampling (docs/mvp/SAMPLING.md §9, §14): a population's ledger, a draw with its live progress or
+"""Sign-off sampling: a population's ledger, a draw with its live progress or
 its sign-off precheck, and closing a name's draws that did not pass with a note of the fix.
 
-Only aggregates leave these routes: strata, counts and bounds, never a key or a key's label (§11.5). A
+Only aggregates leave these routes: strata, counts and bounds, never a key or a key's label. A
 draw's nonce is withheld while its cycle is live, so nobody reading it can compute the sample being
 compared, and from a caller below rule_approver with each stratum's ``u_max``: with keys shown in clear,
-they tell which keys lie in a stratum compared whole (§19). A close is a person's statement under SSO,
+they tell which keys lie in a stratum compared whole. A close is a person's statement under SSO,
 checked as revoke reasons are.
 """
 
@@ -69,7 +69,7 @@ async def ledger(
 @router.get("/samples/{draw_id}")
 async def draw(ctx: Ctx, who: Viewer, draw_id: str) -> Response:
     """The draw (``withheld``) and its ledger; while its cycle is live, its ``progress`` (and no nonce),
-    else its sign-off ``precheck`` (G1-G11, computed now; null once the cycle's purge started: it is never
+    else its sign-off ``precheck`` (computed now; null once the cycle's purge started: it is never
     signed off)."""
     async with ctx.pool.connection() as conn:
         found = need(await repo.ledger_draw(conn, draw_id), f"draw {draw_id}")
@@ -90,7 +90,7 @@ async def draw(ctx: Ctx, who: Viewer, draw_id: str) -> Response:
 @router.post("/samples/close")
 async def close(ctx: Ctx, who: Operator, body: CloseIn) -> Response:
     """Close every ended bottom_k draw of the name's ledger that did not pass and is not closed, with a note
-    of what was fixed (C1-C5): the draws closed."""
+    of what was fixed: the draws closed."""
     if (mode := ctx.settings.auth_mode) != "oidc":
         raise HTTPException(
             409, f"closing draws needs SSO (auth.oidc); this deployment runs in {MODES[mode]}"

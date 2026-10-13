@@ -200,7 +200,7 @@ def test_every_grouped_finding_maps_to_its_cause(causes, phone_missing, changed)
 
 
 def test_bug_suppressed_findings_are_root_causes_of_their_own(causes, phone_missing, changed, tok) -> None:
-    """A bug rule's KNOWN_DIFF is discrepant (§7.1), so its findings have a cause."""
+    """A bug rule's KNOWN_DIFF is discrepant, so its findings have a cause."""
     results = [
         result("C00000001", bug(changed("C00000001"))),
         result("C00000002", bug(changed("C00000002"))),

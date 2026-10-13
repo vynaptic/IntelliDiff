@@ -1,7 +1,7 @@
-"""Sign-in (docs/mvp/AUTH.md §2, §3, §5): the OIDC code flow through the fake IdP and its cookies, the
+"""Sign-in: the OIDC code flow through the fake IdP and its cookies, the
 refusals before and after the identity is known, sessions and how they end, CSRF, sign-out, token
 sign-in in tokens mode, no secret in the tables or the log, and the plain cookies of a plain-http
-loopback ``public_url`` (§3, exception E1), which the settings alone give."""
+loopback ``public_url``, which the settings alone give."""
 
 from __future__ import annotations
 
@@ -714,7 +714,7 @@ def test_signing_out_twice_writes_one_row_and_an_ended_session_cannot_come_back(
     assert revived.status_code == 401
 
 
-# -- a plain-http loopback public_url (docs/mvp/AUTH.md §3, exception E1) -----------------------------
+# -- a plain-http loopback public_url ------------------------------------------------------------------
 
 TRIAL = "http://localhost:8000"
 PLAIN = "ds_session_8000"
@@ -812,7 +812,7 @@ def test_two_loopback_installations_share_a_jar_and_keep_their_sessions(
 def test_an_https_public_url_keeps_the_prefixed_secure_cookies(
     open_client: OpenClient, callers: Any, public_url: str
 ) -> None:
-    """Under https, a loopback address included, the cookie is the one it was before E1, byte for byte, and
+    """Under https, a loopback address included, the cookie is the prefixed, secure one, byte for byte, and
     a valid secret under a plain name is no session."""
     port = urlsplit(public_url).port or 443
     with open_client(auth={"public_url": public_url}) as client:
@@ -838,8 +838,8 @@ def test_an_https_public_url_keeps_the_prefixed_secure_cookies(
 
 
 def test_a_request_cannot_choose_the_cookie_form(open_client: OpenClient, callers: Any) -> None:
-    """E1 follows ``auth.public_url`` alone. A loopback ``Host`` passes the Host check under any
-    ``public_url`` (§3), and names neither the cookie nor its port; nor do ``Origin`` and the headers a
+    """The plain cookies follow ``auth.public_url`` alone. A loopback ``Host`` passes the Host check under any
+    ``public_url``, and names neither the cookie nor its port; nor do ``Origin`` and the headers a
     proxy would add."""
     loopback = {"Host": "localhost:8000", "X-Forwarded-Proto": "http", "Forwarded": "proto=http"}
     with open_client(auth={}) as client:  # https://ds.test

@@ -1,8 +1,8 @@
-"""tools/release.py (docs/mvp/RELEASE.md §13): keygen writes an encrypted key and its procedure outside every
-repository and synced folder; build turns a scratch checkout into a signed bundle, running stub docker, syft,
-grype, uv, npm and pip-audit as §7 and §9 set, and refuses what §9 lists, leaving nothing; the gate and the
-SBOM completeness check are pure; rescan applies today's triage; sign signs only advisories, key transitions
-and OpenVEX; and the real syft and grype run as the tool runs them, deaf to any other configuration."""
+"""tools/release.py: keygen writes an encrypted key and its procedure outside every repository and synced
+folder; build turns a scratch checkout into a signed bundle, running stub docker, syft, grype, uv, npm and
+pip-audit, and refuses what it must, leaving nothing; the gate and the SBOM completeness check are pure;
+rescan applies today's triage; sign signs only advisories, key transitions and OpenVEX; and the real syft
+and grype run as the tool runs them, deaf to any other configuration."""
 
 from __future__ import annotations
 
@@ -197,9 +197,9 @@ def test_build_writes_the_bundle(scratch: Scratch, monkeypatch: pytest.MonkeyPat
     with _members(bundle / "source" / "deltasleuth-0.1.0-src.tar.gz") as tar:
         shipped = sorted(m.name.removeprefix("deltasleuth-0.1.0/") for m in tar.getmembers() if m.isfile())
     assert {name.split("/")[0] for name in shipped} == {entry.split("/")[0] for entry in release.SHIPPED}
-    unshipped = {"docs/drafts/notes.md", "tests/test_nothing.py", "tools/triage.toml", ".env",
-                 "deploy/secrets/kek", "deploy/docker-compose.site.yml"}  # fmt: skip
-    assert {"docs/mvp/DEPLOY.md", "docs/guide/01-install-docker.md"} <= set(shipped)
+    unshipped = {"tests/test_nothing.py", "tools/triage.toml", ".env", "deploy/secrets/kek",
+                 "deploy/docker-compose.site.yml"}  # fmt: skip
+    assert {"docs/deployment.md", "docs/user-guide.md"} <= set(shipped)
     assert not unshipped & set(shipped)
     assert scratch.state()["context"] == shipped  # docker built the archive, not the working tree
     assert (bundle / "VERIFY.txt").read_text().split("\n", 2) == [
@@ -380,7 +380,7 @@ def _vendor_build(scratch: Scratch, monkeypatch: pytest.MonkeyPatch) -> dict[str
     return {"register": str(scratch.out)}
 
 
-# Each refusal of RELEASE.md §9, in its order: how to provoke it, and its output, formatted with the key's
+# Each refusal of build, in its order: how to provoke it, and its output, formatted with the key's
 # {fp} (12 digits), {out}, {notes}, the {head} after the build (12 digits) and the Dockerfile lines {from}
 # and {arg}.
 KEYS, TRIAGE, SYNCED = "tools/release-keys.txt", "tools/triage.toml", "keep release keys on this machine only"
@@ -419,7 +419,7 @@ REFUSALS: dict[str, tuple[Setup, str]] = {
     "changed procedure": (
         _commit(KEYS, lambda t: t[: t.index("procedure=") + 10] + "0" * 64 + "\n"),
         "release.PROCEDURE differs from the procedure filed with key {fp}…: a changed procedure is filed like"
-        " a new key (RELEASE.md §4)",
+        " a new key",
     ),
     "missing notes": (
         lambda s, m: {"notes": str(s.out / "notes.txt")},
@@ -428,12 +428,12 @@ REFUSALS: dict[str, tuple[Setup, str]] = {
     "notes that do not say the build is open": (
         _open_build,
         "--notes: a release without vendor keys is an open build: {notes} lacks the line"
-        f' "{release.OPEN_BUILD}" (LICENCE.md §19)',
+        f' "{release.OPEN_BUILD}"',
     ),
     "a vendor build's notes that say it is open": (
         _vendor_keys,
         "--notes: a release with vendor keys enforces a licence: {notes} holds the line"
-        f' "{release.OPEN_BUILD}" (LICENCE.md §19)',
+        f' "{release.OPEN_BUILD}"',
     ),
     "a vendor build's notes say nothing of it": (_vendor_build, "--register: {out} is not a writable file"),
     "register in a missing folder": (
@@ -688,7 +688,7 @@ def _retagged(scratch: Scratch) -> list[list[str]]:
 
 
 def test_a_build_refused_at_the_gate_leaves_no_image(scratch: Scratch) -> None:
-    """A refusal after docker build removes the image that build made (§9), by its tag alone and unforced, so
+    """A refusal after docker build removes the image that build made, by its tag alone and unforced, so
     nothing stays under the release tag and the next attempt has no image to leave untagged."""
     scratch.scenario["matches"].append(match("CVE-2026-20001", "High", "fixed", PSYCOPG, "3.3.7"))
     for attempt in (1, 2):
@@ -758,7 +758,7 @@ def test_a_refused_build_never_forces_its_image_out(scratch: Scratch) -> None:
 
 
 def test_an_affected_finding_ships_with_its_action(scratch: Scratch) -> None:
-    """A finding decided as affected has no justification (§8): the release ships it with its dated action,
+    """A finding decided as affected has no justification: the release ships it with its dated action,
     in the summary and the VEX, and suppresses nothing."""
     soon, action = TODAY + timedelta(days=20), "Reachable through the health check; fixed by 0.1.1."
     decided = (scratch.root / TRIAGE).read_text()
@@ -798,7 +798,7 @@ def test_a_failed_tag_keeps_the_signed_release(scratch: Scratch) -> None:
 def test_a_failure_after_the_register_names_its_line(
     scratch: Scratch, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
-    """A refusal after the register append (§9 step 9) leaves nothing in DIR, no partial transport tar
+    """A refusal after the register append leaves nothing in DIR, no partial transport tar
     included, and names the register line to strike."""
     if failure == "self-check":
         monkeypatch.setattr(signing, "verifies", lambda *args: False)
@@ -822,7 +822,7 @@ def test_a_failure_after_the_register_names_its_line(
 
 
 def test_one_version_for_each_platform(scratch: Scratch) -> None:
-    """One bundle per platform (D2): the second platform's build of the tagged revision keeps the tag, and the
+    """One bundle per platform: the second platform's build of the tagged revision keeps the tag, and the
     register refuses a platform twice."""
     assert scratch.build().exit_code == 0
     tag = scratch.git("rev-parse", "v0.1.0")
@@ -843,7 +843,7 @@ def test_one_version_for_each_platform(scratch: Scratch) -> None:
 
 
 def test_the_smoke_config_loads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """ds serve loads its settings and targets as it starts (§9 step 5): the real loaders take the smoke
+    """ds serve loads its settings and targets as it starts: the real loaders take the smoke
     test's config, loopback target included."""
     staging, loaded = release._staging(tmp_path / "staging"), []
 
@@ -872,7 +872,7 @@ def test_the_smoke_config_loads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 def test_the_self_test_tries_its_limits_natively_alone(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host: str, platform: str, limits: bool
 ) -> None:
-    """docs/mvp/READER.md §11: an image of another machine than the build host's is smoke-tested under
+    """An image of another machine than the build host's is smoke-tested under
     emulation, where a data limit would count the emulator and the socket filter judge it: its self-test
     runs without its limits."""
     ran: list[list[str]] = []
@@ -904,7 +904,7 @@ def test_no_pull_push_login_or_secret_in_argv(scratch: Scratch, monkeypatch: pyt
         ["deltasleuth:0.1.0", *zoned]
     ]
     assert ["--rm" in argv and "--read-only" in argv for argv in docker if "schedules" in argv] == [True]
-    # The files reader's self-test, under the hardening, with the evidence volume it spills in (FILES.md §3).
+    # The files reader's self-test, under the hardening, with the evidence volume it spills in.
     selftest = [argv for argv in docker if release.DUCK in argv]
     duck = "from deltasleuth.connectors.tables import duck; duck.selftest()"
     assert [argv[argv.index("deltasleuth:0.1.0") :] for argv in selftest] == [
@@ -912,7 +912,7 @@ def test_no_pull_push_login_or_secret_in_argv(scratch: Scratch, monkeypatch: pyt
     ]
     spilled = "/var/lib/deltasleuth/evidence"
     assert ["--read-only" in argv and spilled in str(argv) for argv in selftest] == [True]
-    # The MCP server's self-test (docs/mvp/MCP.md §3), under the hardening too: it reads no store.
+    # The MCP server's self-test, under the hardening too: it reads no store.
     listed = [argv for argv in docker if release.MCP in argv]
     assert [argv[argv.index("deltasleuth:0.1.0") :] for argv in listed] == [
         ["deltasleuth:0.1.0", "python", "-c", "from deltasleuth.mcp import server; server.selftest()"]
@@ -1148,7 +1148,7 @@ by = "maintainer"
 
 def test_pins_reads_every_base(capsys: pytest.CaptureFixture[str]) -> None:
     """Every base must be pinned, local and id-checked: each FROM, in any case, and each COPY --from and RUN
-    --mount from= that names no earlier stage, by name or index (§9 step 2)."""
+    --mount from= that names no earlier stage, by name or index."""
     index = f"python:3.13-slim@{release.INDEX}"
     node, uv = f"node:24-alpine@sha256:{'2' * 64}", f"ghcr.io/astral-sh/uv:0.11.21@sha256:{'1' * 64}"
     dockerfile = (f"ARG PYTHON={index}\nfrom --platform=$BUILDPLATFORM {node} as Web\nFROM ${{PYTHON}}\n"
@@ -1197,7 +1197,7 @@ def test_sbom_completeness() -> None:
 
 
 def test_the_mcp_library_is_pinned_and_brings_no_telemetry_backend(repo_root: Path) -> None:
-    """docs/mvp/MCP.md §3: the exact pin; the four packages it adds to the image, each one pure-Python
+    """The exact pin; the four packages it adds to the image, each one pure-Python
     wheel, which the SBOM must hold, and ``pywin32`` for Windows alone, which it need not; no OpenTelemetry
     SDK, exporter or instrumentation in the lock; and the entry points that the API's ``OTEL_PYTHON_CONTEXT``,
     ``OTEL_PYTHON_TRACER_PROVIDER`` and ``OTEL_PROPAGATORS`` select are the API's own."""
@@ -1275,8 +1275,8 @@ by = "maintainer"
 
 
 def test_rescan_passes_two_lines_that_vendor_other_versions(scratch: Scratch) -> None:
-    """Two supported lines (SECURITY.md §1) whose wheel vendors another version: with a decision for each, one
-    rescan passes both, and the newer build keeps the older line's decision (§8)."""
+    """Two supported lines (SECURITY.md section 1) whose wheel vendors another version: with a decision for
+    each, one rescan passes both, and the newer build keeps the older line's decision."""
     assert scratch.build().exit_code == 0
     triage = (scratch.root / "tools" / "triage.toml").read_text()
     newer = triage[triage.index("[[vendored]]") :].replace('"3.3.6"', '"3.3.7"')
@@ -1357,7 +1357,7 @@ def test_sign_accepts_advisories_and_refuses_sums(scratch: Scratch, monkeypatch:
             ' checksum list, so begin no line with a digest or "SHA… ("\n'
         ))  # fmt: skip
         assert not path.with_name(f"{name}.sig").exists()
-    keys = scratch.root / "tools" / "release-keys.txt"  # a withdrawn key signs nothing more (§4, Compromise)
+    keys = scratch.root / "tools" / "release-keys.txt"  # a withdrawn key signs nothing more
     keys.write_text(keys.read_text().replace(" signing ", f" withdrawn {TODAY} "))
     (path := scratch.tmp / "DS-SA-2026-004.txt").write_text(header.replace("003", "004"))
     withdrawn = _sign(scratch, path)
@@ -1377,7 +1377,7 @@ def test_sign_accepts_advisories_and_refuses_sums(scratch: Scratch, monkeypatch:
 
 
 def test_the_old_keys_last_bundle_ships_its_transition(scratch: Scratch) -> None:
-    """Rotation (RELEASE.md §4): with the new key listed standby, the old key signs the transition and its
+    """Rotation: with the new key listed standby, the old key signs the transition and its
     last bundle ships it, listed; once the new key is signing and the old one retired, it signs nothing."""
     transition, keys = scratch.root / "tools" / "transition.txt", scratch.root / "tools" / "release-keys.txt"
     transition.write_text(_transition(scratch))

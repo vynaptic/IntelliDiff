@@ -1,6 +1,6 @@
 # Entity links of a legacy CRM (a) vs the new platform's export (b): each row is a link fact, "this
 # organisation holds this identifier", in two PostgreSQL databases (seed.sql). Targets: targets.yaml.
-# Contract: docs/mvp/GRAPH.md.
+# What a run shows: README.md.
 #
 # a: crm.entity_identifiers   (entity_code, id_type, id_value)
 # b: public.links_export      (org_code, kind, value)

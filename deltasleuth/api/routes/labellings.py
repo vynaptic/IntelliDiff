@@ -1,8 +1,8 @@
-"""Labelled accuracy (docs/mvp/ACCURACY.md §10): draw a labelling of an ended cycle against a named truth
+"""Labelled accuracy: draw a labelling of an ended cycle against a named truth
 source, list a cycle's labellings, read one with what it claims, download its sheet and upload the filled
 sheet once.
 
-Every auth mode serves them (D8): a token's or developer mode's labelling is shown, and never attested. A
+Every auth mode serves them: a token's or developer mode's labelling is shown, and never attested. A
 draw or an upload answers 409 while the cycle has a requested or approved sign-off, 410 once its purge has
 started (``runner.purge.CyclePurged``), as the sheet does; the list and the item then show the tombstone,
 which keeps its score. Every text shown comes from ``accuracy.lines``, ``summary`` and ``LIMITS``.

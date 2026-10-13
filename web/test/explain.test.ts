@@ -1,5 +1,5 @@
-// What the Run screen says about an AI draft, and what it sends for one (docs/mvp/CONTRACTS.md §6, "Fixed
-// questions"): the facts beside a draft are the engine's stored ones, never the answer's.
+// What the Run screen says about an AI draft, and what it sends for one: the facts beside a draft are the
+// engine's stored ones, never the answer's.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
@@ -74,7 +74,7 @@ test('a summary of more than ten root causes says that it read the first ten', (
 test('no draft is asked while the AI is off, of an older cycle, or without a root cause', () => {
   const run = { cycle: 3 };
   assert.equal(off(false, run, 2, 0), AI_OFF);
-  assert.equal(AI_OFF, 'AI is off: no LLM profile is configured (DEPLOY.md, section 8).');
+  assert.equal(AI_OFF, 'AI is off: no LLM profile is configured.');
   assert.equal(off(true, run, 2, 4), 'AI drafts read the current cycle (cycle 3) only.');
   assert.equal(off(true, run, 3, 0), NO_SUMMARY);
   assert.equal(

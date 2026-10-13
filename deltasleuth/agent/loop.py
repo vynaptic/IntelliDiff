@@ -186,7 +186,7 @@ class _Turn:
 
 
 def _payload(content: str, tool_calls: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    """What a stored message seals (docs/mvp/RETENTION.md §3.1)."""
+    """What a stored message seals."""
     return {"content": content, "tool_calls": tool_calls or []}
 
 

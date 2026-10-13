@@ -1,4 +1,4 @@
-// What the screens say about four-eyes approvals and what a review sends (docs/mvp/APPROVALS.md §4, §5, §6.3).
+// What the screens say about four-eyes approvals and what a review sends.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
@@ -85,7 +85,7 @@ test('the reauth URL signs in afresh and comes back to the review', () => {
   const query = new URL(url, 'https://ds.test').searchParams;
   assert.equal(query.get('reauth'), '1');
   assert.equal(query.get('next'), `#/approvals/${ID}`);
-  assert.match(query.get('next')!, /^#\/[A-Za-z0-9/_.~%?&=+*!'()-]{0,500}$/); // the server's check (docs/mvp/AUTH.md §2)
+  assert.match(query.get('next')!, /^#\/[A-Za-z0-9/_.~%?&=+*!'()-]{0,500}$/); // the server's check
 });
 
 const SPEC_REVIEW = {

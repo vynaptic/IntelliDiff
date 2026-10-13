@@ -1,4 +1,4 @@
-"""RFC 9535 paths, path patterns and DeltaSleuth pointers (§6): the one JSONPath implementation
+"""RFC 9535 paths, path patterns and DeltaSleuth pointers: the one JSONPath implementation
 (strict RFC 9535, no python-jsonpath extensions) for specs, targets, connectors and the engine.
 
 Locations are concrete tuples (``("a", 0, "b")``); patterns replace every index or member key

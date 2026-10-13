@@ -1,4 +1,4 @@
-"""The census of a cycle (docs/mvp/PACK.md §1.2, §1.3): over which population of each side parity was
+"""The census of a cycle: over which population of each side parity was
 observed.
 
 A table scan counts both sides as it reads each table to its end (``ds.scans``). A complete key listing
@@ -6,7 +6,7 @@ counts the side whose target it reads. A key-list run with a table side has each
 first in every cycle, with packs or readiness configured, by the worker (``record``): in one snapshot the
 population's keys are merged with the cycle's sorted key set, so churn cannot hide an omitted key, nor an
 out-of-filter key stand in for one. A hash sample's draw records its frame's sources, each read to its
-end, as its cycle's census (``runner.sample``, docs/mvp/SAMPLING.md §3); no key census counts it. A
+end, as its cycle's census (``runner.sample``); no key census counts it. A
 census is ``{cycle, at, a, b}``, a record, a failed count (``{failed: <error class>}``) or None per side;
 it is stored on the run for its current cycle and copied to the cycle's tombstone when the cycle ends.
 """
@@ -66,7 +66,7 @@ def scanned(side: str, plan: Plan, scan: repo.Row, spec: CompiledSpec) -> dict[s
 
 
 def fixed(found: dict[str, Any], plan: Plan, verified: str | None, repeated: int | None) -> dict[str, Any]:
-    """A census record of a file side (docs/mvp/FILES.md §11) holds no snapshots and no digest, but its files'
+    """A census record of a file side holds no snapshots and no digest, but its files'
     count, bytes and times, whether its mount was read-only, its lines that were not rows, the lines its
     spec's csv.skip left unread and its keys held by several rows; any other side's record as it is."""
     if plan.get("engine") != "files":
@@ -80,9 +80,9 @@ def fixed(found: dict[str, Any], plan: Plan, verified: str | None, repeated: int
 
 
 def engined(plan: Plan, server: str | None = None) -> dict[str, Any]:
-    """What the census record of a side on MySQL or Oracle adds (docs/mvp/ENGINES.md §11): its engine, and
+    """What the census record of a side on MySQL or Oracle adds: its engine, and
     whether its rows were read in a snapshot. A side whose plan names its engine, PostgreSQL's in such a
-    pair too, adds ``server``, the version the read met, which may be another than the plan's (§13). A
+    pair too, adds ``server``, the version the read met, which may be another than the plan's. A
     PostgreSQL pair's records are unchanged."""
     read = {"server": server} if server and "engine" in plan else {}
     if plan.get("engine", "postgresql") == "postgresql":
@@ -114,8 +114,8 @@ async def record(ctx: Context, run_id: str, *, who: Principal = WORKER) -> dict[
     """Count each table side of the key-list run's current cycle not counted yet, store the census and
     audit ``run.census`` per side. A failed count, a timeout included, is recorded as its error class
     and warned; the cycle goes on. None when there was nothing to count, or the cycle ended meanwhile.
-    ``RowsMoved`` alone is raised: a file side's reader that disagrees with its plan fails the run
-    (docs/mvp/FILES.md §7), and no later read of the cycle would meet it."""
+    ``RowsMoved`` alone is raised: a file side's reader that disagrees with its plan fails the run, and no
+    later read of the cycle would meet it."""
     async with ctx.pool.connection() as conn:
         run = await repo.get_run(conn, run_id)
         sides = [] if run is None else pending(run)
@@ -194,7 +194,7 @@ async def _count(ctx: Context, spec: CompiledSpec, side: str, plan: Plan, keys: 
                 else:
                     missing += 1
         skipped = await engine.null_keys(session, plan)
-    if "selected" in plan and rows + skipped != plan["selected"]:  # a file side's rows guard (FILES.md §7)
+    if "selected" in plan and rows + skipped != plan["selected"]:  # a file side's rows guard
         read = rows + skipped
         raise RowsMoved(f"side {side}: {read:,} rows were read where the plan counted {plan['selected']:,}")
     found = {
@@ -218,7 +218,7 @@ def _detail(cycle: int, side: str, counted: dict[str, Any]) -> dict[str, Any]:
     if "failed" in counted:
         return detail | {"failed": counted["failed"]}
     detail |= {name: counted[name] for name in ("rows", "missing", "extra")}
-    if counted.get("consistency") == "fixed":  # a file side's, in place of its snapshot (FILES.md §11)
+    if counted.get("consistency") == "fixed":  # a file side's, in place of its snapshot
         return detail | {
             name: counted[name] for name in ("consistency", "files", "bytes", "rejected", "repeated")
         }
@@ -226,10 +226,10 @@ def _detail(cycle: int, side: str, counted: dict[str, Any]) -> dict[str, Any]:
     return detail | {name: counted[name] for name in ("engine", "consistency") if name in counted}
 
 
-# -- what the certificate says (§1.2) ------------------------------------------------------------------
+# -- what the certificate says ------------------------------------------------------------------
 
 
-# How a side that its engine could not pin was read (docs/mvp/ENGINES.md §13), by its plan's consistency:
+# How a side that its engine could not pin was read, by its plan's consistency:
 # what stands where a snapshot stands, one or several, and why.
 _PINNED = ("snapshot", "snapshots", "")
 _UNPINNED = {
@@ -245,7 +245,7 @@ def _moment(at: str | None) -> str:
 
 def _read(found: dict[str, Any], count: int = 1) -> str:
     """``in 1 snapshot``, or what a side its engine could not pin was read in instead, or the files a file
-    side was read from (docs/mvp/FILES.md §11)."""
+    side was read from."""
     if found.get("consistency") == "fixed":
         return _fixed(found)
     one, several, why = _UNPINNED.get(found.get("consistency", ""), _PINNED)
@@ -286,7 +286,7 @@ def _described(found: dict[str, Any]) -> str:
             f"its key set checked against {found['relation']} {_read(found)}{at}:"
             f" {found['missing']} key(s) missing, {found['extra']} outside it"
         )
-    if found["basis"] == "frame":  # a hash sample's (docs/mvp/SAMPLING.md §3)
+    if found["basis"] == "frame":  # a hash sample's
         return f"its population read to its end {_read(found)}{at} as the sampling frame"
     first, last = _moment(found["first_at"]), _moment(found["last_at"])
     if found["basis"] == "listing":
@@ -305,9 +305,8 @@ def _described(found: dict[str, Any]) -> str:
 
 def warning(side: str, found: dict[str, Any] | None) -> str | None:
     """The certificate's warnings for a side: a table scan read in several snapshots, a side its engine
-    could not pin, and of a file side (docs/mvp/FILES.md §11) side b's lines that were not rows (side a's
-    are no census: C1), keys held by several rows (W2) and a mount it could write to (W3), each on a line of
-    its own; None without any."""
+    could not pin, and of a file side side b's lines that were not rows (side a's are no census), keys
+    held by several rows and a mount it could write to, each on a line of its own; None without any."""
     if found is None:
         return None
     warnings = []

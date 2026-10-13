@@ -1,16 +1,16 @@
-"""Cut-over evidence packs (docs/mvp/PACK.md): one signed ZIP per signed-off census or sampled cycle, which
+"""Cut-over evidence packs: one signed ZIP per signed-off census or sampled cycle, which
 an auditor checks offline, years later, with stock tools and the site's key register.
 
-``problems`` gives every reason a cycle gets no pack (§1.1, §7.2); ``issue`` builds the pack in memory
-and stores it in one audited transaction that reads the cycle, then the sign-off, FOR SHARE (§6). A pack
+``problems`` gives every reason a cycle gets no pack; ``issue`` builds the pack in memory
+and stores it in one audited transaction that reads the cycle, then the sign-off, FOR SHARE. A pack
 holds facts bound to audited hashes, masked aggregates, the audit rows of its objects, the licence it was
-issued under (docs/mvp/LICENCE.md §10) and a certificate; its SHA256SUMS is signed by the installation's
+issued under and a certificate; its SHA256SUMS is signed by the installation's
 key (``security.signing``), whose fingerprint the register lists. A sampled cycle's pack also states its
 frame, its draw (whose salt and selection the certificate's hand check compares with its ``sample.draw``
 audit row), each sign-off stratum's bounds and the population's other draws, and claims only what a sample
-shows (docs/mvp/SAMPLING.md §11). A sign-off of attests format 3 adds the labelling it attests, observed:
-its labels without keys, its score and what they claim (docs/mvp/ACCURACY.md §9). Per key, a pack carries
-only masked keys (§2.3): the attested reviewer sheet's (at most 500, which its score's disagreements
+shows. A sign-off of attests format 3 adds the labelling it attests, observed:
+its labels without keys, its score and what they claim. Per key, a pack carries
+only masked keys: the attested reviewer sheet's (at most 500, which its score's disagreements
 repeat), the key of each ``key.view`` audit row of the run (a row each time a viewer opened a key, in any
 cycle; the segment is verbatim, bound by the chain) and each AI answer's of the cycle, never a sampled key,
 a key's labels or a frame key; its CSVs leave out root causes' and graph rows' key tokens
@@ -67,7 +67,7 @@ MIB = 1 << 20
 MAX_BYTES = 100 * MIB  # a pack's files, uncompressed
 UNLISTED = ("SHA256SUMS", "SHA256SUMS.sig", "signing-key.pem")
 CSV_KINDS = ("root_causes", "coverage", "graph")
-NOT_CONFIGURED = "evidence packs are not configured: set packs.signing_key_ref (docs/mvp/PACK.md §3.1)"
+NOT_CONFIGURED = "evidence packs are not configured: set packs.signing_key_ref"
 PROVES = (
     "Every statement records what the DeltaSleuth installation {name} observed and stored. The signature"
     " proves that the holder of the key with fingerprint {fp} issued these files unchanged. The audit rows"
@@ -78,7 +78,7 @@ PROVES = (
     " copied, or history not rewritten before issue by the database owner; that the pack is still valid"
     " (check revocation); or a certified claim, which needs a frozen cut."
 )
-# A sampled cycle's (docs/mvp/SAMPLING.md §11.3); {absent} is the frame keys absent on both sides, summed
+# A sampled cycle's; {absent} is the frame keys absent on both sides, summed
 # over the sign-off strata.
 PROVES_SAMPLED = (
     "Every statement records what the DeltaSleuth installation {name} observed and stored. The signature"
@@ -108,16 +108,16 @@ PROVES_SAMPLED = (
     " (check revocation); or a certified claim, which needs a frozen cut."
 )
 # The same of a frame whose table's engine could not pin it (a MySQL view, a table outside InnoDB): no
-# certificate says such a table was read in one snapshot (docs/mvp/ENGINES.md §2).
+# certificate says such a table was read in one snapshot.
 PROVES_SAMPLED_UNPINNED = PROVES_SAMPLED.replace(
     "a table in one snapshot", "a table in one pass not observed to be a snapshot"
 )
-# The certificate alone says it of a file side (docs/mvp/FILES.md §11): its closing hash is the scan's.
+# The certificate alone says it of a file side: its closing hash is the scan's.
 SINGLE_KEYS = (
     "reads of single keys before and after it were checked by size, times and inode, not hashed again"
 )
 REVOCATIONS = "# DeltaSleuth pack revocations, key {fp}, as of {at}"
-# A key list no side is counted by (§1.2), by its run's keys_source: where its keys came from.
+# A key list no side is counted by, by its run's keys_source: where its keys came from.
 _GIVEN = {
     "explicit": "were given with the run",
     "list": "are the spec's inline list",
@@ -126,7 +126,7 @@ _GIVEN = {
 _NUMBER = re.compile(r"-?[0-9]+(?:\.[0-9]+)?")
 _CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _IDENTIFIER = re.compile(r"[A-Za-z][A-Za-z0-9]*")
-# The manifest's fixed text, which the raw-value gate does not search (§2.3), the licence's words too.
+# The manifest's fixed text, which the raw-value gate does not search, the licence's words too.
 _FIXED = {("format",), ("procedure",), ("claim_text",), ("installation",), ("signing_key", "algorithm"),
           *(("licence", name) for name in ("customer", "order", "tier", "state")),
           *(("subject", "sides", side, "files", "sha256_of") for side in "ab")}  # fmt: skip
@@ -137,7 +137,7 @@ class PackUnavailable(Exception):
 
 
 class PackRefused(Exception):
-    """The cycle gets no pack now; the message names every reason (§7.2): the API answers 409."""
+    """The cycle gets no pack now; the message names every reason: the API answers 409."""
 
 
 class PackForbidden(Exception):
@@ -188,14 +188,13 @@ def available(ctx: Context) -> PackSigner:
     return ctx.signer
 
 
-# -- the refusals (§1.1, §7.2) -------------------------------------------------------------------------
+# -- the refusals -------------------------------------------------------------------------
 
 
 async def problems(ctx: Context, conn: repo.Conn, run: repo.Row, cycle: int) -> list[str]:
-    """Every reason the run's ended ``cycle`` gets no pack now (§1.1; the licence's first,
-    docs/mvp/LICENCE.md §6), empty when it gets one; the pack is built to judge its audit trail, its raw
-    values and its size. CyclePurged once the cycle's purge has started; PackRefused or PackUnavailable
-    as ``available`` says."""
+    """Every reason the run's ended ``cycle`` gets no pack now (the licence's first), empty when it gets
+    one; the pack is built to judge its audit trail, its raw values and its size. CyclePurged once the
+    cycle's purge has started; PackRefused or PackUnavailable as ``available`` says."""
     return (await _judged(ctx, conn, run, cycle, None))[0]
 
 
@@ -210,10 +209,10 @@ async def _judged(
     run_id = run["run_id"]
     at = f"cycle {cycle} of run {run_id}"
     await refuse_purged(conn, run_id, cycle)
-    current = await licence.standing(ctx, conn)  # the licence at issue (docs/mvp/LICENCE.md §6, §10)
-    found = licence.pack_problems(current, run)  # M4, M7, M8
+    current = await licence.standing(ctx, conn)  # the licence at issue
+    found = licence.pack_problems(current, run)
     early = run["created_at"] < await repo.applied_at(conn, PACKS)  # type: ignore[operator]
-    if early:  # its scan state may lack what a census needs (§1.2): the pack is not built
+    if early:  # its scan state may lack what a census needs: the pack is not built
         found.append(f"run {run_id} started before evidence packs (009): only later runs get a pack")
     signoff = await repo.signed_off(conn, run_id, cycle)
     if signoff is None:
@@ -256,7 +255,7 @@ async def _judged(
         found.append(
             f"the attested adjudication {attested['adjudication_id']} did not pass ({reasons}): no pack"
         )
-    named = rebuilt.get("accuracy")  # attests format 3 (docs/mvp/ACCURACY.md §8)
+    named = rebuilt.get("accuracy")  # attests format 3
     labelling = named and await repo.cycle_labelling(conn, run_id, cycle, named["labelling_id"])
     facts = await _facts(
         ctx, conn, run, cycle, spec, signoff, rebuilt, adjudication, labelling, results, who, current
@@ -284,7 +283,7 @@ def census_problem(
     ended: Mapping[str, Any] | None,
     last: Mapping[str, Any] | None,
 ) -> str | None:
-    """Why the attested census (``counted``) does not count side a in this cycle (§1.2); None when it does
+    """Why the attested census (``counted``) does not count side a in this cycle; None when it does
     (or when the sign-off's own problems already say why a scan counted nothing). ``last`` is the newest
     earlier cycle with a census (``repo.last_census``)."""
     at = f"cycle {cycle} of run {run['run_id']}"
@@ -310,7 +309,7 @@ def _uncounted(
     if a is not None and "failed" in a:
         return f"side a's key census failed ({a['failed']})"
     if a is not None:
-        if a.get("rejected"):  # C1: a key on such a line that side b lacks is in no result (FILES.md §11)
+        if a.get("rejected"):  # a key on such a line that side b lacks is in no result
             return f"side a's files hold {a['rejected']} line(s) that were not rows"
         if a["basis"] == "table" and a["missing"]:
             return (
@@ -321,7 +320,7 @@ def _uncounted(
     if source == "table_scan":
         complete = scan is not None and scan["done"] and (ended or {}).get("keys_cut") is None
         return "graph parity (L2) did not run" if complete and spec.raw.get("graph") else None
-    if source == "hash_sample":  # P1: its draw recorded a census of the sides its frame enumerates
+    if source == "hash_sample":  # its draw recorded a census of the sides its frame enumerates
         return (
             "its sampling frame does not enumerate side a (the baseline); a frame of side b cannot show keys"
             " side b lost"
@@ -361,7 +360,7 @@ class _Facts:
     spec_approval: repo.Row
     adjudication: repo.Row | None
     adjudications: list[repo.Row]  # every draw of the cycle, oldest first
-    labelling: repo.Row | None  # the attested one (docs/mvp/ACCURACY.md §9)
+    labelling: repo.Row | None  # the attested one
     labellings: list[repo.Row]  # every labelling of the cycle, oldest first
     results: int
     retention: dict[str, Any]
@@ -375,9 +374,7 @@ class _Facts:
     answers: list[dict[str, Any]]
     csvs: dict[str, bytes]
     problems: list[str]
-    licence: (
-        dict[str, Any] | None
-    )  # the manifest's licence member: the one at issue (docs/mvp/LICENCE.md §10)
+    licence: dict[str, Any] | None  # the manifest's licence member: the one at issue
     later: list[repo.Row]  # a sampled cycle's later draws at issue, as the population's ledger lists them
 
 
@@ -427,7 +424,7 @@ async def _facts(
     head = await repo.audit_head(conn)
     assert head is not None  # the run's creation wrote rows
     decided = {signoff["approval_id"], spec_approval["approval_id"]}
-    drawn = attests.get("sample")  # a sampled cycle's draw (docs/mvp/SAMPLING.md §11)
+    drawn = attests.get("sample")  # a sampled cycle's draw
     objects = sorted(
         {run_id, spec_approval["approval_id"], *(s["approval_id"] for s in signoffs)}
         | {str(spec_id) for spec_id in await repo.spec_lineage(conn, run["spec_id"])}
@@ -449,7 +446,7 @@ async def _facts(
         chain.check_segment(segment)
     except chain.ChainBroken as exc:
         found.append(f"the audit trail of run {run_id} does not verify at row {exc.seq}: run ds audit verify")
-    if drawn is not None and not _committed(drawn, run_id, segment):  # P2
+    if drawn is not None and not _committed(drawn, run_id, segment):
         found.append(
             f"the sample {drawn['draw_id']} of cycle {cycle} of run {run_id} does not match its sample.draw"
             " audit row: no pack"
@@ -513,7 +510,7 @@ async def _facts(
 
 def _committed(drawn: Mapping[str, Any], run_id: str, segment: Sequence[repo.Row]) -> bool:
     """Whether the draw's ``sample.draw`` row in the segment (chain row ``draw_seq``, the run's) names it and
-    holds the SHA-256 of its salt, ``label:nonce``, and of its selection (P2)."""
+    holds the SHA-256 of its salt, ``label:nonce``, and of its selection."""
     row = next((json.loads(r["text"]) for r in segment if r["seq"] == drawn["draw_seq"]), None)
     detail = (row and (row["action"], row["object"]) == ("sample.draw", run_id) and row["detail"]) or {}
     salt = sha256_hex(sampling.salt(drawn["salt_label"], drawn["nonce"]))
@@ -523,8 +520,7 @@ def _committed(drawn: Mapping[str, Any], run_id: str, segment: Sequence[repo.Row
 
 def _label_row(labelling: Mapping[str, Any], segment: Sequence[repo.Row]) -> int | None:
     """The chain row of the labelling's ``accuracy.label`` in the segment; None unless its kept sheet's
-    labels and its score hash to the SHA-256 values it records and that row holds (docs/mvp/ACCURACY.md
-    §9)."""
+    labels and its score hash to the SHA-256 values it records and that row holds."""
     recorded = {name: labelling[name] for name in ("labels_sha256", "score_sha256")}
     hashed = {
         "labels_sha256": sha256_hex(accuracy.keyless(labelling["sheet"])),
@@ -540,7 +536,7 @@ def _label_row(labelling: Mapping[str, Any], segment: Sequence[repo.Row]) -> int
 
 def _licence(current: licence.Standing) -> dict[str, Any] | None:
     """The licence named and its state (``pairs`` None when unlimited); None in evaluation, which gets no
-    pack, and in an open build, whose packs name no licence (docs/mvp/LICENCE.md §19)."""
+    pack, and in an open build, whose packs name no licence."""
     if (found := current.licence) is None:
         return None
     fields = found.fields()
@@ -570,9 +566,9 @@ def verify_text(
 
 
 def _build(facts: _Facts, signer: PackSigner, installation: str) -> Pack:
-    """The pack's listed files (§2.1): facts, adjudication, audit segment, masked CSVs, the AI annex,
+    """The pack's listed files: facts, adjudication, audit segment, masked CSVs, the AI annex,
     VERIFY.txt, the certificate and, last, the manifest naming the others' hashes; under attests format 3,
-    the cycle's labellings and the attested one's keyless labels and score (docs/mvp/ACCURACY.md §9)."""
+    the cycle's labellings and the attested one's keyless labels and score."""
     run, attests = facts.run, facts.attests
     files: dict[str, bytes] = {
         "facts/attests.json": jsonio.dumps(attests, sort_keys=True).encode(),
@@ -666,9 +662,9 @@ def _labellings(labellings: Sequence[repo.Row]) -> list[dict[str, Any]]:
 def _subject(facts: _Facts) -> dict[str, Any]:
     """What the pack is about; a table side on MySQL or Oracle, and the other side of its pair, also
     names its engine and its server's major and minor version: the one the cycle's scan, census or frame
-    read, else the plan's (docs/mvp/ENGINES.md §13). A file side adds its ``files`` from the plan: their
+    read, else the plan's. A file side adds its ``files`` from the plan: their
     count, their bytes, the one digest of them all, what that digest is the SHA-256 of, and the time their
-    stamp file declares (FILES.md §16)."""
+    stamp file declares."""
     tables, counted = facts.run["params"].get("tables") or {}, facts.attests.get("census") or {}
     return {
         "run_id": facts.run["run_id"],
@@ -737,8 +733,8 @@ def _decisions(facts: _Facts) -> list[dict[str, Any]]:
 
 
 def _manifest(facts: _Facts, signer: PackSigner, installation: str) -> dict[str, Any]:
-    """``manifest.json`` but its ``files`` (§2.2); a sampled cycle's adds its ``sample`` (as attested) and
-    ``later_draws``, the population's draws after it at issue (docs/mvp/SAMPLING.md §11.2); under attests
+    """``manifest.json`` but its ``files``; a sampled cycle's adds its ``sample`` (as attested) and
+    ``later_draws``, the population's draws after it at issue; under attests
     format 3, ``accuracy``: whether a labelling is attested and the cycle's labellings, counted."""
     attests, attested, who = facts.attests, facts.attests["adjudication"], facts.who
     scan, drawn = attests["scan"] or {}, attests.get("sample")
@@ -803,9 +799,8 @@ def _manifest(facts: _Facts, signer: PackSigner, installation: str) -> dict[str,
 
 
 def _claim(attests: Mapping[str, Any], signer: PackSigner, installation: str) -> str:
-    """``claim_text`` (§3.4): a sampled cycle's is docs/mvp/SAMPLING.md §11.3's, which says ``in one
-    snapshot`` only of a frame whose every record was read in one (a record that names no ``consistency``
-    was: PostgreSQL's)."""
+    """``claim_text``: a sampled cycle's says ``in one snapshot`` only of a frame whose every record was
+    read in one (a record that names no ``consistency`` was: PostgreSQL's)."""
     drawn = attests.get("sample")
     if drawn is None:
         return PROVES.format(name=installation, fp=signer.fingerprint)
@@ -820,7 +815,7 @@ def _absent(drawn: Mapping[str, Any]) -> int:
     return sum(s["absent_both"] for s in (drawn["judgement"] or {}).get("strata", []))
 
 
-# -- the certificate (§2.2, §3.4) --------------------------------------------------------------------------
+# -- the certificate --------------------------------------------------------------------------
 
 
 def _moment(at: str | datetime | None) -> str:
@@ -832,8 +827,7 @@ def _moment(at: str | datetime | None) -> str:
 
 def _certificate(facts: _Facts, manifest: Mapping[str, Any], verify: str) -> Document:
     """One ``render.Document``: every section is observed, and the signature's reach is stated verbatim. A
-    sampled cycle's states its frame instead of a census, its draw and bounds, and the population's draws
-    (docs/mvp/SAMPLING.md §11.2)."""
+    sampled cycle's states its frame instead of a census, its draw and bounds, and the population's draws."""
     run, attests, spec, drawn = facts.run, facts.attests, facts.spec, facts.attests.get("sample")
     subject = manifest["subject"]
     lines, warnings = _census_lines(spec, attests["census"], run["params"].get("tables") or {})
@@ -852,7 +846,7 @@ def _certificate(facts: _Facts, manifest: Mapping[str, Any], verify: str) -> Doc
         ]
         warnings += _sample_warnings(facts, drawn)
     labelled = []
-    if "accuracy" in attests:  # attests format 3 (docs/mvp/ACCURACY.md §9)
+    if "accuracy" in attests:  # attests format 3
         labelled = [Section("Labelled accuracy (observed)", _accuracy_lines(facts))]
         warnings += _accuracy_warnings(facts)
     critical = attests["unexplained_critical"]
@@ -914,7 +908,7 @@ def _certificate(facts: _Facts, manifest: Mapping[str, Any], verify: str) -> Doc
 
 def _upgraded(tables: Mapping[str, Any], sides: Mapping[str, Any]) -> list[str]:
     """The certificate's warning of each side the cycle read on another server version than the one its
-    run was planned on (docs/mvp/ENGINES.md §13): the subject names the one read."""
+    run was planned on: the subject names the one read."""
     return [
         f"SIDE {side.upper()} READ ON {found['engine']} {found['server']}: the run was planned on"
         f" {tables[side]['server']}"
@@ -928,7 +922,7 @@ def _census_lines(
 ) -> tuple[list[str], list[str]]:
     """Each side's census, and the warnings a table scan read in several snapshots gets. A file side's line
     alone adds, from its plan (``tables``), the digest of its files, what it is the SHA-256 of, and how
-    single keys were read (docs/mvp/FILES.md §11)."""
+    single keys were read."""
     lines, warnings = [], []
     for side, cfg in spec.sides.items():
         found = counted.get(side.value)
@@ -963,7 +957,7 @@ def _day(at: str | datetime) -> str:
 
 def _sample_section(facts: _Facts, drawn: Mapping[str, Any]) -> Section:
     """What the draw committed and how to check it by hand, then each sign-off stratum as its cycle's end
-    judged it, never recounted (docs/mvp/SAMPLING.md §11.2)."""
+    judged it, never recounted."""
     seq, approval = drawn["draw_seq"], facts.spec_approval
     lines = [
         f"Draw {drawn['draw_id']} by the installation at {_moment(drawn['drawn_at'])}, in the transaction"
@@ -974,7 +968,7 @@ def _sample_section(facts: _Facts, drawn: Mapping[str, Any]) -> Section:
         f"To check by hand: row {seq} of audit/chain.tsv is action sample.draw and holds both SHA-256 values,"
         f" and the SHA-256 of the text {drawn['salt_label']}:{drawn['nonce']} is the salt's",
     ]
-    if facts.spec.key.value_class == BUSINESS_CODE:  # docs/mvp/SAMPLING.md §19
+    if facts.spec.key.value_class == BUSINESS_CODE:
         lines.append(
             "Keys are shown in clear here (key class business_code): with the nonce, anyone holding this pack"
             " can hash each key it lists and tell which of them lie in a stratum compared whole, a customer"
@@ -1008,8 +1002,8 @@ def _sample_section(facts: _Facts, drawn: Mapping[str, Any]) -> Section:
 
 
 def _decided_later(facts: _Facts) -> tuple[int | None, list[dict[str, Any]]]:
-    """The sign-off's final ``approval.grant`` row and the later draws it recorded as it judged them (R-c,
-    docs/mvp/SAMPLING.md §9): a pack reads them, never judges them again."""
+    """The sign-off's final ``approval.grant`` row and the later draws it recorded as it judged them
+    (R-c): a pack reads them, never judges them again."""
     signoff_id = facts.signoff["approval_id"]
     final = [
         g for g in facts.grants if g["object"] == signoff_id and g["detail"]["step"] == g["detail"]["of"]
@@ -1222,7 +1216,7 @@ def _retention_line(facts: _Facts) -> str:
     )
 
 
-# -- the raw-value gate (§2.3) -------------------------------------------------------------------------
+# -- the raw-value gate -------------------------------------------------------------------------
 
 
 def raw_values(spec: CompiledSpec, files: Mapping[str, bytes]) -> list[str]:
@@ -1307,7 +1301,7 @@ def _named(at: Sequence[str | int]) -> str:
     return text
 
 
-# -- signing, storing and reading packs (§3.2, §6) ---------------------------------------------------
+# -- signing, storing and reading packs ---------------------------------------------------
 
 
 def seal(pack: Pack, signer: PackSigner) -> Sealed:
@@ -1337,7 +1331,7 @@ def seal(pack: Pack, signer: PackSigner) -> Sealed:
 
 
 async def issue(ctx: Context, run_id: str, cycle: int, *, who: Principal) -> repo.Row:
-    """Issue the evidence pack of the run's ended ``cycle`` as ``who``, a signed-in person (§6): judged
+    """Issue the evidence pack of the run's ended ``cycle`` as ``who``, a signed-in person: judged
     and built in memory, then stored in one transaction that reads the cycle FOR SHARE (no purge
     started), then the sign-off FOR SHARE (still approved, with the attests hash it was built from), and
     audits ``pack.issue`` last. The stored pack's row.
@@ -1366,7 +1360,7 @@ async def issue(ctx: Context, run_id: str, cycle: int, *, who: Principal) -> rep
         "zip_sha256": sealed.zip_sha256,
         "key": signer.fingerprint,
         "audit_head": pack.head,
-        # issued only under an Enterprise licence, or by an open build, which has none (LICENCE.md §19)
+        # issued only under an Enterprise licence, or by an open build, which has none
         "licence_id": (pack.manifest["licence"] or {}).get("licence_id"),
     }
     async with repo.audited(ctx.pool) as (conn, audit):
@@ -1433,7 +1427,7 @@ def _utc(at: datetime) -> str:
 
 async def revocations(ctx: Context, signer: PackSigner) -> dict[str, bytes]:
     """``revoked.txt`` (every revoked pack of every key used, between its header naming the current key
-    and ``# end``), its signature and the current key's PEM (§6)."""
+    and ``# end``), its signature and the current key's PEM."""
     async with ctx.pool.connection() as conn:
         revoked = await repo.revoked_packs(conn)
     lines = [
@@ -1449,6 +1443,6 @@ async def revocations(ctx: Context, signer: PackSigner) -> dict[str, bytes]:
 
 
 def key_files(installation: str, signer: PackSigner) -> dict[str, bytes]:
-    """What the key register files at key generation (§3.1): ``fingerprint.txt`` and ``procedure.txt``."""
+    """What the key register files at key generation: ``fingerprint.txt`` and ``procedure.txt``."""
     fingerprint = f"installation: {installation}\nfingerprint: {signer.fingerprint}\n"
     return {"fingerprint.txt": fingerprint.encode(), "procedure.txt": PROCEDURE.encode()}

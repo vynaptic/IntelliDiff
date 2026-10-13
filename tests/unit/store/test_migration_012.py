@@ -1,4 +1,4 @@
-"""Migration 012 (docs/mvp/ALERTS.md §13): the feed's cursor, the deliveries and the mutes, touching no
+"""Migration 012: the feed's cursor, the deliveries and the mutes, touching no
 existing table; their constraints; a mute only ever ended, once, as of now(); and the repo functions the
 feed needs over the chain."""
 

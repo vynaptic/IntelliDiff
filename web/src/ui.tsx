@@ -56,7 +56,7 @@ export function cell(v: unknown): string {
 
 export const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : '');
 
-/** A name followed by its user or token id (docs/mvp/AUTH.md §9), as in `jdoe (U-3f2a…)`; other actors
+/** A name followed by its user or token id, as in `jdoe (U-3f2a…)`; other actors
  *  (`local:…`, `system:…`, `dev:loopback`) are their own id. */
 export function Named({ name, actor }: { name?: string | null; actor?: string | null }) {
   if (!actor) return null;

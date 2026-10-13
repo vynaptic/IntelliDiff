@@ -104,7 +104,7 @@ async def _whole(conn: repo.Conn, run_id: str, cycle: int = 1) -> tuple[list[rep
 async def test_a_cycle_s_end_stores_the_counters_of_the_whole_cycle_whatever_its_pages(
     ctx: Context, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """SCALE S2: the counters a paged end stores are ``count_cycle``'s over every row, member for member.
+    """The counters a paged end stores are ``count_cycle``'s over every row, member for member.
     Once the run holds a later cycle's counters, the earlier cycle is counted again from its rows, a page
     at a time too, and gives them again."""
     spec = _spec()
@@ -146,7 +146,7 @@ async def test_a_cycle_s_end_stores_the_counters_of_the_whole_cycle_whatever_its
 
 
 async def test_a_cycle_s_end_holds_a_page_of_its_results_never_the_cycle(ctx: Context) -> None:
-    """SCALE S5(a): KEYS keys with one suppressed finding each, under CEILING."""
+    """KEYS keys with one suppressed finding each, under CEILING."""
     spec = unit_spec()
     keys = {f"K{n:05d}": f"K{n:05d}" for n in range(KEYS)}
     async with ctx.pool.connection() as conn:
@@ -190,7 +190,7 @@ async def test_a_cycle_s_end_holds_a_page_of_its_results_never_the_cycle(ctx: Co
 async def test_reports_read_a_page_of_results_at_a_time_and_only_the_rows_they_print(
     ctx: Context, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """SCALE S3: every export is the same whatever its pages, read without every finding or observation
+    """Every export is the same whatever its pages, read without every finding or observation
     of the cycle in one list; the PDF's top findings are the first of the discrepant ones, counted. The
     re-read a finding's row cites is its key's standing one, whichever keys share its page: a retried key
     has an abandoned attempt's reads at the same pass."""

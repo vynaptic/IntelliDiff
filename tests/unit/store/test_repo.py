@@ -387,7 +387,7 @@ async def test_a_page_of_findings_reads_its_own_rows_once_a_new_store_is_analyse
     pool: AsyncConnectionPool, make_run: MakeRun, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """On a store whose tables were never analysed the planner takes a run's rows for one, and a page of
-    findings joined each key to all of the run's findings (docs/mvp/BENCHMARK.md §16). ``analyse_new``, which
+    findings joined each key to all of the run's findings. ``analyse_new``, which
     the cycle end calls, gives it statistics, and a later page seeks its first key: timing-free, the rows
     each page's plan reads."""
     n, page, run_id, plans = 5000, 100, await make_run([]), _explained(monkeypatch)
@@ -758,7 +758,7 @@ async def test_migration_4_moves_a_run_s_scan_to_its_current_cycle(pg_dsn: str) 
     assert (run["cycle"], run["scan"]) == (2, new_scan() | {"matched": 3})
 
 
-# -- identity (docs/mvp/AUTH.md §7) ------------------------------------------------------------------
+# -- identity ------------------------------------------------------------------
 
 
 async def test_migration_5_keeps_legacy_rows_and_checks_new_ones(pg_dsn: str) -> None:
@@ -1025,7 +1025,7 @@ async def test_ended_sessions_are_deleted_after_30_days(pool: AsyncConnectionPoo
         assert (await cur.fetchone())[0] == 1
 
 
-# -- data keys (docs/mvp/RETENTION.md §1, §7.1) ------------------------------------------------------
+# -- data keys ------------------------------------------------------
 
 
 async def test_data_keys_are_rewrapped_in_place_and_their_checks_refuse_bad_rows(
@@ -1076,7 +1076,7 @@ async def test_observations_take_hk1_addresses(pool: AsyncConnectionPool, make_r
             )
 
 
-# -- the sealed spine (docs/mvp/RETENTION.md §3) ------------------------------------------------------
+# -- the sealed spine ------------------------------------------------------
 
 
 async def test_a_run_stores_its_data_key_and_retention_and_no_plaintext(

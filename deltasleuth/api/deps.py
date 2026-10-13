@@ -1,4 +1,4 @@
-"""What the routes share: the context, who calls with which roles (docs/mvp/AUTH.md §1), exact JSON
+"""What the routes share: the context, who calls with which roles, exact JSON
 responses and key-safe rows."""
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from deltasleuth.security.tokenise import Tokeniser, mask_key
 from deltasleuth.store import repo
 
 UNSAFE = frozenset({"POST", "PUT", "PATCH", "DELETE"})
-SEALED = ("key_enc", "headers_enc", "sealed")  # raw keys, headers and chat (docs/mvp/RETENTION.md §3)
+SEALED = ("key_enc", "headers_enc", "sealed")  # raw keys, headers and chat
 FRESH = timedelta(minutes=15)  # how recent a person's sign-in must be to create a token or approve
 _CHALLENGE = {"WWW-Authenticate": "Bearer"}
 log = logging.getLogger("deltasleuth.auth")
@@ -71,7 +71,7 @@ async def principal(
             log.warning("invalid or expired API token %s request_id=%s", given, seen["request_id"])
             raise HTTPException(401, "invalid or expired API token", headers=_CHALLENGE)
         return Principal(f"token:{token['token_id']}", token["name"], expand([token["role"]]), **seen)
-    cookie = request.cookies.get(sessions.named(sessions.COOKIE, auth))  # its own form's name only (§3, E1)
+    cookie = request.cookies.get(sessions.named(sessions.COOKIE, auth))  # its own form's name only
     if cookie is None:
         raise HTTPException(401, "not signed in", headers=_CHALLENGE)
     async with ctx.pool.connection() as conn:
@@ -134,13 +134,13 @@ def require_fresh(role: str) -> Callable[..., Awaitable[Principal]]:
 
 
 def trial(settings: Settings) -> bool:
-    """Whether the installation is a trial: tokens mode on a plain-http loopback ``public_url``
-    (docs/mvp/AUTH.md §3, E1), as ``deploy/up.sh`` writes."""
+    """Whether the installation is a trial: tokens mode on a plain-http loopback ``public_url``, as
+    ``deploy/up.sh`` writes."""
     return settings.auth_mode == "tokens" and sessions.plain(settings.auth)
 
 
 def declarer(settings: Settings) -> str:
-    """The role that declares targets in the product (docs/mvp/AUTH.md §4.1): admin; in a trial
+    """The role that declares targets in the product: admin; in a trial
     (``trial``), spec_author. Tokens mode elsewhere has no admin, and keeps the targets file."""
     return "spec_author" if trial(settings) else "admin"
 
@@ -173,15 +173,15 @@ def ok(content: Any, status: int = 200, headers: dict[str, str] | None = None) -
 def shown(row: repo.Row, *hidden: str) -> repo.Row:
     """``row`` without its sealed columns, an opened raw ``key`` (and ``hidden``): outputs name keys by
     ``key_masked`` only. A run's table scan resumes ``after`` a key, so that is left out too, as is what
-    the schema guard holds of its tables (``guard``: names and declared types, docs/mvp/PRECHECKS.md §7),
-    and a file side's sealed pins and the digest of its files (docs/mvp/FILES.md §16)."""
+    the schema guard holds of its tables (``guard``: names and declared types),
+    and a file side's sealed pins and the digest of its files."""
     # approval_kind: a foreign key's constant
     left_out = ("key", "approval_kind", "guard", *SEALED, *hidden)
     view = {name: value for name, value in row.items() if name not in left_out}
     if row.get("scan"):
         view["scan"] = {name: value for name, value in row["scan"].items() if name != "after"}
     params = row.get("params")
-    if isinstance(params, dict) and isinstance(params.get("tables"), dict):  # docs/mvp/FILES.md §6, §16
+    if isinstance(params, dict) and isinstance(params.get("tables"), dict):
         tables = {
             side: {k: v for k, v in plan.items() if k != "files_sha256"} if isinstance(plan, dict) else plan
             for side, plan in params["tables"].items()
@@ -225,7 +225,7 @@ async def run_of(conn: repo.Conn, run_id: str) -> repo.Row:
 
 async def live_cycle(conn: repo.Conn, run: repo.Row, cycle: int | None = None) -> int:
     """The cycle a route reads, the run's current one by default; ``runner.purge.CyclePurged`` (410)
-    once its purge has started (docs/mvp/RETENTION.md §4.4)."""
+    once its purge has started."""
     cycle = run["cycle"] if cycle is None else cycle
     await refuse_purged(conn, run["run_id"], cycle)
     return cycle

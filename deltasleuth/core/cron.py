@@ -1,4 +1,4 @@
-"""Cron times in a time zone (docs/mvp/SCHEDULES.md §4): what a 5-field expression names, as instants.
+"""Cron times in a time zone: what a 5-field expression names, as instants.
 
 ``minute hour day-of-month month day-of-week``; each field ``*``, a number, ``a-b``, a list, ``*/n`` or
 ``a-b/n``, months and weekdays by name too, weekday 0 and 7 both Sunday; restricting both day fields is
@@ -6,7 +6,7 @@ refused, as are times under ``SPACING_MIN`` minutes apart. A time is a wall-cloc
 with ``fold=0``: one the clock skips falls later by the size of the jump, one it repeats at its first
 occurrence, and a day's instants are de-duplicated and sorted. Zones are ``UTC`` and the IANA region names
 this build's tz data holds (``zones``), but the legacy names of ``RENAMED``. Pure: every function takes its
-instants, none reads a clock. ``CronError`` carries the binding messages (§9 C1-C9, Z1, Z2).
+instants, none reads a clock. ``CronError`` carries the binding messages.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ SPACING_MIN = 15  # two times of a cron are at least this far apart on the wall 
 HORIZON_YEARS = 8  # every cron names a time within this long: a 29 February at the latest
 MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
 WEEKDAYS = ("SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT")
-# Each field: its name, bounds, names (the first standing for ``low``) and how C2 words its range.
+# Each field: its name, bounds, names (the first standing for ``low``) and how a refusal words its range.
 _FIELDS = (
     ("minute", 0, 59, (), "0-59"),
     ("hour", 0, 23, (), "0-23"),
@@ -32,8 +32,8 @@ _FIELDS = (
     ("month", 1, 12, MONTHS, "1-12 or JAN-DEC"),
     ("day-of-week", 0, 7, WEEKDAYS, "0-7 or SUN-SAT"),
 )
-_PART = re.compile(r"(\*|\w+)(?:-(\w+))?(?:/(\w+))?", re.ASCII)  # no letter or digit beyond ASCII: C3
-# Legacy names browsers following CLDR report, and the US/* links, with their IANA primaries (T5).
+_PART = re.compile(r"(\*|\w+)(?:-(\w+))?(?:/(\w+))?", re.ASCII)  # no letter or digit beyond ASCII
+# Legacy names browsers following CLDR report, and the US/* links, with their IANA primaries.
 RENAMED = {
     "Africa/Asmera": "Africa/Asmara", "America/Buenos_Aires": "America/Argentina/Buenos_Aires",
     "America/Catamarca": "America/Argentina/Catamarca", "America/Cordoba": "America/Argentina/Cordoba",
@@ -52,7 +52,7 @@ _LEAP_CYCLE = [date(2000, 1, 1) + timedelta(days=n) for n in range(1462)]  # eve
 
 
 class CronError(ValueError):
-    """A cron expression or a time zone refused (§9 C1-C9, Z1, Z2)."""
+    """A cron expression or a time zone refused."""
 
 
 @dataclass(frozen=True)
@@ -101,7 +101,7 @@ def _field(text: str, name: str, low: int, high: int, names: tuple[str, ...], sa
 
 
 def parse(cron: str) -> Cron:
-    """The expression parsed; CronError (C1-C9) when it is none a schedule takes. Only its text, trimmed and
+    """The expression parsed; CronError when it is none a schedule takes. Only its text, trimmed and
     single-spaced and at most 100 characters, is remembered."""
     text = " ".join(cron.split())
     if len(text) > 100:
@@ -158,7 +158,7 @@ def zones() -> frozenset[str]:
 
 
 def zone(name: str) -> tzinfo:
-    """The zone ``name``; CronError (Z1, Z2) when it is none a schedule takes."""
+    """The zone ``name``; CronError when it is none a schedule takes."""
     if name == "UTC":
         return UTC
     if "/" not in name:
@@ -178,7 +178,7 @@ def zone(name: str) -> tzinfo:
 
 
 def _day(parsed: Cron, tz: tzinfo, day: date) -> list[datetime]:
-    """The instants of the cron's times on the zone's ``day``, de-duplicated and sorted (T1)."""
+    """The instants of the cron's times on the zone's ``day``, de-duplicated and sorted."""
     if not parsed.on(day):
         return []
     y, m, d = day.year, day.month, day.day
@@ -233,7 +233,7 @@ def utc(at: datetime) -> str:
 
 def notes(cron: str, tz: str, t: datetime, days: int = 370) -> list[str]:
     """What the zone's clock changes do to the cron's times in the ``days`` after ``t``: each time skipped
-    (T2) or repeated (T3), ten at most."""
+    or repeated, ten at most."""
     parsed, where, found = parse(cron), zone(tz), []
     first = t.astimezone(where).date()
     for day in (first + timedelta(days=n) for n in range(days)):

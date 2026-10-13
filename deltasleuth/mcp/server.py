@@ -1,10 +1,10 @@
-"""The MCP server over ``tools`` (docs/mvp/MCP.md §5, §8): the library's low-level server, serving tools
-only. ``tools/list`` offers a caller what its role and the settings serve; ``tools/call`` answers through
-``tools.call``, where every exception ends. One server serves every request of a process, so nothing of a
-caller is kept on it: over HTTP each request names its own (``request.state.mcp_who``, which the route
-sets), over stdio ``build`` is given the one. A request that names none is answered T17, never as a default
-principal. No resource, prompt, output schema or structured content, and no span: the library's
-OpenTelemetry middleware is dropped (§3). A cancelled call's statement is cancelled in the store too (§10).
+"""The MCP server over ``tools``: the library's low-level server, serving tools only. ``tools/list`` offers
+a caller what its role and the settings serve; ``tools/call`` answers through ``tools.call``, where every
+exception ends. One server serves every request of a process, so nothing of a caller is kept on it: over
+HTTP each request names its own (``request.state.mcp_who``, which the route sets), over stdio ``build`` is
+given the one. A request that names none is answered as a fault, never as a default principal. No resource,
+prompt, output schema or structured content, and no span: the library's OpenTelemetry middleware is dropped.
+A cancelled call's statement is cancelled in the store too.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ CANCEL = 5.0  # seconds a cancelled call waits for its cancel request to reach t
 
 
 class _Pool:
-    """The store's pool as the server's calls use it (§10). The library cancels a call through an anyio
+    """The store's pool as the server's calls use it. The library cancels a call through an anyio
     scope, which cancels every later await of the call as well, psycopg's own cancel request among them:
     the statement would run on in its backend, behind a connection the pool closes and replaces. So a
     statement still running when its connection is given back is cancelled in the store first, from a
@@ -88,9 +88,9 @@ def build(
     ctx: Context, settings: McpSettings, *, who: Principal | None = None, denials: Throttle | None = None
 ) -> Server[Any]:
     """The server of one process over ``ctx``, under its ``mcp`` block. ``who`` is stdio's caller
-    (``tools.caller``'s), each of whose calls gets a request id of its own (§5.2); without it each request
-    names its own. ``denials`` is the throttle of ``authz.denied`` rows ``ds serve``'s routes share (§9).
-    Its calls read the store through ``_Pool`` (§10)."""
+    (``tools.caller``'s), each of whose calls gets a request id of its own; without it each request
+    names its own. ``denials`` is the throttle of ``authz.denied`` rows ``ds serve``'s routes share.
+    Its calls read the store through ``_Pool``."""
     limits = tools.Limits(settings, denials=denials)
     ctx = ctx and replace(ctx, pool=_Pool(ctx.pool))  # type: ignore[arg-type]  # None: the self-test's
 
@@ -100,7 +100,8 @@ def build(
         return getattr(getattr(asked.request, "state", None), "mcp_who", None)
 
     def unnamed(asked: ServerRequestContext[Any, Any]) -> str:
-        """T17 for a request that names no caller, which is a bug of its route: logged, never served."""
+        """The fault's text for a request that names no caller, which is a bug of its route: logged, never
+        served."""
         request_id = getattr(getattr(asked.request, "state", None), "request_id", None)
         log.error("%s without a caller request_id=%s", asked.method, request_id)
         return tools.FAULT.format(request_id)
@@ -129,7 +130,7 @@ def build(
         on_list_tools=on_list_tools,
         on_call_tool=on_call_tool,
     )
-    server.middleware.clear()  # the library's default: an OpenTelemetry span per message (§3)
+    server.middleware.clear()  # the library's default: an OpenTelemetry span per message
     return server
 
 
@@ -140,7 +141,7 @@ async def stdio(
     stop: asyncio.Event,
     stopped: Callable[[], Awaitable[None]],
 ) -> None:
-    """``ds mcp`` (§5.2): serve ``who`` (``tools.caller``'s) over the process's stdin and stdout until the
+    """``ds mcp``: serve ``who`` (``tools.caller``'s) over the process's stdin and stdout until the
     client ends its input. The library's transport keeps the wire on duplicates of its own while it serves,
     with fd 0 at the null device and fd 1 at stderr, so nothing else of the process reaches the wire.
     ``stop`` (a SIGTERM) ends the serving as the end of input does: a compare in flight ends first, any
@@ -170,7 +171,7 @@ async def stdio(
 
 
 def selftest() -> None:
-    """The release's smoke step (§3): the server built without a store, every data class and the work tool
+    """The release's smoke step: the server built without a store, every data class and the work tool
     served, lists its tools and says its instructions to the library's own client, as an operator, in both
     protocol eras. Prints what it saw; raises on any failure."""
     settings = McpSettings((tools.AGGREGATES, tools.TOKENISED, tools.CLEAR), work=("compare_key",))

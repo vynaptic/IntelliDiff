@@ -1,7 +1,7 @@
-"""The locked DuckDB instance the files tests read through (docs/mvp/FILES.md §3, §10, §18;
-docs/mvp/READER.md §15): a root of their own under a temporary ``files.roots_under``, and a spill directory
-beside it. ``started`` is a reader, the child process the product reads through; ``locked`` an in-process
-connection locked as a reader's is, for the tests of what DuckDB itself does (U1 to U31)."""
+"""The locked DuckDB instance the files tests read through: a root of their own under a temporary
+``files.roots_under``, and a spill directory beside it. ``started`` is a reader, the child process the product
+reads through; ``locked`` an in-process connection locked as a reader's is, for the tests of what DuckDB
+itself does."""
 
 from __future__ import annotations
 
@@ -111,7 +111,7 @@ def strays() -> list[int]:
 
 
 def unrestricted() -> Any:
-    """A DuckDB connection with nothing locked, which writes the tests' Parquet files (§18)."""
+    """A DuckDB connection with nothing locked, which writes the tests' Parquet files."""
     import duckdb
 
     return duckdb.connect(":memory:")

@@ -50,7 +50,7 @@ def _is_date_time(value: object) -> bool:
 
 @functools.cache
 def core_schema() -> dict[str, Any]:
-    """The packaged spec.schema.json (a byte-identical copy of docs/architecture/spec.schema.json)."""
+    """The packaged spec.schema.json."""
     return json.loads(
         resources.files("deltasleuth.core.spec").joinpath("spec.schema.json").read_text("utf-8")
     )

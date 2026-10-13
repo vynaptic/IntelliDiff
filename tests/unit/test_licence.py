@@ -1,7 +1,6 @@
-"""Licence keys and entitlements (docs/mvp/LICENCE.md §3-§7, §10): the file's grammar and signature
-(I1-I5), offline verification, the embedded and removed keys, the standing judged at each date with its
-refusals, labels and warnings, stored rows that grant nothing, pairs and their seats (``admit``, ``need``),
-and installing and withdrawing a licence (I6-I9, W1)."""
+"""Licence keys and entitlements: the file's grammar and signature, offline verification, the embedded and
+removed keys, the standing judged at each date with its refusals, labels and warnings, stored rows that
+grant nothing, pairs and their seats (``admit``, ``need``), and installing and withdrawing a licence."""
 
 from __future__ import annotations
 
@@ -45,24 +44,24 @@ LATER_ID = "LI-01JB8Q7ZK3M9W2XR5T4VNH6D0D"
 STARTS, ENDS = date(2026, 10, 1), date(2027, 9, 30)
 NOT_A_LICENCE = "the file is not a DeltaSleuth licence (deltasleuth-licence/1): "
 FINGERPRINT = PackSigner(VENDOR_KEY).fingerprint
-I1 = "this build embeds no vendor key: it needs no licence and can verify none (docs/mvp/LICENCE.md §19)"
+I1 = "this build embeds no vendor key: it needs no licence and can verify none"
 M4 = (
     f"licence {LICENCE_ID} ended on 2027-09-30 and its 30 days of grace on 2027-10-30: new runs, compares,"
     " soak cycles and evidence packs are refused until a renewed licence is installed (ds licence install"
     " FILE); reads, reports, exports, holds, erasure, purge, audit, pack downloads and sign-offs under an"
-    " Enterprise licence keep working (docs/mvp/LICENCE.md §6)"
+    " Enterprise licence keep working"
 )
 M5 = (
     "SSO (auth.oidc) is an Enterprise feature and {whose}: under SSO this installation keeps serving sign-in,"
     " reads, reports, exports, pack downloads and administration, and new runs, compares and soak cycles"
-    " need an Enterprise licence (ds licence install FILE){tail} (docs/mvp/LICENCE.md §6)"
+    " need an Enterprise licence (ds licence install FILE){tail}"
 )
 TOKENS_TAIL, PACKS_TAIL = " or tokens mode", "; keep SSO, which evidence packs need"
 LAST_START = " (this installation's server last started in oidc mode)"
 
 
 def example(**fields: Any) -> bytes:
-    """§3's example licence, signed by the session's vendor key; ``fields`` as ``licence_file``'s."""
+    """An example licence, signed by the session's vendor key; ``fields`` as ``licence_file``'s."""
     values = {"licence": LICENCE_ID, "issued": "2026-09-28T10:00:00Z", "starts": STARTS, "ends": ENDS}
     return licence_file(fields.pop("installation_id", INSTALLATION), **values | fields)
 
@@ -107,7 +106,7 @@ def signed(body: str, key: ec.EllipticCurvePrivateKey) -> bytes:
     return f"{body}signature: {signature}\n".encode()
 
 
-# -- the file (§3) ---------------------------------------------------------------------------------------
+# -- the file ---------------------------------------------------------------------------------------
 
 
 def test_parse_example() -> None:
@@ -177,7 +176,7 @@ def test_no_key_I1(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(LicenceError, match=re.escape(I1)):
         licence.parse(example(), keys=())
     # A build before the maintainer's keys, by the keys read at each call; it holds after the bootstrap too,
-    # when SHIPPED_KEYS is no longer empty (§4) and a release's checks run this test.
+    # when SHIPPED_KEYS is no longer empty and a release's checks run this test.
     monkeypatch.setattr(licence, "VENDOR_KEYS", ())
     with pytest.raises(LicenceError, match=re.escape(I1)):
         licence.parse(b"anything")
@@ -224,24 +223,35 @@ def _tools() -> None:
         (pytest.fail if os.environ.get("DS_REQUIRE_TOOLS") else pytest.skip)(f"missing {', '.join(missing)}")
 
 
-def test_openssl_verifies(repo_root: Path, tmp_path: Path) -> None:
-    """§3's recipe as the contract prints it, on a file with a BOM, CRLFs, trailing blanks and empty lines."""
+# A licence checked by hand, with POSIX tools and openssl: the text as it is stored, its body and its
+# signature, the key's fingerprint, and the verification.
+RECIPE = r"""
+LC_ALL=C awk '{ sub(/\r$/, ""); sub(/[ \t]+$/, ""); if (NR == 1) sub(/^\357\273\277/, "");
+  if ($0 != "") print }' licence.txt > l.txt
+sed '$d' l.txt > body.txt
+sed -n 's/^signature: //p' l.txt | openssl base64 -d -A > sig.der
+openssl pkey -pubin -in vendor.pem -outform DER | sha256sum
+openssl dgst -sha256 -verify vendor.pem -signature sig.der body.txt
+"""
+
+
+def test_openssl_verifies(tmp_path: Path) -> None:
+    """A licence verifies without the product: a file with a BOM, CRLFs, trailing blanks and empty lines."""
     _tools()
-    recipe = (repo_root / "docs/mvp/LICENCE.md").read_text().split("```sh\n", 1)[1].split("```", 1)[0]
     data = example()
     (tmp_path / "licence.txt").write_bytes(b"\xef\xbb\xbf" + data.replace(b"\n", b" \t\r\n\r\n"))
     (tmp_path / "vendor.pem").write_bytes(PackSigner(VENDOR_KEY).public_pem)
-    run = subprocess.run(["sh", "-c", recipe], cwd=tmp_path, capture_output=True, text=True, check=False)
+    run = subprocess.run(["sh", "-c", RECIPE], cwd=tmp_path, capture_output=True, text=True, check=False)
     assert run.stdout.split() == [FINGERPRINT, "-", "Verified", "OK"], run.stderr
     assert (tmp_path / "l.txt").read_bytes() == data  # the recipe's normalised text is the stored one
     (tmp_path / "licence.txt").write_bytes(data.replace(b"Bank plc", b"Bank plC"))
-    run = subprocess.run(["sh", "-c", recipe], cwd=tmp_path, capture_output=True, text=True, check=False)
+    run = subprocess.run(["sh", "-c", RECIPE], cwd=tmp_path, capture_output=True, text=True, check=False)
     assert "Verification failure" in run.stdout + run.stderr
 
 
 def test_shipped_keys_match_fixture(repo_root: Path) -> None:
     """The build embeds exactly the keys tests/fixtures/vendor-keys.txt lists as trusted, and the removed
-    ones with their days (§4)."""
+    ones with their days."""
     listed = [
         line.split()
         for line in (repo_root / "tests/fixtures/vendor-keys.txt").read_text().splitlines()
@@ -256,7 +266,7 @@ def test_shipped_keys_match_fixture(repo_root: Path) -> None:
     assert licence.VENDOR_KEYS == (PackSigner(VENDOR_KEY).public_pem,)  # the test's key, in tests only
 
 
-# -- the standing (§5, §6) -------------------------------------------------------------------------------
+# -- the standing -------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -284,7 +294,7 @@ def test_a_future_licence_alone_is_an_evaluation() -> None:
 
 
 def test_what_a_server_start_records() -> None:
-    """``system.start``'s ``licence`` (§11): ``pairs`` is the evaluation's two, a licence's limit, or null
+    """``system.start``'s ``licence``: ``pairs`` is the evaluation's two, a licence's limit, or null
     when unlimited."""
     none = {"installation_id": INSTALLATION, "licence_id": None, "tier": None, "ends": None}
     found = none | {"licence_id": LICENCE_ID, "state": "valid", "ends": "2027-09-30"}
@@ -353,7 +363,7 @@ def test_foreign_or_edited_rows_grant_nothing() -> None:
 
 def test_unreadable_rows_grant_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     """A row written with SQL whose signature line ends in a no-break space, or whose check raises, grants
-    nothing beside the Enterprise licence and makes nothing raise (§5)."""
+    nothing beside the Enterprise licence and makes nothing raise."""
     nbsp = stored(example(licence=LATER_ID))
     nbsp["text"] = nbsp["text"][:-1] + "\u00a0\n"
     current = judged(stored(example()), nbsp, day=STARTS)
@@ -373,7 +383,7 @@ def test_unreadable_rows_grant_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_rows_of_a_removed_key_are_not_warned(monkeypatch: pytest.MonkeyPatch) -> None:
-    """After a compromise release (§4) a row signed by the removed key grants nothing and is not warned of,
+    """After a compromise release a row signed by the removed key grants nothing and is not warned of,
     its reissue in force; one signed by a key this build never knew still is."""
     removed, stranger = (PackSigner(ec.generate_private_key(ec.SECP256R1())) for _ in range(2))
     monkeypatch.setattr(licence, "REMOVED_KEYS", {removed.fingerprint: "2027-01-05"})
@@ -437,8 +447,7 @@ def test_evaluation_fences_like_community() -> None:
     ]
     assert [community.refusal(feature) for feature in ("run", "signoff", "packs")] == [
         None,
-        f"four-eyes sign-off is an Enterprise feature and licence {LICENCE_ID} is community"
-        " (docs/mvp/LICENCE.md §6)",
+        f"four-eyes sign-off is an Enterprise feature and licence {LICENCE_ID} is community",
         f"evidence packs are an Enterprise feature and licence {LICENCE_ID} is community",
     ]
     whose = "this installation is an unlicensed evaluation"
@@ -517,22 +526,21 @@ def test_labels_warnings_golden() -> None:
     assert replace(pro, counted=pairs(*five)).full("cards") == (
         f"spec cards would be pair 6 of 5 under licence {LICENCE_ID} (pro, 2026-10-01 to 2027-09-30): its"
         " seats since 2026-10-01 are accounts, customers, loans, payments, transfers, whose runs go ahead; a"
-        " new pair needs a licence with more pairs (docs/mvp/LICENCE.md §7)"
+        " new pair needs a licence with more pairs"
     )
     assert replace(pro, counted=pairs(*five, "cards")).unseated("cards") == (
         f"spec cards is not one of the 5 pairs licence {LICENCE_ID} (pro, 2026-10-01 to 2027-09-30) seats"
         " since 2026-10-01 (accounts, customers, loans, payments, transfers): its cycles under way end, and a"
-        " new run or cycle needs a licence with more pairs (docs/mvp/LICENCE.md §7)"
+        " new run or cycle needs a licence with more pairs"
     )
     two = replace(judged(day=STARTS), counted=pairs("customer-profile", "linker", "cards"))
     assert two.full("cards") == (
         "spec cards would be a third pair: an unlicensed evaluation runs 2 pairs (customer-profile, linker);"
-        f" install a licence for installation {INSTALLATION} (docs/mvp/LICENCE.md §7)"
+        f" install a licence for installation {INSTALLATION}"
     )
     assert two.unseated("cards") == (
         "spec cards is not one of the 2 pairs an unlicensed evaluation runs (customer-profile, linker): its"
         f" cycles under way end, and a new run or cycle needs a licence for installation {INSTALLATION}"
-        " (docs/mvp/LICENCE.md §7)"
     )
     assert two.unseated("linker") is None and replace(pro, counted=pairs(*five)).unseated("loans") is None
     many = replace(pro, counted=pairs(*(f"spec-{n:02}" for n in range(1, 17))))
@@ -542,7 +550,7 @@ def test_labels_warnings_golden() -> None:
     )
 
 
-# -- in the store: install, withdraw, admit (§5, §7) -----------------------------------------------------
+# -- in the store: install, withdraw, admit -----------------------------------------------------
 
 
 @pytest.fixture
@@ -656,17 +664,17 @@ async def test_install_refusals_write_nothing(ctx: Context, monkeypatch: pytest.
     before = await _written(ctx)
     ended, grace = today - timedelta(days=31), today - timedelta(days=1)
     refusals = [
-        (licence_file(OTHER),  # I6
+        (licence_file(OTHER),
          f"licence {{id}} is for installation {OTHER}, not this one ({installation}): ask for a licence for"
          f" {installation} (ds licence id)"),
-        (licence_file(installation, starts=today - timedelta(days=100), ends=ended),  # I7
+        (licence_file(installation, starts=today - timedelta(days=100), ends=ended),
          f"licence {{id}} ended on {ended} and its grace on {grace}: install a current licence"),
-        (licence_file(installation, licence=installed.licence_id, customer="Another Bank"),  # I8
+        (licence_file(installation, licence=installed.licence_id, customer="Another Bank"),
          "licence {id} is installed already with other content: ask your DeltaSleuth contact which file is"
          " genuine"),
-        (future.text.encode(),  # I9
+        (future.text.encode(),
          f"licence {{id}} was withdrawn on {today}: it is not installed again; ask for a new licence"),
-        (b"format: deltasleuth-licence/1\n", NOT_A_LICENCE + "line 2: expected 'licence: …'"),  # I2
+        (b"format: deltasleuth-licence/1\n", NOT_A_LICENCE + "line 2: expected 'licence: …'"),
     ]  # fmt: skip
     for data, message in refusals:
         with pytest.raises(LicenceError) as refused:
@@ -687,7 +695,7 @@ async def test_withdraw_only_before_starts(ctx: Context) -> None:
     assert (row["withdrawn_by"], row["withdraw_reason"]) == (TESTER.actor, "issued for the wrong order")
     refused = {
         started.licence_id: f"licence {started.licence_id} started on {today}: a started licence is replaced"
-        " by a new one, not withdrawn (docs/mvp/LICENCE.md §5)",
+        " by a new one, not withdrawn",
         future.licence_id: f"licence {future.licence_id} is withdrawn already",
         LATER_ID: f"licence {LATER_ID} is not installed",
     }

@@ -2,8 +2,7 @@
 
 Host names are checked on every new connection by ``GuardedResolver`` (so DNS rebinding is
 refused at connect time); aiohttp never resolves IP-literal hosts, so ``check_literal_host``
-covers those before each call. A database target's session goes to an address ``vetted`` answered
-(docs/mvp/ENGINES.md §4).
+covers those before each call. A database target's session goes to an address ``vetted`` answered.
 """
 
 from __future__ import annotations

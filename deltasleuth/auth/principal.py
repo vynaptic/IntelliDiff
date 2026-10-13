@@ -1,4 +1,4 @@
-"""Principals: who acts, under which roles (docs/mvp/AUTH.md §1).
+"""Principals: who acts, under which roles.
 
 Every route and agent tool checks one of six ordered roles; a principal holding one holds every lower
 one. The two person-required roles are granted only to a person signed in through the IdP, whatever
@@ -72,14 +72,14 @@ def _part(text: str, limit: int) -> str:
 
 
 def local(*, required: bool = False) -> Principal:
-    """The CLI's principal (§4.2): ``DS_OPERATOR`` as asserted, with every role. Unless ``required``
+    """The CLI's principal: ``DS_OPERATOR`` as asserted, with every role. Unless ``required``
     (the settings have ``auth``), an unset or empty ``DS_OPERATOR`` means the OS account.
 
     One per invocation: it carries the invocation's ``C-`` request id.
     """
     account, operator = _account(), os.environ.get("DS_OPERATOR")
     if required and not operator:
-        raise ValueError("set DS_OPERATOR to your user name (docs/mvp/AUTH.md §4.2)")
+        raise ValueError("set DS_OPERATOR to your user name")
     name = operator or account
     if not (1 <= len(name) <= 256 and printable(name)):
         raise ValueError("DS_OPERATOR must be 1 to 256 characters without control characters")

@@ -1,4 +1,4 @@
-"""Labelled accuracy over the API (docs/mvp/ACCURACY.md §10, §11): an operator draws a labelling of an
+"""Labelled accuracy over the API: an operator draws a labelling of an
 ended cycle against a named truth source, a viewer reads it and downloads its sheet, an operator uploads the
 filled sheet once; the sign-off request attests it, freezes the cycle and keeps its labeller from
 approving; every auth mode serves the routes, and only a person's labelling is attested; a purged cycle
@@ -262,9 +262,8 @@ def test_a_tokenised_key_needs_its_acknowledgement(client: TestClient) -> None:
     assert said(refused) == (
         422,
         "the key is tokenised (class identifier) and the spec shows no path in clear: labellers cannot find"
-        " records in the truth source until the per-key reveal (AUTH §11) exists; set"
-        " acknowledge_unlocatable to draw for labels a business rule decides without the record"
-        " (docs/mvp/ACCURACY.md §4)",
+        " records in the truth source until the per-key reveal exists; set"
+        " acknowledge_unlocatable to draw for labels a business rule decides without the record",
     )
     assert drawn.status_code == 201 and drawn.json()["warnings"][0] == (
         "the key is tokenised (class identifier) and the spec shows no path in clear: expect UNDECIDABLE"

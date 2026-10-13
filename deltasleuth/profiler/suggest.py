@@ -1,4 +1,4 @@
-"""Select detection and normaliser suggestions (§8.6).
+"""Select detection and normaliser suggestions.
 
 A wrapper object is selected so envelope members stay out of the comparison. Aligned values
 that agree by light token but differ as written get the normaliser chain that reconciles them,

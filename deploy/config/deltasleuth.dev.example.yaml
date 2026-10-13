@@ -1,4 +1,4 @@
-# DeltaSleuth settings for a source checkout without Docker (docs/guide/02-run-from-source.md): copy to
+# DeltaSleuth settings for a source checkout without Docker (docs/deployment.md): copy to
 # .deltasleuth/deltasleuth.yaml in the checkout, which git ignores, and name that file in DS_CONFIG.
 # Developer mode: no auth block, so ds serve listens on this machine only and every local user and
 # process acts as admin; never put a proxy or a port forward in front of it. The keys are files in the

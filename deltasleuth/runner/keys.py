@@ -3,7 +3,7 @@
 A ``list`` source is inline. A ``paginated_endpoint`` is walked through the connectors (the
 target's rate budget, retries and paging) and must be read completely: a partial listing would
 compare another population than the spec declares. A complete walk is the census of the side whose
-target it reads (docs/mvp/PACK.md §1.2). A ``table`` source with a target and a table of its own (a key
+target it reads. A ``table`` source with a target and a table of its own (a key
 table) is planned anew at each read and read to its end in one snapshot, under one slot of its target's
 gate: a key list, not a census of a side. Every key goes through ``key.normalize`` and must
 match ``key.pattern`` and fit the store (at most 1024 UTF-8 bytes, no NUL); duplicates are dropped,
@@ -124,7 +124,7 @@ def run_keys(keys: Sequence[str], spec: CompiledSpec, tokeniser: Tokeniser) -> d
 
 
 def keys_cut(resolved: Sequence[str], taken: Mapping[str, str]) -> dict[str, int] | None:
-    """``runs.keys_cut`` when maxKeys cut the resolved key set (docs/mvp/APPROVALS.md §4), else None."""
+    """``runs.keys_cut`` when maxKeys cut the resolved key set, else None."""
     return {"resolved": len(resolved), "taken": len(taken)} if len(taken) < len(resolved) else None
 
 
@@ -201,7 +201,7 @@ async def _tabled(
                         if seen > sampling.LIMIT:
                             raise ValueError(OVER.format(sampling.LIMIT))
                     skipped = await engine.null_keys(session, plan)
-        if "selected" in plan and rows + skipped != plan["selected"]:  # a file's rows guard (FILES.md §7)
+        if "selected" in plan and rows + skipped != plan["selected"]:  # a file's rows guard
             read = rows + skipped
             raise tables.RowsMoved(f"{read:,} rows were read where the plan counted {plan['selected']:,}")
     except tables.Unconnected as exc:  # worded for whoever creates the run, but a refused credential

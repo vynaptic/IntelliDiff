@@ -1,4 +1,4 @@
-"""Migration 008 (docs/mvp/APPROVALS.md §7) over a store 001-007 left with specs, a run and its ended
+"""Migration 008 over a store 001-007 left with specs, a run and its ended
 cycle, and on an empty one: it refuses and backfills nothing, and reports the stored bodies that do not
 re-hash to their content hash."""
 

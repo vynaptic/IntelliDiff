@@ -1,4 +1,4 @@
-"""MCP over HTTP (docs/mvp/MCP.md §5.1): ``POST /v1/mcp`` hands a viewer's request to the MCP library's
+"""MCP over HTTP: ``POST /v1/mcp`` hands a viewer's request to the MCP library's
 session manager, which the app's lifespan builds while ``mcp.http`` says so (``app.state.mcp``; None: off).
 Stateless, with JSON answers: no stream and no session, so GET and DELETE are served only to say so. The
 caller is the request's own, cut as ``mcp.tools.caller`` cuts it, and never a cookie session's: an agent
@@ -16,7 +16,7 @@ from starlette.types import Receive, Scope, Send
 from deltasleuth.api.deps import Viewer
 from deltasleuth.mcp import tools
 
-OFF = "MCP over HTTP is off (mcp.http, docs/mvp/MCP.md §4)"
+OFF = "MCP over HTTP is off (mcp.http)"
 SESSION = "MCP takes an API token (Authorization: Bearer dst_…), not a browser session"
 POST_ONLY = "MCP is served by POST only: no stream and no session"
 router = APIRouter()

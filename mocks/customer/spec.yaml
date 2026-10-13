@@ -1,11 +1,10 @@
 # DeltaSleuth ComparisonSpec: customer mock pair, Customer Profile Service v1 (a) vs v2 (b).
-# Validates against docs/architecture/spec.schema.json (a unit test checks it).
+# Validates against deltasleuth/core/spec/spec.schema.json (a unit test checks it).
 #
-# The P0 cut of docs/architecture/examples/generic-customer-services.yaml: the same response shapes,
-# maps, array rules, normalisers and known diffs, with what P0 does not run taken out (shared
-# watermark -> live time policy, hash_sample/union -> an inline key list, no inferredSchema or
-# schemaDrift, no noise calibration, no valueFilter, no reporting block). No domain pack: nothing
-# here is specific to entity linking.
+# A P0 cut of a generic customer-services pair: its response shapes, maps, array rules, normalisers
+# and known diffs, with what P0 does not run taken out (shared watermark -> live time policy,
+# hash_sample/union -> an inline key list, no inferredSchema or schemaDrift, no noise calibration, no
+# valueFilter, no reporting block). No domain pack: nothing here is specific to entity linking.
 #
 # Targets come from mocks/customer/targets.yaml (customer-a, customer-b on 127.0.0.1); no auth.
 #

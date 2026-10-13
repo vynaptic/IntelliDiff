@@ -1,4 +1,4 @@
-"""The hash-chained audit log (docs/mvp/PACK.md §4): checking ``ds.audit_chain`` against itself, the
+"""The hash-chained audit log: checking ``ds.audit_chain`` against itself, the
 audit rows and a SIEM export (``verify``, for ``ds audit verify``), and a pack's segment (``check_segment``).
 
 Row ``seq``'s hash covers row ``seq - 1``'s (``prev``), its object's previous row's (``obj_prev``, 64 zeros
@@ -144,7 +144,7 @@ def _name(line: Mapping[str, Any]) -> str:
 
 
 async def verify(conn: repo.Conn, siem: Sequence[Mapping[str, Any]] | None = None) -> dict[str, Any]:
-    """Check the chain (docs/mvp/PACK.md §4.2) on ``conn``, which has no transaction open: contiguous
+    """Check the chain on ``conn``, which has no transaction open: contiguous
     ``seq``, both links, each hash, each text against its audit row's columns, and every audit row
     chained. With ``siem`` (``read_siem``), also both ways against it over the rows its lines span: a
     line with a ``chain`` entry by that entry and its row's content, one without (logged before 009) by

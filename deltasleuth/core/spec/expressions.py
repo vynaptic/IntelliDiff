@@ -57,7 +57,7 @@ CEL_VARIABLES: dict[CelKind, dict[str, str]] = {
     # The schema documents response.{status, headers, body}; the bare names are bound too.
     "not_found": {"response": "DYN", "status": "INT", "headers": "DYN", "body": "DYN"},
     "absence_shape": {"body": "DYN", "status": "INT", "headers": "DYN"},
-    # A hash sample's frame row, and now, when the frame was read (docs/mvp/SAMPLING.md §2.1).
+    # A hash sample's frame row, and now, when the frame was read.
     "signoff_stratum": {
         "key": "STRING",
         "row": "DYN",

@@ -1,4 +1,4 @@
-"""MySQL behind the engine seam (docs/mvp/ENGINES.md §4 to §11): its session, its catalogue query, the
+"""MySQL behind the engine seam: its session, its catalogue query, the
 primitives of ``compose``'s statements and its error codes.
 
 A session runs on a socket DeltaSleuth opened to an address the guard vetted, handed to PyMySQL, which
@@ -64,7 +64,7 @@ MAX_PACKET = BATCH_BYTES + compose.MAX_LOB_BYTES
 CONNECT_S = 10.0  # the socket, the handshake and the session's settings
 _OLDEST = (8, 0, 17)
 
-# §11's classes by server code; any other server code is TargetRefused.
+# The error classes by server code; any other server code is TargetRefused.
 _CODES: dict[int, type[TableError]] = {
     **dict.fromkeys((1267, 1270, 1271, 1292, 1366, 1525, 3854), KeyUnfit),
     **dict.fromkeys((1040, 1053, 1129, 1203, 1226, 1317, 4031), TargetUnreachable),
@@ -73,7 +73,7 @@ _CODES: dict[int, type[TableError]] = {
     **dict.fromkeys((1045, 1862, 3118), TargetAuthRefused),
     # 1 and 3 are the server's own for a file of its temporary directory it cannot create or write.
     **dict.fromkeys((1, 3, 1021, 1028, 1114), TargetTempSpace),
-    # 1054: a column that is gone (docs/mvp/PRECHECKS.md §7, V5).
+    # 1054: a column that is gone.
     **dict.fromkeys((1054, 1142, 1143, 1146), TargetDenied),
 }
 _GLOSSES = {
@@ -84,7 +84,7 @@ _GLOSSES = {
 }
 _NOT_MYSQL = "the answer is not a MySQL server's"
 _VERSION = r"([0-9]+)\.([0-9]+)\.([0-9]+)"
-# The class of each declared type (§7); a spatial type or VECTOR has none.
+# The class of each declared type; a spatial type or VECTOR has none.
 _CLASSES = {
     **dict.fromkeys(("tinyint", "smallint", "mediumint", "int", "bigint", "year", "bit"), "integer"),
     "decimal": "decimal",
@@ -256,7 +256,7 @@ PRIMITIVES = _Primitives()
 
 
 def _error(exc: BaseException) -> TableError:
-    """The neutral error of a driver's or a socket's, classified by its origin first (§5)."""
+    """The neutral error of a driver's or a socket's, classified by its origin first."""
     if isinstance(exc, pymysql.MySQLError):
         origin = getattr(exc, "original_exception", None)  # the socket's or TLS's own, wrapped at a connect
         if origin is not None:
@@ -398,7 +398,7 @@ def _numbers(version: str) -> tuple[int, ...]:
 
 
 def _refuse_version(target: Target, version: str) -> None:
-    """§12 P2: MariaDB by its version string, and a MySQL older than 8.0.17."""
+    """MariaDB by its version string, and a MySQL older than 8.0.17."""
     maria, number = "MariaDB" in version, _numbers(version)
     if maria or number < _OLDEST:
         product = f"{'MariaDB' if maria else 'MySQL'} {number[0]}.{number[1]}"
@@ -449,7 +449,7 @@ class _Session:
         self, call: Callable[..., Any], *args: Any, then: Callable[[Any], Any] | None = None
     ) -> asyncio.Future[Any]:
         """``call`` in the session's thread, sent to it now; ``then`` shapes its answer there. Whatever
-        the driver raises becomes a neutral error: a server may make it raise anything (§5)."""
+        the driver raises becomes a neutral error: a server may make it raise anything."""
 
         def guarded() -> Any:
             self._busy = True
@@ -544,7 +544,7 @@ class MySQL:
     fold = None  # a column's name matches in any case
     hides = True
     grant = "SELECT"
-    sum_digits = 65  # a DECIMAL's (docs/mvp/PRECHECKS.md §4)
+    sum_digits = 65  # a DECIMAL's
     empty_null = False
     retry_alone = True
 
@@ -649,7 +649,7 @@ class MySQL:
 
     async def scan(self, session: _Session, side: Plan, after: Sequence[bytes] | None) -> AsyncIterator[Rows]:
         """Each fetched batch is canonicalised and hashed off the event loop, in the session's thread; the
-        columns the server hashed itself come as 32 bytes a row (§10)."""
+        columns the server hashed itself come as 32 bytes a row."""
         return session.stream(compose.scan(PRIMITIVES, side, after)[0], compose.digested(PRIMITIVES, side))
 
     def census(self, session: _Session, side: Plan) -> AsyncIterator[Rows]:

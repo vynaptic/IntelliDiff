@@ -1,4 +1,4 @@
-"""A table column's declared canonical type (typeMap, docs/mvp/TABLES.md §10): what each type accepts,
+"""A table column's declared canonical type (typeMap): what each type accepts,
 what it produces, and what it refuses, naming the type and the column, never the value."""
 
 from __future__ import annotations
@@ -105,7 +105,7 @@ def test_a_value_its_type_cannot_hold_is_refused_naming_the_type_only(
 
 
 def test_an_empty_string_declared_as_null_reads_as_one() -> None:
-    # The other side's database stores '' as NULL (docs/mvp/ENGINES.md §9): in digests and per-key rows.
+    # The other side's database stores '' as NULL: in digests and per-key rows.
     spec = {"as": "string", "emptyAsNull": True}
     assert convert("", spec) is None and convert(None, spec) is None
     assert convert_row({"note": "", "name": ""}, {"note": spec}) == {"note": None, "name": ""}
@@ -164,7 +164,7 @@ def test_a_row_converts_its_mapped_columns_and_names_the_one_that_fails() -> Non
 def test_a_text_reads_by_its_declared_format_or_separator(
     value: str, spec: dict[str, Any], expected: Any
 ) -> None:
-    """docs/mvp/FILES.md §5: format parsed whole by strptime; decimalSeparator, the text's own."""
+    """Format parsed whole by strptime; decimalSeparator, the text's own."""
     assert convert(value, spec) == expected
 
 

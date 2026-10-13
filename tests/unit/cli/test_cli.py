@@ -1,5 +1,5 @@
 """The ``ds`` CLI's own behaviour: its commands, exit codes (2 input, 3 a bug, 130 Ctrl-C; never 1 for
-a crash), the LLM probe, and the host administrator's channel (docs/mvp/AUTH.md §4.2): who the CLI acts
+a crash), the LLM probe, and the host administrator's channel: who the CLI acts
 as, API tokens, sessions, users, the audit log and the IdP check. The commands' work is tested end to end
 in tests/e2e/test_cli.py."""
 
@@ -64,7 +64,7 @@ TARGETS = """\
 targets:
   svc: {base_url: "http://127.0.0.1:9/", allow_private_network: true, allow_insecure_http: true}
 """
-OPERATOR = "set DS_OPERATOR to your user name (docs/mvp/AUTH.md §4.2)"
+OPERATOR = "set DS_OPERATOR to your user name"
 MaybeAuth = dict[str, Any] | None
 
 
@@ -92,8 +92,8 @@ def audit_logger() -> Iterator[logging.Logger]:
 @pytest.fixture(autouse=True)
 def mcp_loggers() -> Iterator[None]:
     """``deltasleuth.mcp`` and the MCP library's ``mcp`` as this process had them, restored afterwards:
-    ``ds mcp`` and ``ds serve`` give each a handler of its own and stop its propagating (docs/mvp/MCP.md
-    §9). ``ds mcp`` gives the root logger one too, which goes again: pytest's own stay."""
+    ``ds mcp`` and ``ds serve`` give each a handler of its own and stop its propagating.
+    ``ds mcp`` gives the root logger one too, which goes again: pytest's own stay."""
     root, loggers = logging.getLogger(), [logging.getLogger(name) for name in ("deltasleuth.mcp", "mcp")]
     kept = [(logger.handlers, logger.propagate, logger.level) for logger in loggers]
     root_level = root.level
@@ -112,7 +112,7 @@ def mcp_loggers() -> Iterator[None]:
 def a_free_port_and_a_built_ui(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``ds serve`` as on a machine whose port is free and whose UI is built: these tests serve on 8000,
     which a developer's machine may hold, and a checkout need not hold ``web/dist``. The tests of the two
-    checks put them back (docs/mvp/FIRSTRUN.md §8 C2 to C4)."""
+    checks put them back."""
     monkeypatch.setattr("deltasleuth.cli.main._bindable", lambda host, port: None)
     monkeypatch.setattr("deltasleuth.api.app.WEB_DIST", tmp_path)
 
@@ -141,12 +141,11 @@ def test_help_lists_the_commands() -> None:
 
 
 def test_help_says_what_ds_does() -> None:
-    """docs/mvp/FIRSTRUN.md §8 H1 to H5, H7 and H8."""
     written = {path: " ".join(text.split()) for path, text in helps().items()}
     assert (written["ds"], written["ds target"], written["ds token create name"], written["ds migrate"]) == (
         "DeltaSleuth: compare what two sources hold, key by key, black-box: REST services, database tables,"
         " CSV and Parquet files.",
-        "Database and files targets: the pre-flight check (docs/mvp/ENGINES.md §13, FILES.md §16).",
+        "Database and files targets: the pre-flight check.",
         "Token name, audited as its actor_name: 3 to 64 of a-z, 0-9, '.', '_' and '-', starting with a"
         " letter or a digit.",
         "Apply the pending database migrations (every command that opens the store applies them too).",
@@ -158,7 +157,7 @@ def test_help_says_what_ds_does() -> None:
     assert not [path for path, text in written.items() if "ds spec or" in text]  # no command uploads a spec
     shown = " ".join(run("--help").stdout.replace("│", " ").split())
     assert "compare what two sources hold, key by key, black-box: REST services" in shown
-    # H7, H8: a licence marks a run only in a build that enforces one (LICENCE.md §19): no word of ds --help's
+    # A licence marks a run only in a build that enforces one: no word of ds --help's
     assert "newest first, each with what its spec approval says. report " in shown
     assert "or the P0 summary (report.md and report.html). profile " in shown
     assert all("a build that enforces a licence" in written[path] for path in ("ds runs", "ds report"))
@@ -185,7 +184,6 @@ def test_no_help_text_loses_words_to_markup() -> None:
 def test_samples_size_prints_single_stage_sizes_without_settings(
     monkeypatch: pytest.MonkeyPatch, tier: str, failures: int, said: str
 ) -> None:
-    """docs/mvp/SAMPLING.md §6."""
     monkeypatch.delenv("DS_CONFIG", raising=False)
     assert ds("samples", "size", "--tier", tier, "--failures", failures) == (0, said + "\n")
 
@@ -336,7 +334,7 @@ def test_serve_refuses_a_public_host_without_the_auth_settings(tmp_path: Path) -
     (tmp_path / "ds.yaml").write_text(SETTINGS)
     code, out = ds("serve", "--host", "0.0.0.0", "--config", tmp_path / "ds.yaml")  # noqa: S104
     assert code == 2
-    assert "error: serving on 0.0.0.0 needs the auth settings (docs/mvp/AUTH.md §1)" in out
+    assert "error: serving on 0.0.0.0 needs the auth settings" in out
 
 
 def test_serve_warns_of_developer_mode_and_a_configuration_error_exits_2_in_one_line(tmp_path: Path) -> None:
@@ -409,7 +407,7 @@ def test_serve_leaves_proxy_headers_to_the_app_and_sign_in_queries_out_of_the_lo
 def test_serve_refuses_a_taken_port_before_it_opens_the_store(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """docs/mvp/FIRSTRUN.md §8 C2, C3: the last refusal before the store is opened, so no ``system.start``
+    """The last refusal before the store is opened, so no ``system.start``
     row is written and no worker starts; the driver's own exit would be 3, with a traceback."""
     monkeypatch.setattr("deltasleuth.cli.main._bindable", _bindable)
     monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda *_: pytest.fail("the store must not open"))
@@ -437,7 +435,7 @@ def test_serve_refuses_a_taken_port_before_it_opens_the_store(
 
 
 def test_serve_warns_when_the_ui_is_not_built(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """docs/mvp/FIRSTRUN.md §8 C4: on stderr, and the server starts all the same."""
+    """On stderr, and the server starts all the same."""
     ran: list[Any] = []
     monkeypatch.setattr("uvicorn.run", lambda *_, **__: ran.append(1))
     monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda *_: None)
@@ -469,7 +467,7 @@ def test_serve_runs_the_worker_in_its_process_unless_told_not_to(
     assert (code, made) == (0, {"worker": worker})
 
 
-# --- ds target check (docs/mvp/ENGINES.md §13) ----------------------------------------------------------
+# --- ds target check ----------------------------------------------------------
 
 DATABASE_TARGETS = (
     TARGETS
@@ -561,29 +559,29 @@ def test_target_check_exits_2_with_a_run_s_own_refusal(
 
     refused("target 'nope' is not in the registry", "nope")
     refused("target svc is not a database target (dsn_ref or engine)", "svc")
-    refused(  # P1
+    refused(
         "target crm-legacy: cannot connect to target crm-legacy (oracle crm-db.bank.example:1521/CRMPDB as"
         " ds_reader): DPY-6001: the listener does not know the service",
         "crm-legacy",
         connect=[TargetUnreachable("DPY-6001", "the listener does not know the service")],
     )
-    old = "target crm-legacy is Oracle 12.2: 19c or later is supported"  # P3
-    trigger = "the session could not be set (NLS_SORT is BINARY_CI): a logon trigger overrides it"  # P4
-    orders = "the role may not execute UTL_I18N, which orders text keys in a WE8MSWIN1252 database"  # P5
+    old = "target crm-legacy is Oracle 12.2: 19c or later is supported"
+    trigger = "the session could not be set (NLS_SORT is BINARY_CI): a logon trigger overrides it"
+    orders = "the role may not execute UTL_I18N, which orders text keys in a WE8MSWIN1252 database"
     for method, refusal in (
         ("connect", old),
         ("connect", trigger),
         ("server", f"{orders}: grant it EXECUTE"),
     ):
         refused(f"target crm-legacy: {refusal}", "crm-legacy", **{method: [Refusal(refusal)]})
-    # P12: a relation that is missing, one behind a database link, and one the role may not read.
+    # A relation that is missing, one behind a database link, and one the role may not read.
     missing = "table or view APP.NOPE not found or not visible"
     refused(f"target crm-legacy: {missing}", "crm-legacy", "--table", "APP.NOPE")
     linked = "table or view APP.LINKED not found or not visible: a synonym over a database link is not read"
     refused(f"target crm-legacy: {linked}", "crm-legacy", "--table", "APP.LINKED", describe=[Refusal(linked)])
     denied = "the role may not read public.LOCKED: grant it SELECT"
     refused(f"target crm-legacy: {denied}", "crm-legacy", "--table", "LOCKED")
-    # P14: an error after the connect was once a traceback and exit 3 (an invalid view: ORA-04063).
+    # An error after the connect was once a traceback and exit 3 (an invalid view: ORA-04063).
     refused(
         "target crm-legacy: table or view APP.BROKEN_V cannot be described: ORA-04063",
         *("crm-legacy", "--table", "APP.BROKEN_V"),
@@ -597,7 +595,7 @@ def test_target_check_exits_2_with_a_run_s_own_refusal(
 
 
 def test_the_profiler_drafts_service_specs_only(tmp_path: Path) -> None:
-    # No draft is made for a table side (ENGINES.md D11): a database target, whatever its engine, refuses
+    # No draft is made for a table side: a database target, whatever its engine, refuses
     # the drafted side, and `ds target check` is what a table spec's author reads.
     write_fixtures("linker", tmp_path / "samples")
     (tmp_path / "t.yaml").write_text(DATABASE_TARGETS)
@@ -625,7 +623,7 @@ def files_check(
     tmp_path: Path, target: dict[str, Any], *args: str, others: dict[str, Any] | None = None,
     settings: str = "}",
 ) -> tuple[int, str]:  # fmt: skip
-    """``ds target check legacy ARGS`` of a files target (docs/mvp/FILES.md §4, §16) under a temporary
+    """``ds target check legacy ARGS`` of a files target under a temporary
     files.roots_under, the settings in a directory of their own (``settings``: what its files block ends
     with), ``others`` beside it in the targets file; no store's DSN file exists."""
     base = tmp_path.resolve()
@@ -639,9 +637,9 @@ def files_check(
 
 
 def test_target_check_of_a_files_target(tmp_path: Path) -> None:
-    """Its first line (§16; docs/mvp/READER.md §11): the mount, DuckDB's version and what is compiled in,
-    and the process it is read in with the limits that reader's start saw hold, after T10, P14, P15 and the
-    instance's own proof; a refusal exits 2, worded for the target."""
+    """Its first line: the mount, DuckDB's version and what is compiled in,
+    and the process it is read in with the limits that reader's start saw hold, after the checks of its root
+    and the instance's own proof; a refusal exits 2, worded for the target."""
     from deltasleuth.connectors.tables import reader
 
     base = tmp_path.resolve()
@@ -682,9 +680,9 @@ def test_target_check_of_a_files_target(tmp_path: Path) -> None:
 
 
 def test_target_check_drafts_a_csv_side_and_prints_its_manifest(tmp_path: Path) -> None:
-    """§16: the files a path names, a draft sniffed from file 1 (fields named ``column n`` without --header,
+    """The files a path names, a draft sniffed from file 1 (fields named ``column n`` without --header,
     so no value of a headerless file is printed), a count of the drafted dialect with its lines that are not
-    rows by position and kind, and ``sha256sum``'s lines with files_sha256 as §6 defines it."""
+    rows by position and kind, and ``sha256sum``'s lines with files_sha256 as a plan pins it."""
     base = tmp_path.resolve()
     root = base / "files" / "legacy"
     (root / "customers").mkdir(parents=True)
@@ -745,7 +743,7 @@ def test_target_check_drafts_a_csv_side_and_prints_its_manifest(tmp_path: Path) 
 def test_target_check_of_a_mount_that_does_not_answer_and_of_other_exports(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§10, §16: a directory that does not answer within its deadline is refused by P14's text, never a
+    """A directory that does not answer within its deadline is refused in a plan's words for it, never a
     traceback; a gzip export drafts its compression and is read by it; a file whose lines end with a lone
     carriage return is refused, since no csv.newline declares it."""
     import gzip
@@ -788,9 +786,10 @@ def test_target_check_of_a_mount_that_does_not_answer_and_of_other_exports(
 def test_target_check_of_a_root_that_does_not_resolve_never_hangs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§4, §16: T10 resolves every files target's root, on the files threads under STAT_S as a context's
-    opening does (it ran in the command's own thread with no deadline). A mount whose realpath never returns
-    is judged as written: the check of another target goes on, and the dead one's own is P14's third text."""
+    """The check of where roots lie resolves every files target's root, on the files threads under STAT_S
+    as a context's opening does (it ran in the command's own thread with no deadline). A mount whose
+    realpath never returns is judged as written: the check of another target goes on, and the dead one's
+    own says its directory did not answer."""
     from deltasleuth.connectors.tables import manifest
 
     base = tmp_path.resolve()
@@ -826,9 +825,9 @@ def test_target_check_of_a_root_that_does_not_resolve_never_hangs(
 
 
 def test_target_check_reads_a_compressed_export_s_streams_whole(tmp_path: Path) -> None:
-    """§16, U18: --count and --manifest pin a gzip or zstd export as a plan pins it, each stream read to its
-    end, so one cut short in transfer is refused by P29's text and class: DuckDB reads it as fewer rows with
-    no error, and the check printed that count (164 of 200 rows) and a manifest, exit 0."""
+    """--count and --manifest pin a gzip or zstd export as a plan pins it, each stream read to its
+    end, so one cut short in transfer is refused as unreadable, by its class: DuckDB reads it as fewer rows
+    with no error, and the check printed that count (164 of 200 rows) and a manifest, exit 0."""
     import gzip
 
     import zstandard
@@ -857,7 +856,7 @@ def test_target_check_reads_a_compressed_export_s_streams_whole(tmp_path: Path) 
 
 
 def test_target_check_drafts_an_escape_and_a_wide_file_whole(tmp_path: Path) -> None:
-    """§16: a sniffed escape that is not the quote is drafted beside the default quote (a backslash-escaped
+    """A sniffed escape that is not the quote is drafted beside the default quote (a backslash-escaped
     export, MySQL's OUTFILE: without it the drafted dialect read none of its rows), and a draft's line is
     printed whole, however wide the file (it was cut at 4,000 characters, mid-name)."""
     base = tmp_path.resolve()
@@ -880,11 +879,11 @@ def test_target_check_drafts_an_escape_and_a_wide_file_whole(tmp_path: Path) -> 
 
 
 def test_target_check_drafts_an_export_with_a_trailer_from_its_rows(tmp_path: Path) -> None:
-    """§16: one line of another shape, a trailer record after the acceptance kit's CSV, defeated the draft:
+    """One line of another shape, a trailer record after the acceptance kit's CSV, defeated the draft:
     it drafted ``delimiter: "|"`` and one column and counted the trailer as a row, and held to the file's
-    delimiter it ended in P29's text with DuckDB's class. The draft is sniffed from the lines that are rows
-    and says so, under a delimiter given too, and --count lists the trailer as a run of the dialect declared
-    by hand does. An export in another encoding is still no draft, in words that name no class."""
+    delimiter it ended as unreadable files with DuckDB's class. The draft is sniffed from the lines that are
+    rows and says so, under a delimiter given too, and --count lists the trailer as a run of the dialect
+    declared by hand does. An export in another encoding is still no draft, in words that name no class."""
     base = tmp_path.resolve()
     root = base / "files" / "legacy"
     kit = Path(__file__).parents[3] / "examples" / "tables" / "files"
@@ -930,8 +929,8 @@ def test_target_check_drafts_an_export_with_a_trailer_from_its_rows(tmp_path: Pa
 
 
 def test_target_check_names_a_parquet_side_s_columns_and_classes(tmp_path: Path) -> None:
-    """§16: a Parquet side prints each column's type and class in place of a draft; a type no plan reads is
-    not comparable, a nested one named by its head (what follows is a file's text: READER.md §6); --count
+    """A Parquet side prints each column's type and class in place of a draft; a type no plan reads is
+    not comparable, a nested one named by its head (what follows is a file's text); --count
     gives the footers' rows."""
     from tests.unit.connectors.ducked import unrestricted
 
@@ -972,7 +971,8 @@ def test_target_check_names_a_parquet_side_s_columns_and_classes(tmp_path: Path)
 
 
 def test_every_command_refuses_a_root_where_it_may_not_lie(tmp_path: Path) -> None:
-    """T10 is raised as a context opens (§4), before the store: every command that opens one exits 2."""
+    """A root that lies where none may is refused as a context opens, before the store: every command that
+    opens one exits 2."""
     from deltasleuth.config import load_settings
     from deltasleuth.context import init_workspace
 
@@ -1127,7 +1127,7 @@ def test_llm_probe_reports_each_capability_without_the_key(tmp_path: Path) -> No
         loop.call_soon_threadsafe(loop.stop)
 
 
-# -- the host administrator's channel (docs/mvp/AUTH.md §4.2) ------------------------------------------
+# -- the host administrator's channel ------------------------------------------
 
 YES = [  # the commands that write audit rows
     ("compare", "K1", "--spec", "s.yaml"),
@@ -1296,7 +1296,7 @@ UNREADABLE = (
 def test_a_refused_database_is_one_line(
     store: Callable[..., Path], tmp_path: Path, pg_dsn: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """docs/mvp/FIRSTRUN.md §8 C5: a wrong password is said after three tries (here a tenth of a second
+    """A wrong password is said after three tries (here a tenth of a second
     apart, not two), by every command that opens the store, where the pool's wait would end in
     "unreachable" 30 s later; ``ds keys migrate``, whose first connection is its lock's, among them."""
     monkeypatch.setattr(db, "APART", 0.1)
@@ -1311,7 +1311,7 @@ def test_a_refused_database_is_one_line(
 def test_an_address_the_driver_cannot_read_is_one_line_without_a_piece_of_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """docs/mvp/FIRSTRUN.md §8 C6: the driver's own words quote such an address, the password included,
+    """The driver's own words quote such an address, the password included,
     and the pool logged them at each try of its 30 s. Every command ends at once instead, in one fixed
     line, before any connection: an unencoded %, a space, a %XX that is not UTF-8 (which read "a file is
     not valid utf-8 text"), and an unencoded @, whose tail the driver takes for the host."""
@@ -1335,7 +1335,7 @@ def test_an_address_the_driver_cannot_read_is_one_line_without_a_piece_of_it(
 def test_migrate_logs_one_pool_line_for_a_closed_port(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """docs/mvp/FIRSTRUN.md §8 S4: the pool logs every failed try of its wait, five in its 30 s; each
+    """The pool logs every failed try of its wait, five in its 30 s; each
     wording reaches the terminal once, before the line that says what to check. As a rule that is one
     line: libpq words a refused connection in two ways, the second rarely."""
     monkeypatch.setattr(db, "WAIT", 2.5)  # the pool tries twice: at once, and about a second later
@@ -1375,7 +1375,7 @@ def test_migrate_logs_one_pool_line_for_a_closed_port(
 def test_the_documented_precheck_reads_all_three_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """docs/mvp/FIRSTRUN.md D6: before a restart, ``ds licence`` opens what a start opens, so a mistake in
+    """Before a restart, ``ds licence`` opens what a start opens, so a mistake in
     the targets file or in the LLM profiles ends it in the line the start would log, before the database
     is asked (no DSN file exists here); ``ds init`` reads the settings file alone and passes."""
     monkeypatch.setattr("uvicorn.run", lambda *_, **__: pytest.fail("the server must not start"))
@@ -1457,7 +1457,7 @@ def test_tokens_are_created_listed_with_names_and_revoked_once(
     ]
     [line] = listed.stdout.splitlines()
     assert line.startswith(f"{token_id} (ci-deploy)  operator  active  expires ")
-    assert line.startswith(f"{token_id} ") and "  active  " in line  # what deploy/up.sh reads (FIRSTRUN §3.3)
+    assert line.startswith(f"{token_id} ") and "  active  " in line  # what deploy/up.sh reads
     assert line.endswith(f"  owner 'payments team' {bob} (bob)  created by local:J._Doe@ds-host  last used -")
     assert [said(r) for r in revoked] == [
         (0, f"revoked token {token_id} (ci-deploy)\n"),
@@ -1594,7 +1594,7 @@ def test_the_audit_log_is_read_with_filters_names_beside_actors_and_the_read_is_
     assert run("audit", "--limit", "501", "--config", config).exit_code == 2
 
 
-# -- retention and keys (docs/mvp/RETENTION.md §8) ----------------------------------------------------
+# -- retention and keys ----------------------------------------------------
 
 CLI_SPEC = """\
 apiVersion: deltasleuth/v1
@@ -2024,7 +2024,7 @@ def test_auth_check_needs_the_oidc_settings(tmp_path: Path) -> None:
         )
 
 
-# -- four-eyes approvals (docs/mvp/APPROVALS.md §4, §6.3) ------------------------------------------
+# -- four-eyes approvals ------------------------------------------
 
 APPROVED = """\
 apiVersion: deltasleuth/v1
@@ -2066,8 +2066,8 @@ def errors(result: Result) -> list[str]:
 
 
 async def _enterprise(config: Path) -> None:
-    """An Enterprise licence installed on the store, as an SSO deployment of a vendor build runs
-    (docs/mvp/LICENCE.md §6); none in an open build, which needs none (§19)."""
+    """An Enterprise licence installed on the store, as an SSO deployment of a vendor build runs; none in an
+    open build, which needs none."""
     from deltasleuth.config import load_settings
     from deltasleuth.context import Context
     from tests.conftest import licensed_once
@@ -2157,12 +2157,12 @@ def test_run_over_limit_exit_2(store: Callable[..., Path], tmp_path: Path, pg_ds
     [row] = sql(pg_dsn, "SELECT installation_id FROM ds.installation")
     m2 = (
         "spec cards would be a third pair: an unlicensed evaluation runs 2 pairs (accounts, loans); install a"
-        f" licence for installation {row['installation_id']} (docs/mvp/LICENCE.md §7)"
+        f" licence for installation {row['installation_id']}"
     )
     assert [result.exit_code for result in started] == [0, 0]
     assert [(result.exit_code, errors(result)) for result in refused] == [(2, [f"error: {m2}"])] * 2
     assert sql(pg_dsn, "SELECT count(*) AS runs FROM ds.runs") == [{"runs": 2}]  # no run written
-    # the spec file is stored and audited first, as an upload, which always works (AUTH §4.2)
+    # the spec file is stored and audited first, as an upload, which always works
     [cards] = sql(pg_dsn, "SELECT spec_id FROM ds.specs WHERE name = 'cards'")
     audited = sql(pg_dsn, "SELECT action FROM ds.audit_log WHERE object = %s", str(cards["spec_id"]))
     assert audited == [{"action": "spec.create"}] * 2
@@ -2286,7 +2286,7 @@ def test_approvals_are_listed_and_a_break_glass_revoke_pauses_the_runs_under_one
         f"  Spec approval {approval_id} was revoked on {revoked_at['revoked_at'].astimezone(UTC):%Y-%m-%d} by"
         " local:tester@ds-host (wrong clear path). Not sign-off evidence.",
         "  Unapproved spec version: the run started before approvals (008). Not sign-off evidence.",
-    )  # an open build's run says nothing of a licence (docs/mvp/LICENCE.md §19; a vendor build's:
+    )  # an open build's run says nothing of a licence (a vendor build's:
     # test_report_file_names_labelled), nor does the run stored as before approvals, which has no record
     [revoke], [pause] = audited(pg_dsn, "approval.revoke"), audited(pg_dsn, "paused")
     assert (revoke["actor"], revoke["object"]) == ("local:tester@ds-host", approval_id)
@@ -2315,10 +2315,9 @@ def test_serve_and_auth_check_warn_when_no_idp_group_maps_to_rule_approver(
     assert [(r.exit_code, r.stderr.splitlines()) for r in (served, checked)] == [(0, [NO_APPROVERS])] * 2
 
 
-# -- the licence (docs/mvp/LICENCE.md §9, §10, §12) --------------------------------------------------
+# -- the licence --------------------------------------------------
 
 FP = PackSigner(VENDOR_KEY).fingerprint
-LI_DOCS = "docs/mvp/LICENCE.md"
 
 
 def installation(dsn: str) -> str:
@@ -2366,7 +2365,7 @@ def test_licence_id_stdout(store: Callable[..., Path], pg_dsn: str, monkeypatch:
 def test_an_open_build_needs_no_licence(
     store: Callable[..., Path], pg_dsn: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """docs/mvp/LICENCE.md §19: without a vendor key every pair runs and nothing warns of a licence;
+    """Without a vendor key every pair runs and nothing warns of a licence;
     ``ds licence`` says so, and a file is neither shown nor installed."""
 
     async def worked(*_: Any, **__: Any) -> None:
@@ -2399,8 +2398,7 @@ def test_an_open_build_needs_no_licence(
     path, _ = licence_at(tmp_path / "LI.txt", pg_dsn)
     refused = [run("licence", "install", path, "--config", config), run("licence", "show", path)]
     assert [said(result) for result in refused] == [(2, (
-        "error: this build embeds no vendor key: it needs no licence and can verify none"
-        " (docs/mvp/LICENCE.md §19)\n"
+        "error: this build embeds no vendor key: it needs no licence and can verify none\n"
     ))] * 2  # fmt: skip
     assert written(pg_dsn) == {"licences": 0, "withdrawn": 0, "audited": 0}  # no licence.pair either
     assert sql(pg_dsn, "SELECT DISTINCT params->'licence' AS licence FROM ds.runs") == [{"licence": None}]
@@ -2416,7 +2414,7 @@ def test_show_without_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     shown = (0, f"{body}verifies with key {FP[:12]}… (trusted by this build)\n")
     assert said(run("licence", "show", tmp_path / "mailed.txt")) == shown
     piped = CliRunner().invoke(app, ["licence", "show", "-"], input=(tmp_path / "mailed.txt").read_bytes())
-    assert said(piped) == shown  # as DEPLOY shows it through docker compose run -T
+    assert said(piped) == shown  # as piped through docker compose run -T
     (tmp_path / "changed.txt").write_bytes(data.replace(b"Example", b"Exbmple"))
     (tmp_path / "cut.txt").write_bytes(b"\n".join(data.split(b"\n")[:3]))
     assert [said(run("licence", "show", tmp_path / name)) for name in ("changed.txt", "cut.txt")] == [
@@ -2553,7 +2551,7 @@ def test_install_stdin(
         f"installed {community_id} (community, Example Bank plc, {day} to {ends}, 2 pairs): in force now\n"
         "changes now: tier evaluation -> community; state evaluation -> valid\n"
         "cards have no seat: no new run, and their soaks pause at their next cycle\n"
-        "runs under SSO stay refused (M5)\n"
+        "runs under SSO stay refused\n"
     ))  # fmt: skip
     path, enterprise_id = licence_at(tmp_path / "LI.txt", pg_dsn, issued=f"{day}T11:00:00Z")  # a correction
     assert said(run("licence", "install", path, "--config", config)) == (0, (
@@ -2636,7 +2634,7 @@ def test_withdraw_started_W1(store: Callable[..., Path], pg_dsn: str, tmp_path: 
     refused = run("licence", "withdraw", licence_id, "--reason", "wrong order", "--config", config)
     assert (refused.exit_code, errors(refused)) == (2, [
         f"error: licence {licence_id} started on {today(pg_dsn)}: a started licence is replaced by a new one,"
-        f" not withdrawn ({LI_DOCS} §5)"
+        " not withdrawn"
     ])  # fmt: skip
     assert written(pg_dsn) == {"licences": 1, "withdrawn": 0, "audited": 1}
 
@@ -2706,7 +2704,7 @@ def test_warnings_only_four_commands(
 @pytest.mark.db
 def test_licence_unknown_not_evaluation(store: Callable[..., Path], monkeypatch: pytest.MonkeyPatch) -> None:
     """A standing that cannot be read is unknown, not an unlicensed evaluation: an installed licence may be
-    in force (docs/mvp/LICENCE.md §12)."""
+    in force."""
 
     async def unreadable(*_: Any, **__: Any) -> None:
         raise RuntimeError("unreadable")
@@ -2850,7 +2848,7 @@ def test_install_needs_ds_operator(
 async def _sampled(dsn: str) -> dict[str, str]:
     """Draws of one population under two names, written as the worker commits them: customer-profile-2's
     failed, customer-profile's passed, then one of customer-profile still comparing, and runs whose next
-    draw is pending: one running, one paused and one cancelled (docs/mvp/SAMPLING.md §14)."""
+    draw is pending: one running, one paused and one cancelled."""
     from deltasleuth.store import repo
     from tests.unit.store.four_eyes import drawn, person, sampled, upload
 
@@ -2913,7 +2911,7 @@ def test_samples_list_every_draw_or_a_name_s_ledger(store: Callable[..., Path], 
     assert [line for line in blocks[found["cancelled"]] if "draw" in line] == []
 
 
-# -- labelled accuracy (docs/mvp/ACCURACY.md §10) -----------------------------------------------------
+# -- labelled accuracy -----------------------------------------------------
 
 
 async def _labelled(dsn: str) -> dict[str, str]:
@@ -2939,7 +2937,7 @@ async def _labelled(dsn: str) -> dict[str, str]:
 def test_labellings_lists_each_in_one_line_and_audits_nothing(
     store: Callable[..., Path], pg_dsn: str
 ) -> None:
-    """``ds labellings`` (docs/mvp/ACCURACY.md §10): ``accuracy.summary``'s line per labelling, newest
+    """``ds labellings``: ``accuracy.summary``'s line per labelling, newest
     first; a run's alone; as JSON the API's list items, without sheets, selections or scores; an unknown run
     exits 2."""
     config = store()
@@ -2978,7 +2976,7 @@ def test_labellings_lists_each_in_one_line_and_audits_nothing(
     assert after == rows
 
 
-# -- alerts and notifications (docs/mvp/ALERTS.md §10, §11) ------------------------------------------
+# -- alerts and notifications ------------------------------------------
 
 
 def failed(result: Result) -> tuple[int, list[str]]:
@@ -2986,9 +2984,7 @@ def failed(result: Result) -> tuple[int, list[str]]:
     return result.exit_code, errors(result)
 
 
-NOTIFY_OFF = (
-    "error: notifications are off: add notify to deltasleuth.yaml and restart (docs/mvp/ALERTS.md §8)\n"
-)
+NOTIFY_OFF = "error: notifications are off: add notify to deltasleuth.yaml and restart\n"
 
 
 def hook_settings(base: str, ref: str) -> dict[str, Any]:
@@ -3217,7 +3213,7 @@ def test_serve_worker_and_run_warn_of_an_unreadable_notify_secret_and_go_on(
     assert re.match(r"run R-[0-9A-Z]{26} started\n", started.stdout)
 
 
-# -- cut-over readiness (docs/mvp/READINESS.md §10, §12) ------------------------------------------------
+# -- cut-over readiness ------------------------------------------------
 
 READINESS = {
     "programmes": [
@@ -3258,7 +3254,7 @@ async def _ready(config: Path) -> dict[str, Any]:
 def test_readiness_lists_the_pairs_and_fail_unless_exits_0_or_1(
     store: Callable[..., Path], pg_dsn: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``ds readiness`` (docs/mvp/READINESS.md §10): the definition, each programme's roll-up, each pair in
+    """``ds readiness``: the definition, each programme's roll-up, each pair in
     one line with the gates it does not meet; ``--fail-unless`` for a pipeline; reads audit nothing and
     need no DS_OPERATOR."""
     from deltasleuth.core import readiness as gates
@@ -3351,7 +3347,7 @@ def test_readiness_lists_the_pairs_and_fail_unless_exits_0_or_1(
     assert detail["state"] == "parity_ready" and [p["cycle"] for p in detail["cycles"]] == [1, 2, 3]
     assert "precheck" not in detail
     assert sql(pg_dsn, "SELECT count(*) AS n FROM ds.audit_log") == before  # reads are not audited
-    # §2 here too: no percentage but the targets gate's, and nothing forecast, weighted or certified.
+    # Here too: no percentage but the targets gate's, and nothing forecast, weighted or certified.
     from tests.unit.api.test_readiness_api import BANNED, SCHEDULE
 
     said_not = [line for line in (*lines, *recorded, *pair) if line != gates.DEFINITION]
@@ -3430,7 +3426,7 @@ async def _passed(config: Path, end: str | None = None) -> None:
 def test_readiness_verify_checks_the_measures_against_their_audit_rows(
     store: Callable[..., Path], pg_dsn: str
 ) -> None:
-    """``ds readiness verify`` (§12): it passes on a store with a one-shot's excluded marker and the error
+    """``ds readiness verify``: it passes on a store with a one-shot's excluded marker and the error
     record of a cycle never measured; it exits 2 on an edited record, on a cycle a ``readiness.measured``
     row names whose measures were replaced (by an error record, an excluded marker or a record without a
     pair), removed, or removed and measured again, on measures no row names, on a record that is neither
@@ -3574,7 +3570,7 @@ def test_readiness_report_writes_the_reports_audited(
 def test_readiness_report_pair(
     store: Callable[..., Path], pg_dsn: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``ds readiness report --pair`` (docs/mvp/READINESS.md §10): the pair's brief on one page, its points
+    """``ds readiness report --pair``: the pair's brief on one page, its points
     and every root-cause group of it, more than a brief lists or a download holds, in place of the
     dashboard's files; each audited with the pair."""
     from deltasleuth import readiness
@@ -3631,7 +3627,7 @@ def test_readiness_report_pair(
     assert not (tmp_path / "none").exists() and not (tmp_path / "both").exists()
 
 
-# -- schedules (docs/mvp/SCHEDULES.md §10) -------------------------------------------------------------
+# -- schedules -------------------------------------------------------------
 
 NEXT = r"\d{4}-\d\d-\d\d %s Europe/London \(\d{4}-\d\d-\d\dT\d\d:%sZ\)"
 
@@ -3860,7 +3856,7 @@ def test_a_bug_in_a_schedules_command_exits_3(monkeypatch: pytest.MonkeyPatch, t
     assert found.exit_code == 3 and "internal error: a bug in DeltaSleuth" in found.stderr
 
 
-# -- table pre-checks (docs/mvp/PRECHECKS.md §11) -------------------------------------------------------
+# -- table pre-checks -------------------------------------------------------
 
 NOT = (
     "A table pre-check counts and adds up; it does not compare rows. Tables whose figures agree can hold"
@@ -3929,7 +3925,7 @@ def test_a_table_pre_check_is_run_shown_reported_and_cancelled(
         precheck("show", precheck_id, "--pair", 7),
         precheck("show", "PC-" + "0" * 26),
         run("precheck", "--json", "show", precheck_id),
-        precheck("draft", precheck_id, "--all", "--out", tmp_path / "drafts"),  # stored specs only (K13)
+        precheck("draft", precheck_id, "--all", "--out", tmp_path / "drafts"),  # stored specs only
     ]
     made = rf"{PC}  specs  level counts  by local:ops@\S+ \S+  finished"
     rows = "rows differ: side a 3, side b 5 (2 fewer on side a)"
@@ -3972,7 +3968,7 @@ def test_a_table_pre_check_is_run_shown_reported_and_cancelled(
         (2, "error: level must be schema, counts, columns or distinct"),
         (2, "error: spec 99 not found"),
         (2, "error: no spec is named customer-profile"),
-        (2, "error: --fail-on waits for the pre-check's end: leave out --no-wait"),  # K13
+        (2, "error: --fail-on waits for the pre-check's end: leave out --no-wait"),
         (2, "error: --fail-on is one of refused, differs, incomplete"),
         (2, f"error: --verdict is one of {', '.join(prechecking_verdicts())}"),
         (2, f"error: pair 7 of table pre-check {precheck_id} not found"),
@@ -4138,7 +4134,7 @@ def test_fail_on_judges_the_worst_pair_and_a_cancel(
     assert result.exit_code == code and result.stdout.splitlines()[-1] == f"{len(pairs)}  accounts  a line"
 
 
-# -- the schema guard (docs/mvp/PRECHECKS.md §11) -------------------------------------------------------
+# -- the schema guard -------------------------------------------------------
 
 
 @pytest.mark.db
@@ -4181,14 +4177,14 @@ def test_ds_run_prints_the_schema_guard_s_warnings_and_exits_2_for_a_run_it_paus
     assert listed.stdout.count(f"  {line}") == 2 and "processed by" not in unwaited.stdout
 
 
-# -- your own agent: the MCP server (docs/mvp/MCP.md §12) -------------------------------------------------
+# -- your own agent: the MCP server -------------------------------------------------
 
 TOKENISED = {"data_classes": ["aggregates", "production_tokenised"]}
 EVERY = {"data_classes": [*TOKENISED["data_classes"], "production_clear_declared"], "work": ["compare_key"]}
-MCP_OFF = "error: MCP is off: the settings have no mcp block (docs/mvp/MCP.md §4)\n"
+MCP_OFF = "error: MCP is off: the settings have no mcp block\n"
 HOST_CHANNEL = (
     "error: ds mcp under auth is the host-administrator channel: use /v1/mcp with a named token, or pass"
-    " --host-channel (docs/mvp/MCP.md §5.2)\n"
+    " --host-channel\n"
 )
 ASSERTED = (
     "warning: ds mcp is the host-administrator channel: its caller is asserted (DS_OPERATOR), not signed in,"
@@ -4248,7 +4244,7 @@ def test_mcp_refuses_in_one_line_before_it_serves(tmp_path: Path, monkeypatch: p
 def test_mcp_under_auth_serves_only_as_the_host_channel(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
 ) -> None:
-    """§5.2: where the settings have auth, ``ds mcp`` is the host administrator's, said so by a flag, and
+    """Where the settings have auth, ``ds mcp`` is the host administrator's, said so by a flag, and
     its caller asserted: each refusal comes before any work (no store exists here)."""
     config = mcp_settings(tmp_path, TOKENISED, mode_auth(mode, tmp_path))
     monkeypatch.setenv("DS_OPERATOR", "jdoe")
@@ -4265,7 +4261,7 @@ def test_mcp_under_auth_serves_only_as_the_host_channel(
 def test_mcp_serves_stdio_as_the_local_caller_cut_to_its_role(
     store: Callable[..., Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
 ) -> None:
-    """§12: its start line, and under auth the warning; its caller is ``local()`` cut to ``--role``. The
+    """Its start line, and under auth the warning; its caller is ``local()`` cut to ``--role``. The
     runner's stdin is at its end, so the serving ends at once: exit 0, and nothing on stdout."""
     from deltasleuth.mcp import server
 
@@ -4300,7 +4296,7 @@ def test_mcp_serves_stdio_as_the_local_caller_cut_to_its_role(
 def test_a_fault_of_the_mcp_stream_leaves_its_type_alone(
     store: Callable[..., Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§12: a bug's traceback is printed before the serving only: once it serves, stderr is the agent's."""
+    """A bug's traceback is printed before the serving only: once it serves, stderr is the agent's."""
     from deltasleuth.mcp import server
 
     async def broken(*_: Any) -> None:
@@ -4326,7 +4322,7 @@ def test_a_fault_of_the_mcp_stream_leaves_its_type_alone(
 def test_mcp_leaves_a_later_sigterm_without_a_handler(
     store: Callable[..., Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§5.2: once the serving has ended without a SIGTERM (here at the end of the runner's stdin) nothing
+    """Once the serving has ended without a SIGTERM (here at the end of the runner's stdin) nothing
     waits for the signal's event, so the signal is without a handler before the library's transport is left,
     where the process may wait; and the first SIGTERM, having set the event, leaves the signal so too, for a
     second to end a process whose loop never comes to the event. Afterwards it is this process's own again."""
@@ -4360,7 +4356,7 @@ def test_mcp_leaves_a_later_sigterm_without_a_handler(
 def test_mcp_keeps_one_idle_store_connection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, concurrency: int | None, pool: tuple[int, int]
 ) -> None:
-    """§5.2: an editor starts a server per window, so each idles on one connection, not the pool's four."""
+    """An editor starts a server per window, so each idles on one connection, not the pool's four."""
     opened: list[Any] = []
     monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda _, work, pool: opened.append(pool))
     block = TOKENISED | ({} if concurrency is None else {"concurrency": concurrency})
@@ -4372,7 +4368,7 @@ def test_mcp_keeps_one_idle_store_connection(
 def test_the_mcp_loggers_are_the_entry_point_s(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], entry: str
 ) -> None:
-    """§9: each call's line and the library's own lines from WARNING up, on stderr through handlers of the
+    """Each call's line and the library's own lines from WARNING up, on stderr through handlers of the
     entry point's own. Under ``ds mcp`` stderr is the launching agent's: a library line is then its logger
     and level alone, without its message and without its traceback, which may hold data; and so is every
     other logger's, the driver's words for the store among them, through the root logger, which ``ds serve``
@@ -4424,7 +4420,7 @@ def test_the_mcp_loggers_are_the_entry_point_s(
 def test_serve_says_what_it_serves_over_mcp(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, block: Any, said: list[str]
 ) -> None:
-    """§4: with ``mcp.http``, on stderr; and a server that does not serve it leaves the loggers alone."""
+    """With ``mcp.http``, on stderr; and a server that does not serve it leaves the loggers alone."""
     monkeypatch.setattr("uvicorn.run", lambda *_, **__: None)
     monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda *_, **__: None)
     served = run("serve", "--config", mcp_settings(tmp_path, block))
@@ -4434,7 +4430,7 @@ def test_serve_says_what_it_serves_over_mcp(
 
 
 def test_serve_loads_the_mcp_library_before_it_opens_the_store(tmp_path: Path, repo_root: Path) -> None:
-    """§3: with ``mcp.http`` the start imports the MCP library, which a name of ``OTEL_*`` that the image
+    """With ``mcp.http`` the start imports the MCP library, which a name of ``OTEL_*`` that the image
     holds nothing for stops. ``ds serve`` loads it with what else it opens once first: the start then ends
     in one line before the store is opened (no key exists here), so before ``system.start`` is audited.
     Without ``mcp.http`` nothing loads it, and the same environment stops nothing."""
@@ -4492,7 +4488,7 @@ def test_mcp_check_prints_the_block_as_judged_and_what_mcp_is_not(tmp_path: Path
 
 
 def test_mcp_help_never_says_what_deltasleuth_does_not_do() -> None:
-    """§2: as the tools' own texts (tests/unit/mcp_server/test_tools.py ``test_never_told``)."""
+    """As the tools' own texts (tests/unit/mcp_server/test_tools.py ``test_never_told``)."""
     never = ("verified", "validated", "certified", "guaranteed", "anonymised", "anonymized")
     said = [ds("mcp", "--help")[1], ds("mcp", "check", "--help")[1], MCP_OFF, HOST_CHANNEL, ASSERTED, CLEAR]
     assert "--host-channel" in said[0] and "--role" in said[0]

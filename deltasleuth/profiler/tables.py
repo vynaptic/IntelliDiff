@@ -1,4 +1,4 @@
-"""A starter spec for two relations a table pre-check paired by name (docs/mvp/PRECHECKS.md §3): both
+"""A starter spec for two relations a table pre-check paired by name: both
 ``table`` blocks in the catalogue's spelling, the common primary key, the columns both sides hold of one
 family, and a comment for each column left out, with the bridge a spec would declare, never applied (one
 for a key part whose key texts are never equal, at the key).

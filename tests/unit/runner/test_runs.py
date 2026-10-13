@@ -66,7 +66,7 @@ async def _run(h: Harness, spec: str, keys: list[str] | None = None, **kw: Any) 
     return run_id, await h.finish(run_id)
 
 
-# -- rechecks (§8.3) and evidence -------------------------------------------------------------------
+# -- rechecks and evidence -------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("failing", ["a", "b"])

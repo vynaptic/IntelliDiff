@@ -1,7 +1,7 @@
-"""A release bundle checked as a site checks it, on the Docker host (docs/mvp/RELEASE.md §3, §13): its own
+"""A release bundle checked as a site checks it, on the Docker host: its own
 VERIFY.txt run step by step with ``sh``, under ``sha256sum``, under ``shasum -a 256`` and, where it is
 installed, with macOS's LibreSSL, a docker stub loading the image for step 5. The untouched bundle passes;
-each tamper of §3 fails the step §3 says catches it; DEPLOY quotes the procedure verbatim."""
+each tamper fails the step that catches it."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ import os
 import re
 import shutil
 import subprocess
-import textwrap
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
@@ -24,7 +23,6 @@ from deltasleuth.security.signing import PackSigner
 from tests.unit import releases
 from tests.unit.releases import Scratch
 from tests.unit.reports.packs import Ran, run_step, steps, tools
-from tools import release
 
 LIBRESSL = Path("/usr/bin/openssl")  # macOS's: the procedure must work with it too
 STEM = "deltasleuth-0.1.0-linux-amd64"
@@ -187,24 +185,3 @@ def test_each_tamper_fails_its_step(released: tuple[Scratch, Path], tmp_path: Pa
     (scratch.tmp / "scenario.json").write_text(json.dumps(scratch.scenario))
     folder = _copy(pristine, tmp_path / "another-id")
     assert [run_with(folder, 5, variant).out[-1] for variant in VARIANTS] == ["0"] * len(VARIANTS)
-
-
-def test_deploy_quotes_the_procedure(repo_root: Path) -> None:
-    """DEPLOY's "Install a signed release" quotes release.PROCEDURE verbatim: the site types from its filed
-    copy, and the guide must not teach another."""
-    guide = (repo_root / "docs" / "mvp" / "DEPLOY.md").read_text()
-    if "Install a signed release" not in guide:
-        pytest.skip("DEPLOY.md has no 'Install a signed release' section yet (RELEASE.md §14)")
-    blocks = [
-        textwrap.dedent(b.partition("\n")[2].rpartition("```")[0])
-        for b in re.findall(r"```.*?```", guide, re.S)
-    ]
-    assert release.PROCEDURE in blocks
-
-
-def test_step_5_runs_again_only_after_step_0(repo_root: Path) -> None:
-    """Step 5 reads $VERSION and $PLATFORM, which only step 0 sets: run alone in a new shell it prints 0 for a
-    good release, so wherever DEPLOY or this contract runs it again, step 0 runs with it."""
-    for name in ("DEPLOY.md", "RELEASE.md"):
-        text = re.sub(r"\s+", " ", (repo_root / "docs" / "mvp" / name).read_text())
-        assert re.findall(r"\bstep 5\b[^.;|()]*\b(?:again|re-run)\b|\bre-run step 5\b", text) == [], name

@@ -1,11 +1,11 @@
-"""Runs with a file side (docs/mvp/FILES.md §10 to §13, §18): a mixed pair reads its file side a pass a group
+"""Runs with a file side: a mixed pair reads its file side a pass a group
 and its service side key by key; a recheck reads no side of fixed files again, whose first observation stands,
 and none is due where their bytes alone would answer it; two file sides are hashed in DuckDB and their per-key
-results are final as read; a changed file, rows the plan did not count and an error's class fail the run by
-§15's texts; a read error of unchanged bytes fails it at the third pass, checkpoint or not; a mount that does
+results are final as read; a changed file, rows the plan did not count and an error's class fail the run in
+fixed words; a read error of unchanged bytes fails it at the third pass, checkpoint or not; a mount that does
 not answer costs its own runs only; per-file sizes, times and digests are in no answer, audit row or plan. A
-reader's process that ends (docs/mvp/READER.md §9, §12) pauses a pass, and at the third end charged to a
-side's files fails their run with F12, the worker and the other runs going on."""
+reader's process that ends pauses a pass, and at the third end charged to a
+side's files fails their run as ReaderDied, the worker and the other runs going on."""
 
 from __future__ import annotations
 
@@ -111,7 +111,7 @@ def served(n: int, status: str = "A") -> dict[str, Any]:
 
 @pytest.fixture
 def exports(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """``files.roots_under``, outside the harness's own directories (T10), as its real path (P14)."""
+    """``files.roots_under``, outside the harness's own directories, as its real path."""
     found = tmp_path_factory.mktemp("exports").resolve()
     (found / "a").mkdir()
     (found / "b").mkdir()
@@ -160,11 +160,11 @@ def statements(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 
 def per_key(sent: list[str]) -> int:
-    """The per-key statements among ``sent``: each one pass over a side's files (§9)."""
+    """The per-key statements among ``sent``: each one pass over a side's files."""
     return sum("QUALIFY" in statement for statement in sent)
 
 
-# --- mixed pairs read files in groups; rechecks never read a fixed side (§12) ---------------------------
+# --- mixed pairs read files in groups; rechecks never read a fixed side ---------------------------
 
 
 async def test_mixed_pair_reads_the_file_side_in_groups(
@@ -206,7 +206,7 @@ async def test_mixed_pair_reads_the_file_side_in_groups(
 async def test_no_recheck_is_due_where_fixed_bytes_alone_would_answer(
     opened: Opened, service: ScriptedService, exports: Path, statements: list[str]
 ) -> None:
-    """D6, D13: a key on no row of a side with a line that was not a row (M1), and a key several rows hold,
+    """A key on no row of a side with a line that was not a row, and a key several rows hold,
     are inconclusive as read: those bytes cannot answer differently, so the service is not read again."""
     (exports / "a" / "export.csv").write_text(HEADER + rows(1, 2, 2) + "short\n")
     for n in (1, 2, 3):
@@ -221,7 +221,7 @@ async def test_no_recheck_is_due_where_fixed_bytes_alone_would_answer(
     assert {key: (r["outcome"], r["inconclusive_reason"], r["confirmation"]) for key, r in found.items()} == {
         "K001": ("MATCH", None, "provisional"),
         "K002": ("INCONCLUSIVE", "identity_ambiguous", "provisional"),
-        "K003": ("INCONCLUSIVE", "unparseable", "provisional"),  # M1, never NOT_FOUND_A
+        "K003": ("INCONCLUSIVE", "unparseable", "provisional"),  # never NOT_FOUND_A
         "K004": ("INCONCLUSIVE", "unparseable", "provisional"),
     }
     assert found["K003"]["attrs"]["side_a_detail"] == (
@@ -237,7 +237,7 @@ async def test_a_recheck_reads_a_fixed_side_whose_first_read_failed(
     statements: list[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """§12 as built: a read that failed (temporary space met by the group's pass, read once more and met
+    """A read that failed (temporary space met by the group's pass, read once more and met
     again) observed no bytes, so nothing of it stands: the recheck reads the side, in one statement."""
     (exports / "a" / "export.csv").write_text(HEADER + rows(1, 2))
     service.script("b", "K001", (200, served(1)))
@@ -272,7 +272,7 @@ async def test_a_recheck_reads_a_fixed_side_whose_first_read_failed(
 async def test_what_stands_of_a_fixed_side_is_stat_checked_once(
     opened: Opened, service: ScriptedService, exports: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§11's table: a recheck's reused observation follows one stat check of the files for its group: a
+    """A recheck's reused observation follows one stat check of the files for its group: a
     changed file fails the run, and files that do not answer keep nothing, so the keys are read as any."""
     export = exports / "a" / "export.csv"
     export.write_text(HEADER + rows(1, 2))
@@ -327,7 +327,7 @@ def _first(key: str, a: SideState | None = None) -> KeyResult:
 async def test_a_soak_reads_the_same_pinned_files_each_cycle(
     opened: Opened, service: ScriptedService, exports: Path, statements: list[str]
 ) -> None:
-    """§12, D4: a soak against a live side reads its pinned files once a cycle (a pass a group) and never
+    """A soak against a live side reads its pinned files once a cycle (a pass a group) and never
     for a recheck, and finds what the live side changed between two cycles."""
     (exports / "a" / "export.csv").write_text(HEADER + rows(1, 2))
     service.script("b", "K001", (200, served(1)), (200, served(1, "B")))  # it changes after cycle 1
@@ -351,7 +351,7 @@ async def test_a_soak_reads_the_same_pinned_files_each_cycle(
 async def test_compare_one_reads_a_fixed_side_once(
     opened: Opened, service: ScriptedService, exports: Path, statements: list[str]
 ) -> None:
-    """§12: a one-shot comparison's recheck reads the service again and the file side never; between two
+    """A one-shot comparison's recheck reads the service again and the file side never; between two
     file sides no recheck is made at all."""
     _pair(exports)
     service.script("b", "K005", (200, served(5, "B")))
@@ -394,9 +394,10 @@ async def test_a_group_beside_a_side_of_large_rows_is_one_pass_over_the_files(
     monkeypatch: pytest.MonkeyPatch,
     kind: str,
 ) -> None:
-    """§12: a file side is read a group of 200 keys a pass, also beside a side whose rows may be large (a
+    """A file side is read a group of 200 keys a pass, also beside a side whose rows may be large (a
     MySQL TEXT column), which is then read LOB_BATCH keys at a time inside the group. The pair was leased 4
-    keys a group, each group a pass over the files: 10 passes for 40 keys, 50 times the passes of §12."""
+    keys a group, each group a pass over the files: 10 passes for 40 keys, 50 times the passes of a group of
+    200."""
     keys = [f"K{n:03d}" for n in range(1, 41)]
     values = ", ".join(f"('{key}', 'n{n}', 'B')" for n, key in enumerate(keys))
     database = mysql_server.database(
@@ -433,7 +434,7 @@ async def test_a_group_beside_a_side_of_large_rows_is_one_pass_over_the_files(
 async def test_the_lines_csv_skip_leaves_unread_are_approved_stored_and_said(
     opened: Opened, exports: Path
 ) -> None:
-    """D5, D6, §5: csv.skip leaves the first lines of each file out of what is compared, so a spec that
+    """``csv.skip`` leaves the first lines of each file out of what is compared, so a spec that
     declares it needs the four-eyes approval a filter needs, its side's plan stores how many lines that is,
     and the census wording says them. A headerless export's first two rows went unread without an approval,
     a count or a word: the census read 'to its end' the bytes of all five."""
@@ -459,7 +460,7 @@ async def test_the_lines_csv_skip_leaves_unread_are_approved_stored_and_said(
     assert "skipped as" not in census.described(census.scanned("b", plan["b"], scan, compiled[0]))
 
 
-# --- two file sides: hashed in DuckDB, final as read (D7, §9, §12) --------------------------------------
+# --- two file sides: hashed in DuckDB, final as read -----------------------------------------------------
 
 
 def _pair(exports: Path, b: str | None = None) -> None:
@@ -475,7 +476,7 @@ SEEDED = {"K005": "MISMATCH", "K007": "NOT_FOUND_B", "K011": "NOT_FOUND_A"}
 async def test_two_file_sides_are_hashed_in_duckdb_and_final_as_read(
     opened: Opened, exports: Path, statements: list[str]
 ) -> None:
-    """D7: a file-to-file pair's columns that both sides declare alike are hashed by DuckDB, so the worker
+    """A file-to-file pair's columns that both sides declare alike are hashed by DuckDB, so the worker
     renders none and the sort carries the hash, 32 bytes a row; the scan finds exactly the seeded
     differences. Each per-key result of two fixed sides is final as read (frozen_cut): no recheck is due,
     nothing is outstanding."""
@@ -489,7 +490,7 @@ async def test_two_file_sides_are_hashed_in_duckdb_and_final_as_read(
         found, read = await h.results(scanned), await h.results(listed)
     plan, scan = run["params"]["tables"], run["scan"]
     assert plan["a"]["digest"] == plan["b"]["digest"] == [] and plan["rendering"] == 1
-    # §6 step 8: the key text three times, 24 bytes for each of the four values carried, the hash, 16 a row.
+    # The key text three times, 24 bytes for each of the four values carried, the hash, 16 a row.
     assert plan["a"]["sort_bytes"] == math.ceil(1.15 * 10 * (3 * 4 + 24 * 4 + 32 + 16))
     sorts = [statement for statement in statements if " ORDER BY encode(" in statement]
     assert len(sorts) == 2 and all(
@@ -522,7 +523,7 @@ async def test_two_file_sides_are_hashed_in_duckdb_and_final_as_read(
 
 
 async def test_a_column_the_sides_declare_apart_is_the_worker_s(opened: Opened, exports: Path) -> None:
-    """§9: a padded field against one that is not, and a typeMap's column, are worker columns; two padded
+    """A padded field against one that is not, and a typeMap's column, are worker columns; two padded
     fields are hashed in DuckDB without their padding, so trailing spaces alone are no difference."""
     (exports / "a" / "export.csv").write_text(HEADER + "K001|n1  |A\nK002|n2|A \n")
     (exports / "b" / "export.csv").write_text(HEADER + "K001|n1|A\nK002|n2 |B\n")
@@ -547,7 +548,7 @@ async def test_a_column_the_sides_declare_apart_is_the_worker_s(opened: Opened, 
     } == {"K002": "MISMATCH"}
 
 
-# --- what fails a run, by §15's texts (F3, F4, F9, F10) --------------------------------------------------
+# --- what fails a run, and its text ----------------------------------------------------------------------
 
 
 def _append(path: Path) -> None:
@@ -581,7 +582,7 @@ def _add(path: Path) -> None:
         (_earlier, "file 1 of 1 is not the file the run was created on (modified)"),
         (lambda path: os.chmod(path, 0o600), "file 1 of 1 is not the file the run was created on (changed)"),
         (_replace, "file 1 of 1 is not the file the run was created on (replaced)"),
-        (_link, "file 1 of 1 is not the file the run was created on (link)"),  # §14 point 4: never followed
+        (_link, "file 1 of 1 is not the file the run was created on (link)"),  # never followed
         (_add, "2 files match now, 1 when the run was created"),
     ],
     ids=["size", "modified", "changed", "replaced", "link", "added"],
@@ -589,7 +590,7 @@ def _add(path: Path) -> None:
 async def test_files_changed_fails_the_run(
     opened: Opened, exports: Path, change: Callable[[Path], object], said: str
 ) -> None:
-    """F9: any difference from the pinned files fails the run at its next check, naming the file by its
+    """Any difference from the pinned files fails the run at its next check, naming the file by its
     position; the alert's error_type is the class."""
     _pair(exports)
     async with opened() as h:
@@ -605,7 +606,7 @@ async def test_files_changed_fails_the_run(
 async def test_a_per_key_read_fails_its_run_on_a_changed_file_or_a_refused_permission(
     opened: Opened, service: ScriptedService, exports: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§10's table, per key: a changed file (F9) and a refused permission (F4) fail the run; neither is an
+    """Per key: a changed file and a refused permission fail the run; neither is an
     outage to read again, and the service side is not asked for a key the files could not answer."""
     export = exports / "a" / "export.csv"
     export.write_text(HEADER + rows(1, 2))
@@ -636,8 +637,8 @@ async def test_a_per_key_read_fails_its_run_on_a_changed_file_or_a_refused_permi
 async def test_a_change_no_stat_shows_is_met_by_the_closing_hash(
     opened: Opened, exports: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§11: a pass's files are hashed again when its rows end, so other bytes of the same size, times and
-    inode (here on a mount that keeps no change time) fail the run: F9 (content)."""
+    """A pass's files are hashed again when its rows end, so other bytes of the same size, times and
+    inode (here on a mount that keeps no change time) fail the run as changed files (content)."""
     _pair(exports)
     real = manifest._key
     monkeypatch.setattr(manifest, "_key", lambda found: (*real(found)[:2], 0, real(found)[3]))
@@ -657,7 +658,7 @@ async def test_a_change_no_stat_shows_is_met_by_the_closing_hash(
 
 @pytest.mark.parametrize("where", [None, "status = 'A'"], ids=["every row", "a filter"])
 async def test_rows_moved_fails(opened: Opened, exports: Path, where: str | None) -> None:
-    """F10, §7's rows guard: a side read to its end met another number of rows than its plan counted (here
+    """A side read to its end met another number of rows than its plan counted (here
     the stored count is made to disagree, as a parser that disagreed with itself would)."""
     _pair(exports, HEADER + rows(*range(1, 9)) + rows(9, 10, status="B"))
     b = table() if where is None else table(where=where)
@@ -681,14 +682,14 @@ async def test_rows_moved_fails(opened: Opened, exports: Path, where: str | None
 @pytest.mark.parametrize(
     ("raised", "said"),
     [
-        (TargetTempSpace("OutOfMemoryException"), "TargetTempSpace: OutOfMemoryException"),  # F3
-        (TargetDenied("PermissionError"), "TargetDenied: PermissionError"),  # F4
+        (TargetTempSpace("OutOfMemoryException"), "TargetTempSpace: OutOfMemoryException"),
+        (TargetDenied("PermissionError"), "TargetDenied: PermissionError"),
     ],
 )
 async def test_a_scan_s_failure_fails_the_run_by_its_class(
     opened: Opened, exports: Path, monkeypatch: pytest.MonkeyPatch, raised: Exception, said: str
 ) -> None:
-    """§10's table: temporary space and a refused permission fail a scan's run at once, by the error's class
+    """Temporary space and a refused permission fail a scan's run at once, by the error's class
     and code (never DuckDB's text), which the alert's error_type reads."""
     _pair(exports)
 
@@ -706,7 +707,7 @@ async def test_a_scan_s_failure_fails_the_run_by_its_class(
 async def test_a_sort_without_free_space_fails_the_run(
     opened: Opened, exports: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """F3: the spill's free space is checked before a sort reads a byte."""
+    """The spill's free space is checked before a sort reads a byte."""
     _pair(exports)
     async with opened() as h:
         run_id = await create_run(h.ctx, await h.spec(spec(table(), other(table()))), "batch", who=TESTER)
@@ -718,7 +719,7 @@ async def test_a_sort_without_free_space_fails_the_run(
 async def test_io_error_on_unchanged_bytes_fails_at_the_third_pass(
     opened: Opened, exports: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """§10's table, F4: a read error at the same row of files that did not change (a bad block: here a stub
+    """A read error at the same row of files that did not change (a bad block: here a stub
     at K005) is met by every pass, so the third fails the run though the first saved checkpoints."""
     _pair(exports)
     monkeypatch.setattr(scanning, "BATCH", 2)
@@ -748,7 +749,7 @@ async def test_io_error_on_unchanged_bytes_fails_at_the_third_pass(
 async def test_an_unmounted_directory_pauses_and_a_changed_file_fails_at_resume(
     opened: Opened, exports: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """F1, §10's table: a root that cannot be listed pauses the pass (the log names the class, never a path),
+    """A root that cannot be listed pauses the pass (the log names the class, never a path),
     as often as it takes; the pass that resumes stat-checks first, and fails the run on a changed file."""
     _pair(exports)
     async with opened() as h:
@@ -777,13 +778,13 @@ async def test_an_unmounted_directory_pauses_and_a_changed_file_fails_at_resume(
     assert str(exports) not in caplog.text
 
 
-# --- a reader's process that ends (READER.md §9, §12) ----------------------------------------------------
+# --- a reader's process that ends ----------------------------------------------------
 
 
 async def test_a_run_whose_reader_dies_three_times_fails_with_f12(
     opened: Opened, exports: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """READER §9, F12: a side's files under whose statements the reader's process ends (as a fault ends
+    """A side's files under whose statements the reader's process ends (as a fault ends
     it: here by a signal that is no crash to the system, sent as each is taken) pause a scan's pass twice,
     each end charged to them alone, and fail the run at the third; a key-list run of such files fails at
     its third read. The error is the closed text, naming the cause and no file, and the alert's error_type
@@ -860,7 +861,7 @@ async def test_a_reader_that_takes_no_work_pauses_a_scan(
     caplog: pytest.LogCaptureFixture,
     code: str,
 ) -> None:
-    """READER §9, F1: a reader that ended, did not start or reads another export apart is an outage with a
+    """A reader that ended, did not start or reads another export apart is an outage with a
     code of its own: the pass is paused, logged by that code, and resumed."""
     _pair(exports)
     scan, met = duck.Files.scan, []
@@ -881,7 +882,7 @@ async def test_a_reader_that_takes_no_work_pauses_a_scan(
     assert said == [f"scan of run {run_id} paused: {code}"]
 
 
-# --- a mount that does not answer (D14) ------------------------------------------------------------------
+# --- a mount that does not answer ------------------------------------------------------------------------
 
 
 async def test_a_mount_that_does_not_answer_costs_its_own_runs_only(
@@ -891,7 +892,7 @@ async def test_a_mount_that_does_not_answer_costs_its_own_runs_only(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """D14, §10: a stat check that hangs is abandoned at its deadline, never joined; each pass is an outage,
+    """A stat check that hangs is abandoned at its deadline, never joined; each pass is an outage,
     paused and tried again, until four abandoned reads of its target's root wait: then that target's file
     work is refused at once, without another thread. A run without a file side goes on meanwhile, a run of
     another files target is created and read while the dead one stands at its cap, and the file run completes
@@ -951,7 +952,7 @@ async def test_a_mount_that_does_not_answer_costs_its_own_runs_only(
     assert {key: r["outcome"] for key, r in found.items()} == SEEDED
 
 
-# --- privacy (§13, D12) ----------------------------------------------------------------------------------
+# --- privacy ----------------------------------------------------------------------------------
 
 
 def _held(value: Any) -> list[Any]:
@@ -966,7 +967,7 @@ def _held(value: Any) -> list[Any]:
 async def test_per_file_digests_are_sealed(
     opened: Opened, exports: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """D12, §13: a matched file's name, size, times, inode and digest are in the run's sealed pins alone:
+    """A matched file's name, size, times, inode and digest are in the run's sealed pins alone:
     in no stored plan, plan.json, audit row, census record, answer or log. Only the aggregate files_sha256
     leaves, unkeyed, in the stored plan and plan.json, and in no answer or audit row; the pins are unreadable
     without the run's data key."""

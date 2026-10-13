@@ -81,7 +81,7 @@ class TestNotFound:
 
 
 class TestNotFoundIn2xx:
-    """PLAN: a 2xx is ABSENT only when notFound.when matches and the target declares that status
+    """A 2xx is ABSENT only when notFound.when matches and the target declares that status
     with an absence shape that matches; a 2xx status is never not-found by being listed alone."""
 
     GRAPHQL = side(

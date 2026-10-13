@@ -1,5 +1,5 @@
 """Evidence store: encrypted format 1 blobs at keyed addresses, evidence first, dedup, verification,
-keyed ids, private modes, and the keys a read or a write needs (docs/mvp/RETENTION.md §2)."""
+keyed ids, private modes, and the keys a read or a write needs."""
 
 from __future__ import annotations
 
@@ -334,7 +334,7 @@ class TestLegacy:
             evidence_store(tmp_path)
         assert str(refused.value) == (
             f"legacy plaintext remains in {tmp_path / 'blobs' / 'sha256'}: stop the app and run"
-            " 'ds keys migrate' (docs/mvp/RETENTION.md §7.2)"
+            " 'ds keys migrate'"
         )
         assert evidence_store(tmp_path, migrating=True).put_blob(make_obs()).content_hash == address()
 

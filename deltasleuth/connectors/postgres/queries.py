@@ -1,4 +1,4 @@
-"""The SQL of a table side (TABLES.md §4, §5, §9, §10), composed with ``psycopg.sql``.
+"""The SQL of a table side, composed with ``psycopg.sql``.
 
 Names are ``Identifier``s; key-map constants, filter literals, key values and resume bounds are
 named placeholders: no text of a spec or a key is ever spliced into a statement (not even into a
@@ -160,8 +160,8 @@ def scan_sql(side: Plan, after: Sequence[bytes] | None) -> tuple[sql.Composed, P
 
 
 def census_sql(side: Plan) -> tuple[sql.Composed, Params]:
-    """The population's canonical key parts, in ``scan_sql``'s order: the key census of a key-list run
-    (docs/mvp/PACK.md §1.3). A key held by several rows comes once per row."""
+    """The population's canonical key parts, in ``scan_sql``'s order: the key census of a key-list run. A
+    key held by several rows comes once per row."""
     params: Params = {}
     keys = _canonical_keys(side, params)
     order = _join([sql.SQL("convert_to({}, 'UTF8')").format(k) for k in keys])
@@ -174,7 +174,7 @@ def census_sql(side: Plan) -> tuple[sql.Composed, Params]:
 def frame_sql(side: Plan) -> tuple[sql.Composed, Params]:
     """``census_sql``'s canonical key parts and order, then each row's strata columns (``strata``: name ->
     column) as a JSON document, which breaks ties, so a key's first row is always the same one: a hash
-    sample's frame (docs/mvp/SAMPLING.md §3)."""
+    sample's frame."""
     params: Params = {}
     keys = _canonical_keys(side, params)
     order = [sql.SQL("convert_to({}, 'UTF8')").format(k) for k in keys]
@@ -213,7 +213,7 @@ def probe_sql(side: Plan) -> tuple[sql.Composed, Params]:
     return statement, params
 
 
-# --- table pre-checks (docs/mvp/PRECHECKS.md §4) -------------------------------------------------------
+# --- table pre-checks -------------------------------------------------------
 
 # A column's figure: ``c`` is the column and ``text`` its text in the "C" collation (a ``character``
 # column's without its padding), so an empty or a distinct text is judged as the scan's merge would.
@@ -282,7 +282,7 @@ def duplicates_sql(side: Plan) -> tuple[sql.Composed, Params]:
     return statement, params
 
 
-# --- graph parity (GRAPH.md §3) ----------------------------------------------------------------------
+# --- graph parity ----------------------------------------------------------------------
 
 
 def _fact_texts(

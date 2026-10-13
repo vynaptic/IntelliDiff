@@ -1,4 +1,4 @@
-"""An engine's errors become neutral ones holding only a code (docs/mvp/ENGINES.md §5, §11): classified by
+"""An engine's errors become neutral ones holding only a code: classified by
 origin first, then by the server's code, and never with a driver's text, which may quote a key or a value.
 """
 
@@ -28,7 +28,7 @@ CODES = {
     tables.TargetAuthRefused: (1045, 1862, 3118),
     # 3 is what a sort answers a full temporary directory with (observed: test_mysql), 1 its sibling.
     tables.TargetTempSpace: (1, 3, 1021, 1028, 1114),
-    # 1054: a column that is gone, which the schema guard looks at first (docs/mvp/PRECHECKS.md §7, V5).
+    # 1054: a column that is gone, which the schema guard looks at first.
     tables.TargetDenied: (1054, 1142, 1143, 1146),
     tables.TargetRefused: (1064, 1792, 3819, 999),  # any other server code
 }
@@ -120,7 +120,7 @@ def test_mariadb_and_an_old_mysql_are_refused_by_their_version(version: str, ref
     target = Target("ledger", "")
     if refused is None:
         return mysql._refuse_version(target, version)
-    with pytest.raises(tables.Refusal) as exc:  # P2, which the plan prefixes with its side
+    with pytest.raises(tables.Refusal) as exc:  # the plan prefixes it with its side
         mysql._refuse_version(target, version)
     assert str(exc.value) == f"target ledger is {refused}: MySQL 8.0.17 or later is supported, MariaDB is not"
 
@@ -130,7 +130,7 @@ def test_an_engine_changed_since_the_plan_is_refused() -> None:
     assert engine.planned("a", {"keys": []}, plain) is tables.ENGINES["postgresql"]
     with pytest.raises(tables.EngineChanged) as exc:
         engine.planned("a", {"engine": "mysql"}, plain)
-    assert str(exc.value) == "side a: target ledger is postgresql now; this run was planned for mysql"  # F6
+    assert str(exc.value) == "side a: target ledger is postgresql now; this run was planned for mysql"
     assert failure(exc.value) == f"EngineChanged: {exc.value}"
     with pytest.raises(tables.EngineChanged):
         engine.planned("b", {"keys": []}, declared)  # no database any more
@@ -254,7 +254,7 @@ def test_an_oracle_before_19_is_refused_by_its_version(version: str, refused: st
     target = Target("crm-legacy", "")
     if refused is None:
         return oracle._settled(target, version, SETTLED, True)
-    with pytest.raises(tables.Refusal) as exc:  # P3, which the plan prefixes with its side
+    with pytest.raises(tables.Refusal) as exc:  # the plan prefixes it with its side
         oracle._settled(target, version, SETTLED, True)
     assert str(exc.value) == f"target crm-legacy is Oracle {refused}: 19c or later is supported"
 
@@ -271,7 +271,7 @@ def test_an_oracle_before_19_is_refused_by_its_version(version: str, refused: st
 )
 def test_a_setting_a_logon_trigger_overrides_is_named(at: int, found: str, setting: str) -> None:
     read = [*SETTLED[:at], found, *SETTLED[at + 1 :]]
-    with pytest.raises(tables.Refusal) as exc:  # P4
+    with pytest.raises(tables.Refusal) as exc:
         oracle._settled(Target("crm-legacy", ""), "19.21.0.0.0", read, True)
     assert (
         str(exc.value) == f"the session could not be set ({setting} is {found}): a logon trigger overrides it"
@@ -323,4 +323,4 @@ def test_an_oracle_number_s_class_and_declared_type_follow_its_scale() -> None:
     floating = oracle._column(True, "F", "FLOAT", 22, 126, None, 0, None, None)
     assert (floating.declared, floating.cls) == ("FLOAT(126)", "decimal")
     spatial = oracle._column(True, "G", "SDO_GEOMETRY", 1, None, None, 0, None, None)
-    assert (spatial.declared, spatial.cls, spatial.keyable) == ("SDO_GEOMETRY", None, False)  # P7
+    assert (spatial.declared, spatial.cls, spatial.keyable) == ("SDO_GEOMETRY", None, False)

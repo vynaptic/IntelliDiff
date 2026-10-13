@@ -1,4 +1,4 @@
-"""Sign-in and administration (docs/mvp/AUTH.md §2, §3, §5, §6): OIDC sign-in and its callback, token
+"""Sign-in and administration: OIDC sign-in and its callback, token
 sign-in (tokens mode), who is calling, sign-out, API tokens, sessions, users and the audit log.
 
 Nothing is written to the database before a person or token is identified: a failed sign-in leaves a
@@ -36,10 +36,10 @@ from deltasleuth.auth.principal import ROLES, Principal, expand
 from deltasleuth.context import Context
 from deltasleuth.store import repo
 
-public = APIRouter(prefix="/auth")  # anyone may call these (docs/mvp/AUTH.md §1)
+public = APIRouter(prefix="/auth")  # anyone may call these
 router = APIRouter()
 log = logging.getLogger("deltasleuth.auth")
-# Set and read under sessions.named, with secure=not sessions.plain(auth): plain on loopback http (§3, E1).
+# Set and read under sessions.named, with secure=not sessions.plain(auth): plain on loopback http.
 _SESSION_COOKIE: dict[str, Any] = {"path": "/", "httponly": True, "samesite": "strict"}
 _LOGIN_COOKIE: dict[str, Any] = {"path": "/", "httponly": True, "samesite": "lax"}
 

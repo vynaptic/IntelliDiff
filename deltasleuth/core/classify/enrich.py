@@ -1,4 +1,4 @@
-"""Enrich differ findings (§8.2): taxonomy, severity, value class, signature and known-diff rule.
+"""Enrich differ findings: taxonomy, severity, value class, signature and known-diff rule.
 
 Code and severity come from a preset code, else the array rule of a one-sided member, else the
 field rule of a value change, else the core default; the pack's aliases apply last. Known-diff

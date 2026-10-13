@@ -1,4 +1,4 @@
-"""A labelling's draw in the store (docs/mvp/ACCURACY.md §3): ``repo.labelling_draw``'s one statement equals
+"""A labelling's draw in the store: ``repo.labelling_draw``'s one statement equals
 the Python it replaces over 10,000 synthetic results (``*`` items, non-ASCII keys, each population and
 count), beside another run's rows; its joins do not follow the planner's estimates, which a new store's
 first cycle end leaves wrong; coverage tops causes up in rank order and stops at 1,000 items; a stopped
@@ -150,7 +150,7 @@ def context(pool: AsyncConnectionPool, version: CompiledSpec) -> Any:
 
 
 def expected(n: int, salt: str = SALT) -> dict[str, list[tuple[str, str]]]:
-    """Each population's items (masked key, cause) in digest order, as §2.1 and §3 define them."""
+    """Each population's items (masked key, cause) in digest order, as a labelling draws them."""
     items: dict[str, list[tuple[str, str]]] = {name: [] for name in accuracy.POPULATIONS}
     for masked, (outcome, findings) in synthetic(n).items():
         causes = sorted({found for found, _, _, _ in findings if found})

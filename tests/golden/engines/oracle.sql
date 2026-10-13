@@ -1,4 +1,4 @@
--- The golden corpus of canonical rendering 1 (docs/mvp/ENGINES.md §9, §16) on Oracle: one column per
+-- The golden corpus of canonical rendering 1 on Oracle: one column per
 -- supported type with edge values (corpus), the values every engine must render and digest alike
 -- (portable: the empty string is NULL here, and a DATE holds a time) and decimal keys (amounts).
 -- expected.json and portable.json pin what each row renders as.

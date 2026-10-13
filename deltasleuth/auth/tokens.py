@@ -1,4 +1,4 @@
-"""Named API tokens (docs/mvp/AUTH.md §5): ``dst_<16 hex id>_<64 hex secret>``, id ``T-<16 hex>``.
+"""Named API tokens: ``dst_<16 hex id>_<64 hex secret>``, id ``T-<16 hex>``.
 
 A row stores ``sha256(token)``, found by the id the token carries and compared in constant time. The
 token itself is shown once, when it is created.

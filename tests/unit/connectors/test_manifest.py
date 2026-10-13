@@ -1,4 +1,4 @@
-"""What a file side reads, without DuckDB (docs/mvp/FILES.md §4, §5, §6 steps 1 to 4 and 9, §10, §11): the
+"""What a file side reads, without DuckDB: the
 roots' places, the path's grammar, the expansion, the arrival, the pins, the threads and the spill."""
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ UID = os.getuid()
 
 
 def _target(root: Path, **declared: Any) -> Target:
-    """A fixture target (§18): settle_s 0 and allow_writable, as a test's directory is writable."""
+    """A fixture target: settle_s 0 and allow_writable, as a test's directory is writable."""
     return Target("legacy", "", root=str(root), **({"settle_s": 0, "allow_writable": True} | declared))
 
 
@@ -160,7 +160,7 @@ async def test_what_is_no_regular_file_or_has_a_name_outside_the_alphabet_is_ref
 
 @pytest.mark.parametrize("name", ["*", "**", "?", "[a]", "a'b"])
 async def test_a_directory_named_as_a_pattern_is_refused_and_never_entered(root: Path, name: str) -> None:
-    """P18, D3: under a globbed directory segment a directory whose name is outside the alphabet refuses the
+    """Under a globbed directory segment a directory whose name is outside the alphabet refuses the
     plan, as below a directory read. Entered, its file was pinned under a path DuckDB expands, which then read
     files that were never listed, pinned or hashed: a hidden directory's, another target's through a link."""
     _write(root, "dt=1/part.csv", ".staging/part.csv")
@@ -203,10 +203,10 @@ async def test_a_root_that_is_not_there_or_writable(root: Path, monkeypatch: pyt
 
 
 async def test_the_mount_of_each_file_is_judged(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """P15, D8: a root on a read-only mount (the image's own file system, with the exports mounted below it)
+    """A root on a read-only mount (the image's own file system, with the exports mounted below it)
     says nothing of the mounts its files lie on: each file's is judged by its descriptor. One on a mount
     DeltaSleuth could write to refuses the plan, or with allow_writable is what the plan records, so the
-    certificate says it (W3)."""
+    certificate says it."""
     _write(root, "e/one/a.csv", "e/two/b.csv")
     statvfs, fstatvfs, writable = os.statvfs, os.fstatvfs, os.stat(root / "e" / "two" / "b.csv").st_ino
 
@@ -231,8 +231,8 @@ async def test_the_mount_of_each_file_is_judged(root: Path, monkeypatch: pytest.
 
 
 async def test_a_mount_that_answers_with_an_error(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """§10's table: a listing or a stat the mount answers with an error (a stale handle, EIO) is P14 while a
-    run is planned, and afterwards an outage (TargetUnreachable: paused, read again), never a failed run."""
+    """A listing or a stat the mount answers with an error (a stale handle, EIO) refuses the run while it
+    is planned, and afterwards an outage (TargetUnreachable: paused, read again), never a failed run."""
     _write(root, "e/a.csv")
     pinned = await manifest.pin(_target(root), "e/", "side a", FILES)
     lstat = os.lstat
@@ -271,7 +271,7 @@ ABOVE = (
 
 
 async def test_no_other_name_value_directory_lies_above_the_partitions(root: Path) -> None:
-    """P26: with partitions declared DuckDB reads every name=value directory of a file's whole path as a
+    """With partitions declared DuckDB reads every name=value directory of a file's whole path as a
     column of each row, in place of the files' own column of that name. One in the path's fixed part or in
     the target's root refuses the plan; without partitions none is read so."""
     _write(root, "region=eu/dt=2024-01-01/part.parquet", "type=full/sales/dt=1/part.parquet")
@@ -288,7 +288,7 @@ async def test_no_other_name_value_directory_lies_above_the_partitions(root: Pat
     assert [f.path for f in plain] == ["sales/dt=1/part.parquet"]
 
 
-# -- the path's grammar (L10) ---------------------------------------------------------------------
+# -- the path's grammar ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -318,7 +318,7 @@ def test_no_accepted_path_leaves_the_root(path: str) -> None:
         assert not any(segment.startswith(".") for segment in path.split("/"))
 
 
-# -- arrival (§6 step 3) --------------------------------------------------------------------------
+# -- arrival --------------------------------------------------------------------------
 
 
 async def test_settle_and_max_age_with_an_injected_clock(root: Path) -> None:
@@ -376,11 +376,11 @@ async def test_the_stamp_file(root: Path, tmp_path: Path) -> None:
         assert (refused.value.code, str(refused.value)) == ("unstamped", f"side a: {message}"), name
 
 
-# -- pins (§6 step 4) -----------------------------------------------------------------------------
+# -- pins -----------------------------------------------------------------------------
 
 
 def _sha256sum(root: Path, files: tuple[str, ...]) -> str:
-    """``sha256sum`` in the root, then ``cut -c1-64 | sha256sum`` (§16's recipe)."""
+    """``sha256sum`` in the root, then ``cut -c1-64 | sha256sum``."""
     lines = [f"{hashlib.sha256((root / f).read_bytes()).hexdigest()}  {f}" for f in files]
     return hashlib.sha256("".join(line[:64] + "\n" for line in lines).encode()).hexdigest()
 
@@ -419,7 +419,7 @@ async def test_pins_and_the_aggregate_digest(root: Path) -> None:
 
 
 async def test_a_partitioned_side_s_digest_binds_its_paths(root: Path) -> None:
-    """§6: a side that declares partitions compares its directories' names, so its digest is the SHA-256 of
+    """A side that declares partitions compares its directories' names, so its digest is the SHA-256 of
     sha256sum's lines whole, paths and all: the same bytes under another directory are another export.
     Without partitions it is the files' digests alone, wherever they lie."""
     _write(root, "t/dt=2026-10-01/part.csv", data=b"id\n1\n")
@@ -490,7 +490,7 @@ async def test_file_changed_during_plan(root: Path) -> None:
 
 def _renamed(root: Path, name: str, data: bytes) -> None:
     """A file written, then given an older modification time: its change time differs, as one renamed
-    into place after it was written (DEPLOY's advice) has."""
+    into place after it was written has."""
     _write(root, name, data=data)
     os.utime(root / name, (time.time() - 3600, time.time() - 3600))
 
@@ -539,9 +539,9 @@ async def test_planning_past_plan_s_stops_within_a_chunk_and_goes_on(
 async def test_a_gzip_stream_of_several_members_is_read_member_by_member(
     root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§6 step 4 (U18): each member of a gzip export (parts concatenated, as log shippers write them) is read
+    """Each member of a gzip export (parts concatenated, as log shippers write them) is read
     to its end and none is fed twice, whether the file comes in one read or its members span reads; cut short,
-    or ending in what is no member, it is still refused (P29). Once a member's text passed the 1 MiB a step
+    or ending in what is no member, it is still refused. Once a member's text passed the 1 MiB a step
     decompresses, zlib leaves the bytes after its end in unused_data and in unconsumed_tail: fed both, the
     check of a valid export never ended, or refused it."""
     monkeypatch.setattr(manifest, "STAT_S", 5)  # a check that does not end fails this test, not the session
@@ -573,9 +573,9 @@ ENCRYPTED = "is encrypted Parquet, which is not read"
 async def test_a_parquet_footer_is_walked_before_duckdb_reads_it(
     root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§14 point 7, P22: DuckDB follows a schema's nesting by recursion without a bound (a file of 20 KB whose
+    """DuckDB follows a schema's nesting by recursion without a bound (a file of 20 KB whose
     groups nest 2,000 deep ended the process that planned it), so a plan walks each footer as it hashes its
-    file, before any statement names the file (``pin`` is steps 1 to 4, and no DuckDB), and refuses one over
+    file, before any statement names the file (``pin`` runs no DuckDB), and refuses one over
     a size, an element count or a nesting depth, and one that is not of the form the walk reads: a leaf that
     claims children, or a negative count of them, which once left planning as an IndexError; and whatever
     lets the walk and Thrift's generated reader, which DuckDB reads a footer with, take different schemas.
@@ -669,7 +669,7 @@ async def test_a_parquet_footer_is_walked_before_duckdb_reads_it(
 async def test_a_footer_holds_the_schema_s_chunks_and_few_lists(
     root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§6 step 4, §14 point 7, P22: DuckDB's reader makes a list's elements before it reads them, 704 bytes
+    """DuckDB's reader makes a list's elements before it reads them, 704 bytes
     for a column chunk that one byte of a footer declares, outside ``files.memory``: the verifier's footer
     of a megabyte, a second row group of a million column chunks, took 672 MiB (``swollen``; 100,000 here,
     which the walk alone reads). So the walk refuses a row group whose column chunks are not the schema's
@@ -747,7 +747,7 @@ async def test_a_footer_holds_the_schema_s_chunks_and_few_lists(
     assert (await manifest.pin(_target(root), "ok/5.parquet", "side a", FILES)).footed == (0, {})  # a CSV's
 
 
-# -- verify (§11) ---------------------------------------------------------------------------------
+# -- verify ---------------------------------------------------------------------------------
 
 
 async def test_verify_names_each_change(root: Path, tmp_path: Path) -> None:
@@ -795,7 +795,7 @@ async def test_verify_names_each_change(root: Path, tmp_path: Path) -> None:
 async def test_a_read_error_of_the_closing_hash_is_no_change(
     root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§10's table: the closing hash of files that did not change, answered with an error by the mount (EIO
+    """The closing hash of files that did not change, answered with an error by the mount (EIO
     of a bad block or a soft mount, a stale handle after a failover), is an outage as a listing's is, and a
     refused permission is denied: FilesChanged says that the export changed, and only a file that is gone,
     replaced or of other content has."""
@@ -832,10 +832,10 @@ async def test_a_read_error_of_the_closing_hash_is_no_change(
 
 
 async def test_an_emptied_root_is_an_outage_after_the_plan(root: Path, tmp_path: Path) -> None:
-    """§10's table: a mount point whose mount is not there is an empty directory (the service started before
+    """A mount point whose mount is not there is an empty directory (the service started before
     the export was mounted). At run time that is an outage, paused and resumed, never a claim that the export
-    changed; a root that still holds an entry has changed. While a run is planned it stays P16
-    (export_absent), which a schedule waits for."""
+    changed; a root that still holds an entry has changed. While a run is planned it stays a missing
+    export (export_absent), which a schedule waits for."""
     target = _target(root)
     _write(root, "e/1.csv", "e/2.csv", "e/3.csv")
     pinned = await manifest.pin(target, "e/", "side a", FILES)
@@ -843,7 +843,7 @@ async def test_an_emptied_root_is_an_outage_after_the_plan(root: Path, tmp_path:
     with pytest.raises(TargetUnreachable) as outage:
         await manifest.verify(target, "e/", "a", pinned.files, pinned.pins)
     assert str(outage.value) == "Empty" and not isinstance(outage.value, FilesChanged)
-    with pytest.raises(NotReady) as unsettled:  # step 9 of a plan: P19's first text
+    with pytest.raises(NotReady) as unsettled:  # the last step of a plan
         await manifest.verify(target, "e/", "a", pinned.files, pinned.pins, planning=True)
     assert "changed while the run was planned" in str(unsettled.value)
     with pytest.raises(NotReady) as absent:
@@ -857,15 +857,15 @@ async def test_an_emptied_root_is_an_outage_after_the_plan(root: Path, tmp_path:
     await manifest.verify(target, "e/", "a", pinned.files, pinned.pins)  # mounted again: the run goes on
 
 
-# -- threads and deadlines (§10) ------------------------------------------------------------------
+# -- threads and deadlines ------------------------------------------------------------------
 
 
 async def test_stuck_mount_stalls_nothing(
     root: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A mount whose listing never answers: the event loop goes on serving, the deadline gives P14, the
-    fifth call of its target meets four abandoned ones (P28) and spends no thread, each abandoned read is
-    logged (F1), and the threads hold no exit. Another files target is planned meanwhile (D14: a dead mount
+    """A mount whose listing never answers: the event loop goes on serving, the deadline refuses the plan, the
+    fifth call of its target meets four abandoned ones and spends no thread, each abandoned read is
+    logged, and the threads hold no exit. Another files target is planned meanwhile (a dead mount
     costs its own target's runs), until abandoned reads of all targets together reach STUCK_ALL."""
     _write(root, "e/a.csv")
     other = root.parent / "healthy"
@@ -929,10 +929,10 @@ async def test_stuck_mount_stalls_nothing(
 
 
 async def test_a_busy_pool_is_no_dead_mount(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """§10: a call's deadline starts when a thread takes it. With every thread of the pool held by work that
+    """A call's deadline starts when a thread takes it. With every thread of the pool held by work that
     answers (sixteen long hashes, say), a call that waited longer than STAT_S and then ran is answered; one no
-    thread took within STAT_S is withdrawn and never run: Busy, which a plan words as not ready (P34), no
-    abandoned read and no word of a dead mount (P14)."""
+    thread took within STAT_S is withdrawn and never run: Busy, which a plan words as not ready, no
+    abandoned read and no word of a dead mount."""
     _write(root, "e/a.csv")
     monkeypatch.setattr(manifest, "STAT_S", 0.3)
     release, ran = threading.Event(), []
@@ -961,7 +961,7 @@ async def test_a_busy_pool_is_no_dead_mount(root: Path, monkeypatch: pytest.Monk
     assert ran == []  # the withdrawn call was never run
 
 
-# -- where roots lie (T10) and the spill (§10) ----------------------------------------------------
+# -- where roots lie and the spill ----------------------------------------------------------
 
 
 def _settings(base: Path, **files: Any) -> Settings:
@@ -1040,7 +1040,8 @@ async def test_stale_spill_swept_at_open_and_hourly(tmp_path: Path) -> None:
         assert holder.stdout is not None and holder.stdout.readline() == "held\n"
         crashed, other = _stale(spill, "a" * 26), spill / "not-a-spill"
         other.mkdir()
-        assert await manifest.opened(settings, _registry()) == []  # Context.open's call: the sweep, and T10
+        # Context.open's call: the sweep, and where roots lie
+        assert await manifest.opened(settings, _registry()) == []
         assert sorted(p.name for p in spill.iterdir()) == sorted([mine.name, live.name, "not-a-spill"])
         assert not crashed.exists()
         _stale(spill, "c" * 26)
@@ -1089,7 +1090,7 @@ def _texts(module: Any) -> list[str]:
 
 @pytest.mark.parametrize("never", manifest.NOT)
 def test_never_told(never: str) -> None:
-    """§2: no message of the file reader, no census wording of a fixed side and no line the certificate adds
+    """No message of the file reader, no census wording of a fixed side and no line the certificate adds
     for one says what is never claimed of files."""
     from deltasleuth.connectors.tables import duck, reader
     from deltasleuth.reports import pack

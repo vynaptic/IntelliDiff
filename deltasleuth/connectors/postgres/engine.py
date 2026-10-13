@@ -1,6 +1,6 @@
-"""PostgreSQL behind the engine seam (docs/mvp/ENGINES.md §5): today's sessions and statements
-(docs/mvp/TABLES.md), unchanged, and the catalogue query of the column plan. In a pair with another
-engine its rows take the canonical form of rendering 1 (§9) and the worker hashes them (§10).
+"""PostgreSQL behind the engine seam: today's sessions and statements, unchanged, and the catalogue query
+of the column plan. In a pair with another engine its rows take the canonical form of rendering 1 and the
+worker hashes them.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from deltasleuth.core.types import Target
 BATCH = 10_000  # rows per fetch
 BATCH_BYTES = 64 * 1024 * 1024  # in a pair with another engine a fetch is sized to hold about this much
 FIRST = 100  # rows of such a scan's first fetch, whose width is not known yet
-# The class of each declared type (ENGINES.md §7), as ``format_type`` names it without its modifier; an
+# The class of each declared type, as ``format_type`` names it without its modifier; an
 # enum is text, any other type is ``other``.
 _CLASSES = {
     **dict.fromkeys(("smallint", "integer", "bigint"), "integer"),
@@ -136,7 +136,7 @@ class PostgreSQL:
         columns = []
         for column, declared, nullable in zip(row[2] or (), row[5] or (), row[8] or (), strict=True):
             cls = "text" if column in enums else _CLASSES.get(re.sub(r"\([0-9,]*\)", "", declared), "other")
-            # A key text every engine renders alike (§8): a timestamp's only without fractional seconds.
+            # A key text every engine renders alike: a timestamp's only without fractional seconds.
             keyable = cls in render.KEYS and (cls != "timestamp" or declared.startswith("timestamp(0)"))
             read, like = column in readable, column in likeable
             says = None if kind.endswith("view") else nullable  # no view's column says whether it may
@@ -179,7 +179,7 @@ class PostgreSQL:
         await cursor.execute(*queries.scan_sql(side, after))  # declared now: it takes the snapshot
         if not side.get("digest"):
             return _fetched(cursor)
-        # In a pair with another engine every compared column comes with each row (ENGINES.md §6).
+        # In a pair with another engine every compared column comes with each row.
         sized = _sized(cursor, len(side["keys"]) + 1) if side.get("classes") else _fetched(cursor)
         return _digested(side, sized)
 
@@ -237,7 +237,7 @@ def _canonical(side: Plan, text: str) -> str | ValueError:
 async def _digested(side: Plan, batches: AsyncIterator[Rows]) -> AsyncIterator[Rows]:
     """Each fetched row's (key parts, row hash, digest columns' JSON text) as (key parts, digest). A
     PostgreSQL pair's few typeMap columns are hashed where they were before the seam, on the event loop:
-    the hand-off to a thread cost such a scan about a sixth of its time (ENGINES.md §10)."""
+    the hand-off to a thread cost such a scan about a sixth of its time."""
     n = len(side["keys"])
 
     def digests(batch: Rows) -> Rows:

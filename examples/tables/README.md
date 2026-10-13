@@ -14,8 +14,8 @@ Two PostgreSQL databases hold the same customers in different tables:
 | `targets.yaml` | The two database targets: a DSN file reference and a budget each. |
 | `spec.yaml` | Side a lists the columns it compares, renames two onto side b's names, and compares open accounts only (`where: "status <> 'closed'"`). Side b omits `columns`, so its own two columns are listed as one-sided and not compared. Both sides map `created_at` to one canonical timestamp (`typeMap`), side a reading its naive values in Europe/London. E-mail addresses ignore case and surrounding spaces. E-mail, name and phone are tokenised, the rest is clear. Customer numbers are `identifier` keys with a `key.pattern` of six digits: an evidence pack tells a raw key from other text by it, and issues none for identifier keys without one. |
 
-The contract is [docs/mvp/TABLES.md](../../docs/mvp/TABLES.md); the runbook's
-[Compare two tables](../../docs/mvp/RUNBOOK.md#compare-two-tables) explains every step.
+The user guide's [Compare tables and files](../../docs/user-guide.md#compare-tables-and-files) explains
+table specs step by step.
 
 ## What a run shows
 
@@ -45,8 +45,9 @@ b's stays `2020-01-02T00:37:00+00:00`: every row differs. Map a converted column
 
 ## Run it
 
-You need PostgreSQL 16 or later, `psql`, and a settings file as in the runbook's
-[Setup](../../docs/mvp/RUNBOOK.md#setup), whose `targets_file` is `examples/tables/targets.yaml`.
+You need PostgreSQL 16 or later, `psql`, and a settings file as
+[docs/deployment.md](../../docs/deployment.md) describes for a run from source, whose `targets_file` is
+`examples/tables/targets.yaml`.
 
 1. Seed the two databases, as a role that may create databases:
 
@@ -55,8 +56,7 @@ You need PostgreSQL 16 or later, `psql`, and a settings file as in the runbook's
    ```
 
 2. Write each DSN to its file, percent-encoding the password (`@` as `%40`). `secrets/` is
-   git-ignored. Any role that can read both tables will do; a read-only one is better
-   (docs/mvp/DEPLOY.md, section 7).
+   git-ignored. Any role that can read both tables will do; a read-only one is better.
 
    ```bash
    mkdir -p -m 700 examples/tables/secrets
@@ -74,11 +74,11 @@ You need PostgreSQL 16 or later, `psql`, and a settings file as in the runbook's
    uv run ds report R-... --out demo/tables --kind coverage.csv --kind discrepancies.csv
    ```
 
-**On the compose stack** (docs/mvp/DEPLOY.md), in the installation's folder, with the demo databases
-on its `db` service and `compose.yaml` mounting their two DSN secrets into the app (paths relative to
-`deploy/`). Name `compose.yaml` in `.env` after the site file, and after the CA or source override if
-you use one (`…site.yml:deploy/docker-compose.ca.yml:examples/tables/compose.yaml`), never in an
-exported `COMPOSE_FILE`, which overrides `.env`:
+**On the compose stack** ([docs/deployment.md](../../docs/deployment.md)), in the installation's folder,
+with the demo databases on its `db` service and `compose.yaml` mounting their two DSN secrets into the
+app (paths relative to `deploy/`). Name `compose.yaml` in `.env` after the site file, and after the CA
+or source override if you use one (`…site.yml:deploy/docker-compose.ca.yml:examples/tables/compose.yaml`),
+never in an exported `COMPOSE_FILE`, which overrides `.env`:
 
 ```bash
 printf '%s\n' 'COMPOSE_FILE=deploy/docker-compose.yml:deploy/docker-compose.site.yml:examples/tables/compose.yaml' > .env
@@ -105,6 +105,6 @@ paths and its table `where` and `columns` need one (`clear`, `population_filters
 run goes ahead, labelled unapproved.
 
 **In a deployment:** seed the databases on a server the app can reach, and add the secrets
-`crm_legacy_dsn` and `platform_users_dsn` (docs/mvp/DEPLOY.md, section 7);
+`crm_legacy_dsn` and `platform_users_dsn` as [docs/deployment.md](../../docs/deployment.md) describes;
 `deploy/config/targets.example.yaml` already declares both targets with these files. Then upload
 `spec.yaml`, have its approval requested and granted as above, and start a batch run without keys.

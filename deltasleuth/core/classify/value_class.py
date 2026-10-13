@@ -1,4 +1,4 @@
-"""Value class of a difference (§8.2): what kind of difference, never the values themselves.
+"""Value class of a difference: what kind of difference, never the values themselves.
 
 It keeps the explanation once values are tokenised: ``tok:phone:…`` on both sides, but a
 ``digit_transposition``. It is computed on the normalised values when they differ, else on the

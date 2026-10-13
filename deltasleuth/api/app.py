@@ -1,9 +1,9 @@
 """``create_app(settings)``: the public API v1 under /v1 and the built UI (web/dist) at /.
 
-The app holds a Context for its lifetime; ``worker=True`` (``ds serve``) also runs the run worker
-in the same event loop. Every /v1 route but the five public ones declares who may call it
-(docs/mvp/AUTH.md §4.1). Every error is JSON: ``{"detail": ..., "issues": [{pointer, ...}]}``. No
-interactive docs are served: they would load third-party scripts onto the UI's origin.
+The app holds a Context for its lifetime; ``worker=True`` (``ds serve``) also runs the run worker in the
+same event loop. Every /v1 route but the five public ones declares who may call it. Every error is JSON:
+``{"detail": ..., "issues": [{pointer, ...}]}``. No interactive docs are served: they would load third-party
+scripts onto the UI's origin.
 """
 
 from __future__ import annotations
@@ -108,12 +108,12 @@ def create_app(settings: Settings, *, worker: bool = False, web_dir: Path = WEB_
                 "keks": list(ctx.keyring.ids),
                 "current_kek": ctx.keyring.current,
                 "missing_keks": sorted(ctx.missing_keks),
-                "pack_key": ctx.signer and ctx.signer.fingerprint,  # the key register's entry (PACK.md §3.1)
-                "licence": current and current.detail(),  # docs/mvp/LICENCE.md §11
-                "mcp": settings.mcp and asdict(settings.mcp),  # docs/mvp/MCP.md §4
+                "pack_key": ctx.signer and ctx.signer.fingerprint,  # the key register's entry
+                "licence": current and current.detail(),
+                "mcp": settings.mcp and asdict(settings.mcp),
             }
             async with repo.audited(ctx.pool) as (conn, audit):
-                started["audit_head"] = await repo.audit_head(conn)  # an anchor (docs/mvp/PACK.md §4.1)
+                started["audit_head"] = await repo.audit_head(conn)  # an anchor
                 await audit(SERVER, "system.start", "server", started)
             served = _mcp(app, ctx) if settings.mcp is not None and settings.mcp.http else nullcontext()
             async with served, _worker(ctx) if worker else nullcontext():
@@ -125,8 +125,8 @@ def create_app(settings: Settings, *, worker: bool = False, web_dir: Path = WEB_
     app.state.roles_sha256 = mapping  # the role mapping every SSO session must be granted under
     app.state.denials = Throttle(60)  # authz.denied rows: one per caller and route a minute
     app.state.login_denials = Throttle(600)  # auth.login_denied rows: one per user and reason in 10 minutes
-    app.state.notify_tests = Throttle(10)  # test sends: one per channel in 10 s (docs/mvp/ALERTS.md §10)
-    app.state.mcp = None  # the MCP session manager while mcp.http serves it (docs/mvp/MCP.md §5.1)
+    app.state.notify_tests = Throttle(10)  # test sends: one per channel in 10 s
+    app.state.mcp = None  # the MCP session manager while mcp.http serves it
     app.add_middleware(_Guard, auth=auth)
     if auth and auth.trusted_proxies:  # added last, so it runs first: every check sees the client
         app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=list(auth.trusted_proxies))
@@ -146,10 +146,10 @@ def create_app(settings: Settings, *, worker: bool = False, web_dir: Path = WEB_
             app.state.templates[id(route.original_route)] = route.path
             unlisted = {(method, route.path) for method in route.methods} - PUBLIC
             if unlisted and not _guarded(route.dependant):
-                raise RuntimeError(f"route {sorted(unlisted)} declares no principal (docs/mvp/AUTH.md §1)")
+                raise RuntimeError(f"route {sorted(unlisted)} declares no principal")
     if web_dir.is_dir():
         app.mount("/", _SinglePageApp(directory=web_dir, html=True), name="web")
-    else:  # ds serve has warned (docs/mvp/FIRSTRUN.md §8); every other path stays Not Found
+    else:  # ds serve has warned; every other path stays Not Found
         app.add_api_route("/", _unbuilt, methods=["GET"], include_in_schema=False)  # no /v1 operation
     return app
 
@@ -160,7 +160,7 @@ def _guarded(dependant: Dependant) -> bool:
 
 @asynccontextmanager
 async def _mcp(app: FastAPI, ctx: Context) -> AsyncIterator[None]:
-    """The MCP server behind ``POST /v1/mcp`` (docs/mvp/MCP.md §5.1), and the only place this app imports
+    """The MCP server behind ``POST /v1/mcp``, and the only place this app imports
     the MCP library: one stateless session manager with JSON answers, no stream and no session. ``_Guard``
     has checked Host and Origin, so the library's own check is off; a body is 65,536 bytes at most. A role
     refusal's audit row shares the routes' throttle."""
@@ -199,7 +199,7 @@ async def _worker(ctx: Context) -> AsyncIterator[None]:
 
 
 class _Guard:
-    """Every request's checks, in order (docs/mvp/AUTH.md §3): a request id; in developer mode, loopback
+    """Every request's checks, in order: a request id; in developer mode, loopback
     clients only, never through a proxy; the Host of /v1 calls (DNS rebinding); Origin and
     Sec-Fetch-Site on unsafe methods. Every response gets the security headers (/v1: no-store), and a
     request body over MAX_BODY is refused (413) while it is read, before it is parsed or its caller
@@ -323,7 +323,7 @@ class _SinglePageApp(StaticFiles):
             return await super().get_response(path, scope)
         except HTTPException as exc:
             if exc.status_code != 404 or path.split(os.sep, 1)[0] in ("v1", ".well-known"):
-                raise  # .well-known: a client probing for OAuth metadata reads JSON (docs/mvp/MCP.md §5.1)
+                raise  # .well-known: a client probing for OAuth metadata reads JSON
             return await super().get_response("index.html", scope)
 
 
@@ -353,7 +353,7 @@ async def _invalid_target(_: Request, exc: TargetsError) -> Response:
 
 
 async def _target_refused(_: Request, exc: targets.Refused) -> Response:
-    # docs/mvp/DEPLOY.md §7, "In the product": ids, counts and an OS error's text, never a path
+    # A target declared in the product: ids, counts and an OS error's text, never a path
     return _error(exc.status, str(exc))
 
 
@@ -362,11 +362,11 @@ async def _unprocessable(_: Request, exc: Exception) -> Response:
 
 
 async def _conflict(_: Request, exc: Exception) -> Response:
-    return _error(409, str(exc))  # four-eyes approvals (docs/mvp/APPROVALS.md §6.2): ids and scopes only
+    return _error(409, str(exc))  # four-eyes approvals: ids and scopes only
 
 
 async def _refused(_: Request, exc: repo.ApprovalRefused) -> Response:
-    # ds.tg_approvals refused a decision (23514, docs/mvp/APPROVALS.md §6.1); the decision route words
+    # ds.tg_approvals refused a decision (23514); the decision route words
     # the refusals it can explain, and passes on the others.
     if exc.check == "approver":
         return _error(409, "your stored roles lack rule_approver, or your account is disabled; sign in again")
@@ -374,37 +374,37 @@ async def _refused(_: Request, exc: repo.ApprovalRefused) -> Response:
 
 
 async def _sample_refused(_: Request, exc: SampleRefused) -> Response:
-    return _error(exc.status, str(exc))  # docs/mvp/SAMPLING.md §13 R1-R5: ids, names and population ids
+    return _error(exc.status, str(exc))  # ids, names and population ids
 
 
 async def _notify_refused(_: Request, exc: notifications.Refused) -> Response:
-    return _error(exc.status, str(exc))  # docs/mvp/ALERTS.md §10: channel names, ids and times
+    return _error(exc.status, str(exc))  # channel names, ids and times
 
 
 async def _readiness_refused(_: Request, exc: readiness.Refused) -> Response:
-    return _error(exc.status, str(exc))  # docs/mvp/READINESS.md §9: names, states and counts
+    return _error(exc.status, str(exc))  # names, states and counts
 
 
 async def _schedule_refused(_: Request, exc: schedules.Refused) -> Response:
-    return _error(exc.status, str(exc))  # docs/mvp/SCHEDULES.md §9: ids, names, cron text, zones and times
+    return _error(exc.status, str(exc))  # ids, names, cron text, zones and times
 
 
 async def _precheck_refused(_: Request, exc: prechecks.Refused) -> Response:
-    return _error(exc.status, str(exc))  # docs/mvp/PRECHECKS.md §10: ids, spec names, versions and counts
+    return _error(exc.status, str(exc))  # ids, spec names, versions and counts
 
 
 async def _schema_refused(_: Request, exc: drift.Refused) -> Response:
-    # docs/mvp/PRECHECKS.md §10 E6, U1, U2: ids, a version's name, and the names and declared types of the
+    # Ids, a version's name, and the names and declared types of the
     # columns a run's own page prints
     return _error(exc.status, str(exc))
 
 
 async def _too_large(_: Request, exc: Exception) -> Response:
-    return _error(413, str(exc))  # a reviewed sheet over 1 MiB (docs/mvp/PACK.md §5)
+    return _error(413, str(exc))  # a reviewed sheet over 1 MiB
 
 
 async def _timed_out(_: Request, exc: Exception) -> Response:
-    return _error(504, str(exc))  # a labelling's draw was stopped (docs/mvp/ACCURACY.md §11): ids only
+    return _error(504, str(exc))  # a labelling's draw was stopped: ids only
 
 
 async def _forbidden(_: Request, exc: Exception) -> Response:
@@ -412,7 +412,7 @@ async def _forbidden(_: Request, exc: Exception) -> Response:
 
 
 async def _unavailable(_: Request, exc: Exception) -> Response:
-    return _error(503, str(exc))  # evidence packs are not configured (docs/mvp/PACK.md §7.2)
+    return _error(503, str(exc))  # evidence packs are not configured
 
 
 async def _gone(_: Request, exc: Exception) -> Response:
@@ -420,8 +420,8 @@ async def _gone(_: Request, exc: Exception) -> Response:
 
 
 async def _key_missing(_: Request, exc: Exception) -> Response:
-    # A key the keyring cannot unwrap (docs/mvp/RETENTION.md §6.1): its message names ids only.
-    return _error(503, f"evidence unreadable: {exc} (docs/mvp/RETENTION.md §6.1)")
+    # A key the keyring cannot unwrap: its message names ids only.
+    return _error(503, f"evidence unreadable: {exc}")
 
 
 async def _internal(request: Request, exc: Exception) -> Response:
@@ -445,7 +445,7 @@ _HANDLERS = {
     ApprovalConflict: _conflict,
     repo.ApprovalRefused: _refused,
     PackRefused: _conflict,
-    licence.LicenceRefused: _conflict,  # docs/mvp/LICENCE.md §9 M1-M8
+    licence.LicenceRefused: _conflict,
     SampleRefused: _sample_refused,
     notifications.Refused: _notify_refused,
     readiness.Refused: _readiness_refused,

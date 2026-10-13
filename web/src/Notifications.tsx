@@ -1,4 +1,4 @@
-/** Alerts and notifications (docs/mvp/ALERTS.md §11), open to every role: the feed's cursor, each channel with its
+/** Alerts and notifications, open to every role: the feed's cursor, each channel with its
  *  counts (operators send a test, or send its failed deliveries again), the rules as declared, the active mutes
  *  (admins mute, and end them) and the deliveries, newest first. Channels and rules live in deltasleuth.yaml: no
  *  screen creates one. The server still decides. */

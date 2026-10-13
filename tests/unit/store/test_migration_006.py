@@ -1,4 +1,4 @@
-"""Migrations 006 and 007 (docs/mvp/RETENTION.md §7.1) over a store 001-005 left with data, and on an empty
+"""Migrations 006 and 007 over a store 001-005 left with data, and on an empty
 one: 006 keeps the legacy plaintext for 'ds keys migrate', and 007 refuses while any of it remains."""
 
 from __future__ import annotations
@@ -236,7 +236,7 @@ async def test_006_checks_refuse_bad_rows(legacy_pool: AsyncConnectionPool, sql:
 
 # -- 007 -----------------------------------------------------------------------------------------------
 
-REFUSED = "legacy plaintext remains: stop the app and run 'ds keys migrate' (docs/mvp/RETENTION.md §7.2)"
+REFUSED = "legacy plaintext remains: stop the app and run 'ds keys migrate'"
 SEALED = b"\x01" + b"\x00" * 29  # a sealed value's shape; 007 checks only that one is there
 # Once 007 applied, of the plaintext and the sealed columns only the sealed are left, NOT NULL.
 SEALED_COLUMNS = [("chat_messages", "sealed", "NO"), ("observations", "headers_enc", "NO"),

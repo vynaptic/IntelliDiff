@@ -1,5 +1,5 @@
-"""Fixtures: the generic customer example (docs/architecture/examples/generic-customer-services.yaml)
-built directly as a CompiledSpec, differ-shaped findings, a stub differ and a fixed tokeniser."""
+"""Fixtures: the generic customer example built directly as a CompiledSpec, differ-shaped findings, a stub
+differ and a fixed tokeniser."""
 
 from __future__ import annotations
 

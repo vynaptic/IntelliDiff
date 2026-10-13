@@ -1,4 +1,4 @@
-"""What the reports say of the licence (docs/mvp/LICENCE.md §10): report.pdf's title block states the licence
+"""What the reports say of the licence: report.pdf's title block states the licence
 a run was made under, and the P0 summary's warning an evaluation's or a grace's; the plan a pack hashes
 records it without the customer; the raw-value gate reads the licence's ids as DeltaSleuth's and skips its
 fixed words, and a soak paused for the licence keeps its packs under an integer key pattern."""
@@ -152,17 +152,19 @@ def test_licence_pauses_hold_no_raw_value(pattern: str) -> None:
     pro = licence.Licence(LICENCE_ID, "Example Bank plc", "ORD-2026-014", MEMBER["installation_id"], "pro", 5,
                           starts, ends, now, MEMBER["key"], b"", "")  # fmt: skip
     counted = tuple({"name": name} for name in ("a1", "b22", "c333", "d4444", "e55555", "cards-7"))
+    under_sso = {"sso": True, "oidc": True, "packs": True}
     standings = {
-        "M3": licence.Standing(pro.installation_id, now, "valid", pro, counted=counted),
-        "M4": licence.Standing(pro.installation_id, now, "expired", pro),
-        "M5": licence.Standing(pro.installation_id, now, "evaluation", None, sso=True, oidc=True, packs=True),
+        "unseated": licence.Standing(pro.installation_id, now, "valid", pro, counted=counted),
+        "expired": licence.Standing(pro.installation_id, now, "expired", pro),
+        "sso": licence.Standing(pro.installation_id, now, "evaluation", None, **under_sso),
     }
     for code, standing in standings.items():
         message, detail = standing.paused("cards-7")  # type: ignore[misc]
-        assert rawvalues.key_shaped(spec, message), code  # why the row records no message
+        # Why the row records no message: its numbers read as keys. The SSO refusal holds no number.
+        assert rawvalues.key_shaped(spec, message) == (code != "sso"), code
         row = {"reason": licence.LICENCE_PAUSE, "approval_id": None, "licence": detail}
         assert pack.raw_values(spec, {"audit/chain.tsv": _paused_row(row)}) == [], (code, detail)
-    assert standings["M3"].paused("cards-7")[1] == {  # type: ignore[index]
+    assert standings["unseated"].paused("cards-7")[1] == {  # type: ignore[index]
         "licence_id": LICENCE_ID, "tier": "pro", "state": "valid", "ends": "2027-09-30",
         "refusal": "unseated", "count": 6, "limit": 5, "since": "2026-10-01",
     }  # fmt: skip
@@ -171,8 +173,8 @@ def test_licence_pauses_hold_no_raw_value(pattern: str) -> None:
 @pytest.mark.db
 @pytest.mark.parametrize("pattern", INTEGERS)
 async def test_a_soak_paused_for_the_licence_keeps_its_packs(pack_ctx: Context, pattern: str) -> None:
-    """The boundary pauses a soak whose licence and grace ended (§8); its cycle is signed off (§2), the
-    renewal installed and the soak resumed (§15): the pack's raw-value gate finds nothing in its rows."""
+    """The boundary pauses a soak whose licence and grace ended; its cycle is signed off, the
+    renewal installed and the soak resumed: the pack's raw-value gate finds nothing in its rows."""
     key = listed_spec(pii=True).raw["key"] | {"pattern": pattern}
     spec = listed_spec(pii=True, key=key, knownDiffs=[], execution={"cycleInterval": "0s"})
     soak = await signed_cycle(pack_ctx, spec=spec, pairs=samples(pii=True), sign=False, mode="soak")

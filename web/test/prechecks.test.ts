@@ -1,6 +1,6 @@
 // What the Pre-checks screens build besides the API's texts: the body a form sends, a report's file name, the
 // pairs counted by status and the filter's verdicts in the API's words; that no screen words a pair, a total or a
-// banner, shows a tick or paints a verdict; and what the screens ask of /v1/prechecks (docs/mvp/PRECHECKS.md §2, §11).
+// banner, shows a tick or paints a verdict; and what the screens ask of /v1/prechecks.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
@@ -87,7 +87,7 @@ test('the list is read over its pages', async () => {
 });
 
 test('no screen builds a text, shows a tick or paints a verdict: they print the server\'s words', () => {
-  // The words of a pair's lines, the totals and the banner (§10), and what a pre-check never says (N1, N2).
+  // The words of a pair's lines, the totals and the banner, and what a pre-check never says.
   const worded = /rows differ|not checked|not compared|would be refused|not parity|no difference observed|differ in a figure|read at one moment|no worker has taken|\bpairs?: |fewer on side|not approved/i;
   const never = /\b(match|matches|matched|identical|passed|verified|validated|reconciled)\b|[✓✔☑]|%|percent|\bscore\b/i;
   for (const file of ['prechecking.ts', 'Prechecks.tsx']) {

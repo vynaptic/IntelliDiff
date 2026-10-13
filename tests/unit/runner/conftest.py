@@ -242,7 +242,7 @@ def open_harness(tmp_path: Path, pg_dsn: str) -> OpenHarness:
     precheck=None, files=None, tier=..., **worker) as h``: a Context on the test database; ``auth``: the
     auth settings (then the encryption settings too, the same each time); ``packs``: the evidence pack
     settings; ``notify``: the notification settings; ``readiness``: the readiness settings; ``precheck``:
-    the table pre-check settings; ``files``: the file reader's (docs/mvp/FILES.md §4). In oidc mode of a
+    the table pre-check settings; ``files``: the file reader's. In oidc mode of a
     vendor build (``vendor_keys``) a licence of ``tier`` (None: none, an evaluation) is installed unless the
     store names one, so that its runs and sign-offs go ahead, as they do in the open build without one."""
 

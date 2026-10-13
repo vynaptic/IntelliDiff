@@ -1,7 +1,7 @@
-"""The table scan's sealed, numbered checkpoints (docs/mvp/RETENTION.md §3.3, docs/mvp/TABLES.md §5), the
-cut its maxKeys stop records (docs/mvp/APPROVALS.md §4), a scan stopped before the end refused a
-sign-off (§1.2), the guard on each side's key order (docs/mvp/ENGINES.md §8) and what the worker does with
-a pass an engine's error ends (§11): resumed, stalled, paused or failed."""
+"""The table scan's sealed, numbered checkpoints, the
+cut its maxKeys stop records, a scan stopped before the end refused a
+sign-off, the guard on each side's key order and what the worker does with
+a pass an engine's error ends: resumed, stalled, paused or failed."""
 
 from __future__ import annotations
 
@@ -213,7 +213,7 @@ async def test_a_new_store_s_first_cycle_end_analyses_its_tables(
     open_harness: OpenHarness, databases: Callable[[str], str], tmp_path: Path
 ) -> None:
     """A store whose tables were never analysed gets them analysed at its first cycle end, before summarise
-    pages their rows (``repo.analyse_new``, docs/mvp/BENCHMARK.md §16), also once a VACUUM counted their rows
+    pages their rows (``repo.analyse_new``), also once a VACUUM counted their rows
     (reltuples) without statistics, as autovacuum's insert-driven VACUUM does; autovacuum is off here."""
     targets = {}
     for side, seed in (("a", SEED), ("b", SEED + CHANGES)):
@@ -307,7 +307,7 @@ async def test_keys_out_of_order_fail_the_run(
     opened = _played(monkeypatch, swapped)
     async with open_harness(_targets(databases, tmp_path)) as h:
         run = await _scanned(h)
-    assert (run["status"], run["error"]) == ("failed", "KeysOutOfOrder")  # F5, on the first pass
+    assert (run["status"], run["error"]) == ("failed", "KeysOutOfOrder")  # on the first pass
     assert opened == [0, 0] and (run["scan"]["matched"], run["scan"]["candidates"]) == (0, 0)
 
 
@@ -407,7 +407,7 @@ async def test_unreachable_passes_never_fail(
         async with open_harness(_targets(databases, tmp_path), lease_seconds=1) as h:
             run = await _scanned(h)
     assert run["status"] == "completed" and opened == [n for n in range(5) for _ in "ab"]
-    paused = f"scan of run {run['run_id']} paused: ORA-03113"  # F1
+    paused = f"scan of run {run['run_id']} paused: ORA-03113"
     assert [r.getMessage() for r in caplog.records].count(paused) == 4
 
 
@@ -420,7 +420,7 @@ async def test_temp_space_fails_the_run(
     opened = _played(monkeypatch, _ending(tables.TargetTempSpace("ORA-01652"), 9, fetches=2))
     async with open_harness(_targets(databases, tmp_path)) as h:
         run = await _scanned(h)
-    assert (run["status"], run["error"]) == ("failed", "TargetTempSpace: ORA-01652")  # F3
+    assert (run["status"], run["error"]) == ("failed", "TargetTempSpace: ORA-01652")
     assert opened == [0, 0] and run["scan"]["checkpoint"] == 1  # no resume, though it saved a checkpoint
 
 
@@ -456,7 +456,7 @@ async def test_engine_changed_fails(
             await reader.fetch("7", Side.B, run_id=run_id, call_seq=0)
         await reader.aclose()
     changed = "side b: target db-b is postgresql now; this run was planned for mysql"
-    assert (run["status"], run["error"]) == ("failed", f"EngineChanged: {changed}")  # F6
+    assert (run["status"], run["error"]) == ("failed", f"EngineChanged: {changed}")
     assert run["scan"]["checkpoint"] == 0
 
 
@@ -475,7 +475,7 @@ async def test_unsafe_target_fails_the_scan(
     opened = _played(monkeypatch, _ending(refused, 9, fetches=0))
     async with open_harness(_targets(databases, tmp_path)) as h:
         run = await _scanned(h)
-    assert (run["status"], run["error"]) == ("failed", f"UnsafeTargetError: {refused}")  # F8: an address
+    assert (run["status"], run["error"]) == ("failed", f"UnsafeTargetError: {refused}")  # an address
     assert opened == [0, 0]  # the guard's refusal is not waited out
 
 
@@ -533,13 +533,13 @@ async def test_a_pass_takes_the_one_sort_before_a_database_snapshot_opens(
     caplog: pytest.LogCaptureFixture,
     database: str,
 ) -> None:
-    """docs/mvp/FILES.md §10: a pass of a database against files takes the file reader's one sort before the
+    """A pass of a database against files takes the file reader's one sort before the
     database side's snapshot opens, whichever side the database is. While it waits for another run's sort
     the database has no session of it (none idle in a transaction, its horizon pinned for as long as that
     sort lasts: a server that ends such sessions failed the run), a row committed meanwhile is read, and
     first_at, which the census prints as the snapshot's time, is when the snapshots opened, not when the
     file side's own sort returned."""
-    exports = tmp_path_factory.mktemp("exports").resolve()  # outside the harness's own directories (T10)
+    exports = tmp_path_factory.mktemp("exports").resolve()  # outside the harness's own directories
     (exports / "users.csv").write_text("userid|email\n" + "".join(f"{n}|u{n}\n" for n in range(1, 7)))
     dsn = databases(MIXED)
     (tmp_path / "dsn_t").write_text(dsn)

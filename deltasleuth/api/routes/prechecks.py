@@ -1,4 +1,4 @@
-"""Table pre-checks (docs/mvp/PRECHECKS.md §11): the pre-checks with their banner, one with its totals and
+"""Table pre-checks: the pre-checks with their banner, one with its totals and
 its pairs worst first, a pair's result, the reports, a pair's draft, and the acts, each audited as its
 caller: making a pre-check of stored specs and cancelling one (operators; a token or developer mode too),
 and making one of two schemas paired by name (spec authors, as drafting is authoring). A viewer reads
@@ -26,7 +26,7 @@ Verdict = Literal[
 
 
 class PrecheckIn(Payload):
-    """Exactly one of the three forms (K1); the level is judged by its own message (K5)."""
+    """Exactly one of the three forms; the level is judged by its own message."""
 
     level: str = "columns"
     spec_ids: list[int] | None = None  # stored versions
@@ -41,7 +41,7 @@ class SchemaIn(Payload):
 
 class CatalogueIn(Payload):
     """Two declared database targets' schemas, their tables paired by name; the level is judged by its
-    own message (K5), the globs by theirs (K8)."""
+    own message, the globs by theirs."""
 
     a: SchemaIn
     b: SchemaIn

@@ -1,5 +1,5 @@
 """Runs: creation through the runner, pages, control, masked views, key detail, reports, compare; under SSO
-each waits for its spec version's four-eyes approval (docs/mvp/APPROVALS.md §4)."""
+each waits for its spec version's four-eyes approval."""
 
 from __future__ import annotations
 
@@ -103,7 +103,7 @@ def test_a_sampled_run_is_answered_at_once_and_its_refusals_by_their_status(
         (
             409,
             f"spec api-demo samples the population of live sampled run {run['run_id']} (spec api-demo,"
-            " listing:svc-a:GET /list): stop it before drawing another sample (docs/mvp/SAMPLING.md §5)",
+            " listing:svc-a:GET /list): stop it before drawing another sample",
         ),
     ]
 
@@ -156,7 +156,7 @@ def test_a_run_shows_its_scan_but_not_the_raw_key_it_resumes_after(client: TestC
 
 
 def test_run_lists_and_pages_show_no_guard(client: TestClient, seeded: Any) -> None:
-    """What the schema guard holds of a run's tables (names and declared types, docs/mvp/PRECHECKS.md §7)
+    """What the schema guard holds of a run's tables (names and declared types)
     is in no run row an answer shows."""
 
     async def record(ctx: Any) -> None:
@@ -182,7 +182,7 @@ def test_run_lists_and_pages_show_no_guard(client: TestClient, seeded: Any) -> N
     assert "character varying" not in page.text + listed.text and "iban" not in page.text + listed.text
     # The run's page prints the guard's lines, built before the row is shown; a list prints none.
     assert page.json()["schema"]["guarded"] and "schema" not in listed.json()["items"][0]
-    assert "no change observed against the run's plan" in page.json()["schema"]["lines"][0]  # N9
+    assert "no change observed against the run's plan" in page.json()["schema"]["lines"][0]
     assert "unchanged" not in page.text
 
 
@@ -197,10 +197,10 @@ FIRST = "no earlier run of this version recorded its tables' shapes: this run re
 def test_a_run_s_schema_block_its_warnings_and_what_a_resume_accepts(
     open_client: Callable[..., AbstractContextManager[TestClient]], tmp_path: Any, pg_dsn: str
 ) -> None:
-    """docs/mvp/PRECHECKS.md §7, §11: ``GET /v1/runs/{id}`` prints the schema guard's lines and never its
+    """``GET /v1/runs/{id}`` prints the schema guard's lines and never its
     record; ``POST /v1/runs`` and ``POST /v1/compare`` answer with ``warnings``; a run created paused
-    resumes by accepting its tables, is refused while a change that breaks its plan stands (U1, 409), and
-    a spec that pauses on schema drift refuses a narrowed run (E6, 422)."""
+    resumes by accepting its tables, is refused while a change that breaks its plan stands (409), and
+    a spec that pauses on schema drift refuses a narrowed run (422)."""
     with psycopg.connect(pg_dsn, autocommit=True) as conn:
         for name in ("customers", "customers_new"):
             conn.execute(f"CREATE TABLE {name} {CUSTOMERS}")  # type: ignore[arg-type]
@@ -223,7 +223,7 @@ def test_a_run_s_schema_block_its_warnings_and_what_a_resume_accepts(
             "lines": [UNCHANGED, FIRST],
         }  # fmt: skip
         assert first["schema"]["checked"]["where"] == "creation" and "guard" not in first
-        assert "unchanged" not in json.dumps(first["schema"])  # N9: it never says the schema is unchanged
+        assert "unchanged" not in json.dumps(first["schema"])  # it never says the schema is unchanged
         assert client.post("/v1/compare", json={"spec_id": finding, "key": "1"}).json()["warnings"] == []
 
         with psycopg.connect(pg_dsn, autocommit=True) as conn:
@@ -367,7 +367,7 @@ def test_a_key_view_needing_a_kek_the_keyring_lacks_is_a_503(client: TestClient,
     reply = client.get(f"/v1/runs/{seeded.run_id}/keys/{seeded.key}")
     assert (reply.status_code, reply.json()) == (
         503,
-        {"detail": f"evidence unreadable: the keyring lacks {lost} (docs/mvp/RETENTION.md §6.1)"},
+        {"detail": f"evidence unreadable: the keyring lacks {lost}"},
     )
     assert client.get(f"/v1/runs/{seeded.run_id}/results").status_code == 200  # masked data needs no key
 
@@ -522,9 +522,9 @@ def test_compare_by_masked_key_refuses_another_spec(client: TestClient, seeded: 
 def test_a_file_side_s_root_pins_and_digest_are_in_no_answer(
     open_client: Callable[..., AbstractContextManager[TestClient]], tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    """docs/mvp/FILES.md §13, §16: GET /v1/targets names a files target's engine, never its root; a run's
+    """GET /v1/targets names a files target's engine, never its root; a run's
     answers carry its file side's plan (counts, bytes, times) but not the digest of its files nor its sealed
-    pins, on the list route too; a refused plan is a 422 with §15's text."""
+    pins, on the list route too; a refused plan is a 422 with the plan's text."""
     exports = tmp_path_factory.mktemp("exports").resolve()
     for side in "ab":
         (exports / side).mkdir()

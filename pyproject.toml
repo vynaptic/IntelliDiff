@@ -62,7 +62,7 @@ build-backend = "hatchling.build"
 packages = ["deltasleuth"]
 
 [tool.uv]
-# Supply-chain cooldown (design §11 / Appendix C.7): resolve only releases at least 3 days old.
+# Supply-chain cooldown: resolve only releases at least 3 days old.
 exclude-newer = "2026-09-21T00:00:00Z"
 
 [tool.pytest.ini_options]

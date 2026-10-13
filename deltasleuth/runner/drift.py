@@ -1,19 +1,19 @@
-"""The schema guard (docs/mvp/PRECHECKS.md §7): a run does not read a table that is no longer what its plan,
+"""The schema guard: a run does not read a table that is no longer what its plan,
 or its version's run before it, read.
 
 What it holds of a run is ``ds.runs.guard`` (format 1): each table side's shape as its plan was made of it
-(``planned``) and as it was last seen where that is another (``seen``, with the ``changes`` between them; the
-two hashes tell a shape that is gone from one that is as planned), what the plan reads each column as
-(``roles``), the run of the version it was judged against at its creation (``basis``, with the
-changes since), who accepted a change (``accepted``), when it last looked (``checked``) and each look it
-could not make (``unchecked``). It looks when a run is created (V1, ``created``), on each scan pass's own
-sessions before a cursor opens (V2), at a key-list cycle's start (V3, ``cycle_start``), at the resume of a
-run it paused (V4, ``resuming``) and after a read or a draw's frame failed on a column or a table (V5,
-``failed``). A change that alters what the plan's statements read, or how a key renders, pauses the run;
-any other warns, or pauses under ``schemaDrift: {mode: pause}`` (``core.precheck.changes`` and
-``verdict``). It fails no run: a look that cannot be made is recorded and the
-run goes on. ``lines`` words everything a surface prints of it; names and declared types leave ``guard`` in
-those lines only, and an audit row holds counts, closed kinds, ids and hashes.
+(``planned``) and as it was last seen where that is another (``seen``, with the ``changes`` between them;
+the two hashes tell a shape that is gone from one that is as planned), what the plan reads each column as
+(``roles``), the run of the version it was judged against at its creation (``basis``, with the changes
+since), who accepted a change (``accepted``), when it last looked (``checked``) and each look it could not
+make (``unchecked``). It looks when a run is created (``created``), on each scan pass's own sessions before
+a cursor opens, at a key-list cycle's start (``cycle_start``), at the resume of a run it paused
+(``resuming``) and after a read or a draw's frame failed on a column or a table (``failed``). A change that
+alters what the plan's statements read, or how a key renders, pauses the run; any other warns, or pauses
+under ``schemaDrift: {mode: pause}`` (``core.precheck.changes`` and ``verdict``). It fails no run: a look
+that cannot be made is recorded and the run goes on. ``lines`` words everything a surface prints of it;
+names and declared types leave ``guard`` in those lines only, and an audit row holds counts, closed kinds,
+ids and hashes.
 """
 
 from __future__ import annotations
@@ -37,8 +37,8 @@ from deltasleuth.store import repo
 
 FORMAT = 1  # of ds.runs.guard
 SCHEMA_PAUSE = "run_paused_schema_drift"  # a table changed under the run: a person resumes or cancels it
-TIMEOUT_S = 30.0  # each statement of a look on a session of its own (V3 to V5), as a run's creation plans
-# What a read of a dropped or revoked column or table raises (V5; docs/mvp/ENGINES.md §11's denied class).
+TIMEOUT_S = 30.0  # each statement of a look on a session of its own, as a run's creation plans
+# What a read of a dropped or revoked column or table raises.
 DENIED = (
     psycopg.errors.UndefinedColumn, psycopg.errors.UndefinedTable, psycopg.errors.InsufficientPrivilege,
     tables.TargetDenied,
@@ -64,7 +64,7 @@ class Tripped(Exception):
 
 
 class Refused(ValueError):
-    """A run the schema guard does not create (E6) or resume (U1, U2); ``status`` is the API's answer."""
+    """A run the schema guard does not create or resume; ``status`` is the API's answer."""
 
     def __init__(self, status: int, message: str) -> None:
         super().__init__(message)
@@ -177,7 +177,7 @@ def _narrowed(guard: Mapping[str, Any]) -> bool:
     return not guard["baseline"] and guard["adopted"] is None and guard["basis"] is not None
 
 
-# -- V1: a run's creation --------------------------------------------------------------------------------
+# -- a run's creation ------------------------------------------------------------------------------------
 
 
 def _against(
@@ -205,11 +205,11 @@ def _against(
 def created(
     spec: CompiledSpec, spec_id: int, planned: tables.Planned, basis: Mapping[str, Any] | None
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    """V1: what the guard holds of a new run whose plan is ``planned``, and its ``schema.drift`` detail
+    """What the guard holds of a new run whose plan is ``planned``, and its ``schema.drift`` detail
     when its tables differ from the ``basis`` (``repo.guard_basis``); ``(None, None)`` for a run without a
     table side. A run that would not compare what the basis compared is created paused (the detail says
     so, and the run is no baseline until a person accepts its tables), or refused when the spec pauses on
-    schema drift (E6). A fault of the guard's own code refuses no run: it is created with nothing held of
+    schema drift. A fault of the guard's own code refuses no run: it is created with nothing held of
     its tables, its look recorded as not made, and the guard's next look at it adopts it."""
     if not planned.relations:
         return None, None
@@ -260,11 +260,11 @@ def compared(spec: CompiledSpec, planned: tables.Planned, basis: Mapping[str, An
     return list(dict.fromkeys(text for _, text in _since(guard)))
 
 
-# -- V2 to V5: a run's own plan --------------------------------------------------------------------------
+# -- a run's own plan ------------------------------------------------------------------------------------
 
 
 def due(run: Mapping[str, Any]) -> bool:
-    """Whether the start of the run's cycle has not been looked at (V3): a key-list run with a table side
+    """Whether the start of the run's cycle has not been looked at: a key-list run with a table side
     whose last look was in an earlier cycle, or that was planned before the guard existed."""
     planned = run["params"].get("tables") or {}
     listed = run["mode"] != "one_shot" and run["params"].get("keys_source") != "table_scan"
@@ -278,7 +278,7 @@ async def observed(ctx: Context, run: Mapping[str, Any]) -> tuple[CompiledSpec, 
     async with ctx.pool.connection() as conn:
         spec = await ctx.spec(conn, run["spec_id"], live=True)
         planned = run["params"].get("tables") or {}
-        if run["params"].get("pinned"):  # a file side's pins, which its stat check reads (FILES.md §12)
+        if run["params"].get("pinned"):  # a file side's pins, which its stat check reads
             planned = tables.unsealed(await ctx.sealer(conn, run["run_id"]), run["params"])
     relations = {}
     for side in "ab":
@@ -353,12 +353,12 @@ async def check(
     *,
     breaking: bool = False,
 ) -> bool:
-    """Judge what a look saw (each table side's relation, None: gone) against the run's plan and record
-    it; True when the changes that stand pause
-    the run (``breaking``: only one that breaks its plan does, V5). A trip is one transaction: the guard,
-    judged on what the run holds under its row lock and written only while the run is in the cycle that
-    was looked at, the pause of a running run, then the audit rows ``paused`` and, last, ``schema.drift``.
-    A fault of the guard's own code is recorded and the run goes on unchecked."""
+    """Judge what a look saw (each table side's relation, None: gone) against the run's plan and record it;
+    True when the changes that stand pause the run (``breaking``: only one that breaks its plan does, as
+    after a failed read). A trip is one transaction: the guard, judged on what the run holds under its row
+    lock and written only while the run is in the cycle that was looked at, the pause of a running run, then
+    the audit rows ``paused`` and, last, ``schema.drift``. A fault of the guard's own code is recorded and
+    the run goes on unchecked."""
     run_id = run["run_id"]
     async with repo.audited(ctx.pool) as (conn, audit):
         held = await repo.held_guard(conn, run_id)
@@ -411,7 +411,7 @@ async def unchecked(
 
 
 async def cycle_start(ctx: Context, run_id: str) -> None:
-    """V3: look at the tables of a running key-list run whose cycle fell due, before its census and its
+    """Look at the tables of a running key-list run whose cycle fell due, before its census and its
     draw. A side that cannot be reached is tried once more a lease period later; then, as after any other
     fault, the look is recorded as not made and the cycle goes on. A refused login is raised
     (``TargetAuthRefused``): the worker pauses the run for it."""
@@ -438,7 +438,7 @@ async def cycle_start(ctx: Context, run_id: str) -> None:
 
 
 async def failed(ctx: Context, run_id: str) -> bool:
-    """V5: after a read failed on a column or a table, look at the run's tables; True when a change that
+    """After a read failed on a column or a table, look at the run's tables; True when a change that
     breaks its plan paused the run instead of failing it. Whatever keeps the look from being made leaves
     the failure to fail the run."""
     try:
@@ -456,10 +456,10 @@ async def failed(ctx: Context, run_id: str) -> bool:
 async def resuming(
     ctx: Context, run: Mapping[str, Any], who: Principal
 ) -> tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any] | None]:
-    """V4: look again at the tables of a run the guard paused, before it resumes. The guard to record, what
+    """Look again at the tables of a run the guard paused, before it resumes. The guard to record, what
     the ``running`` row says was accepted (None: nothing was) and a ``schema.drift`` detail when the look
-    saw a new state. Refused while a change that breaks the plan stands (U1) or a side cannot be looked
-    at (U2). A resume of a run created paused, or of one whose spec pauses on schema drift, accepts the
+    saw a new state. Refused while a change that breaks the plan stands or a side cannot be looked
+    at. A resume of a run created paused, or of one whose spec pauses on schema drift, accepts the
     changes that stand: the run goes on with its plan, and is a baseline. A fault of the guard's own code
     keeps no run paused: the resume goes on, its look recorded as not made."""
     run_id = run["run_id"]
@@ -492,7 +492,7 @@ async def resuming(
     return guard, accepted, moved and _detail(guard, "resume", moved)
 
 
-# -- texts (§10) -----------------------------------------------------------------------------------------
+# -- texts -----------------------------------------------------------------------------------------
 
 
 def _typed(held: Sequence[Any]) -> str:
@@ -513,7 +513,7 @@ def _listed(clauses: Sequence[str]) -> str:
 
 
 def _broken(side: str, held: Mapping[str, Any], change: Mapping[str, Any]) -> tuple[str, str]:
-    """A change that breaks the run's plan, as a clause, and what a person does about it (E1 to E4)."""
+    """A change that breaks the run's plan, as a clause, and what a person does about it."""
     kind, column, relation = change["kind"], change["column"], held["relation"]
     was, now = change["was"], change["now"]
     if kind == "relation_missing":
@@ -534,7 +534,7 @@ def _broken(side: str, held: Mapping[str, Any], change: Mapping[str, Any]) -> tu
 
 
 def _narrowing(change: Mapping[str, Any], of: str) -> str:
-    """A change that narrows what a new run compares against run ``of`` of its version (E5, E6)."""
+    """A change that narrows what a new run compares against run ``of`` of its version."""
     column, was, now = change["column"], change["was"], change["now"]
     if change["kind"] == "compared_lost":
         return f"column {column!r} was compared by run {of} of this version and is not compared now"
@@ -605,7 +605,7 @@ def _since(guard: Mapping[str, Any]) -> list[tuple[bool, str]]:
 
 
 def _pause(guard: Mapping[str, Any]) -> tuple[str, list[str]] | None:
-    """The line of a run the guard paused (E1 to E5, E7) and the lines it leaves to be said after it."""
+    """The line of a run the guard paused and the lines it leaves to be said after it."""
     at, standing, since = guard["since"] or guard["checked"], _standing(guard), _since(guard)
     lead = f"Paused by the schema guard {_when(at)}"
     rest = [line for _, line, _ in standing] + [line for _, line in since]
@@ -624,7 +624,7 @@ def _pause(guard: Mapping[str, Any]) -> tuple[str, list[str]] | None:
 
 
 def lines(run: Mapping[str, Any]) -> list[str]:
-    """Every line a surface prints of what the schema guard holds of the run (§10), the pause's first:
+    """Every line a surface prints of what the schema guard holds of the run, the pause's first:
     the only builder of them. None for a run it does not guard."""
     guard = run["guard"]
     if guard is None:

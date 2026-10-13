@@ -27,7 +27,7 @@ test('invalid JSON is rejected, as JSON.parse rejects it', () => {
   assert.throws(() => parseExact('{"a": 01}'), SyntaxError);
 });
 
-// -- sign-in and requests (docs/mvp/AUTH.md §3, §9) --------------------------------------------------
+// -- sign-in and requests ---------------------------------------------------------------------------
 
 type Sent = { url: string; method: string; headers: Headers };
 type Answer = { status: number; body: unknown };

@@ -13,7 +13,7 @@ import yaml
 from deltasleuth.core.spec import TargetRegistry, load_spec_file, load_targets
 from deltasleuth.core.types import AuthoritativeAbsence, Target, TargetCapabilities, TruncationIndicators
 
-EXAMPLES = Path(__file__).resolve().parents[3] / "docs" / "architecture" / "examples"
+EXAMPLES = Path(__file__).resolve().parents[2] / "fixtures" / "specs"
 
 _MINIMAL_SPEC: dict[str, Any] = {
     "apiVersion": "deltasleuth/v1",

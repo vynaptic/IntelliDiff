@@ -1,7 +1,7 @@
-"""A hash sample's frame (docs/mvp/SAMPLING.md §3): a table side's population in one snapshot (NULL keys
+"""A hash sample's frame: a table side's population in one snapshot (NULL keys
 skipped, a key's several rows once, keys out of order refused, no temporary table), a listing through the
 scripted service, a union of both (origins, the first source's strata), a key listed twice on adjacent or
-distant pages of either source (W2), unfit keys counted and never shown, each side's census record, and no
+distant pages of either source, unfit keys counted and never shown, each side's census record, and no
 key census or census-gated lease for a sampled cycle."""
 
 from __future__ import annotations
@@ -364,7 +364,7 @@ async def test_a_listing_repeating_a_key_the_first_source_holds_is_refused(
     harness: Harness, service: ScriptedService
 ) -> None:
     """The second source lists K003, which the first holds, on pages 1 and 3: its second listing is a
-    repeat (W2), never a second key both hold, and the origins count each key once."""
+    repeat, never a second key both hold, and the origins count each key once."""
     service.listings = [
         ["K003", "K004", "K005", "K006", "K007", "K008"],
         ["K001", "K003", "K002", "K004", "K005", "K003"],

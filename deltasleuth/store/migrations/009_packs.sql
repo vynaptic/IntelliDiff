@@ -1,4 +1,4 @@
--- Cut-over evidence packs (docs/mvp/PACK.md §8). The hash-chained audit log (§4): every audit row, from
+-- Cut-over evidence packs. The hash-chained audit log: every audit row, from
 -- any writer, gets a ds.audit_chain row in commit order under the DSAU lock; the rows already written are
 -- chained first, in id order, while inserts wait on the table lock.
 CREATE FUNCTION ds.audit_text(a ds.audit_log) RETURNS text LANGUAGE sql STABLE AS $$
@@ -38,12 +38,12 @@ CREATE TRIGGER audit_chain_append_only BEFORE UPDATE OR DELETE OR TRUNCATE ON ds
 CREATE TRIGGER audit_chain_upgrade_append_only BEFORE UPDATE OR DELETE OR TRUNCATE ON ds.audit_chain_upgrade
     FOR EACH STATEMENT EXECUTE FUNCTION ds.append_only();
 
--- The census of each cycle (§1.2, §1.3): {cycle, at, a, b}, stored on the run for its current cycle and
+-- The census of each cycle: {cycle, at, a, b}, stored on the run for its current cycle and
 -- copied to the cycle's tombstone when that cycle ends.
 ALTER TABLE ds.runs ADD COLUMN census jsonb CHECK (jsonb_typeof(census) = 'object');
 ALTER TABLE ds.cycles ADD COLUMN census jsonb CHECK (jsonb_typeof(census) = 'object');
 
--- Reviewer sheets of an ended cycle (§5): drawn with a server salt, scored once, tombstoned by the purge.
+-- Reviewer sheets of an ended cycle: drawn with a server salt, scored once, tombstoned by the purge.
 CREATE TABLE ds.adjudications (
     adjudication_id text PRIMARY KEY CHECK (adjudication_id ~ '^J-[0-9A-Z]{26}$'),
     run_id          text NOT NULL,
@@ -117,7 +117,7 @@ CREATE TRIGGER adjudications_lifecycle BEFORE INSERT OR UPDATE OR DELETE ON ds.a
 CREATE TRIGGER adjudications_no_truncate BEFORE TRUNCATE ON ds.adjudications
     FOR EACH STATEMENT EXECUTE FUNCTION ds.append_only();
 
--- A sign-off's exclusion set also holds whoever scored the adjudication it attests (§5).
+-- A sign-off's exclusion set also holds whoever scored the adjudication it attests.
 CREATE OR REPLACE FUNCTION ds.approval_authors(a ds.approvals, OUT persons text[], OUT unattributed boolean)
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
@@ -136,7 +136,7 @@ BEGIN
     unattributed := unattributed IS NOT FALSE OR NOT ds.attributed(a.requested_by);
 END $$;
 
--- Evidence packs (§6): the record of each issued pack stays; its zip goes when its cycle is purged. An issued
+-- Evidence packs: the record of each issued pack stays; its zip goes when its cycle is purged. An issued
 -- pack needs its sign-off approved (read FOR SHARE, so a revoke waits for the issue, or the issue sees it);
 -- a pack is only revoked, with its sign-off, or marked purged by its cycle's purge.
 CREATE TABLE ds.packs (

@@ -1,4 +1,4 @@
-"""An agent on ``POST /v1/mcp`` of a served mock pair (docs/mvp/MCP.md §5.1): with an API token, the MCP
+"""An agent on ``POST /v1/mcp`` of a served mock pair: with an API token, the MCP
 library's own client finds a run the API made, reads it as the Run screen shows it, masked, and compares
 one of its keys again against the live pair; a viewer's token is offered no compare."""
 

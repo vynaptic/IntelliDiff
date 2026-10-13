@@ -1,4 +1,4 @@
-"""Two PostgreSQL tables in two databases (docs/mvp/TABLES.md): a scan run finds exactly the seeded
+"""Two PostgreSQL tables in two databases: a scan run finds exactly the seeded
 differences, reads them per key through the engine, and resumes after a kill or a pause without counting
 twice. It honours maxKeys and time limits, scans composite keys, and pairs keys across encodings.
 """
@@ -326,7 +326,7 @@ async def test_a_million_rows_a_side_finish_in_a_minute(tables: Callable[..., St
 @pytest.mark.skipif(not os.environ.get("DS_PERF"), reason="DS_PERF=1 runs it")
 async def test_many_differing_rows_are_read_in_batches(tables: Callable[..., Stack]) -> None:
     # 20,000 of 100,000 rows differ; each is read, confirmed and saved. Before batched reads (with a
-    # recheck pass each) this took 205 s; batched it takes 43 s on a laptop (TABLES.md §12).
+    # recheck pass each) this took 205 s; batched it takes 43 s on a laptop.
     rows = 100_000
     seed = f"""
         CREATE TABLE users (userid bigint PRIMARY KEY, email text, name text, amount numeric(12, 2));

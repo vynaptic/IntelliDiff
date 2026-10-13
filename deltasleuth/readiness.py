@@ -1,4 +1,4 @@
-"""Cut-over readiness as every surface reads it (docs/mvp/READINESS.md §8, §10, §12, §14): the evaluation of
+"""Cut-over readiness as every surface reads it: the evaluation of
 the installation's pairs from stored evidence, which the API, the CLI, the reports and the worker's watch
 share; a pair's detail, trend and brief; the recorded transitions; the settings as judged; and the check of
 the stored measures against their audit rows. It reads only: the worker alone writes measures and readiness
@@ -42,7 +42,7 @@ _NONE: dict[str, Any] = {
     "cycles": [],
     "soaks": [],
 }  # the governance of a pair without evidence
-# A pair as GET /v1/readiness lists it (§10), from its evaluation.
+# A pair as GET /v1/readiness lists it, from its evaluation.
 _ITEM = (
     "pair", "programme", "entity", "version", "spec_id", "state", "regressed", "score", "gates", "blocking",
     "evidence", "trend", "since",
@@ -56,7 +56,7 @@ log = logging.getLogger(__name__)
 
 
 class Refused(ValueError):
-    """A readiness read refused (docs/mvp/READINESS.md §9): its HTTP status and binding message."""
+    """A readiness read refused: its HTTP status and binding message."""
 
     def __init__(self, status: int, message: str) -> None:
         super().__init__(message)
@@ -69,9 +69,9 @@ class Judged:
     (with ``since``, when it entered its state as the worker recorded it), the policy, series and
     governance it was judged from, its newest ``readiness.changed`` row (``last``), the pairs with cycles
     never measured as they were judged with them (``waiting``, ``repo.unmeasured_pairs``' records: the
-    worker writes no transition of one, §8), and how many ended cycles are still to measure, each counted
+    worker writes no transition of one), and how many ended cycles are still to measure, each counted
     up to ``repo.OWED``: never measured (``unmeasured``), and ended before 014 (``backfill``: while any is
-    left, no transition is written, §8)."""
+    left, no transition is written)."""
 
     now: datetime
     items: dict[str, dict[str, Any]]
@@ -97,7 +97,7 @@ async def known(conn: repo.Conn, settings: ReadinessSettings | None, name: str) 
 
 async def _allows(ctx: Context, conn: repo.Conn) -> dict[str, bool] | None:
     """What the licence allows now; None when its standing cannot be read (logged): sign-off and pack then
-    keep what the licence last decided of them, and are never met without their stored fact (§5)."""
+    keep what the licence last decided of them, and are never met without their stored fact."""
     try:
         async with conn.transaction():
             return (await licence.standing(ctx, conn)).allows()
@@ -111,9 +111,9 @@ async def _allows(ctx: Context, conn: repo.Conn) -> dict[str, bool] | None:
 async def judged(
     ctx: Context, conn: repo.Conn, *, only: str | None = None, at: datetime | None = None
 ) -> Judged:
-    """Evaluate every pair (§3: the spec names with a batch or soak run, and those the settings list), or
+    """Evaluate every pair (the spec names with a batch or soak run, and those the settings list), or
     ``only`` that one; Refused (404) when no spec or setting names it. ``at``: as of then (a run report's
-    cycle, §11), on the cycles ended by then and without a live soak's schedule, which is today's."""
+    cycle), on the cycles ended by then and without a live soak's schedule, which is today's."""
     from deltasleuth.reports import accuracy  # the reports and the runner's modules import this one
     from deltasleuth.runner import sample
     from deltasleuth.runner.stop import StopConditions
@@ -185,7 +185,7 @@ async def judged(
                         conn, run, picked["cycle"], spec, later=True, selection=False
                     )
                 item = judge(ledger=ledger)
-        except Exception as exc:  # one pair's records never stop the others' evaluation (§4)
+        except Exception as exc:  # one pair's records never stop the others' evaluation
             if repo.lost(conn, exc):
                 raise  # the store is unreachable: nothing is judged
             log.warning("readiness: pair %s could not be evaluated: %s", name, type(exc).__name__)
@@ -196,7 +196,7 @@ async def judged(
     return Judged(now, items, policies, series, governance, last, unmeasured, *counts)
 
 
-# -- what is asked (§9, §10) ----------------------------------------------------------------------------
+# -- what is asked ----------------------------------------------------------------------------
 
 
 def _limit(value: Any, default: int = 100) -> int:
@@ -230,7 +230,7 @@ def filters(
     closed: str | None = None,
     bucket: str | None = None,
 ) -> None:
-    """Refuse a filter that names nothing (§9), before anything is read."""
+    """Refuse a filter that names nothing, before anything is read."""
     if programme is not None and programme not in [p.name for p in (settings.programmes if settings else ())]:
         raise Refused(404, f"programme {programme} is not configured")
     if state is not None and state not in STATES:
@@ -272,7 +272,7 @@ def _blocked(item: Mapping[str, Any], gate: str) -> bool:
 
 
 def listed(item: Mapping[str, Any]) -> dict[str, Any]:
-    """An evaluated pair as GET /v1/readiness lists it (§10): ``signoff`` and ``pack`` are the approved
+    """An evaluated pair as GET /v1/readiness lists it: ``signoff`` and ``pack`` are the approved
     sign-off's and the issued pack's ids."""
     return {name: item[name] for name in _ITEM} | {
         "signoff": item["signoff_id"], "pack": item["pack_id"], "closed": item["closed"],
@@ -281,7 +281,7 @@ def listed(item: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _recorded(pair: str, row: Mapping[str, Any]) -> dict[str, Any]:
-    """A pair as its ``readiness.changed`` row recorded it (``as_of``, §10)."""
+    """A pair as its ``readiness.changed`` row recorded it (``as_of``)."""
     detail = row["detail"]
     names = ("programme", "entity", "regressed", "score", "gates", "evidence", "candidate", "signoff_id",
              "pack_id", "config_sha256")  # fmt: skip
@@ -305,8 +305,8 @@ def entities(items: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
 
 
 def notes(found: Judged | None, config: str, worker: str | None) -> list[str]:
-    """What heads every surface besides the definition: Y15 (cycles not measured yet) and Y16 (the worker
-    judges with other settings than this process)."""
+    """What heads every surface besides the definition: that cycles are not measured yet, and that the
+    worker judges with other settings than this process."""
     said = []
     if found is not None and (found.unmeasured or found.backfill):
         said.append(f"{gates.counted(found.unmeasured, repo.OWED)} ended cycle(s) are not measured yet")
@@ -352,10 +352,10 @@ async def overview(
     limit: Any = None,
     cursor: str | None = None,
 ) -> dict[str, Any]:
-    """``GET /v1/readiness`` and ``ds readiness`` (§10): the pairs a selection takes, worst first, a page of
-    them, with the definition, the settings hashes, Y15 and Y16, each programme's roll-up and each entity
+    """``GET /v1/readiness`` and ``ds readiness``: the pairs a selection takes, worst first, a page of
+    them, with the definition, the settings hashes, the ``notes``, each programme's roll-up and each entity
     type's states (over the selection before ``state`` and ``gate`` narrow it), and how many
-    ``dashboard.pdf`` volumes the pairs of the programme and entity type make, closed ones too (§11). With
+    ``dashboard.pdf`` volumes the pairs of the programme and entity type make, closed ones too. With
     ``as_of``, what the worker had recorded by then: each pair's newest ``readiness.changed`` row, whatever
     ``closed`` says."""
     from deltasleuth.reports import readiness as reports  # the reports import this module
@@ -396,13 +396,13 @@ async def overview(
     }  # fmt: skip
 
 
-# -- a pair (§10) ---------------------------------------------------------------------------------------
+# -- a pair ---------------------------------------------------------------------------------------
 
 
 async def _precheck(ctx: Context, conn: repo.Conn, item: Mapping[str, Any]) -> dict[str, Any] | None:
     """What a sign-off of the pair's unsigned candidate would be refused for, computed now (the sign-off
     decides), and, where packs are configured, the line that refuses every pack of a spec whose key
-    pattern cannot tell a key (docs/mvp/PACK.md §2.3), which no sign-off is refused for; ``purged`` once
+    pattern cannot tell a key, which no sign-off is refused for; ``purged`` once
     its cycle's purge has started; None outside SSO, without a candidate or for one signed off."""
     from deltasleuth.runner.purge import CyclePurged
 
@@ -423,7 +423,7 @@ async def _precheck(ctx: Context, conn: repo.Conn, item: Mapping[str, Any]) -> d
 
 
 async def pair(ctx: Context, name: str, *, precheck: bool = False) -> dict[str, Any]:
-    """``GET /v1/readiness/pairs/{name}`` (§10): the pair as listed, with its candidate, convergence and
+    """``GET /v1/readiness/pairs/{name}``: the pair as listed, with its candidate, convergence and
     notes, the streak's points (the window at most), each version's newest evidence cycle, the live soaks
     of the current one, the evidence cycle's strata (counts, never a pooled rate), the candidate's labelling
     and, on demand only, the sign-off precheck."""
@@ -466,13 +466,13 @@ async def pair(ctx: Context, name: str, *, precheck: bool = False) -> dict[str, 
 
 
 async def brief(ctx: Context, name: str, *, whole: bool = False, most: int | None = None) -> dict[str, Any]:
-    """``GET /v1/readiness/pairs/{name}/brief`` (§10): the pair as listed, under the definition and what a
-    brief is (M1), with the detail's notes, the legend of its marks (M7), its newest ``BRIEF_CYCLES``
+    """``GET /v1/readiness/pairs/{name}/brief``: the pair as listed, under the definition and what a
+    brief is, with the detail's notes, the legend of its marks, its newest ``BRIEF_CYCLES``
     measured points oldest first (a closed pair's up to its day), each marked against the one before, its
     reported ``cycle`` (the newest complete one, whatever its basis; None without one, as a note then
-    says, M2) and its root-cause groups over the window's complete cycles that keep theirs (``causes``;
-    None without a reported cycle, and for a purged one, as a note says, M3): ``BRIEF_CAUSES`` of them
-    listed, or (``whole``, as ``causes.csv`` holds them, §11) every one, ``most`` at most. The evaluation
+    says) and its root-cause groups over the window's complete cycles that keep theirs (``causes``;
+    None without a reported cycle, and for a purged one, as a note says): ``BRIEF_CAUSES`` of them
+    listed, or (``whole``, as ``causes.csv`` holds them) every one, ``most`` at most. The evaluation
     and both reads share one snapshot, so a purge that commits between them changes nothing; nothing is
     written."""
     from deltasleuth.runner import sample  # the runner's modules import this one
@@ -524,7 +524,7 @@ def _before(cursor: str | None) -> tuple[datetime, str, int] | None:
 async def cycles(
     ctx: Context, name: str, *, bucket: str | None = None, cursor: str | None = None
 ) -> dict[str, Any]:
-    """``GET /v1/readiness/pairs/{name}/cycles`` (§10): the pair's trend, a page of ``PAGE`` points oldest
+    """``GET /v1/readiness/pairs/{name}/cycles``: the pair's trend, a page of ``PAGE`` points oldest
     first, the pages going back in time (a keyset on ``(ended_at, run_id, cycle)``); by ``day`` or ``week``,
     each bucket's last evidence point."""
     settings = ctx.settings.readiness
@@ -551,7 +551,7 @@ async def transitions(
     limit: Any = None,
     cursor: str | None = None,
 ) -> dict[str, Any]:
-    """``GET /v1/readiness/transitions`` (§10): the ``readiness.changed`` rows, newest first, of a pair or
+    """``GET /v1/readiness/transitions``: the ``readiness.changed`` rows, newest first, of a pair or
     a programme if given: projections of the worker's rows only."""
     settings = ctx.settings.readiness
     filters(settings, programme=programme)
@@ -569,11 +569,11 @@ async def transitions(
     return {"items": items, "next_cursor": following}
 
 
-# -- the settings as judged, and the stored measures (§7, §12) ------------------------------------------
+# -- the settings as judged, and the stored measures ------------------------------------------
 
 
 async def check(ctx: Context) -> tuple[list[str], list[str]]:
-    """``ds readiness check`` (§7): each pair's effective gates, tagged with where each comes from, its
+    """``ds readiness check``: each pair's effective gates, tagged with where each comes from, its
     deviations and the settings hash; and a warning for each listed spec that is not stored."""
     settings = ctx.settings.readiness
     names = named(settings)
@@ -609,7 +609,7 @@ async def check(ctx: Context) -> tuple[list[str], list[str]]:
 
 
 async def verify(ctx: Context) -> dict[str, int]:
-    """``ds readiness verify`` (§12): each cycle a ``readiness.measured`` row names must be named once and
+    """``ds readiness verify``: each cycle a ``readiness.measured`` row names must be named once and
     still hold a record with a pair and no error that hashes to it; each record with a pair and no error
     must be named; each excluded marker must agree with its run; and no record is neither. ValueError names
     the first that does not. How many were ``measured``, ``excluded`` and not measured (``errors``: a failed

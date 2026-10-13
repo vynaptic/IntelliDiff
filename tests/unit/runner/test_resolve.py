@@ -1,4 +1,4 @@
-"""Retries to resolution (docs/mvp/SAMPLING.md §7): a sign-off member no read compared is read again from its
+"""Retries to resolution: a sign-off member no read compared is read again from its
 first pass, at most ``resolve.times``; a comparable read is never read away, nor a read no retry changes; a
 retry's first read is judged as a first read and counted once; contrast keys and unsampled runs are never
 retried."""
@@ -133,8 +133,9 @@ async def test_drift_truncation_and_absence_are_never_read_again(
 async def test_a_key_its_recheck_leaves_truncated_is_above_the_api_cap(
     harness: Harness, service: ScriptedService
 ) -> None:
-    """D13 under the default recheck policy: the truncated first read is rechecked, truncated again, and ends
-    recheck_failed, yet the key counts api_uncomparable, never unresolved: its stratum fails with G11."""
+    """Under the default recheck policy: the truncated first read is rechecked, truncated again, and ends
+    recheck_failed, yet the key counts api_uncomparable, never unresolved: its stratum fails for keys above
+    the API cap."""
     for side in "ab":
         service.script(side, "K003", (200, _tagged("K003", 50)))
     run, _ = await _sampled(harness, service, _spec())

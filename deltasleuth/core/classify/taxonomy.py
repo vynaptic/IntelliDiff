@@ -1,4 +1,4 @@
-"""Taxonomy registry (§7.2, Appendix J): core codes as ``ds.taxonomy_codes`` seeds them, plus packs.
+"""Taxonomy registry: core codes as ``ds.taxonomy_codes`` seeds them, plus packs.
 
 A domain pack is any ``deltasleuth.packs.<module>`` exposing a ``PACK``: it adds domain-level
 codes and display aliases of core codes (``MISSING_ENTITY`` for ``MISSING_DOCUMENT``). Findings

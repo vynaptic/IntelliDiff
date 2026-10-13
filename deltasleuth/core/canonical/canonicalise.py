@@ -1,4 +1,4 @@
-"""Canonicalise one side's parsed body (§8.1): select and map, include/exclude, normalise a copy
+"""Canonicalise one side's parsed body: select and map, include/exclude, normalise a copy
 (key fields before any member key exists), check tolerance values, rewrite arrays of both trees
 in lockstep, valueFilter, then hash each tree (``raw_hash`` keeps normalised-away differences)."""
 

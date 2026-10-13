@@ -1,4 +1,4 @@
--- Labelled accuracy (docs/mvp/ACCURACY.md): a salted sample of an ended cycle's items, labelled once
+-- Labelled accuracy: a salted sample of an ended cycle's items, labelled once
 -- against a named truth source; frozen by the cycle's sign-off, tombstoned by its purge.
 CREATE TABLE ds.labellings (
     labelling_id     text PRIMARY KEY CHECK (labelling_id ~ '^V-[0-9A-Z]{26}$'),
@@ -76,7 +76,7 @@ CREATE TRIGGER labellings_lifecycle BEFORE INSERT OR UPDATE OR DELETE ON ds.labe
 CREATE TRIGGER labellings_no_truncate BEFORE TRUNCATE ON ds.labellings
     FOR EACH STATEMENT EXECUTE FUNCTION ds.append_only();
 
--- A sign-off's exclusion set also holds whoever labelled the labelling it attests (§4).
+-- A sign-off's exclusion set also holds whoever labelled the labelling it attests.
 CREATE OR REPLACE FUNCTION ds.approval_authors(a ds.approvals, OUT persons text[], OUT unattributed boolean)
 LANGUAGE plpgsql STABLE AS $$
 BEGIN

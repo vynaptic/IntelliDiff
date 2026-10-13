@@ -1,5 +1,5 @@
 # DeltaSleuth ComparisonSpec: linker mock pair, legacy links API (a) vs new linked-entities API (b).
-# Validates against docs/architecture/spec.schema.json (a unit test checks it).
+# Validates against deltasleuth/core/spec/spec.schema.json (a unit test checks it).
 #
 # Black-box: the spec knows each service only by what its endpoint returns. P0 subset only: tree
 # mode, the live time policy, an inline key list, no domain pack, no graph mode, no noise

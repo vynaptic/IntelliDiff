@@ -1,4 +1,4 @@
-"""Roles (docs/mvp/AUTH.md §1, §4.1): every /v1 operation checks the role the contract gives it, for
+"""Roles: every /v1 operation checks the role ``ROUTES`` gives it, for
 bearer tokens, cookie sessions and developer mode; the person-required roles need a person; denials
 are audited, a row per caller and route a minute; a chat session is its creator's."""
 
@@ -27,7 +27,7 @@ from .conftest import OIDC, append_chat
 
 pytestmark = pytest.mark.db
 OpenClient = Callable[..., AbstractContextManager[TestClient]]
-ROUTES = {  # docs/mvp/AUTH.md §4.1; "anyone": any principal
+ROUTES = {  # "anyone": any principal
     ("GET", "/v1/auth/me"): "anyone",
     ("GET", "/v1/targets"): "viewer",
     ("PUT", "/v1/targets/{target_id}"): "admin",  # who declares (test_who_declares): signed in within 15
@@ -64,17 +64,17 @@ ROUTES = {  # docs/mvp/AUTH.md §4.1; "anyone": any principal
     ("POST", "/v1/auth/users/{user_id}/disable"): "admin",
     ("POST", "/v1/auth/users/{user_id}/enable"): "admin",
     ("GET", "/v1/audit"): "admin",
-    ("GET", "/v1/approvals"): "viewer",  # docs/mvp/APPROVALS.md §6.1
+    ("GET", "/v1/approvals"): "viewer",
     ("GET", "/v1/approvals/{approval_id}"): "viewer",
     ("POST", "/v1/specs/{spec_id}/approvals"): "spec_author",
     ("POST", "/v1/runs/{run_id}/cycles/{cycle}/signoff"): "operator",
     ("POST", "/v1/approvals/{approval_id}/decision"): "rule_approver",
     ("POST", "/v1/approvals/{approval_id}/revoke"): "rule_approver",
-    ("POST", "/v1/runs/{run_id}/cycles/{cycle}/adjudications"): "operator",  # docs/mvp/PACK.md §7.1
+    ("POST", "/v1/runs/{run_id}/cycles/{cycle}/adjudications"): "operator",
     ("GET", "/v1/runs/{run_id}/cycles/{cycle}/adjudications"): "viewer",
     ("GET", "/v1/adjudications/{adjudication_id}/sheet.csv"): "viewer",
     ("POST", "/v1/adjudications/{adjudication_id}/score"): "operator",
-    ("POST", "/v1/runs/{run_id}/cycles/{cycle}/labellings"): "operator",  # docs/mvp/ACCURACY.md §10
+    ("POST", "/v1/runs/{run_id}/cycles/{cycle}/labellings"): "operator",
     ("GET", "/v1/runs/{run_id}/cycles/{cycle}/labellings"): "viewer",
     ("GET", "/v1/labellings/{labelling_id}"): "viewer",
     ("GET", "/v1/labellings/{labelling_id}/sheet.csv"): "viewer",
@@ -84,23 +84,23 @@ ROUTES = {  # docs/mvp/AUTH.md §4.1; "anyone": any principal
     ("GET", "/v1/packs/revocations"): "viewer",
     ("GET", "/v1/packs/{pack_id}"): "viewer",
     ("GET", "/v1/packs/{pack_id}/download"): "viewer",
-    ("GET", "/v1/licence"): "viewer",  # docs/mvp/LICENCE.md §12
-    ("GET", "/v1/samples"): "viewer",  # docs/mvp/SAMPLING.md §14
+    ("GET", "/v1/licence"): "viewer",
+    ("GET", "/v1/samples"): "viewer",
     ("GET", "/v1/samples/{draw_id}"): "viewer",
     ("POST", "/v1/samples/close"): "operator",  # a person: 403 for a token
-    ("GET", "/v1/notifications"): "viewer",  # docs/mvp/ALERTS.md §11
+    ("GET", "/v1/notifications"): "viewer",
     ("GET", "/v1/notifications/deliveries"): "viewer",
     ("POST", "/v1/notifications/channels/{channel}/test"): "operator",
     ("POST", "/v1/notifications/channels/{channel}/retry"): "operator",
     ("POST", "/v1/notifications/mutes"): "admin",  # a person signed in within 15 minutes
     ("POST", "/v1/notifications/mutes/{mute_id}/end"): "admin",
-    ("GET", "/v1/readiness"): "viewer",  # docs/mvp/READINESS.md §10: nothing writes readiness
+    ("GET", "/v1/readiness"): "viewer",  # nothing writes readiness
     ("GET", "/v1/readiness/pairs/{name}"): "viewer",
     ("GET", "/v1/readiness/pairs/{name}/cycles"): "viewer",
     ("GET", "/v1/readiness/pairs/{name}/brief"): "viewer",
     ("GET", "/v1/readiness/transitions"): "viewer",
     ("GET", "/v1/readiness/reports/{name}"): "viewer",
-    ("GET", "/v1/schedules"): "viewer",  # docs/mvp/SCHEDULES.md §10
+    ("GET", "/v1/schedules"): "viewer",
     ("GET", "/v1/schedules/zones"): "viewer",
     ("GET", "/v1/schedules/{schedule_id}"): "viewer",
     ("GET", "/v1/schedules/{schedule_id}/firings"): "viewer",
@@ -110,7 +110,7 @@ ROUTES = {  # docs/mvp/AUTH.md §4.1; "anyone": any principal
     ("POST", "/v1/schedules/{schedule_id}/pause"): "operator",
     ("POST", "/v1/schedules/{schedule_id}/resume"): "operator",
     ("DELETE", "/v1/schedules/{schedule_id}"): "operator",
-    ("POST", "/v1/prechecks"): "operator",  # docs/mvp/PRECHECKS.md §11
+    ("POST", "/v1/prechecks"): "operator",
     ("POST", "/v1/prechecks/catalogue"): "spec_author",
     ("GET", "/v1/prechecks"): "viewer",
     ("GET", "/v1/prechecks/{precheck_id}"): "viewer",
@@ -118,7 +118,7 @@ ROUTES = {  # docs/mvp/AUTH.md §4.1; "anyone": any principal
     ("POST", "/v1/prechecks/{precheck_id}/cancel"): "operator",
     ("GET", "/v1/prechecks/{precheck_id}/reports/{name}"): "viewer",
     ("GET", "/v1/prechecks/{precheck_id}/pairs/{n}/draft.yaml"): "spec_author",
-    ("POST", "/v1/mcp"): "viewer",  # docs/mvp/MCP.md §5.1: an API token's; 404 unless mcp.http serves it
+    ("POST", "/v1/mcp"): "viewer",  # an API token's; 404 unless mcp.http serves it
     ("GET", "/v1/mcp"): "viewer",  # 405 where it is served: no stream
     ("DELETE", "/v1/mcp"): "viewer",  # 405: no session
 }
@@ -135,7 +135,7 @@ LOWER = {
     "rule_approver": "spec_author",
     "admin": "spec_author",
 }
-PERSONS_ONLY = ("rule_approver", "admin")  # no token holds these roles (docs/mvp/AUTH.md §5)
+PERSONS_ONLY = ("rule_approver", "admin")  # no token holds these roles
 
 
 def _operations(client: TestClient) -> list[tuple[str, str]]:
@@ -149,8 +149,8 @@ def _call(client: TestClient, operation: tuple[str, str], headers: dict[str, str
 
 
 def test_every_operation_is_listed(open_client: OpenClient, tmp_path: Path) -> None:
-    """With the UI built and without it: a checkout need not hold ``web/dist``, and S1's ``GET /`` is no
-    operation (docs/mvp/FIRSTRUN.md §8)."""
+    """With the UI built and without it: a checkout need not hold ``web/dist``, and ``GET /`` is no
+    operation."""
     for web_dir in (tmp_path, tmp_path / "no-ui"):
         with open_client(web_dir=web_dir) as client:
             assert set(_operations(client)) - PUBLIC == set(ROUTES), web_dir
@@ -185,7 +185,7 @@ def test_developer_mode_passes_every_operation(open_client: OpenClient) -> None:
 
 
 def test_who_declares(open_client: OpenClient, callers: Any, tmp_path: Path) -> None:
-    """docs/mvp/AUTH.md §4.1: a target is declared in the product by an admin signed in within 15 minutes;
+    """A target is declared in the product by an admin signed in within 15 minutes;
     in a trial (tokens mode at a plain-http loopback address) by a spec_author's token; by no one in tokens
     mode behind https, which has no admin and keeps the targets file; and in developer mode, which acts as
     admin."""
@@ -338,7 +338,7 @@ def test_a_chat_session_is_its_creator_s(
         await append_chat(ctx, session_id, "user", question)
 
     stub("deltasleuth.agent.loop", answer=answer)
-    # chat needs no licence (LICENCE.md §2): not a vendor build's evaluation under SSO, which refuses runs
+    # chat needs no licence: not a vendor build's evaluation under SSO, which refuses runs
     with open_client(auth={"oidc": OIDC}, ai=True, tier=None) as client:
         run_id = seed(client).run_id
         alice, bob = callers(client).session("viewer"), callers(client).session("viewer", username="bob")

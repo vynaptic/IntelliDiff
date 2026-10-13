@@ -1,4 +1,4 @@
-"""Cut-over readiness, the worker's part (docs/mvp/READINESS.md §4, §8): each ended batch or soak cycle
+"""Cut-over readiness, the worker's part: each ended batch or soak cycle
 is measured once onto its tombstone (``ds.cycles.readiness``), where ``core.readiness`` judges it, and each
 change of a pair's state or of a required gate is chained as ``readiness.changed``, which the notifier
 routes.
@@ -51,7 +51,7 @@ BACKFILL_EVERY_S = 10  # a batch of the cycles ended before 014 at most this oft
 ATTEMPTS = 5  # measures of a cycle before its failure is final
 READINESS_MIN_S = 30  # a chain row that may change a pair is judged this long after the last evaluation
 READINESS_EVERY_S = 900  # and time alone (a cycle no longer fresh) this often; a failed one after MIN_S
-# The audit actions that may change a pair (§8): one entering the chain makes an evaluation due.
+# The audit actions that may change a pair: one entering the chain makes an evaluation due.
 TRIGGERS = (
     "run.cycle", "run.finished", "approval.request", "approval.grant", "approval.reject", "approval.revoke",
     "pack.issue", "pack.revoke", "sample.draw", "sample.close", "adjudication.score", "accuracy.label",
@@ -98,7 +98,7 @@ async def _configured(
 ) -> None:
     """Audit ``readiness.config``, the settings as judged, which differ from the newest such row's (``was``,
     its hash; ``licence.watch``'s pattern): the gates, each listed pair's, and what deviates from the
-    contract."""
+    built-in defaults."""
     listed = [None, *(pair.spec for p in (settings.programmes if settings else ()) for pair in p.pairs)]
     deviations = [
         {"pair": name, "deviations": list(found)}
@@ -113,7 +113,7 @@ async def _configured(
 async def _evaluate(ctx: Context, state: State) -> None:
     """Evaluate every pair when a cycle was measured, a row that may change one entered the chain at least
     ``READINESS_MIN_S`` after the last evaluation, or ``READINESS_EVERY_S`` have passed, and chain what
-    changed (§8): nothing while a cycle ended before 014 is still to measure, and nothing of a pair one of
+    changed: nothing while a cycle ended before 014 is still to measure, and nothing of a pair one of
     whose cycles was never measured, which the pass that measures it judges. A process's first evaluation
     records the settings it judges with when they are new, before the rows it writes: they name ``config``,
     and no later row does."""
@@ -254,7 +254,7 @@ async def _measured(
         whole = scan is not None and scan["done"] and cut is None
         if whole:  # with or without its graph parity; but a file side a with lines that were not rows
             side_a = census.scanned("a", params["tables"]["a"], scan, spec)  # type: ignore[arg-type]
-            if side_a.get("rejected"):  # is no census (docs/mvp/FILES.md §11, C1)
+            if side_a.get("rejected"):  # is no census
                 counted = {"cycle": cycle, "a": side_a, "b": None}
                 problem = census_problem(run, cycle, spec, counted, scan, ended, None)
             said = problem or census.described(side_a)

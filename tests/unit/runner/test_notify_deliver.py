@@ -1,4 +1,4 @@
-"""Delivery (docs/mvp/ALERTS.md §5): each channel's heads in order under one id and the stored bytes, a crash
+"""Delivery: each channel's heads in order under one id and the stored bytes, a crash
 after a 2xx sending them again under the same id, backoff with Retry-After a floor, a poisoned head dying
 ``retries_exhausted`` so the next arrives, expiry after an outage, dead letters audited hourly without a
 loop, one channel's failure never holding another, mutes, housekeeping, and no secret anywhere."""

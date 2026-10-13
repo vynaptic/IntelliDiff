@@ -1,10 +1,10 @@
-"""Files as table sides (docs/mvp/FILES.md §18's e2e row): TABLES §7's dataset as CSV and as Parquet files
+"""Files as table sides: the table dataset as CSV and as Parquet files
 against PostgreSQL, MySQL and Oracle, a CSV side against a Parquet one, and a CSV side against a service find
 exactly the seeded differences, by a scan of fixed files whose rows the worker hashes and by per-key reads of
 canonical rendering 1; a declared dialect (a decimal comma, DD/MM/YYYY, a zero-padded key) bridges a
 PostgreSQL side; lines that are not rows leave a key inconclusive, never missing, and side a no census; a soak
 reads the same pinned bytes every cycle and fails once a file is replaced; a crafted page ends the reader's
-process under ``ds serve``, never the server's (docs/mvp/READER.md §15). A key file, CSV or Parquet, gives the
+process under ``ds serve``, never the server's. A key file, CSV or Parquet, gives the
 keys of a rolling soak between two services, read anew at each roll.
 """
 
@@ -51,7 +51,7 @@ pytestmark = pytest.mark.e2e
 mysql, oracle = pytest.mark.mysql, pytest.mark.oracle
 
 Rows = Sequence[Sequence[Any]]
-# TABLES.md §7's dataset. Side a: every row. Side b: row 5's email differs in case, row 6's amount only in
+# The table dataset. Side a: every row. Side b: row 5's email differs in case, row 6's amount only in
 # scale, row 7 is missing, row 8 is there twice, row 1001 is extra, one row has no key.
 USERS_A = [
     (g, f"user{g}@example.com", f"Name {g}", f"{Decimal(g) * Decimal('1.25'):.2f}", "true")
@@ -94,7 +94,7 @@ def write_csv(
 
 
 def write_parquet(path: Path, select: str, rows: Rows, columns: Sequence[str], options: str = "") -> None:
-    """``rows`` written by DuckDB's own writer (§18: an unrestricted, test-only connection), typed by
+    """``rows`` written by DuckDB's own writer (an unrestricted, test-only connection), typed by
     ``select`` over them (its columns named as ``columns``), with the writer's other ``options``."""
     con = unrestricted()
     con.execute(f"CREATE TABLE raw ({', '.join(f'{c} VARCHAR' for c in columns)})")
@@ -143,7 +143,7 @@ B_SELECT = (
 
 @pytest.fixture
 def exports(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """``files.roots_under``: a directory of its own, outside the stack's (T10), as its real path (P14)."""
+    """``files.roots_under``: a directory of its own, outside the stack's, as its real path."""
     return tmp_path_factory.mktemp("exports").resolve()
 
 
@@ -187,7 +187,7 @@ def stacked(
 
 
 def _passes(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Every per-key statement a file side is sent from here on: each is one pass over its files (§9)."""
+    """Every per-key statement a file side is sent from here on: each is one pass over its files."""
     passes: list[str] = []
     execute = duck.Cursor.execute
 
@@ -207,7 +207,7 @@ def users_spec(table_a: dict[str, Any], table_b: dict[str, Any], **sides: Any) -
 
 
 def assert_seeded(run: repo.Row, found: dict[str, repo.Row]) -> None:
-    """TABLES §7's dataset's counters and findings, whoever hashes the rows."""
+    """The table dataset's counters and findings, whoever hashes the rows."""
     assert scanned(run) == (ROWS, ROWS + 2, 0, 1, ROWS - 3, 4)
     assert {key: (r["outcome"], r["inconclusive_reason"]) for key, r in found.items()} == {
         "5": ("MISMATCH", None),
@@ -276,7 +276,7 @@ async def test_a_csv_side_against_a_parquet_side(stacked: Callable[..., Stack], 
         found = await results(ctx, run["run_id"])
     plan = run["params"]["tables"]
     assert (run["status"], plan["only_a"]) == ("completed", ["legacy_flag"])
-    # A CSV field and a Parquet column are declared apart: the worker's columns (§9).
+    # A CSV field and a Parquet column are declared apart: the worker's columns.
     assert plan["a"]["digest"] == ["amount", "email", "name"]
     assert run["scan"]["verified_a"] and run["scan"]["verified_b"]
     assert_seeded(run, found)
@@ -292,7 +292,7 @@ A_SELECT = (
 async def test_two_file_sides_of_one_format_are_hashed_in_duckdb(
     stacked: Callable[..., Stack], exports: Path, form: str
 ) -> None:
-    """D7, §9: TABLES §7's dataset as two CSV sides and as two Parquet sides. The columns both sides declare
+    """The table dataset as two CSV sides and as two Parquet sides. The columns both sides declare
     alike (email, name) are hashed by DuckDB and never fetched by the scan; the amount, which a typeMap names
     (CSV) or whose two decimals differ in scale (Parquet), is the worker's. Counters and findings are exact,
     and each per-key result of two fixed sides is final as read."""
@@ -370,7 +370,7 @@ async def test_a_csv_side_against_a_service(make_stack: Callable[..., Stack], ex
         1,
     )
     assert plan["a"]["kinds"] == {"columns": 1}
-    # 4 is on neither side's rows: with a line of side a that was not a row, it is inconclusive (M1).
+    # 4 is on neither side's rows: with a line of side a that was not a row, it is inconclusive.
     assert {key: (r["outcome"], r["inconclusive_reason"]) for key, r in found.items()} == {
         "1": ("MATCH", None), "2": ("MISMATCH", None), "3": ("NOT_FOUND_B", None),
         "4": ("INCONCLUSIVE", "unparseable"),
@@ -512,7 +512,7 @@ async def test_a_key_files_lines_that_are_not_rows_refuse_its_read(
     ]
 
 
-# --- a declared dialect bridges another engine (§5, §7) ---------------------------------------------------
+# --- a declared dialect bridges another engine ---------------------------------------------------
 
 LEDGER = """
     CREATE TABLE ledger (id int PRIMARY KEY, balance numeric(12, 2), opened date, note text);
@@ -564,7 +564,7 @@ async def test_a_declared_dialect_bridges_postgres(stacked: Callable[..., Stack]
 async def test_empty_as_null_bridges_a_null_field_and_an_empty_string(
     stacked: Callable[..., Stack], exports: Path
 ) -> None:
-    """§5, §7: an unquoted empty field is NULL and PostgreSQL holds '': the difference is reported until the
+    """An unquoted empty field is NULL and PostgreSQL holds '': the difference is reported until the
     approved spec declares emptyAsNull on the side that holds the empty string."""
     stack = stacked(("postgresql", LEDGER), ("files",))
     rows = [(123, "1.50", "2024-02-29", "a"), (124, "-0.50", "2023-12-31", None)]
@@ -593,7 +593,7 @@ async def test_empty_as_null_bridges_a_null_field_and_an_empty_string(
 async def test_a_scan_of_files_killed_mid_pass_resumes_after_its_checkpoint(
     stacked: Callable[..., Stack], exports: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§11: a pass that ends mid-scan (a kill, a stop) resumes after its last saved key on the same pinned
+    """A pass that ends mid-scan (a kill, a stop) resumes after its last saved key on the same pinned
     bytes: nothing is counted twice, and the files are hashed again when the resumed pass's rows end."""
     from deltasleuth.runner import scan as scanning
 
@@ -632,7 +632,7 @@ async def test_a_scan_of_files_killed_mid_pass_resumes_after_its_checkpoint(
     assert_seeded(run, found)
 
 
-# --- lines that are not rows (D6) and a soak of fixed files (§11) ----------------------------------------
+# --- lines that are not rows and a soak of fixed files ---------------------------------------------------
 
 
 async def test_lines_that_are_not_rows_on_side_a_leave_no_census(
@@ -704,7 +704,7 @@ async def test_a_soak_reads_the_same_pinned_files_and_fails_once_one_is_replaced
 async def test_a_scan_that_does_not_meet_the_plan_s_rows_fails_the_run(
     stacked: Callable[..., Stack], exports: Path
 ) -> None:
-    """§7's rows guard (F10): a read to its end met another number of rows than the plan counted. Here the
+    """The rows guard: a read to its end met another number of rows than the plan counted. Here the
     stored plan is made to disagree with the files, as a parser that disagreed with itself would."""
     stack = stacked(("postgresql", USERS["postgresql"]), ("files",))
     write_csv(exports / "b" / "users_v.csv", B_COLUMNS, USERS_B)
@@ -728,7 +728,7 @@ async def test_a_scan_that_does_not_meet_the_plan_s_rows_fails_the_run(
 async def test_a_directory_that_is_not_there_pauses_the_scan_until_it_is(
     stacked: Callable[..., Stack], exports: Path
 ) -> None:
-    """§10's table: a root that cannot be listed is TargetUnreachable: the pass is paused and resumed without
+    """A root that cannot be listed is TargetUnreachable: the pass is paused and resumed without
     limit, never failing the run."""
     stack = stacked(("postgresql", USERS["postgresql"]), ("files",), lease_seconds=1)
     write_csv(exports / "b" / "users_v.csv", B_COLUMNS, USERS_B)
@@ -758,9 +758,9 @@ async def test_a_directory_that_is_not_there_pauses_the_scan_until_it_is(
 async def test_a_damaged_page_fails_the_run_at_its_third_stalled_pass(
     stacked: Callable[..., Stack], exports: Path
 ) -> None:
-    """§10's table: a damaged page of a compared column, which the plan's pass over the key columns does not
+    """A damaged page of a compared column, which the plan's pass over the key columns does not
     read, fails every pass the same way on the same bytes: the files are stat-checked, unchanged, and the
-    third pass that saves no checkpoint fails the run (F4), by the error's class, never DuckDB's text."""
+    third pass that saves no checkpoint fails the run, by the error's class, never DuckDB's text."""
     stack = stacked(("postgresql", USERS["postgresql"]), ("files",), lease_seconds=1)
     path = exports / "b" / "users_v.parquet"
     write_parquet(path, B_SELECT, USERS_B, B_COLUMNS, ", COMPRESSION zstd")
@@ -820,7 +820,7 @@ def _pages(
 def test_the_server_s_log_says_how_its_reader_started(
     make_stack: Callable[..., Stack], exports: Path
 ) -> None:
-    """READER §12: the reader's start line is in the log of ``ds serve``, which configures no logger of
+    """The reader's start line is in the log of ``ds serve``, which configures no logger of
     its own, whatever held: the line is a warning, the level every ``ds`` process prints. On Linux it says
     the data limit and, on a machine of ``reader.FILTERED``, that sockets are denied; on macOS that the
     platform has neither."""
@@ -840,9 +840,9 @@ def test_the_server_s_log_says_how_its_reader_started(
 
 @faults.real
 def test_a_crafted_page_fails_its_run_and_no_other(make_stack: Callable[..., Stack], exports: Path) -> None:
-    """READER §9, §15 (FILES §14 point 7): the kept mutant under ``ds serve``. A read of its changed page
+    """The kept mutant under ``ds serve``. A read of its changed page
     ends the reader's process, which is not the server's: that one stands, ``/v1/health`` answers
-    throughout, the run's pass is paused twice and the run fails at the third end with F12, a closed text
+    throughout, the run's pass is paused twice and the run fails at the third end as ReaderDied, a closed text
     that names the cause and no file; a run of clean files completes after it, on a new reader. Elsewhere
     than macOS arm64 with DuckDB 1.5.5, where its scan may be a read or a closed refusal, each passes; on
     macOS, where the fault is a crash to the system, it runs with ``DS_FAULTS=1`` alone."""
@@ -879,7 +879,7 @@ ACCOUNTS = """
 async def test_partitioned_files_with_a_composite_key_and_a_key_map(
     stacked: Callable[..., Stack], exports: Path
 ) -> None:
-    """A glob of three Parquet files under key=value directories (§5: partitions read as text), a composite
+    """A glob of three Parquet files under key=value directories (partitions read as text), a composite
     key whose second part a prefix_pad map derives from a number, against PostgreSQL."""
     stack = stacked(("files",), ("postgresql", ACCOUNTS))
     files = {
@@ -912,9 +912,9 @@ async def test_partitioned_files_with_a_composite_key_and_a_key_map(
 async def test_a_hash_sample_framed_by_a_file_side(
     make_stack: Callable[..., Stack], exports: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A mixed pair's hash sample whose frame is a CSV side (SAMPLING §3, FILES.md §11): drawn by its strata
+    """A mixed pair's hash sample whose frame is a CSV side: drawn by its strata
     column from the files, read whole, its census record says what it was read from; its drawn keys are read
-    from the files in one pass for the group (§12), not one a key."""
+    from the files in one pass for the group, not one a key."""
     passes = _passes(monkeypatch)
     customers = [(f"C{n:03d}", f"n{n}", "A", "R" if n <= 10 else "B") for n in range(1, 21)]
     write_csv(exports / "a" / "customers.csv", ["id", "name", "status", "segment"], customers)
@@ -1023,11 +1023,11 @@ async def test_the_files_kit_gives_its_expected_result(
     assert actual == json.loads((kit / "expected.json").read_text())
 
 
-# --- performance (FILES.md §17): DS_PERF=1 runs these; TABLES.md §14 publishes what they measured --------
+# --- performance: DS_PERF=1 runs these -------------------------------------------------------------------
 
 perf = pytest.mark.skipif(not os.environ.get("DS_PERF"), reason="DS_PERF=1 runs it")
 PEOPLE = ["userid", "email", "name", "amount"]
-BUDGET = {"memory": "2GB", "spill": "20GB"}  # the files settings' defaults (§4)
+BUDGET = {"memory": "2GB", "spill": "20GB"}  # the files settings' defaults
 GIB = 2**30
 SERVICE = {
     "role": "new", "target": "svc", "request": {"method": "GET", "path": "/users/{{ key }}"},
@@ -1144,7 +1144,7 @@ def _served(stack: Stack, beside: bool = False) -> Iterator[tuple[int, list[Any]
     """``ds serve`` in developer mode on a free loopback port, its output in ``ds-serve.log`` beside the
     settings (``beside``: with ``--no-worker``, and a ``ds worker`` beside it); the port and, once stopped,
     the rusage of the process the worker ran in, then the most resident bytes seen of that process and its
-    readers together, looked at once a second (READER.md §14)."""
+    readers together, looked at once a second."""
 
     def ds(*args: str) -> subprocess.Popen[bytes]:
         argv = [str(Path(sys.executable).with_name("ds")), *args, "--config", str(stack.settings)]

@@ -1,4 +1,4 @@
-"""Table sides (docs/mvp/TABLES.md §2): they compile to ``SideConfig.table``, what the product does not run
+"""Table sides: they compile to ``SideConfig.table``, what the product does not run
 yet is ``unsupported``, key columns fit the key, and a side is a table exactly when its target is a database.
 """
 
@@ -77,14 +77,14 @@ def _mixed(doc: dict[str, Any]) -> dict[str, Any]:
 
 def test_keys_of_a_value_class_without_a_pattern_are_warned_of(spec: dict[str, Any]) -> None:
     """Two table sides need no key.pattern, and a pack's gate cannot tell a key of a value class without
-    one (docs/mvp/PACK.md §2.3): no pack was issued for any run of such a spec, and nothing said so before
+    one: no pack was issued for any run of such a spec, and nothing said so before
     its cycle was signed off. A warning: the spec stays valid."""
     spec["key"]["class"] = "identifier"
     [issue] = validate_spec(spec, targets=TARGETS)
     assert (issue.pointer, issue.code, issue.severity) == ("/key/pattern", "key_pattern_empty", "warning")
     assert issue.message == (
         "key.pattern is missing: a raw key cannot be told from other text, so no evidence pack is issued for"
-        " a run of this spec (docs/mvp/PACK.md §2.3); declare a pattern that fits its keys only, or class"
+        " a run of this spec; declare a pattern that fits its keys only, or class"
         " keys that are not personal business_code"
     )
     assert compile_spec(spec, targets=TARGETS).key.pattern is None
@@ -143,7 +143,7 @@ def test_what_table_sides_do_not_run_yet_is_unsupported(
 
 
 def test_a_spec_with_a_table_side_may_pause_on_schema_drift(spec: dict[str, Any]) -> None:
-    """docs/mvp/PRECHECKS.md §7: ``schemaDrift: {mode: pause}`` is accepted when a side is a table, with
+    """``schemaDrift: {mode: pause}`` is accepted when a side is a table, with
     two table sides and with one, and compiles as the spec's content."""
     spec["schemaDrift"] = {"mode": "pause"}
     assert _errors(spec) == set() and _errors(_mixed(copy.deepcopy(spec))) == set()
@@ -349,7 +349,7 @@ def test_graph_parity_needs_two_table_sides_and_a_composite_key(spec: dict[str, 
     assert _errors(doc) == {("/graph", "invalid_graph")}
 
 
-# --- a side on MySQL or Oracle (docs/mvp/ENGINES.md D9, §12 L1 to L4) ---------------------------------
+# --- a side on MySQL or Oracle -----------------------------------------------------------------------------
 
 
 def _issues(doc: dict[str, Any], targets: TargetRegistry) -> dict[str, tuple[str, str]]:
@@ -409,7 +409,7 @@ def test_what_a_mysql_side_does_not_run_is_unsupported(spec: dict[str, Any]) -> 
 
 
 def test_a_files_target_needs_table_file(spec: dict[str, Any]) -> None:
-    """docs/mvp/FILES.md §15 L5: a table side reads a files target through table.file (path, format)."""
+    """A table side reads a files target through table.file (path, format)."""
     exports = Target("exports", "", root="/var/lib/deltasleuth/files/x")
     files = TargetRegistry(
         {target_id: TARGETS.get(target_id) for target_id in TARGETS} | {"exports": exports}
@@ -427,7 +427,7 @@ def test_a_files_target_needs_table_file(spec: dict[str, Any]) -> None:
     )
 
 
-# --- a file side (docs/mvp/FILES.md §5) -------------------------------------------------------------------
+# --- a file side -------------------------------------------------------------------
 
 EXPORTS = Target("exports", "", root="/var/lib/deltasleuth/files/x")
 FILE_TARGETS = TargetRegistry(
@@ -468,7 +468,7 @@ def test_a_file_side_compiles_to_its_file(spec: dict[str, Any]) -> None:
 
 
 def test_table_file_goes_exactly_with_a_files_target(spec: dict[str, Any]) -> None:
-    """L5, both ways."""
+    """Both ways: table.file needs a files target, and a files target needs table.file."""
     filed = _filed(spec)
     filed["sides"]["a"]["target"] = "db-a"
     assert _issues(filed, FILE_TARGETS)["/sides/a/target"] == (
@@ -522,7 +522,7 @@ L10 = [
 def test_each_problem_of_table_file_is_worded(
     spec: dict[str, Any], change: dict[str, Any], member: str, message: str
 ) -> None:
-    """L10, each text, at the member it judges."""
+    """Each text, at the member it judges."""
     file = copy.deepcopy(CSV_FILE)
     for name, value in change.items():
         if name == "csv" and value is not None:
@@ -538,7 +538,7 @@ def test_each_problem_of_table_file_is_worded(
 
 
 def test_what_a_file_side_does_not_run_is_unsupported(spec: dict[str, Any]) -> None:
-    """L6 to L9 (D10): graph parity, ILIKE, a regex key map and table.schema."""
+    """Graph parity, ILIKE, a regex key map and table.schema."""
     regex = [{"name": "userid", "keyMap": REGEX}]
     doc = _filed(spec, schema="public", where="email ILIKE 'a%'", keyColumns=regex)
     doc["graph"] = {"members": ["a"], "groups": ["b"]}
@@ -568,6 +568,6 @@ def test_what_a_file_side_does_not_run_is_unsupported(spec: dict[str, Any]) -> N
 def test_a_type_spec_reads_a_text_by_its_format_or_separator(
     spec: dict[str, Any], type_spec: dict[str, Any], member: str, message: str
 ) -> None:
-    """L11, on any table side."""
+    """On any table side."""
     spec["sides"]["b"]["typeMap"] = {"balance": type_spec}
     assert _issues(spec, TARGETS)[f"/sides/b/typeMap/balance/{member}"] == ("invalid_type_map", message)

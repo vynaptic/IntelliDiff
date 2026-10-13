@@ -1,5 +1,5 @@
 # Customers of a legacy CRM (a) vs users of the new platform (b), two PostgreSQL tables in two
-# databases (seed.sql). Targets: targets.yaml. Contract: docs/mvp/TABLES.md.
+# databases (seed.sql). Targets: targets.yaml. What a run shows: README.md.
 #
 # a: crm.customers    (customer_id, email_address, full_name, phone, status, country, balance,
 #                      created_at timestamp, branch_code)
@@ -69,7 +69,7 @@ compare:
       severity: HIGH
 
 recheck:                                       # keys given with the run, and `ds compare`; a scan's keys
-  delay: 5s                                    # are confirmed by their per-key read (TABLES.md §12)
+  delay: 5s                                    # are confirmed by their per-key read
   times: 1
   outcomes: [MISMATCH, NOT_FOUND_A, NOT_FOUND_B]
 

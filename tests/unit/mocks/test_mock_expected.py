@@ -1,7 +1,7 @@
 """expected.json: well-formed, complete, and consistent with the mocks, the specs and the targets.
 
 These tests do not run the engine. Instead a deliberately small
-oracle re-derives, from each recorded reply and the declared contract, what §7.1 fixes without
+oracle re-derives, from each recorded reply and the declared contract, what is fixed without
 any diffing: the side states, hence INCONCLUSIVE / NOT_FOUND outcomes and their reasons; and for
 two complete sides, whether the mapped documents differ at all. The end-to-end tests
 then check the findings themselves.
@@ -9,12 +9,12 @@ then check the findings themselves.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 from typing import Any
 
 import pytest
 
+from deltasleuth.core.classify.taxonomy import CORE_CODES
 from deltasleuth.core.types import (
     ChangeType,
     DriftReason,
@@ -27,11 +27,10 @@ from mocks.common import JSONBody, Reply, ScriptedDataset, Variant
 from mocks.fixtures import recorded_reply
 from mocks.registry import PAIRS
 
-DDL = "docs/architecture/control-plane.sql"
-# The INCONCLUSIVE reasons in §7.1 (docs/architecture.md) precedence order, copied as a literal on
+# The INCONCLUSIVE reasons in precedence order, copied as a literal on
 # purpose: an oracle ordered by types.INCONCLUSIVE_PRECEDENCE would agree with any reordering of
 # the tuple the engine itself uses.
-SECTION_7_1_PRECEDENCE = (
+PRECEDENCE = (
     "both_error",
     "error_a",
     "error_b",
@@ -72,13 +71,6 @@ CONTRACT_SEVERITY = {
 Mapped = Callable[[str, Variant, JSONBody], Any]
 
 
-@pytest.fixture(scope="module")
-def core_codes(repo_root: Any) -> set[str]:
-    """Core taxonomy codes, read from the DDL seed rows (the source of truth)."""
-    text = (repo_root / DDL).read_text(encoding="utf-8")
-    return set(re.findall(r"\('([A-Z][A-Z0-9_]*)',\s*'core'", text))
-
-
 def _entries(expected: dict[str, Any]) -> list[tuple[str, str, dict[str, Any]]]:
     return [(pair, key, entry) for pair in PAIRS for key, entry in expected[pair]["keys"].items()]
 
@@ -90,7 +82,7 @@ def _all_findings(entry: dict[str, Any]) -> list[dict[str, Any]]:
 def _side_state(
     pair: str, variant: Variant, reply: Reply, spec: dict[str, Any], absence_shape: Callable[..., bool]
 ) -> tuple[str, str | None]:
-    """(state, reason) per the §8.1 observe order, for what the mocks can produce."""
+    """(state, reason) in the observe order, for what the mocks can produce."""
     side = spec["sides"][variant]
     declared = reply.status in side["notFound"]["status"]
     if declared or reply.status in (404, 410):
@@ -115,13 +107,13 @@ def _at(body: JSONBody, path: str) -> Any:
 
 
 def _file_outcome(states: dict[str, tuple[str, str | None]]) -> tuple[str, str | None]:
-    """The outcome class and reason §7.1 fixes before any diff (None class = both complete)."""
+    """The outcome class and reason fixed before any diff (None class = both complete)."""
     kinds = {v: s for v, (s, _) in states.items()}
     if kinds["a"] == kinds["b"] == "ERROR":
         return "INCONCLUSIVE", "both_error"
     reasons = [r for (s, r) in states.values() if s in ("INCOMPLETE", "ERROR")]
     if reasons:
-        return "INCONCLUSIVE", min(reasons, key=SECTION_7_1_PRECEDENCE.index)
+        return "INCONCLUSIVE", min(reasons, key=PRECEDENCE.index)
     if kinds["a"] == kinds["b"] == "ABSENT":
         return "INCONCLUSIVE", "absent_both"
     if kinds["a"] == "ABSENT":
@@ -172,7 +164,7 @@ def test_lists_every_seeded_key_and_only_sampled_keys(
     }
 
 
-def test_entries_are_well_formed(expected: dict[str, Any], core_codes: set[str]) -> None:
+def test_entries_are_well_formed(expected: dict[str, Any]) -> None:
     for pair, key, entry in _entries(expected):
         where = f"{pair} {key}"
         assert entry["why"].strip(), where
@@ -183,7 +175,7 @@ def test_entries_are_well_formed(expected: dict[str, Any], core_codes: set[str])
             outcome = Outcome(result["outcome"])
             assert (result["inconclusive_reason"] is not None) == (outcome is Outcome.INCONCLUSIVE), where
             if result["inconclusive_reason"] is not None:
-                assert result["inconclusive_reason"] in SECTION_7_1_PRECEDENCE, where
+                assert result["inconclusive_reason"] in PRECEDENCE, where
             assert (result["drift_reason"] is not None) == (outcome is Outcome.DRIFT), where
             if result["drift_reason"] is not None:
                 DriftReason(result["drift_reason"])
@@ -196,7 +188,7 @@ def test_entries_are_well_formed(expected: dict[str, Any], core_codes: set[str])
             assert set(finding) <= FINDING_FIELDS and "path_pattern" in finding, where
             assert "taxonomy_code" in finding or "change_type" in finding, where
             if "taxonomy_code" in finding:
-                assert finding["taxonomy_code"] in core_codes, where
+                assert finding["taxonomy_code"] in CORE_CODES, where
             if "change_type" in finding:
                 ChangeType(finding["change_type"])
             if "severity" in finding:

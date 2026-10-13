@@ -1,7 +1,7 @@
-"""Schedules over the API (docs/mvp/SCHEDULES.md §9, §10): who may read and write them in each auth mode,
+"""Schedules over the API: who may read and write them in each auth mode,
 every refusal with its status, the warnings, the list with its filters, banners and overdue count, a
 preview that writes nothing, the zones, the firings as a projection of the worker's rows, a run naming the
-schedule that started it, and what no answer ever tells (§2), keys among it. The firing itself is tested in
+schedule that started it, and what no answer ever tells, keys among it. The firing itself is tested in
 tests/unit/runner/test_schedule_fire.py; here the real ``fire`` runs on the server's loop."""
 
 from __future__ import annotations
@@ -113,7 +113,7 @@ def strings(value: Any) -> list[str]:
     return [value] if isinstance(value, str) else []
 
 
-# -- who may do what (§6, §10) -------------------------------------------------------------------------
+# -- who may do what -------------------------------------------------------------------------
 
 
 def test_viewers_read_and_operators_write_under_sso(open_client: OpenClient, callers: Any) -> None:
@@ -230,7 +230,7 @@ def test_tokens_and_developer_mode_write_as_their_callers(
     assert [row[0].startswith(actor) for row in rows] == [True, True]
 
 
-# -- every refusal (§9) --------------------------------------------------------------------------------
+# -- every refusal --------------------------------------------------------------------------------
 
 LONG = f"0 {','.join(map(str, range(24)))} {','.join(map(str, range(1, 32)))} * *"
 CRONS = [
@@ -486,7 +486,7 @@ def test_the_zones_are_those_a_schedule_takes(client: TestClient) -> None:
     assert found["renamed"]["Asia/Calcutta"] == "Asia/Kolkata"
 
 
-# -- the list (§10) ------------------------------------------------------------------------------------
+# -- the list ------------------------------------------------------------------------------------
 
 
 def test_the_list_filters_pages_counts_the_overdue_and_compiles_no_spec(
@@ -608,7 +608,8 @@ def test_upcoming_counts_from_now_while_a_time_is_overdue(open_client: OpenClien
         )
         shown, stalled = (client.get(f"/v1/schedules/{found}").json() for found in (late, ahead))
     times = [found["utc"] for found in shown["upcoming"]]
-    # The time due and not settled is the item's next_due; the next times are after now: D6 starts no older.
+    # The time due and not settled is the item's next_due; the next times are after now: no older time is
+    # started.
     assert shown["overdue"] and shown["next_due"]["utc"] < cron.utc(at) < min(times) and len(times) == 5
     first = datetime.fromisoformat(times[0])
     assert times == [cron.utc(first + timedelta(minutes=15 * n)) for n in range(5)]
@@ -617,7 +618,7 @@ def test_upcoming_counts_from_now_while_a_time_is_overdue(open_client: OpenClien
     )  # never before its anchor
 
 
-# -- firings, and a run's schedule (§10) ---------------------------------------------------------------
+# -- firings, and a run's schedule ---------------------------------------------------------------
 
 
 def test_firings_are_a_projection_of_the_worker_s_rows_without_actors(open_client: OpenClient) -> None:
@@ -732,7 +733,7 @@ def test_a_run_names_its_schedule_in_the_zone_in_force_at_its_firing(
     assert {r["run_id"] for r in every} == {run_id, unscheduled.run_id}
 
 
-# -- the texts (§9), each built by schedules.line ------------------------------------------------------
+# -- the texts, each built by schedules.line ------------------------------------------------------
 
 
 def detail(reason: str, code: str | None = None, **facts: Any) -> dict[str, Any]:
@@ -842,14 +843,14 @@ def test_firing_texts(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "passed its 30 min while" in schedules.line("missed", hourly, at=seen)
 
 
-# -- what no answer tells (§2) -------------------------------------------------------------------------
+# -- what no answer tells -------------------------------------------------------------------------
 
 
 def test_never_told(open_client: OpenClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    """§2 over every answer: a firing is a started run, never a completed one (N1); next due is a schedule
-    (N2); no firing names an actor (N3); a missed time reads not started, late starts and ranges counted
-    (N4); no percentage, uptime or success rate (N5); no key and no value, a refusal's message included
-    (N6); and the list says a schedule is no dead-man's switch (N7)."""
+    """Over every answer: a firing is a started run, never a completed one; next due is a schedule; no
+    firing names an actor; a missed time reads not started, late starts and ranges counted; no percentage,
+    uptime or success rate; no key and no value, a refusal's message included; and the list says a schedule
+    is no dead-man's switch."""
     canary = f"customer {RAW_KEY} has no account"
 
     async def refusing(*_: Any, **__: Any) -> str:
@@ -874,7 +875,7 @@ def test_never_told(open_client: OpenClient, monkeypatch: pytest.MonkeyPatch) ->
     assert [answer.url.path for answer in answers if answer.status_code != 200] == []
     texts = [text for answer in (listed, shown, firings) for text in strings(answer)]
     started, backlog, refused = firings["items"]
-    minutes = started["late_s"] // 60  # N4: a late start says how late
+    minutes = started["late_s"] // 60  # a late start says how late
     assert minutes in (20, 21) and started["text"] == f"started run {run_id} {minutes} min after its time"
     assert (backlog["count"], backlog["text"]) == (
         3,
@@ -885,25 +886,25 @@ def test_never_told(open_client: OpenClient, monkeypatch: pytest.MonkeyPatch) ->
         "not started: the run could not be created (ValueError): starting one on the Runs screen shows the"
         " cause"
     )
-    # N1: a firing's text is the started run's id; how it ended is the run's status, beside it.
+    # A firing's text is the started run's id; how it ended is the run's status, beside it.
     assert run["status"] == "failed" and run["schedule"]["text"].startswith("started by schedule nightly (")
     assert [t for t in texts if "started run" in t and not t.startswith("started run R-")] == []
     last = listed["items"][0]["last"]
     assert (last["text"], last["run_id"], last["run_status"]) == (started["text"], run_id, "failed")
-    # N2 and N7: the list says so itself.
+    # The list says so itself.
     assert "Next due is a schedule, not a forecast." in listed["not"]
     assert any(
         "no alert is sent while no worker runs: a missed time is reported when a worker next sweeps" in line
         for line in listed["not"]
     )
-    # N3: no firing names an actor.
+    # No firing names an actor.
     assert all(set(found) == FIRING for found in firings["items"] + shown["firings"])
     assert [t for t in strings(firings) + strings(shown["firings"]) if "system:" in t or "dev:" in t] == []
-    # N4: every miss reads not started, and N5: nothing is a rate, an uptime or a forecast.
+    # Every miss reads not started, and nothing is a rate, an uptime or a forecast.
     assert all(found["text"].startswith("not started") for found in (backlog, refused))
     assert [t for t in texts if t not in schedules.NOT and BANNED.search(t)] == []
     assert [t for t in strings(zones) if BANNED.search(t)] == []
-    # N6: no key and no value: the refusal's message is in no answer, the audit log's included.
+    # No key and no value: the refusal's message is in no answer, the audit log's included.
     assert [
         answer.url.path for answer in answers if RAW_KEY in answer.text or "has no account" in answer.text
     ] == []

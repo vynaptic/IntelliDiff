@@ -1,4 +1,4 @@
-"""MCP fixtures (docs/mvp/MCP.md §16): the runner's harness (a Context on a fresh database and a scripted
+"""MCP fixtures: the runner's harness (a Context on a fresh database and a scripted
 service on loopback) holding what the tools read, each made by a named person as the app makes it: a run of
 a spec that declares nothing clear, a run of one that declares a clear path and a business-code key, a
 schedule and a table pre-check. Callers are API tokens as ``tools.caller`` cuts them; a tool is asked

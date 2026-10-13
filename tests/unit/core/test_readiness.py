@@ -1,4 +1,4 @@
-"""Cut-over readiness, pure (docs/mvp/READINESS.md §3 to §7, §9): what a cycle's measures say of it at each
+"""Cut-over readiness, pure: what a cycle's measures say of it at each
 tier; the streak, the candidate cycle and the earliest cycle that could complete it; every gate's status
 and text, the states and the score table; the settings' policy, its hash and its deviations; the marks of
 a brief's points."""
@@ -53,7 +53,7 @@ from .ready import (
 AT = f"cycle {{}} of run {RUN}"
 V14, V15 = "1.4.0 (spec 12)", "1.5.0 (spec 15)"
 NEWER = {"spec_id": 15, "version": "1.5.0"}
-SUPPRESSED = "; {} key(s) suppressed (known differences or noise only)"  # N6: beside each discrepant count
+SUPPRESSED = "; {} key(s) suppressed (known differences or noise only)"  # beside each discrepant count
 
 
 def policy(**block: Any) -> readiness.Policy:
@@ -76,7 +76,7 @@ def test_the_definition_and_the_names_other_modules_hold() -> None:
     assert tuple(sampling.TARGETS) == ("standard", "high")
 
 
-# -- measures (§4) and the pooled rule (§5) ---------------------------------------------------------------
+# -- measures and the pooled rule ---------------------------------------------------------------
 
 
 def test_census_allowance_exact() -> None:
@@ -271,7 +271,7 @@ def test_explicit_list_evidence_only_with_census() -> None:
     )
     assert said(judged([pending]))["population"][1] == (
         f"{AT.format(5)} is not a census: side a's key census is pending: its counts describe those keys only"
-        " (side a is counted only with packs or readiness configured, PACK §1.3)"
+        " (side a is counted only with packs or readiness configured)"
     )
 
 
@@ -309,7 +309,7 @@ def test_old_counters_late_measures_and_failed_ones_are_unknown() -> None:
     assert (alone["state"], said(alone)["convergence"][0]) == ("not_ready", "not_met")
 
 
-# -- the streak, the candidate and the earliest cycle (§3, §6) --------------------------------------------
+# -- the streak, the candidate and the earliest cycle --------------------------------------------
 
 
 def test_streak_ends_at_version() -> None:
@@ -404,7 +404,7 @@ def test_convergence_is_not_met_when_its_unknown_points_cannot_complete_it() -> 
 
 
 def test_measures_of_another_format_are_an_unknown_point() -> None:
-    """§4: a record whose format is not this build's is no evidence and ends the streak as unknown, with
+    """A record whose format is not this build's is no evidence and ends the streak as unknown, with
     a reason naming its format, whatever its fields say."""
     other = point(4) | {"readiness": point(4)["readiness"] | {"format": 2}}  # evidence true, fails nothing
     item = judged([*clean(3), other])
@@ -523,7 +523,7 @@ def test_the_sample_ledger_gate() -> None:
     kept = judged(sampled, ledger=[])
     assert said(kept)["sample_ledger"] == (
         "met",
-        f"draw {DRAW} of {AT.format(3)} meets the draw discipline (SAMPLING §9)",
+        f"draw {DRAW} of {AT.format(3)} meets the draw discipline",
     )
     assert (kept["state"], kept["score"]) == ("signoff_ready", {"passed": 8, "required": 10})
     earlier = (
@@ -754,7 +754,7 @@ def test_closed_as_of() -> None:
     ]  # fmt: skip
 
 
-# -- sign-offs, packs and what the installation allows (§5, D9) -------------------------------------------
+# -- sign-offs, packs and what the installation allows -------------------------------------------
 
 
 def test_signoff_credit_regressed_superseded() -> None:
@@ -895,7 +895,7 @@ def test_a_candidate_of_another_run_is_named_with_its_run() -> None:
 
 
 def test_stored_signoff_survives_expiry_and_downgrade() -> None:
-    """A stored sign-off and pack count whatever the auth mode, ``packs`` or the licence allow now (D9)."""
+    """A stored sign-off and pack count whatever the auth mode, ``packs`` or the licence allow now."""
     points = clean(3)
     stored = {"cycles": [cycle(points[-1], packs=[pack()])], "signoffs": [signoff(points[-1])]}
     expired = dict.fromkeys(ALLOWS, False)
@@ -905,8 +905,7 @@ def test_stored_signoff_survives_expiry_and_downgrade() -> None:
     downgraded = said(judged(points, installation=seen(allows=ALLOWS | {"signoff": False, "packs": False})))
     assert downgraded["signoff"] == (
         "unavailable",
-        "sign-off needs an Enterprise licence, which this installation's does not allow"
-        " (docs/mvp/LICENCE.md §6)",
+        "sign-off needs an Enterprise licence, which this installation's does not allow",
     )
     assert downgraded["pack"] == (
         "unavailable",
@@ -976,7 +975,7 @@ def test_tokens_mode_stops_at_parity_ready() -> None:
 
 
 def test_score_table() -> None:
-    """§5: the required gates counted, per installation; unavailable and not applicable ones are left out."""
+    """The required gates counted, per installation; unavailable and not applicable ones are left out."""
     points = clean(3, results=50)  # from 50 results, an adjudication counts
     tokens = cycle(points[-1], started="tokens", cited=None, adjudication=None)
     unscored = {"cycles": [cycle(points[-1], adjudication=None)]}
@@ -999,7 +998,7 @@ def test_score_table() -> None:
     assert said(rows["enterprise"])["adjudication"] == (
         "not_met",
         f"no adjudication of {AT.format(3)} is scored: draw and score one before requesting sign-off, which"
-        " freezes the cycle's adjudications (docs/mvp/PACK.md §5)",
+        " freezes the cycle's adjudications",
     )
     assert (rows["enterprise"]["state"], rows["enterprise"]["score"]["passed"]) == ("parity_ready", 6)
     # A sampled pair adds sample_ledger; a required graph and accuracy gate add theirs.
@@ -1075,7 +1074,7 @@ def test_the_ladder_and_the_gates_that_are_not_required() -> None:
 
 
 def test_no_evidence() -> None:
-    """Y14: every parity gate is unknown with why the pair has no evidence cycle."""
+    """Every parity gate is unknown with why the pair has no evidence cycle."""
     none = readiness.evaluate(
         PAIR, POLICY, series([]), {"signoffs": [], "cycles": [], "soaks": []}, seen(), now=T0
     )
@@ -1123,7 +1122,7 @@ def test_no_evidence() -> None:
     reasons.append(
         (
             "is a key list given at creation whose census does not count side a (side a is counted only with"
-            " packs or readiness configured, PACK §1.3)",
+            " packs or readiness configured)",
             {"keys_source": "explicit", "problem": pending},
         )
     )
@@ -1152,11 +1151,11 @@ def test_no_evidence() -> None:
     )
 
 
-# -- settings (§7) ----------------------------------------------------------------------------------------
+# -- settings ----------------------------------------------------------------------------------------
 
 
 def recorded(item: dict[str, Any]) -> dict[str, Any]:
-    """The pair as the worker's ``readiness.changed`` row records it (§8)."""
+    """The pair as the worker's ``readiness.changed`` row records it."""
     evidence = item["evidence"] and {name: item["evidence"][name] for name in ("run_id", "cycle")}
     statuses = {found["gate"]: found["status"] for found in item["gates"] if found["required"]}
     return {
@@ -1172,7 +1171,7 @@ def named(
 
 
 def test_a_row_s_causes_are_what_differs_for_its_pair() -> None:
-    """§8: a row names why from the pair as last recorded and as it is now, whatever else happened in the
+    """A row names why from the pair as last recorded and as it is now, whatever else happened in the
     installation: the cycle that moved a parity gate, the fact a governance or evidence gate reads, the
     licence, the settings just recorded, time."""
     points = clean(3)
@@ -1294,7 +1293,7 @@ def test_policy_sha_deviations() -> None:
     assert relaxed["state"] == "signoff_ready" and relaxed["deviations"] == list(other.deviations)
 
 
-# -- the trend (§6) ---------------------------------------------------------------------------------------
+# -- the trend ---------------------------------------------------------------------------------------
 
 
 def test_the_trend_marks_skipped_points_and_version_boundaries() -> None:
@@ -1325,7 +1324,7 @@ def test_the_trend_marks_skipped_points_and_version_boundaries() -> None:
     assert [row["cycle"] for row in readiness.trend(points, "standard", "week")] == [31]
     spark = readiness.spark(points[:5], "standard")
     assert [(s["cycle"], s["value"], s["allowed"], s["suppressed"], s["failed"]) for s in spark][-3:] == [
-        (3, 17, 999, 4, []),  # N6: the suppressed count beside the discrepant one
+        (3, 17, 999, 4, []),  # the suppressed count beside the discrepant one
         (30, 12, 1_000, 0, []),
         (31, 5_000, 1_000, 0, ["targets"]),
     ]
@@ -1398,8 +1397,8 @@ def test_brief_marks() -> None:
 
 def test_brief_ratio_that_rounded_its_count_away() -> None:
     """The counters round a ratio to six places. A brief's point holds it as stored; where it reads 0 of
-    keys that differ, or 1 of keys not all compared, M9 and the figures say ``under 0.000001`` and
-    ``over 0.999999``, never a plain 0 or 1 beside the counts."""
+    keys that differ, or 1 of keys not all compared, the rate's line and the figures say ``under 0.000001``
+    and ``over 0.999999``, never a plain 0 or 1 beside the counts."""
     groups = [
         {"n": n, "outcome": outcome, "bug": False, "confirmation": "rechecked", "first_outcome": outcome}
         | {"inconclusive_reason": reason, "drift_reason": None, "truncated": False}
@@ -1478,12 +1477,12 @@ def test_failing_cycle_never_raises_state(
     assert after == "not_ready" and item["convergence"]["streak"] == 0 and item["blocking"]
 
 
-# -- every text (§9) --------------------------------------------------------------------------------------
+# -- every text --------------------------------------------------------------------------------------
 
 
 def test_messages_golden() -> None:
     """Every gate has a text for each status; the pair below is at parity ready, then at sign-off ready."""
-    points = clean(14, different=1_204, absent_both=1_000, indeterminate=1_000)  # the contract's 999 allowed
+    points = clean(14, different=1_204, absent_both=1_000, indeterminate=1_000)  # 999 are allowed
     assert said(judged(points))["targets"] == (
         "not_met",
         f"{AT.format(14)} has 1,204 discrepant or unresolved key(s) of 1,000,000 observed whole; its pooled"
@@ -1512,7 +1511,7 @@ def test_messages_golden() -> None:
         "adjudication": (
             "not_met",
             f"no adjudication of {AT.format(14)} is scored: draw and score one before requesting sign-off,"
-            " which freezes the cycle's adjudications (docs/mvp/PACK.md §5)",
+            " which freezes the cycle's adjudications",
         ),
         "sample_ledger": ("not_applicable", f"{AT.format(14)} is not sampled"),
         "accuracy": ("not_applicable", "no accuracy gate is configured"),
@@ -1530,7 +1529,7 @@ def test_messages_golden() -> None:
         f"request sign-off of {AT.format(14)} on the Run screen, the newest cycle in the streak whose"
         " adjudication passed (or the newest evidence cycle): every other gate is met",
     )
-    for found in item["gates"]:  # N8, N9: observed, never certified; a text names no key and no value
+    for found in item["gates"]:  # observed, never certified; a text names no key and no value
         assert "certif" not in found["text"] and "%" not in found["text"].replace("0.1% target", "")
     ended_at = points[-1]["ended_at"]
     assert item["evidence"] == {

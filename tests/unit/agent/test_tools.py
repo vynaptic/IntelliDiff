@@ -56,7 +56,7 @@ async def test_get_observations_gives_masked_capped_sides_and_their_ids(make_ctx
         json.loads(a["canonical"])["email"].startswith("tok:email:") and len(b["canonical"]) == MAX_DOC_BYTES
     )
     assert [a["obs_id"], b["obs_id"]] == [data["result"]["obs_a_id"], data["result"]["obs_b_id"]]
-    assert data["cycle"] == 1  # the cycle read (docs/mvp/MCP.md §7)
+    assert data["cycle"] == 1  # the cycle read
     assert {o["obs_id"] for o in data["observations"]} == {a["obs_id"], b["obs_id"]}
     assert {f["finding_id"] for f in data["findings"]} == set(seeded.findings.values())
     shown = frame("get_observations", data)
@@ -120,7 +120,7 @@ async def test_run_summary_gives_graph_counts_but_never_the_key_a_scan_resumes_a
 async def test_run_summary_gives_the_newest_ended_cycle_s_labelled_accuracy_as_stored(
     make_ctx: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """docs/mvp/ACCURACY.md §10, D13: the stored score, cut to its first root causes with the rest counted,
+    """The stored score, cut to its first root causes with the rest counted,
     with ``summary`` and the sign-off attesting it; None until a labelling of the cycle is labelled. No
     key, masked or raw, and no staff identity: the line says a person labelled, not who."""
     ctx = make_ctx(None)
@@ -195,7 +195,7 @@ def test_the_accuracy_block_is_cut_to_the_rules_with_most_labelled_keys_and_coun
 
 @pytest.mark.db
 async def test_a_key_the_run_lacks_is_named_with_its_run_and_frames_hold_no_time(make_ctx: Any) -> None:
-    """docs/mvp/MCP.md §11 T9: one text for the chat and for MCP; and ``jsonio.plain``, which MCP applies
+    """One text for the chat and for MCP; and ``jsonio.plain``, which MCP applies
     before it frames a result, leaves every result of the chat's tools as it is."""
     ctx = make_ctx(None)
     seeded = await seed(ctx)
@@ -218,7 +218,7 @@ async def test_a_key_the_run_lacks_is_named_with_its_run_and_frames_hold_no_time
 
 
 def test_the_system_prompt_is_its_four_paragraphs_unchanged() -> None:
-    """docs/mvp/MCP.md §8: the MCP server's instructions say three of them; the chat's prompt is as it was."""
+    """The MCP server's instructions say three of them; the chat's prompt is as it was."""
     assert prompt.SYSTEM == "\n\n".join((prompt.INTRO, prompt.UNTRUSTED, prompt.MASKED, prompt.CITE))
     assert hashlib.sha256(prompt.SYSTEM.encode()).hexdigest() == (
         "9513f64641dbddb9c0c2786f5b61aba4e54e2b91be96051e35645ca2dbf8855d"
@@ -301,8 +301,8 @@ async def test_a_spec_version_lacking_its_approval_is_a_tool_error_the_model_rea
 async def test_a_refused_connect_tells_the_model_the_side_and_the_target_only(
     make_ctx: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    # The plan words a refused connect for whoever creates the run, with the endpoint its target declares
-    # (ENGINES §12 P1). That text once reached the model's host and the stored transcript as it was.
+    # The plan words a refused connect for whoever creates the run, with the endpoint its target declares.
+    # That text once reached the model's host and the stored transcript as it was.
     (tmp_path / "password").write_text("s3cret")
     database = DatabaseTarget(
         "oracle", "127.0.0.1", 9, "CRMPDB", "ds_reader", f"file:{tmp_path}/password", allow_unencrypted=True

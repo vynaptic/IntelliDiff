@@ -1,4 +1,4 @@
-"""Readiness's performance targets (docs/mvp/READINESS.md §14), held with ``DS_PERF=1`` only: measuring a
+"""Readiness's performance targets, held with ``DS_PERF=1`` only: measuring a
 cycle of a million results; over 500 pairs of 4,400 cycles each whose sign-offs lie 4,000 cycles back,
 the evaluation every surface shares, a pair's trend by day, ``trends.csv`` at its row limit and a
 ``dashboard.pdf`` volume of 100 pairs; and a brief's two reads over cycles of 20,000 root-cause groups."""

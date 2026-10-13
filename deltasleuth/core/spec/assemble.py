@@ -96,7 +96,7 @@ def build_compiled_spec(doc: dict[str, Any]) -> CompiledSpec:
 
 
 def _side(side: Side, entry: dict[str, Any], parts: tuple[str, ...]) -> SideConfig:
-    if "table" in entry:  # a missing row is the connector's 404 (docs/mvp/TABLES.md §4)
+    if "table" in entry:  # a missing row is the connector's 404
         table = _table(entry["table"], entry.get("typeMap", {}))
         return SideConfig(side, entry["role"], entry["target"], not_found=NotFoundRule(), table=table)
     not_found, truncation = entry.get("notFound"), entry.get("truncation", {})
@@ -146,7 +146,7 @@ def key_table(source: Mapping[str, Any]) -> SideConfig:
 
 
 def _sample(raw: Mapping[str, Any]) -> Sample | None:
-    """A ``hash_sample`` key source (docs/mvp/SAMPLING.md §2.1); None for any other."""
+    """A ``hash_sample`` key source; None for any other."""
     source = raw["key"].get("source")
     if source is None or source["kind"] != "hash_sample":
         return None
@@ -172,7 +172,7 @@ def _sample(raw: Mapping[str, Any]) -> Sample | None:
 
 def _member(raw: Mapping[str, Any], entry: Mapping[str, Any]) -> FrameMember:
     """A frame member and its population id: the table's name lower-cased, its schema, where and filters
-    left out, or the listing's method and canonical path (§9)."""
+    left out, or the listing's method and canonical path."""
     if entry["kind"] == "table":
         side = raw["sides"][entry["side"]]
         member_id = f"table:{side['target']}/{side['table']['name'].lower()}"

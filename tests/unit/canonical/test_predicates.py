@@ -49,7 +49,7 @@ def test_a_result_that_depends_on_digits_a_double_drops_fails_closed(source, num
 
 
 def test_a_value_expression_returns_its_value_exactly() -> None:
-    """A hash sample's dimension or sign-off label (docs/mvp/SAMPLING.md §4): a string, boolean, null or
+    """A hash sample's dimension or sign-off label: a string, boolean, null or
     exact number, over JSON and a timestamp ``now``."""
     now = datetime(2026, 10, 1, 9, 12, tzinfo=UTC)
     row = {"kind": "ORG", "n": Decimal(2), "x": Decimal("0.5"), "at": "2026-09-30T00:00:00Z", "none": None}

@@ -1,4 +1,4 @@
-"""``ds audit verify`` and a pack's segment (docs/mvp/PACK.md §4.2, §4.3): an intact log verifies and
+"""``ds audit verify`` and a pack's segment: an intact log verifies and
 prints its head; each tampering a database owner can do is caught, naming the first row that fails:
 an edited ``detail`` or ``text``, a deleted, unchained or SIEM-only row, a swapped ``obj_prev``, a
 consistent rewrite (against the SIEM), a pre-009 row unlike its line, an edit covered by a replaced

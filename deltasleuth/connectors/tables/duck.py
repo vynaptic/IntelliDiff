@@ -1,4 +1,4 @@
-"""DuckDB behind the files engine (docs/mvp/FILES.md §3, §10; docs/mvp/READER.md): the reader, a child process
+"""DuckDB behind the files engine: the reader, a child process
 that alone loads it (``reader``), its handle and its cursors here, and the self-test the release's smoke
 step runs.
 
@@ -6,23 +6,23 @@ No ``ds`` process imports ``duckdb``. Its reader is started at the first file re
 ``subprocess.Popen`` with none of this process's variables (``env={}``), and builds the locked instance: it
 reads the declared roots alone and spills in a directory this process holds for it; nothing installs or
 loads, external access is off and the configuration is locked before any statement of a run, and it proves
-all of that before it answers. Before DuckDB loads it restricts itself (READER.md §7): no core, and on
+all of that before it answers. Before DuckDB loads it restricts itself: no core, and on
 Linux, unless ``files.os_limits`` is false, a data limit and no socket; ``restricted`` words what its start
 saw hold, for its start's log line, ``ds target check`` and the self-test.
 The two speak in frames (``reader``'s codec: no pickle, every message bounded and every answer checked,
 its rows by their cells, their width and, where a plan keeps or words them, their types, before one is
-built; one outside the protocol ends the reader). Its cursors share its memory, its threads and its spill
-(U11). A cursor runs one ``SELECT`` a call, on ``manifest.POOL`` under a deadline counted from when a
+built; one outside the protocol ends the reader). Its cursors share its memory, its threads and its spill.
+A cursor runs one ``SELECT`` a call, on ``manifest.POOL`` under a deadline counted from when a
 thread took it: past it the statement is interrupted and given ``GRACE_S`` more, then given up with the
 reader, which is retired; another is started, one start whoever asks meanwhile. A retired reader makes no
 cursor more: a session that holds one finishes on it, and its process is killed, and its spill directory
 given up, with its last cursor. A reader's end is its process's, learnt by reaping it. What waits on a
 reader whose process ended is ``Busy('Died')``, and an end this process did not cause, or caused for a
-deadline, is accounted (READER.md §9): charged to the file set that alone was in flight, which is read no
+deadline, is accounted: charged to the file set that alone was in flight, which is read no
 more after ``DEATHS`` charges (``ReaderDied``); sets in flight together are read apart next, in a reader of
 their task's own. No DuckDB text crosses the pipe (it quotes paths and values): each error becomes a
 ``TableError`` holding its class's name, raised from nothing. An ``IOException`` is ``TargetRefused`` here;
-the session that knows the side's pins stat-checks them before it judges one (§10's table).
+the session that knows the side's pins stat-checks them before it judges one.
 """
 
 from __future__ import annotations
@@ -93,13 +93,13 @@ START_S = 20  # a reader's start, to its first answer; with its file work, ``man
 GRACE_S = 10  # after an interrupt, before a statement is given up
 REAP_S = 10  # after its kill, before a reader's process that has not ended is logged
 DRAIN_S = 1  # after its reaping, for what a reader wrote before its end to be read
-WATCH_S = 60  # a statement running longer has its files stat-checked, and its reader asked, this often (§10)
-DEATHS = 3  # a reader's ends charged to a file set before it is read no more (READER.md §9)
+WATCH_S = 60  # a statement running longer has its files stat-checked, and its reader asked, this often
+DEATHS = 3  # a reader's ends charged to a file set before it is read no more
 DEADLINE = "killed after its deadline"  # the cause of a kill for a statement given up, or a ping unanswered
 BATCH = 10_000  # rows a fetched batch holds at most
 BATCH_BYTES = 64 * 2**20  # or this much of their texts and bytes
 STEP = 64  # rows a fetch step while a text, bytes or JSON column is read
-# U4's sort, which the self-test runs: 200,000 rows of 132 bytes spill, with 2 threads, from 72 MiB to 88
+# The sort the self-test runs: 200,000 rows of 132 bytes spill, with 2 threads, from 72 MiB to 88
 # MiB (observed on 1.5.5, macOS arm64; 70 MiB fails, from 90 MiB the sort fits in memory).
 SPILL_SORT = (
     "SELECT md5(CAST(i AS VARCHAR)) || repeat('y', 100) AS k FROM range(200000) t(i) ORDER BY encode(k)"
@@ -126,11 +126,11 @@ _builds: weakref.WeakKeyDictionary[Any, asyncio.Lock] = weakref.WeakKeyDictionar
 _instance: Instance | None = None
 _key: tuple[Any, ...] | None = None
 _readers: set[Instance] = set()  # every reader whose process has not ended: killed as this one exits
-# READER.md §9, by a file set's key, in memory only and ``manifest.CACHE_MAX`` keys each: the ends charged
+# By a file set's key, in memory only and ``manifest.CACHE_MAX`` keys each: the ends charged
 # to a set, with the last one's cause, and the sets that were in flight together when a reader ended.
 _charged: dict[str, tuple[int, str]] = {}
 _suspects: dict[str, None] = {}
-# The free text taken from a reader, each by a grammar of this process's (READER.md §6): its version, its
+# The free text taken from a reader, each by a grammar of this process's: its version, its
 # fault's class, and the head of a column's type that is none this process reads (``_typed``).
 _VERSION = re.compile(r"[0-9.]{1,32}")
 _FAULT = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
@@ -138,8 +138,7 @@ _HEAD = re.compile(r'"?([A-Z][A-Z0-9_ ]{0,31})"?(?:[(\[].*)?', re.DOTALL)
 
 
 class Unstarted(Exception):
-    """The reader did not start: ``reason`` is ``guard`` or ``process`` (P27), ``spill_dir`` or ``space``
-    (P28)."""
+    """The reader did not start: ``reason`` is ``guard`` or ``process``, ``spill_dir`` or ``space``."""
 
     def __init__(self, reason: str, free: int = 0) -> None:
         super().__init__(reason)
@@ -147,7 +146,7 @@ class Unstarted(Exception):
 
 
 def unstarted(exc: Unstarted, who: str, files: FilesSettings) -> str:
-    """P27 or P28, worded for ``who`` (``side a``, or ``target <id>``)."""
+    """Why the reader did not start, worded for ``who`` (``side a``, or ``target <id>``)."""
     return f"{who}: the file reader did not start: {_unstarted(exc, files)}"
 
 
@@ -166,8 +165,9 @@ def _unstarted(exc: Unstarted, files: FilesSettings) -> str:
 
 
 def _unguarded(why: str, names: Sequence[str] = ()) -> Unstarted:
-    """P27, and in the server log which check of the reader's did not hold (``reader.Unguarded``'s code),
-    worded here by the names of this process's own constants: no text of DuckDB's."""
+    """A reader whose guard did not hold, and in the server log which check of the reader's it was
+    (``reader.Unguarded``'s code), worded here by the names of this process's own constants: no text of
+    DuckDB's."""
     said = {
         "lacks": f"this build's DuckDB lacks {', '.join(names)}, statically linked",
         "unset": f"{', '.join(names)} did not read back as set",
@@ -179,7 +179,7 @@ def _unguarded(why: str, names: Sequence[str] = ()) -> Unstarted:
 
 @dataclass(eq=False)
 class Instance:
-    """A reader's handle (READER.md §5): its process, the spill directory this process holds for it, its
+    """A reader's handle: its process, the spill directory this process holds for it, its
     DuckDB's version and the limits its start saw hold; under ``_build``, its open cursors and whether it
     was ``dropped`` (``discard``, or its process ended). Three daemon threads serve it: one drains a queue
     into its input, so nothing here blocks writing to a stopped process; one reads its answers and
@@ -195,7 +195,7 @@ class Instance:
     dropped: bool = False
     cause: str | None = None  # why its process ended: ``reply``, ``DEADLINE``, a signal's name, its exit code
     killed: bool = False  # by this process and for no cause: its end is not accounted
-    ahead: bool = True  # a scan's next batch is read ahead in it (READER.md R9): never in a reader apart
+    ahead: bool = True  # a scan's next batch is read ahead in it: never in a reader apart
 
     def __post_init__(self) -> None:
         self._lock = threading.Lock()  # its pending requests and its cause
@@ -243,7 +243,7 @@ class Instance:
         return request, slot
 
     def forsake(self, number: int) -> Future[Any] | None:
-        """Give up request ``number``, unanswered past its grace (READER.md §8): what waits on its slot is
+        """Give up request ``number``, unanswered past its grace: what waits on its slot is
         answered (``Deadline``), and the slot handed back stands for the statement until it answers or the
         process ends; None for a request that has answered."""
         with self._lock:
@@ -342,7 +342,7 @@ def _ended(instance: Instance) -> None:
         instance.cause = instance.cause or (DEADLINE if late else _cause(status))
     manifest.release(instance.spill)
     try:
-        if instance.version and not own:  # one that never started is P27's, and logged as that
+        if instance.version and not own:  # one that never started is ``Unstarted``, and logged as that
             _accounted(instance, [by for _, by in pending.values()])
     finally:
         for slot in (instance._first, *(slot for slot, _ in pending.values())):
@@ -354,7 +354,7 @@ def _ended(instance: Instance) -> None:
 
 
 def _accounted(instance: Instance, flights: Sequence[Cursor | None]) -> None:
-    """A reader's end, accounted for the file sets in flight in it (READER.md §9): those of its requests
+    """A reader's end, accounted for the file sets in flight in it: those of its requests
     then unanswered (``flights``: their cursors) and of its cursors with a batch read ahead; if none, of its
     cursors whose statement was not read to its end. One set alone is charged the end, a kill for a
     deadline only where its root answers a stat (a dead mount stays an outage); several are each suspect,
@@ -415,7 +415,7 @@ def _doubted(key: str | None) -> bool:
 
 
 def _condemned(key: str | None, who: str) -> ReaderDied | None:
-    """F12, and P35 at plan (READER.md §12), of a file set charged ``DEATHS`` ends, worded for ``who``
+    """The refusal, at plan too, of a file set charged ``DEATHS`` ends, worded for ``who``
     (``side a``) with the last one's cause; None for any other set."""
     with _build:
         count, cause = _charged.get(key or "", (0, ""))
@@ -457,7 +457,7 @@ def _exited() -> None:
 
 
 def _failed(made: Instance, why: str) -> Unstarted:
-    """P27's second text of a reader whose process did not start as it must, and that in the server log;
+    """The ``Unstarted`` of a reader whose process did not start as it must, and that in the server log;
     what was started is killed, and its spill directory given up."""
     _stopped(made)
     manifest.log.error("the file reader did not start: its process %s", why)
@@ -466,8 +466,8 @@ def _failed(made: Instance, why: str) -> Unstarted:
 
 def _readied(first: Mapping[str, Any], limit: int | None) -> Unstarted | None:
     """A reader's first answer, checked: None for ``ready``, which reports no limit but ``limit``, the one
-    asked for, and no socket filter where none was; P27 for ``unstarted``, whose names are of this
-    process's own constants. Any other exception: the answer is not of the protocol."""
+    asked for, and no socket filter where none was; ``_unguarded``'s for ``unstarted``, whose names are of
+    this process's own constants. Any other exception: the answer is not of the protocol."""
     if "unstarted" in first:
         known = {"lacks": reader.NEEDED, "unset": (*reader.GUARD, *reader.CACHES), "probe": ()}
         names = first["names"]
@@ -493,9 +493,9 @@ def _spawned(
     spill_dir: Path, roots: Sequence[str], probe: Path, memory_mib: int, spill_mib: int, threads: int,
     limit: int | None = None,
 ) -> Instance:  # fmt: skip
-    """A reader started and proved (READER.md §5) that reads ``roots`` and spills in a directory of its own
+    """A reader started and proved that reads ``roots`` and spills in a directory of its own
     under ``spill_dir``, made and held here; with ``limit`` (MiB) it sets itself that data limit and denies
-    itself sockets, where its platform has them (READER.md §7; ``restricted`` says what its start saw).
+    itself sockets, where its platform has them (``restricted`` says what its start saw).
     ``Unstarted`` when its spill directory cannot be made, its process does not start or answer (within
     ``START_S``), its guard does not hold (``probe``, a file outside the roots, must be refused) or the
     spill's file system lacks ``spill_mib`` plus ``SPILL_RESERVE`` free, what the live sorts of this
@@ -555,13 +555,13 @@ def _spawned(
 
 
 def _limit(memory_mib: int, threads: int) -> int:
-    """A reader's data limit, MiB (READER.md R7): its memory, 2 GiB and 600 MiB a thread (U31's footers,
-    DEPLOY's 1 GiB, the stacks of 24 requests, one batch)."""
+    """A reader's data limit, MiB: its memory, 2 GiB and 600 MiB a thread (the footers it holds, the
+    1 GiB a container is sized with beyond ``files.memory``, the stacks of 24 requests, one batch)."""
     return memory_mib + 2048 + 600 * threads
 
 
 def restricted(made: Instance) -> tuple[str, str]:
-    """READER.md §11's two phrases of a reader, each as its start saw it: its data limit, and that sockets
+    """The two phrases said of a reader, each as its start saw it: its data limit, and that sockets
     are denied it; or why not: ``files.os_limits`` is false, its platform has none (a data limit is
     Linux's, the socket filter of its machines of ``reader.FILTERED``), or it was tried and not seen to
     hold."""
@@ -580,7 +580,7 @@ def restricted(made: Instance) -> tuple[str, str]:
 def _started(settings: Settings, roots: Sequence[str], apart: bool = False) -> Instance:
     """A reader of ``settings``' budget, its start logged with what it saw hold: as a warning, the lowest
     level every ``ds`` process prints (none configures this log), so that the line is there whatever held.
-    A reader ``apart`` (§9: one a read of a charged or suspect file set) says so only where a limit did
+    A reader ``apart`` (one a read of a charged or suspect file set) says so only where a limit did
     not hold: a set's later groups would else write one line each."""
     files = settings.files
     memory = manifest.size_bytes(files.memory) // 2**20
@@ -598,8 +598,9 @@ def _started(settings: Settings, roots: Sequence[str], apart: bool = False) -> I
 
 async def _begun(settings: Settings, roots: Sequence[str], apart: bool = False) -> Instance:
     """A reader started on ``manifest.POOL`` and proved, reading ``roots``; ``Unstarted`` when it does not
-    start, within ``START_S`` and the ``manifest.STAT_S`` of its file work too (P27's second text, never
-    P14's). One whose start ended after its caller had left is retired."""
+    start, within ``START_S`` and the ``manifest.STAT_S`` of its file work too (as a process that did not
+    start, never as a root that does not answer). One whose start ended after its caller had left is
+    retired."""
     started: list[Instance] = []  # under ``_build``, with whether its caller has left
     left = threading.Event()
 
@@ -629,7 +630,7 @@ async def _begun(settings: Settings, roots: Sequence[str], apart: bool = False) 
 async def instance(settings: Settings, roots: Sequence[str]) -> Instance:
     """The process's reader, started at its first use, reading ``roots`` (every files target's) and proved
     before it is handed out; ``Unstarted`` when it does not start (``_begun``). Those who ask while it
-    starts wait for that one start (D9: one reader, one budget). A new budget or root list starts another
+    starts wait for that one start (one reader, one budget). A new budget or root list starts another
     (one process holds one: its settings and targets are read at its start), and the reader it replaces is
     retired."""
     global _instance, _key
@@ -680,7 +681,7 @@ def _returned(instance: Instance, cursor: Cursor) -> None:
 
 
 def _error(kind: str, name: str, spill: Path) -> TableError:
-    """A reader's refusal, by its kind, as a neutral error holding its class's name (§10)."""
+    """A reader's refusal, by its kind, as a neutral error holding its class's name."""
     if kind == "memory":
         return TargetTempSpace(name)  # the memory limit, or the spill at its limit (observed)
     if kind == "interrupt":
@@ -706,7 +707,7 @@ class _Refused(Exception):
 
 
 def _typed(kind: str) -> str | None:
-    """A column's type as this process keeps and words it (READER.md §6), by a grammar of its own: one it
+    """A column's type as this process keeps and words it, by a grammar of its own: one it
     reads (of ``_CLASSES``, a DECIMAL(p,s)) as it is; a list as LIST and an array as ARRAY; any other by
     its head, the word before its parameters (STRUCT, MAP, UNION, ENUM), which may hold a file's text: a
     struct's field names, an enum's values. None for a text that is no type's."""
@@ -721,7 +722,7 @@ def _typed(kind: str) -> str | None:
 def _checked(
     request: Mapping[str, Any], kind: bytes, found: Any, width: int | None = None, tags: str | None = None
 ) -> Any:
-    """What the reader's answer to ``request`` holds (READER.md §6): a fetch's rows, no more than it asked
+    """What the reader's answer to ``request`` holds: a fetch's rows, no more than it asked
     for nor than ``reader.CELLS`` cells, of its statement's ``width`` and under ``tags`` where those are
     known; a statement's columns, as many as that width, each type as ``_typed`` keeps it; else nothing.
     ``_Refused`` for a refusal. Any other exception: the answer is not of the protocol (another request's,
@@ -752,26 +753,26 @@ def _checked(
 
 class Cursor:
     """A cursor of a reader, for the target whose root is ``root``, known to its process by a number: one
-    statement at a time, each a single ``SELECT`` (U3: DuckDB itself runs ``ATTACH``, ``COPY TO`` and
+    statement at a time, each a single ``SELECT`` (DuckDB itself runs ``ATTACH``, ``COPY TO`` and
     ``EXPORT`` into an allowed directory, so the reader runs no other statement)."""
 
     def __init__(
         self, instance: Instance, root: str | None = None, key: str | None = None, who: str = ""
     ) -> None:
         self._instance, self._number, self._root = instance, next(instance._numbers), root
-        self._key, self._who = key, who  # the file set it reads (READER.md §9), and for whom
+        self._key, self._who = key, who  # the file set it reads, and for whom
         self.lock = asyncio.Lock()
         self._open, self._sending = True, threading.Lock()  # no request is sent after its close
         self._flight: int | None = None  # the request it sent last
         self._unread = False  # its statement is not read to its end
-        self._ahead = False  # its reader reads the statement's next batch ahead (READER.md R9)
+        self._ahead = False  # its reader reads the statement's next batch ahead
         self._width: int | None = None  # its statement's columns, once an answer has said how many
         _taken(instance, self)
 
     def _asked(self, op: str, tags: str | None = None, /, **members: Any) -> Any:
         """A request of this cursor and what its answer holds, on the pool's thread, which waits for it;
         ``tags``: what each column of a fetch's rows must cross as (``reader.pack_rows``). A refusal is
-        §10's error by its kind; a fatal one invalidated the database and discards the reader: the
+        the error of its kind; a fatal one invalidated the database and discards the reader: the
         statements its other cursors send afterwards meet it too, and are ``Busy('Dropped')`` (their
         sessions open on the new reader). An answer outside the protocol ends the reader's process, and one
         whose process ended is ``Busy('Died')``: ``ReaderDied`` once its file set was charged ``DEATHS``
@@ -819,9 +820,9 @@ class Cursor:
         reader (``_forsaken``). A caller cancelled meanwhile interrupts it on its way out. With ``watch``
         (the files' stat check) a call is looked at every ``WATCH_S``: a changed file interrupts it, a
         check past its deadline abandons it, and a reader that gives no sign of life within
-        ``manifest.STAT_S`` is killed, so neither a dead mount nor a frozen process keeps ``SORT``
-        (FILES.md §10, READER.md §8). A call no thread took within ``manifest.STAT_S`` is
-        ``manifest.Busy``: it is never run, nothing is abandoned and no reader discarded."""
+        ``manifest.STAT_S`` is killed, so neither a dead mount nor a frozen process keeps ``SORT``. A call
+        no thread took within ``manifest.STAT_S`` is ``manifest.Busy``: it is never run, nothing is
+        abandoned and no reader discarded."""
         manifest._admitted(self._root)
         instance = self._instance
 
@@ -879,7 +880,7 @@ class Cursor:
                 self.interrupt()
 
     def _forsaken(self, pooled: Future[Any] | None = None) -> None:
-        """Give up the cursor's statement, unanswered ``GRACE_S`` after its interrupt (READER.md §8): what
+        """Give up the cursor's statement, unanswered ``GRACE_S`` after its interrupt: what
         waits for its answer is answered, the cursor is closed and its reader retired, killed with its last
         cursor: at once where the statement was alone. The read is counted for its target's root until it
         answers or its process ends; ``pooled``, the pool's call, until that returns where no request of
@@ -911,7 +912,7 @@ class Cursor:
         watch: Callable[[], Awaitable[None]] | None = None,
         tags: str | None = None,
     ) -> Any:
-        """Up to ``size`` more rows of the statement, streamed (U6), through ``then`` in the pool's thread;
+        """Up to ``size`` more rows of the statement, streamed, through ``then`` in the pool's thread;
         none when it has ended. ``tags``: a tag a column (``i`` an integer, ``s`` text, ``o`` a boolean),
         for rows whose values this process keeps or words: rows of another form are no answer."""
 
@@ -931,8 +932,8 @@ class Cursor:
     ) -> Any:
         """The next batch: ``BATCH`` rows or ``BATCH_BYTES`` of their texts and bytes, whichever comes
         first, fetched ``step`` rows at a time in the reader (fewer where a frame, or ``reader.CELLS``, has
-        no room for them all) and shaped by ``then`` in the pool's thread; none at the end (§10). After a
-        batch of ``BATCH`` rows or more the reader reads the next one ahead meanwhile (READER.md R9), unless
+        no room for them all) and shaped by ``then`` in the pool's thread; none at the end. After a
+        batch of ``BATCH`` rows or more the reader reads the next one ahead meanwhile, unless
         it is a task's own."""
 
         def fetched() -> Any:
@@ -958,7 +959,7 @@ class Cursor:
 
     async def close(self) -> None:
         """Close the cursor, once: its statement in flight is interrupted (one its reader has not begun is
-        not run), its rejects tables go with it (U16), and it holds its reader no longer. Two frames and no
+        not run), its rejects tables go with it, and it holds its reader no longer. Two frames and no
         wait: no read fails for it. A statement still unanswered ``GRACE_S`` later is given up."""
         if not self._open:
             return
@@ -968,15 +969,15 @@ class Cursor:
 
 
 def selftest(settings: Settings | None = None, *, limits: bool = True, fault: int = signal.SIGSEGV) -> None:
-    """The release's smoke step (FILES.md §3, READER.md §11), under the compose hardening: a three-row CSV
-    and the two-row Parquet constant written under the temporary directory; a reader that reads them alone
-    and spills in the evidence volume (``files.spill_dir`` of ``DS_CONFIG``'s settings), proved (U2, a
-    refused read outside its root), both files read, and U4's sort of 200,000 rows under ``SELFTEST_MIB``,
-    which must spill; that reader sent ``fault`` (SIGSEGV) mid-statement, whose statement is ``Died`` and
-    whose process and directory are gone, and another that reads again. With ``limits``, on Linux: the
-    first reader's start saw its data limit hold and, on a machine of ``reader.FILTERED``, sockets denied,
-    and under a data limit of 512 MiB ``HOLDS`` does not complete; without, its readers start as
-    ``files.os_limits: false`` starts them. Prints what it saw; raises on any failure."""
+    """The release's smoke step, under the compose hardening: a three-row CSV and the two-row Parquet
+    constant written under the temporary directory; a reader that reads them alone and spills in the
+    evidence volume (``files.spill_dir`` of ``DS_CONFIG``'s settings), proved (a refused read outside its
+    root), both files read, and ``SPILL_SORT`` of 200,000 rows under ``SELFTEST_MIB``, which must spill;
+    that reader sent ``fault`` (SIGSEGV) mid-statement, whose statement is ``Died`` and whose process and
+    directory are gone, and another that reads again. With ``limits``, on Linux: the first reader's start
+    saw its data limit hold and, on a machine of ``reader.FILTERED``, sockets denied, and under a data limit
+    of 512 MiB ``HOLDS`` does not complete; without, its readers start as ``files.os_limits: false`` starts
+    them. Prints what it saw; raises on any failure."""
     settings = settings or load_settings()
     with tempfile.TemporaryDirectory() as scratch:
         root, probe = Path(scratch, "files").resolve(), Path(scratch, "outside.csv")
@@ -1066,14 +1067,14 @@ async def _spilled(cursor: Cursor, temp: Path) -> bool:
     return rows == 200_000 and peak[0] > 0
 
 
-# -- the files engine (FILES.md §6 to §11) ---------------------------------------------------------------
+# -- the files engine ---------------------------------------------------------------
 
-FIELD = "a CSV field"  # a CSV column's declared type: every field is text, converted only as declared (D5)
+FIELD = "a CSV field"  # a CSV column's declared type: every field is text, converted only as declared
 PARTITION = "a partition directory"  # a key=value directory's, read as text
-REJECT_MAX = 1000  # lines of a side's files that are not rows: more refuse its run (P24)
-FLOOD = 1000  # rows of file 1 the flood guard converts (§6 step 7)
-PADDED = 64  # fields beyond csv.columns a first record's count reads (§6 step 5)
-# What a scan's sort holds of a row, as DuckDB 1.5.5 was measured to spill it (§6 step 8, §10): the key's text
+REJECT_MAX = 1000  # lines of a side's files that are not rows: more refuse its run
+FLOOD = 1000  # rows of file 1 the flood guard converts
+PADDED = 64  # fields beyond csv.columns a first record's count reads
+# What a scan's sort holds of a row, as DuckDB 1.5.5 was measured to spill it: the key's text
 # three times (the order key, the text selected, and the expression ordered by, which is carried too), 24
 # bytes for each value carried beside its text, 16 a row; and what the projection adds to that sum, whose
 # peak spill was 0.36 to 0.98 of it in the 37 sorts measured.
@@ -1084,15 +1085,15 @@ _counted: dict[tuple[str, str], dict[str, Any]] = {}  # (files_sha256, its decla
 # Integer types by their bits, an unsigned one's negative.
 _BITS = {"TINYINT": 8, "SMALLINT": 16, "INTEGER": 32, "BIGINT": 64, "HUGEINT": 128}
 _BITS |= {f"U{name}": -bits for name, bits in _BITS.items()}
-# The class of each type DuckDB reads a Parquet column as (§8); a DECIMAL(p,s) is decimal, a type not listed
-# refused (P23).
+# The class of each type DuckDB reads a Parquet column as; a DECIMAL(p,s) is decimal, a type not listed
+# refused.
 _CLASSES = dict.fromkeys(_BITS, "integer") | {
     "DOUBLE": "float", "FLOAT": "float32", "VARCHAR": "text", "UUID": "text", "BOOLEAN": "boolean",
     "DATE": "date", "TIME": "time", "TIMESTAMP WITH TIME ZONE": "instant", "BLOB": "bytes", "JSON": "json",
     "INTERVAL": "other", "TIME WITH TIME ZONE": "other",
     **dict.fromkeys(("TIMESTAMP_S", "TIMESTAMP_MS", "TIMESTAMP", "TIMESTAMP_NS"), "timestamp"),
 }  # fmt: skip
-_KEYS = ("text", "char", "integer", "decimal", "date", "bytes")  # the classes a file's key may be (§9)
+_KEYS = ("text", "char", "integer", "decimal", "date", "bytes")  # the classes a file's key may be
 # What a filter's literal compared with a column of the class must be, and what it is cast to.
 _MOMENT = r"[0-9]{4}-[0-9]{2}-[0-9]{2}"
 _CLOCK = r"[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?"
@@ -1102,7 +1103,7 @@ _FORMS = {
     "timestamp": re.compile(f"{_MOMENT}[ T]{_CLOCK}"),
     "instant": re.compile(f"{_MOMENT}[ T]{_CLOCK}(Z|[+-][0-9]{{2}}(?::?[0-9]{{2}})?)?"),
 }
-# A key part a column's key text can be (§9: anything else is on no row, 404 without a statement).
+# A key part a column's key text can be (anything else is on no row, 404 without a statement).
 _KEY_TEXT = {"integer": re.compile(r"0|-?[1-9][0-9]{0,37}"), "date": re.compile(_MOMENT)}
 _HEX = re.compile(r"\\x((?:[0-9a-f]{2})*)")
 _WHOLE = re.compile(r"DECIMAL\(([0-9]+),\1\)")  # a decimal without an integer digit: DECIMAL(9,9)
@@ -1111,12 +1112,12 @@ _REJECTS = {
     "MISSING COLUMNS": "columns", "TOO MANY COLUMNS": "columns", "UNQUOTED VALUE": "quote",
     "LINE SIZE OVER MAXIMUM": "line_size", "INVALID ENCODING": "encoding",
 }  # fmt: skip
-_NEWLINES = {"\n": "\\n", "\r\n": "\\r\\n"}  # new_line takes the escaped text (U14)
+_NEWLINES = {"\n": "\\n", "\r\n": "\\r\\n"}  # new_line takes the escaped text
 _GLOB = re.compile(r"[*?\[]")  # what makes a path a pattern to DuckDB
-# §7's reader, every option bound (U5): strict_mode is DuckDB's strict default (U14). ``ignore_errors`` and
-# ``null_padding`` are bound too, so a first record is read by the same reader (§6 step 5). ``parallel`` is
-# false in every statement that reads rows (U20: the parallel reader takes a line of a quoted field for a
-# row); the plan's end check alone reads a file with it (U21).
+# The CSV reader, every option bound: strict_mode is DuckDB's strict default. ``ignore_errors`` and
+# ``null_padding`` are bound too, so a first record is read by the same reader. ``parallel`` is
+# false in every statement that reads rows (the parallel reader takes a line of a quoted field for a
+# row); the plan's end check alone reads a file with it.
 _CSV = (
     "read_csv($r_files, auto_detect=false, columns=$r_columns, header=$r_header, skip=$r_skip,"
     " delim=$r_delim, new_line=$r_new_line, quote=$r_quote, escape=$r_escape, encoding=$r_encoding,"
@@ -1132,7 +1133,7 @@ _PARQUET = (
 
 def configure(settings: Settings, registry: TargetRegistry) -> None:
     """What the process's reader is started with: its settings and every files target's root, which
-    ``Context.open`` hands over before any file side is read (one reader a process, §10)."""
+    ``Context.open`` hands over before any file side is read (one reader a process)."""
     global _settings, _roots
     found = (registry.get(target_id).root for target_id in registry)
     _settings, _roots = settings, tuple(sorted(root for root in found if root is not None))
@@ -1150,10 +1151,10 @@ async def configured() -> Instance:
 
 
 class _Sorting:
-    """``SORT``: one sort at a time a process (§10), held by a scan pass (both file sides of its pair, which
+    """``SORT``: one sort at a time a process, held by a scan pass (both file sides of its pair, which
     one task opens), a census and a frame for their length. A task waiting for it holds no cursor yet.
     ``apart``: its holder reads in a reader of its own, a side's catalogue having said so before a cursor
-    opened (READER.md §9)."""
+    opened."""
 
     def __init__(self) -> None:
         self._locks: weakref.WeakKeyDictionary[Any, asyncio.Lock] = weakref.WeakKeyDictionary()
@@ -1186,7 +1187,7 @@ _aparts: dict[Any, _Apart] = {}  # by task, while it holds a cursor apart
 
 @dataclass(eq=False)
 class _Apart:
-    """A task's reader of its own (READER.md §9), where a file set a reader ended on is read apart, and
+    """A task's reader of its own, where a file set a reader ended on is read apart, and
     whatever else the task reads meanwhile: started for its first cursor there and killed with its last,
     which clears those sets of suspicion when it lived. ``alone`` is ``ALONE`` as the task holds it; a
     task that holds ``SORT`` waits for nothing more."""
@@ -1230,7 +1231,7 @@ def _rejoined(apart: _Apart) -> None:
 
 
 def _set(side: Plan) -> str:
-    """A file side's key (READER.md §9): the SHA-256 of its pinned files and pins, held in memory only."""
+    """A file side's key: the SHA-256 of its pinned files and pins, held in memory only."""
     pinned = side["pinned"]
     return hashlib.sha256(jsonio.dumps([pinned["files"], pinned["pins"]]).encode()).hexdigest()
 
@@ -1254,7 +1255,7 @@ def _scale(declared: str) -> int:
 
 class _Primitives:
     """``compose.Dialect`` for DuckDB reading a file side: a value is a bound parameter; the reader's own (the
-    file list and the dialect) are bound by the session (U5)."""
+    file list and the dialect) are bound by the session."""
 
     def ident(self, name: str) -> str:
         if not name.isprintable():
@@ -1265,7 +1266,7 @@ class _Primitives:
         return _relation(side)
 
     def literal(self, text: str, cls: str, declared: str, binds: compose.Binds) -> str | None:
-        if _csv(declared) or cls in ("text", "char", "json", "other"):  # a CSV column compares as text (§7)
+        if _csv(declared) or cls in ("text", "char", "json", "other"):  # a CSV column compares as text
             return _bind(binds, text)
         if render.family(cls) == "number":
             try:
@@ -1289,7 +1290,7 @@ class _Primitives:
         name = f"t.{self.ident(column)}"
         if cls == "char":
             return f"rtrim({name}, ' ')"
-        if _csv(declared):  # by csv.keys (§9): a field that is no value of its class has no key text
+        if _csv(declared):  # by csv.keys: a field that is no value of its class has no key text
             if cls == "integer":
                 matched, typed = "-?[0-9]{1,38}", "DECIMAL(38,0)"
             elif cls == "decimal":
@@ -1333,16 +1334,16 @@ class _Primitives:
             return value
         if cls == "boolean":
             return f"CASE WHEN {value} THEN 'TRUE' WHEN NOT {value} THEN 'FALSE' END"
-        if cls in ("float", "float32"):  # the shortest text that reads back (U9), narrowed in render
+        if cls in ("float", "float32"):  # the shortest text that reads back, narrowed in render
             return f"CAST(CAST({value} AS DOUBLE) AS VARCHAR)"
         if cls == "timestamp":  # up to 9 digits
             return f"replace(CAST({value} AS VARCHAR), ' ', 'T')"
-        if cls == "instant":  # its UTC microseconds, read without ICU (U9); render adds +00:00
+        if cls == "instant":  # its UTC microseconds, read without ICU; render adds +00:00
             return f"replace(CAST(make_timestamp(epoch_us({value})) AS VARCHAR), ' ', 'T')"
         if cls == "time":
             # Written from its microseconds. DuckDB's own text of a TIME outside a day, which a crafted file's
             # pages may hold, is an internal error or ends the process, and a guard before it is folded away
-            # where the file's statistics say no value lies outside (U30). Of a time of day, the same text.
+            # where the file's statistics say no value lies outside. Of a time of day, the same text.
             us = f"epoch_us({value})"
             parts = f"{us} // 3600000000, {us} // 60000000 % 60, {us} // 1000000 % 60"
             micros = f"rtrim(printf('.%06d', {us} % 1000000), '0')"
@@ -1357,7 +1358,7 @@ class _Primitives:
         return f"t.{self.ident(column)}"
 
     def lob(self, declared: str) -> bool:
-        """Bytes and JSON: a row whose values of them pass ``MAX_LOB_BYTES`` is not fetched (§10). A text
+        """Bytes and JSON: a row whose values of them pass ``MAX_LOB_BYTES`` is not fetched. A text
         column is not flagged: a frame's strata are text, and a CSV line holds 2 MiB at most."""
         return declared in ("BLOB", "JSON")
 
@@ -1370,9 +1371,10 @@ class _Primitives:
         return f"({' + '.join(sizes)} > {compose.MAX_LOB_BYTES})"
 
     def row_hash(self, side: Plan, columns: Sequence[str]) -> str:
-        """§9's: each rendered text's SHA-256 (``-`` for a NULL), all of them hashed again, so a NULL and the
-        boundary between two values stay apart; bytes and a padded field as their key texts (the hexadecimal
-        digits, the text without its padding), so equal hashes are equal canonical values."""
+        """The row's hash: each rendered text's SHA-256 (``-`` for a NULL), all of them hashed again, so a
+        NULL and the boundary between two values stay apart; bytes and a padded field as their key texts
+        (the hexadecimal digits, the text without its padding), so equal hashes are equal canonical
+        values."""
         texts = []
         for column in columns:
             cls, declared = side["classes"][column], side["declared"][column]
@@ -1402,7 +1404,7 @@ PRIMITIVES = _Primitives()
 
 def _relation(side: Plan, more: str = "") -> str:
     """The side's reader under the alias ``t``. A CSV side's reads every declared column, also in a
-    statement that reads only some (U13: invalid encoding is found only in a field that is read)."""
+    statement that reads only some (invalid encoding is found only in a field that is read)."""
     file = side["file"]
     more = (", hive_types=$r_types" if file.get("partitions") else "") + more
     if file["format"] == "parquet":
@@ -1415,7 +1417,7 @@ def _relation(side: Plan, more: str = "") -> str:
 def _reader(side: Plan, root: str, files: Sequence[str] | None = None) -> dict[str, Any]:
     """The values the side's reader binds: its files (``files``: of them, by relative path), then its
     format's options. The files are the pinned ones and no path is a pattern (DuckDB expands ``*``, ``?``
-    and ``[``), so it reads no file that was not listed, pinned and hashed (D3)."""
+    and ``[``), so it reads no file that was not listed, pinned and hashed."""
     file, pinned = side["file"], side["pinned"]["files"]
     paths = [os.path.join(root, name) for name in (pinned if files is None else files)]
     if not set(pinned if files is None else files) <= set(pinned) or any(map(_GLOB.search, paths)):
@@ -1438,7 +1440,7 @@ def _reader(side: Plan, root: str, files: Sequence[str] | None = None) -> dict[s
 
 
 async def _verify(target: Target, side: Plan, *, full: bool = False, planning: bool = False) -> None:
-    """§11's check of the side's files against its pins: stat, or ``full`` (hashed again, uncached)."""
+    """The check of the side's files against its pins: stat, or ``full`` (hashed again, uncached)."""
     file, pinned = side["file"], side["pinned"]
     pins = [tuple(pin) for pin in pinned["pins"]]
     await manifest.verify(
@@ -1448,8 +1450,8 @@ async def _verify(target: Target, side: Plan, *, full: bool = False, planning: b
 
 
 def described(side: Plan) -> Relation:
-    """A file side's relation as its plan holds it (§12): the columns it reads, their declared types and
-    classes. Only other files change them, and a changed file fails the run (F9)."""
+    """A file side's relation as its plan holds it: the columns it reads, their declared types and
+    classes. Only other files change them, and a changed file fails the run."""
     columns = tuple(
         Column(column, side["declared"][column], cls, True, cls in ("text", "char"), cls in _KEYS)
         for column, cls in side["classes"].items()
@@ -1466,11 +1468,11 @@ class _Session:
         self.target, self.timeout_s = target, timeout_s or None
         self.cursor: Cursor | None = None
         self.apart: _Apart | None = None  # where its cursor was opened apart
-        self.verified_at: str | None = None  # when its pass's closing hash agreed (§11)
+        self.verified_at: str | None = None  # when its pass's closing hash agreed
 
     async def _opened(self, side: Plan | None = None) -> Cursor:
         """Its cursor, opened at its first statement: of the process's reader, or, for a side whose files
-        a reader ended on and in a task that reads apart, of that task's own (READER.md §9). A side
+        a reader ended on and in a task that reads apart, of that task's own. A side
         charged ``DEATHS`` ends is ``ReaderDied`` before anything is sent."""
         if self.cursor is None:
             key, who = (None, "") if side is None else (_set(side), f"side {side['pinned']['side']}")
@@ -1490,9 +1492,9 @@ class _Session:
                     apart.keys += (key,)
                 self.cursor, self.apart = made.cursor(self.target.root, key, who), apart
             except Unstarted as exc:
-                # A plan started the reader before its first statement (P27, P28). At run time a spill
-                # volume short of room is temporary space, as before a sort: a read waits for it (§10);
-                # a process that does not start is an outage with a code of its own (READER.md §9); a
+                # A plan started the reader before its first statement. At run time a spill
+                # volume short of room is temporary space, as before a sort: a read waits for it;
+                # a process that does not start is an outage with a code of its own; a
                 # guard that does not hold fails the run.
                 if exc.reason == "process":
                     raise manifest.Busy("Unstarted") from None
@@ -1511,7 +1513,7 @@ class _Session:
 
     async def _judged(self, side: Plan, call: Awaitable[Any]) -> Any:
         """``call``'s answer; an error of unchanged files is the statement's, of changed ones ``FilesChanged``
-        and of files that cannot be listed ``TargetUnreachable`` (§10's table)."""
+        and of files that cannot be listed ``TargetUnreachable``."""
         try:
             return await call
         except TargetRefused as exc:
@@ -1524,7 +1526,7 @@ class _Session:
         reader: Mapping[str, Any] | None = None, timeout_s: float | None = None, watch: bool = False,
     ) -> None:  # fmt: skip
         """Send one statement with the side's reader bound (``files``: of them; ``reader``: options of its
-        own); a sort's is watched (§10)."""
+        own); a sort's is watched."""
         cursor = await self._opened(side)
         watched = partial(_verify, self.target, side) if watch else None
         bound = _reader(side, self.target.root or "", files) | dict(reader or {})
@@ -1551,7 +1553,7 @@ class _Session:
         return found
 
     def outside(self) -> manifest.Busy:
-        """What rows that are no answer of DuckDB's to their statement cost (READER.md §6), where only the
+        """What rows that are no answer of DuckDB's to their statement cost, where only the
         plan that reads them can tell: the reader's process is ended (``reply``), and the read is
         ``Died``."""
         assert self.cursor is not None
@@ -1560,8 +1562,7 @@ class _Session:
 
     async def batches(self, side: Plan, shaped: Callable[[Rows], Rows], wide: bool) -> AsyncIterator[Rows]:
         """The sent statement's rows in batches through ``shaped``, ``STEP`` rows a fetch while ``wide`` (a
-        text, bytes or JSON column is read); the files stat-checked after each and hashed again at the end
-        (§11)."""
+        text, bytes or JSON column is read); the files stat-checked after each and hashed again at the end."""
         assert self.cursor is not None
         watched = partial(_verify, self.target, side)
         step = STEP if wide else BATCH
@@ -1572,9 +1573,9 @@ class _Session:
         self.verified_at = utc_now_iso()
 
     async def sort(self, side: Plan) -> None:
-        """Before a sort: the spill's free space for the smaller of its ``sort_bytes`` and ``files.spill``
-        (§10), before a byte is read. A reader whose process ended meanwhile, and its spill directory with
-        it, is ``Died``, not a spill without room: its cause is set before its directory is given up."""
+        """Before a sort: the spill's free space for the smaller of its ``sort_bytes`` and ``files.spill``,
+        before a byte is read. A reader whose process ended meanwhile, and its spill directory with it, is
+        ``Died``, not a spill without room: its cause is set before its directory is given up."""
         cursor = await self._opened(side)
         need = min(side.get("sort_bytes") or 0, manifest.size_bytes(_configured().files.spill))
         if await manifest.call(_free, self.spill) < need:
@@ -1584,7 +1585,7 @@ class _Session:
 
     async def renewed(self) -> None:
         """Before a per-key read, which needs nothing of an earlier statement: a cursor of a discarded
-        reader is closed, so the read opens one of the new reader and the old one's budget ends (D9); and
+        reader is closed, so the read opens one of the new reader and the old one's budget ends; and
         so is one of the shared reader whose files a reader has ended on since: the read opens apart."""
         cursor = self.cursor
         if cursor and (cursor._instance.dropped or (self.apart is None and _doubted(cursor._key))):
@@ -1599,12 +1600,12 @@ class _Session:
 
 
 def _wide(side: Plan, columns: Sequence[str]) -> bool:
-    """Whether a statement reading ``columns`` reads a text, bytes or JSON column (§10)."""
+    """Whether a statement reading ``columns`` reads a text, bytes or JSON column."""
     return any(side["classes"][column] in ("text", "char", "bytes", "json") for column in columns)
 
 
 def _fits(side: Plan, column: str, part: str) -> bool:
-    """Whether a key part can be the key text of a value of the column (§9): of its class's form, and a
+    """Whether a key part can be the key text of a value of the column: of its class's form, and a
     Parquet integer in its type's range."""
     cls, declared = side["classes"][column], side["declared"][column]
     if cls == "decimal":
@@ -1629,7 +1630,7 @@ def _fits(side: Plan, column: str, part: str) -> bool:
 
 
 def _keyed(side: Plan, asked: Asked) -> tuple[str, compose.Binds]:
-    """§9's per-key read: one statement for a group, one pass over the files. The keys join the rows by
+    """One statement for a group, one pass over the files. The keys join the rows by
     their key texts' bytes; a key one of whose parts no key text can be is on no row and is not joined. No
     predicate on a key column reaches the files' reader, which prunes row groups by their statistics: by
     those old writers computed in signed-byte order for a text or bytes column, and by those of any column
@@ -1664,17 +1665,17 @@ def _keyed(side: Plan, asked: Asked) -> tuple[str, compose.Binds]:
     return statement, binds
 
 
-# -- a file side's plan (§6) ------------------------------------------------------------------------------
+# -- a file side's plan ------------------------------------------------------------------------------
 
 
 @asynccontextmanager
 async def _planning(who: str, target: Target, files: int) -> AsyncIterator[None]:
-    """A plan's file work, its failures worded for ``who`` (P27 to P30, P34, P35, P14's deadline)."""
+    """A plan's file work, its failures worded for ``who``."""
     try:
         yield
     except Unstarted as exc:
         raise ValueError(unstarted(exc, who, _configured().files)) from None
-    except ReaderDied as exc:  # P35: its code is the text, worded for its side
+    except ReaderDied as exc:  # its code is the text, worded for its side
         raise ValueError(str(exc)) from None
     except StatementTimeout:
         raise NotReady(
@@ -1685,7 +1686,7 @@ async def _planning(who: str, target: Target, files: int) -> AsyncIterator[None]
         ) from None
     except TargetUnreachable as exc:
         raise manifest.unanswered(exc, who, target) from None
-    except (FilesChanged, TargetTempSpace, TargetDenied, TargetRefused) as exc:  # P29: any of DuckDB's
+    except (FilesChanged, TargetTempSpace, TargetDenied, TargetRefused) as exc:  # any of DuckDB's
         raise ValueError(
             f"{who}: its files could not be read while the run was planned ({code(exc)})"
         ) from None
@@ -1698,9 +1699,9 @@ _ending: ContextVar[float | None] = ContextVar("ending", default=None)  # when t
 
 @asynccontextmanager
 async def creating() -> AsyncIterator[None]:
-    """A run's creation while its file sides are planned (§6, §10): one ``files.plan_s`` from here for all
+    """A run's creation while its file sides are planned: one ``files.plan_s`` from here for all
     of them, and ``PLANS`` creations at once in a process, so that plans alone never fill the pool; one that
-    waited its whole ``files.plan_s`` for its turn is not ready (P34)."""
+    waited its whole ``files.plan_s`` for its turn is not ready."""
     plan_s = _configured().files.plan_s
     end = time.monotonic() + plan_s
     slots = _plans.setdefault(asyncio.get_running_loop(), asyncio.Semaphore(PLANS))
@@ -1722,7 +1723,7 @@ async def creating() -> AsyncIterator[None]:
 
 
 def _left(side: Plan) -> float:
-    """What is left of its run's ``files.plan_s`` (§6); a statement past it is P30."""
+    """What is left of its run's ``files.plan_s``; a statement past it fails the plan."""
     return max(side["pinned"]["end"] - time.monotonic(), 0.001)
 
 
@@ -1737,8 +1738,8 @@ async def _records(session: _Session, side: Plan, who: str) -> None:
     """Step 5 of a CSV side: each file's first record after ``skip``, read by the same reader as one record
     (``header=false``) with ``PADDED`` more columns, NULL past its last (the declared reader would skip a
     record of another count and hand over the next), has as many fields as csv.columns, no ``\\r`` ending
-    its last with ``newline: "\\n"``, and with ``header`` each field folds to its declared name (P21). A file
-    the reader refuses is P29, and the record is compared, never kept."""
+    its last with ``newline: "\\n"``, and with ``header`` each field folds to its declared name. A file
+    the reader refuses fails the plan, and the record is compared, never kept."""
     csv, files, declared = side["file"]["csv"], side["pinned"]["files"], side["file"]["csv"]["columns"]
     typed = ", hive_types=$r_types" if side["file"].get("partitions") else ""
     first = f"SELECT * FROM {_CSV.format(more=typed)} LIMIT 1"  # noqa: S608 (constants)
@@ -1784,7 +1785,7 @@ def _tops(rows: Rows) -> dict[str, tuple[Any, ...]]:
 
 
 def _footed(row: tuple[Any, ...]) -> str:
-    """A footer column's type as a message names it, and as every file's must be file 1's (P22): a time's
+    """A footer column's type as a message names it, and as every file's must be file 1's: a time's
     or a timestamp's with its unit, an INT96 as such, since DuckDB reads them all as one type."""
     if (row[4] or "").startswith("DecimalType"):
         return f"DECIMAL({row[5]},{row[6]})"
@@ -1798,7 +1799,7 @@ def _footed(row: tuple[Any, ...]) -> str:
 def _parquet_type(
     name: str, kind: str, row: tuple[Any, ...] | None, typed: Mapping[str, Any]
 ) -> tuple[str | None, str]:
-    """A Parquet column's class (None: refused) and why it is refused (P23), from the type DuckDB reads it
+    """A Parquet column's class (None: refused) and why it is refused, from the type DuckDB reads it
     as and its footer: a DECIMAL over 38 digits comes as a DOUBLE; a UTC nanosecond timestamp, an INT96
     timestamp (nanoseconds of a day) and a nanosecond time come to the microsecond, read only once the spec
     declares that reading: ``{as: timestamp}``, and for a time ``{as: string}``, its text."""
@@ -1830,8 +1831,8 @@ def _parquet_type(
 
 
 async def _footers(session: _Session, side: Plan, cfg: SideConfig, who: str) -> list[Column]:
-    """Step 5 of a Parquet side: file 1's columns as DuckDB reads them, each column the plan reads of a class
-    (P23), and every footer holding each with file 1's name and type (P22). Each file's footer was walked
+    """Step 5 of a Parquet side: file 1's columns as DuckDB reads them, each column the plan reads of a
+    class, and every footer holding each with file 1's name and type. Each file's footer was walked
     when it was pinned (``manifest._footer``); encrypted Parquet was refused there."""
     table, files, root = cfg.table, side["pinned"]["files"], session.target.root or ""
     assert table is not None
@@ -1887,7 +1888,7 @@ async def _footers(session: _Session, side: Plan, cfg: SideConfig, who: str) -> 
 
 
 def _csv_columns(file: Mapping[str, Any]) -> list[Column]:
-    """A CSV side's columns (§7): every field text, or char with ``padded``; a csv.keys column of its key's
+    """A CSV side's columns: every field text, or char with ``padded``; a csv.keys column of its key's
     class; the partitions' text."""
     csv, keys = file["csv"], file["csv"].get("keys") or {}
     columns = []
@@ -1903,7 +1904,7 @@ def _csv_columns(file: Mapping[str, Any]) -> list[Column]:
 
 
 # The lines a cursor's statements did not take as rows, by file, statement and line, each one's errors in
-# column order (U16: they store them in one pair of tables, under a scan id each): never a line's text or
+# column order (they store them in one pair of tables, under a scan id each): never a line's text or
 # DuckDB's message.
 _REJECTED = (
     "SELECT s.file_path, e.scan_id, e.line, e.error_type FROM reject_errors e"
@@ -1912,7 +1913,7 @@ _REJECTED = (
 
 
 def _p11(side: Plan, who: str) -> None:
-    """P11 of a CSV side: its filter compares a column, which is text, with a number or TRUE or FALSE."""
+    """Refuse a CSV side whose filter compares a column, which is text, with a number or TRUE or FALSE."""
     if not side.get("where"):
         return
     pending = [where.parse(side["where"])]
@@ -1929,14 +1930,14 @@ def _p11(side: Plan, who: str) -> None:
 
 
 async def _count(session: _Session, side: Plan, who: str) -> dict[str, Any]:
-    """Steps 6 and 7 (§6), on the session's own cursor: one pass counting the rows, those the filter selects
+    """Steps 6 and 7, on the session's own cursor: one pass counting the rows, those the filter selects
     and the texts a scan of the side would sort, from which ``sort_bytes`` projects its spill (step 8), every
-    declared column read so no later statement rejects a line it took (U13); a CSV side's lines that are not
-    rows, each (file, line) once by its kind, from the rejects of the pass and of its end check (U16, U21;
-    over ``REJECT_MAX`` refuses, P24). A Parquet side's rows and its worker columns' bytes are its footers',
+    declared column read so no later statement rejects a line it took; a CSV side's lines that are not
+    rows, each (file, line) once by its kind, from the rejects of the pass and of its end check (over
+    ``REJECT_MAX`` refuses). A Parquet side's rows and its worker columns' bytes are its footers',
     as the plan's walk read them (``manifest.Pinned.footed``): no statement reads a footer's figures or its
-    statistics as text (U30).
-    Then the first ``FLOOD`` rows of file 1 converted by csv.keys and typeMap (P25)."""
+    statistics as text.
+    Then the first ``FLOOD`` rows of file 1 converted by csv.keys and typeMap."""
     file, binds = side["file"], {}
     keys = compose._keys(PRIMITIVES, side, binds)
     condition = compose._filter(PRIMITIVES, side, binds)
@@ -1978,7 +1979,7 @@ async def _count(session: _Session, side: Plan, who: str) -> dict[str, Any]:
     if file["format"] == "csv":
         lines = await _lines(session, side, who, rows, more)
         counted |= {"rejected": len(lines), "kinds": dict(sorted(Counter(lines.values()).items()))}
-        if lines:  # by position and kind, never a name or a line's text (D12)
+        if lines:  # by position and kind, never a name or a line's text
             paths = [os.path.join(session.target.root or "", name) for name in side["pinned"]["files"]]
             shown = [
                 f"file {paths.index(path) + 1} line {line}: {kind}" for (path, line), kind in lines.items()
@@ -2022,12 +2023,12 @@ async def _rejected(session: _Session, side: Plan, before: set[int]) -> tuple[Li
 
 async def _lines(session: _Session, side: Plan, who: str, rows: int, more: str) -> Lines:
     """A CSV side's lines that are not rows: the counting pass's and, of a side that declares a quote, its
-    files' last records cut inside a quoted field, which the reader drops without a reject (U21). DuckDB's
+    files' last records cut inside a quoted field, which the reader drops without a reject. DuckDB's
     parallel reader records one, so each file is read once more with that one, alone (several files in one
     statement are read as the reader reads them). A scan of it that starts inside a quoted field takes the
-    field's lines for rows, or for lines that are not (U20), so it must have read the pass's ``rows`` and its
+    field's lines for rows, or for lines that are not, so it must have read the pass's ``rows`` and its
     lines, and beyond them nothing but a file's last line, cut in a quote: else no file's end is known, and
-    the plan is refused (P33)."""
+    the plan is refused."""
     counted, before = await _rejected(session, side, set())
     if not side["file"]["csv"].get("quote", '"') or len(counted) > REJECT_MAX:
         return counted
@@ -2054,7 +2055,7 @@ async def _lines(session: _Session, side: Plan, who: str, rows: int, more: str) 
 
 async def _flood(session: _Session, side: Plan, who: str) -> None:
     """Step 7: the first ``FLOOD`` rows of file 1, each csv.keys column's key text and each typeMap column's
-    value converted; a column failing in over half refuses (P25)."""
+    value converted; a column failing in over half refuses."""
     file, by = side["file"], {column: canonical for canonical, column in side["columns"].items()}
     keyed = [c for c in side["keys"] if c in ((file.get("csv") or {}).get("keys") or {})]
     mapped = [(side["columns"][canonical], spec) for canonical, spec in side["types"].items()]
@@ -2093,12 +2094,12 @@ def _declaration(side: Plan) -> str:
 
 
 class Files:
-    """``connectors.tables.Engine`` over files a target's root holds, read by the process's reader
-    (docs/mvp/FILES.md). A side's plan holds its pins as ``pinned`` once its run opened them (§6)."""
+    """``connectors.tables.Engine`` over files a target's root holds, read by the process's reader. A
+    side's plan holds its pins as ``pinned`` once its run opened them."""
 
     name = "files"
     arms = 200
-    unfit = ()  # no key is unfit here: the join compares texts (§9)
+    unfit = ()  # no key is unfit here: the join compares texts
     fold = staticmethod(str)  # a column is named as spelled
     hides = False
     grant = "SELECT"
@@ -2114,7 +2115,7 @@ class Files:
 
     @asynccontextmanager
     async def snapshot(self, target: Target, *, timeout_s: float = 0) -> AsyncIterator[_Session]:
-        """A session of files that cannot change under it (a change fails the run, §11), holding ``SORT``."""
+        """A session of files that cannot change under it (a change fails the run), holding ``SORT``."""
         async with SORT.held():
             session = await self.connect(target, timeout_s=timeout_s)
             try:
@@ -2131,11 +2132,11 @@ class Files:
     async def describe(
         self, session: _Session, schema: str | None, name: str, *, side: Any = None
     ) -> Relation | None:
-        """When a run is planned (``side`` its ``SideConfig``), §6's steps 1 to 5: the files pinned and their
-        columns read, the relation's facts holding what the plan stores of them and the pins; afterwards
+        """When a run is planned (``side`` its ``SideConfig``), the plan's steps 1 to 5: the files pinned and
+        their columns read, the relation's facts holding what the plan stores of them and the pins; afterwards
         (``side`` the stored plan) the relation as planned, after a stat check. A table pre-check, which
         names no side, is refused."""
-        if side is None:  # a table pre-check's (FILES.md §12: K1, the item a run would refuse)
+        if side is None:  # a table pre-check's (the item a run would refuse)
             raise Refusal(FILE_SIDE)
         if not isinstance(side, SideConfig):
             await _verify(session.target, side)
@@ -2162,7 +2163,7 @@ class Files:
         }
         plan = {"file": file, "pinned": held}
         async with _planning(who, session.target, len(pinned.files)):
-            await configured()  # P27, P28: before the side's first statement, which words neither
+            await configured()  # started before the side's first statement, which words no failed start
             if file["format"] == "parquet":
                 columns = await _footers(session, plan, side, who)
             else:
@@ -2175,8 +2176,8 @@ class Files:
         return Relation(None, table.name, tuple(columns), facts)
 
     async def probe(self, session: _Session, side: Plan) -> None:
-        """At a run's creation (the side's pins held with their deadline): its filter's literals (P11), its
-        statements parsed reading no row, then steps 6 to 9, whose counts the side's plan gains (§6); the
+        """At a run's creation (the side's pins held with their deadline): its filter's literals, its
+        statements parsed reading no row, then steps 6 to 9, whose counts the side's plan gains; the
         same bytes under the same declaration are counted once a process. A key table's are worded for it
         (``pinned["who"]``, ``plan.key_plan``'s): the log line of its lines that are not rows names no
         side."""
@@ -2201,11 +2202,11 @@ class Files:
 
     def large(self, side: Plan) -> bool:
         # A group is one pass over the files: 200 keys whatever its rows hold, and beside a side whose rows
-        # may be large too, which the worker then reads few at a time inside the group (FILES.md §12).
+        # may be large too, which the worker then reads few at a time inside the group.
         return False
 
     async def rows(self, session: _Session, side: Plan, asked: Asked) -> list[Row]:
-        """One statement for the group (§9), the files stat-checked before and after it; the documents are
+        """One statement for the group, the files stat-checked before and after it; the documents are
         built in the pool's thread."""
         statement, binds = _keyed(side, asked)
         if not statement:
@@ -2217,7 +2218,7 @@ class Files:
                 side, statement, binds, then=partial(compose.found, PRIMITIVES, side, asked)
             )
         finally:
-            if session.apart is not None:  # a reader apart is left after each read (READER.md §9)
+            if session.apart is not None:  # a reader apart is left after each read
                 await session.close()
         await _verify(session.target, side)
         return found
@@ -2254,7 +2255,7 @@ class Files:
     async def null_keys(self, session: _Session, side: Plan) -> int:
         """One more pass over the files, by a scan, a census or a frame that holds ``SORT``: stat-checked
         before and after as every read, and watched as their sort is, so a mount that stops answering under
-        it keeps ``SORT`` no longer than under them (§10)."""
+        it keeps ``SORT`` no longer than under them."""
         statement, binds = compose.null_keys(PRIMITIVES, side)
         await _verify(session.target, side)
         ((count,),) = await session.rows(side, statement, binds, watch=True)
@@ -2271,7 +2272,7 @@ class Files:
         raise Refusal(FILE_SIDE)
 
 
-# -- ``ds target check --table`` (FILES.md §16) -------------------------------------------------------------
+# -- ``ds target check --table`` -------------------------------------------------------------
 
 SNIFFED = 20_480  # rows of file 1 a draft is sniffed from
 # A row a sniffed column, its name and type after the header's flag: a frame carries no list of structs.
@@ -2292,14 +2293,14 @@ async def check(
     target: Target, path: str, form: str, *, delimiter: str | None = None, header: bool = False,
     count: bool = False, listed: bool = False,
 ) -> list[str]:  # fmt: skip
-    """``ds target check ID --table PATH --format FORM``'s lines (§16): the files the path names, as a plan's
+    """``ds target check ID --table PATH --format FORM``'s lines: the files the path names, as a plan's
     steps 1 and 2 find them; a CSV's draft, sniffed from file 1 (the one place a dialect is sniffed: a run
-    reads only what its approved spec declares, D5), or a Parquet side's columns with their classes; with
+    reads only what its approved spec declares), or a Parquet side's columns with their classes; with
     ``count`` the rows, a pass's seconds and the lines that are not rows, by position and kind; with
     ``listed`` each file's SHA-256 and ``files_sha256``. For ``listed``, and for ``count`` of a compressed
-    CSV export, the files are pinned as a plan pins them: each compressed stream read whole (U18: DuckDB
+    CSV export, the files are pinned as a plan pins them: each compressed stream read whole (DuckDB
     reads one cut short as fewer rows), a Parquet footer walked. File names are printed here and nowhere
-    else (D12). A refusal is a plan's, worded for ``target <id>``."""
+    else. A refusal is a plan's, worded for ``target <id>``."""
     files, who = _configured().files, f"target {target.target_id}"
     if manifest.path_error(path):
         raise ValueError(manifest.PATH_REFUSED)
@@ -2323,7 +2324,7 @@ async def check(
     ]
     root, packed = target.root or "", _packed(names[0]) if form == "csv" else None
     pinned = None
-    if listed or (count and packed):  # as a plan pins them: a compressed stream is read whole (U18)
+    if listed or (count and packed):  # as a plan pins them: a compressed stream is read whole
         stream = "parquet" if form == "parquet" else packed
         pinned = await manifest.pin(target, path, who, files, stream=stream)
     held = {"side": "a", "files": names, "pins": [[*manifest._key(stat), ""] for stat in stats]}
@@ -2365,7 +2366,7 @@ async def check(
 
 async def mount(target: Target) -> str:
     """A files target's mount for ``ds target check``, ``read-only`` or ``writable``: refused as a plan's
-    step 1 refuses it, a directory that does not answer among them (P14, P15, P28)."""
+    step 1 refuses it, a directory that does not answer among them."""
     who = f"target {target.target_id}"
     async with _planning(who, target, 0):
         return await manifest.rooted(target, who)
@@ -2384,7 +2385,7 @@ def _member(spec: Mapping[str, Any]) -> str:
 
 async def _sniffed(cursor: Cursor, side: Plan, asked: Mapping[str, Any], more: str) -> Rows:
     """File 1 as DuckDB's sniffer reads it under the options ``more``, a row a column; none where it finds
-    no dialect (its ``InvalidInputException``: any other failure is a read's, P29)."""
+    no dialect (its ``InvalidInputException``: any other failure is a read's)."""
     statement = _SNIFF.format(more=more)
     values = {name: value for name, value in asked.items() if f"${name}" in statement}
     try:
@@ -2506,7 +2507,7 @@ async def _drafted(
 
 async def _classed(session: _Session, side: Plan, who: str, *, count: bool, **_: Any) -> list[str]:
     """A Parquet side's columns as DuckDB reads file 1's, each with its class, or that a plan reading it is
-    refused (P23), or the typeMap a plan needs of a column read to the microsecond; with ``count``, the rows
+    refused, or the typeMap a plan needs of a column read to the microsecond; with ``count``, the rows
     the footers hold and the seconds of a pass over the first column."""
     first, relation = side["pinned"]["files"][:1], _relation(side)
     await session.send(side, f"SELECT * FROM {relation} LIMIT 0", {}, files=first, timeout_s=_left(side))  # noqa: S608

@@ -1,4 +1,4 @@
-"""Tiny Parquet files for the shapes DuckDB's writer does not produce (docs/mvp/FILES.md §18): one row group,
+"""Tiny Parquet files for the shapes DuckDB's writer does not produce: one row group,
 one row, required columns, PLAIN-encoded and uncompressed, the footer written by a test-only Thrift compact
 encoder. Test-only: no dependency, no reader.
 

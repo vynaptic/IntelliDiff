@@ -1,4 +1,4 @@
-"""Migration 016 (docs/mvp/PRECHECKS.md §8) over a populated 015 store with runs: the two pre-check tables,
+"""Migration 016 over a populated 015 store with runs: the two pre-check tables,
 each of their checks and the cascade, ``ds.runs.guard`` added without rewriting or scanning a table, and the
 repo functions of a pre-check: its pairs claimed and settled once, a target's pairs settled in one
 statement, a cancel, the end, the worst-first list that reads no result, pruning, and the schema guard's
@@ -16,7 +16,7 @@ from psycopg_pool import AsyncConnectionPool
 from deltasleuth.core.spec.assemble import content_hash
 from deltasleuth.core.spec.documents import parse_yaml_text
 from deltasleuth.store import repo
-from deltasleuth.store.db import MIGRATIONS, migrate
+from deltasleuth.store.db import migrate
 from tests.unit.runner.conftest import spec_text
 
 pytestmark = pytest.mark.db
@@ -106,14 +106,6 @@ async def stored(empty_pool: AsyncConnectionPool) -> AsyncConnectionPool:
         )
         assert described == [("jsonb", False, False)] and await _all(conn, constraints) == held
     return empty_pool
-
-
-def test_the_migration_is_the_contract_s() -> None:
-    """§8's statements, word for word, as the contract prints them."""
-    contract = (MIGRATIONS.parents[2] / "docs" / "mvp" / "PRECHECKS.md").read_text()
-    printed = contract.split("```sql\n", 1)[1].split("```", 1)[0]
-    assert (MIGRATIONS / "016_prechecks.sql").read_text() == printed
-    assert printed.rstrip().endswith("ALTER TABLE ds.runs ADD COLUMN guard jsonb;")
 
 
 async def test_indexes(stored: AsyncConnectionPool) -> None:

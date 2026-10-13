@@ -1,4 +1,4 @@
-"""The recheck policy (spec ``recheck``) and the confirm-on-mismatch rules (§8.3).
+"""The recheck policy (spec ``recheck``) and the confirm-on-mismatch rules.
 
 A provisional result is re-read, B first, and ``confirm`` judges it against the first read:
 
@@ -12,7 +12,7 @@ A provisional result is re-read, B first, and ``confirm`` judges it against the 
   its discrepant findings tagged ``intermittent_b``;
 * nothing changed: the first outcome is confirmed.
 
-Fixed files are read once (docs/mvp/FILES.md §12): a recheck reads no side of them again, so none is due
+Fixed files are read once: a recheck reads no side of them again, so none is due
 where their bytes alone would answer it, and a result both of whose sides read them is final as read
 (``freeze``). A read that failed read no bytes: it is read again.
 """
@@ -92,7 +92,7 @@ def _read(result: KeyResult, fixed: Collection[Side]) -> list[SideState]:
 
 def freeze(result: KeyResult, fixed: Collection[Side]) -> KeyResult:
     """``result``, final as read when both of its sides read fixed files: reading them again is a no-op, so
-    its confirmation is ``frozen_cut`` (architecture §8.3)."""
+    its confirmation is ``frozen_cut``."""
     if len(_read(result, fixed)) == 2:
         result.confirmation = Confirmation.FROZEN_CUT
     return result

@@ -1,5 +1,5 @@
 # The MySQL acceptance kit: accounts_a against accounts_b, the two tables of seed.sql, in one database.
-# Target: targets.yaml. Expected result: expected.json. Contract: docs/mvp/ENGINES.md.
+# Target: targets.yaml. Expected result: expected.json.
 #
 # Every non-key column is compared. Both sides are MySQL, so the server hashes the columns both tables
 # declare alike and the worker the others (amount, doc, note); each differing key is then read per key

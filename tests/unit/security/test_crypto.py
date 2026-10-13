@@ -1,4 +1,4 @@
-"""Keyring, key ids and sealed values (docs/mvp/RETENTION.md §1, §3): errors name files, lines and ids,
+"""Keyring, key ids and sealed values: errors name files, lines and ids,
 never key material; a sealed value opens only with its label, cycle, context, run key and run id."""
 
 from __future__ import annotations

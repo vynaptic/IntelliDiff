@@ -43,7 +43,7 @@ def test_health_needs_no_credential_and_says_what_is_on(
 def test_health_says_when_the_database_does_not_answer(
     open_client: OpenClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """docs/mvp/FIRSTRUN.md §8 S2: three seconds for a connection, under the image health check's four;
+    """Three seconds for a connection, under the image health check's four;
     and one text, which names no wait as passed: a pooled connection the database has closed fails at
     once."""
     waited = []
@@ -303,7 +303,7 @@ def test_targets_name_a_database_target_s_engine_and_never_its_host_or_user(open
 def test_a_database_s_error_while_a_run_is_created_is_a_422_naming_its_code(
     open_client: OpenClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # ENGINES §12 P14: a view left invalid answers its description with ORA-04063, which left the plan as
+    # A view left invalid answers its description with ORA-04063, which left the plan as
     # the engine's error and so the API as a 500, where every other refusal of a plan is a 422.
     refused = [TargetRefused("ORA-04063"), TargetUnreachable("ORA-03113")]
     monkeypatch.setitem(ENGINES, "postgresql", FakeEngine({"users": ["userid", "email"]}, describe=refused))

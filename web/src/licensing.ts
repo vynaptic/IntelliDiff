@@ -1,6 +1,6 @@
-/** What the screens say about the licence (docs/mvp/LICENCE.md §10, §12): why a control it refuses is
+/** What the screens say about the licence: why a control it refuses is
  *  disabled, a run paused for it, the names a run's reports are saved as, and a licence, its pairs and what it
- *  allows as `ds licence` prints them; and, of an open build (§19), that it needs no licence. The server still
+ *  allows as `ds licence` prints them; and, of an open build, that it needs no licence. The server still
  *  decides. */
 // Type imports only, so that Node runs the tests of this module without a bundler.
 import type { Allows, Licence, LicenceFields, Run } from './api';
@@ -54,7 +54,7 @@ export const allowsLine = (allows: Allows) =>
     .map(([name, ok]) => `${name} ${ok ? 'yes' : 'no'}`)
     .join(', ');
 
-/** How many pairs are seated and where their window opens (docs/mvp/LICENCE.md §7). */
+/** How many pairs are seated and where their window opens. */
 export function pairsLine(p: NonNullable<Licence['pairs']>): string {
   const since = p.since ? `the runs since ${p.since}` : 'every run';
   return `${p.limit === null ? 'Unlimited pairs' : `${pairs(p.limit)} seated`}; ${p.counted.length} counted from ${since}.`;

@@ -1,4 +1,4 @@
-"""One attempt of a notification (docs/mvp/ALERTS.md §5, §7): a signed HTTPS webhook, Slack, Teams or SMTP
+"""One attempt of a notification: a signed HTTPS webhook, Slack, Teams or SMTP
 mail, on threads of the notifier's own, never the loop's default executor, which key judging, sample
 judgements, purge and target DNS share.
 
@@ -422,7 +422,7 @@ class Sender:
         return Outcome("sent", "recipients_refused" if refused else None, 250)
 
 
-# -- without sending: ds notify check and the warnings at start (§10) -----------------------------------
+# -- without sending: ds notify check and the warnings at start -----------------------------------
 
 
 def _secrets(channel: ChannelSettings) -> tuple[str | None, list[str]]:

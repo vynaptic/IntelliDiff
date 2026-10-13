@@ -79,7 +79,7 @@ export function Chat({ runId, keyMasked, closed, ai }: { runId: string; keyMaske
   }
 
   if (ai === false)
-    return <span className="chat-toggle muted" title="No LLM profile is configured (DEPLOY.md, section 8)">AI is off</span>;
+    return <span className="chat-toggle muted" title="No LLM profile is configured">AI is off</span>;
   if (!open)
     return (
       <button className="chat-toggle" onClick={() => setOpen(true)}>

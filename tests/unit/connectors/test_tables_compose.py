@@ -1,4 +1,4 @@
-"""The statements of a MySQL and of an Oracle table side (docs/mvp/ENGINES.md §8, §10): their text, pinned
+"""The statements of a MySQL and of an Oracle table side: their text, pinned
 by a golden file each, and that whatever a key, a filter literal or a key map's prefix holds, a MySQL
 statement holds only grammar and an Oracle statement holds no value at all.
 """
@@ -216,13 +216,13 @@ def _filtered(literal: where.Value, column: str = "note") -> Plan:
 def test_a_filter_literal_not_of_its_column_s_class_is_refused(
     literal: where.Value, column: str, message: str
 ) -> None:
-    with pytest.raises(Refusal) as exc:  # P11: the server's zero-row probe would accept it
+    with pytest.raises(Refusal) as exc:  # the server's zero-row probe would accept it
         compose.probe(PRIMITIVES, _filtered(literal, column))
     assert str(exc.value) == message
 
 
 def test_a_filter_number_whose_exponent_no_decimal_holds_is_refused() -> None:
-    # P11 on both engines, not an arithmetic error out of the probe at run creation.
+    # Refused on both engines, not an arithmetic error out of the probe at run creation.
     huge = where.Value("num", "1e999999999999999999999999999999")
     with pytest.raises(Refusal) as exc:
         compose.probe(PRIMITIVES, _filtered(huge, "rate"))
@@ -242,7 +242,7 @@ def test_what_is_refused_when_the_spec_is_loaded_is_never_composed() -> None:
     with pytest.raises(Refusal, match="ILIKE is not read on this engine: use LIKE"):
         compose.scan(PRIMITIVES, PLAIN | {"where": "\"email\" ILIKE 'a%'"}, None)
     lob = MAPPED | {"strata": {"note": "note"}}
-    with pytest.raises(Refusal) as exc:  # P10
+    with pytest.raises(Refusal) as exc:
         compose.frame(PRIMITIVES, lob)
     assert str(exc.value) == "strata column 'note' (longtext) cannot stratify a frame"
     with pytest.raises(Refusal, match="strata column 'doc' \\(json\\) cannot stratify a frame"):
@@ -561,7 +561,7 @@ def test_oracle_statements_hold_no_value(key: str, literal: str, prefix: str, bo
     assert found == harmless
 
 
-# --- a file side's statements (docs/mvp/FILES.md §9) -----------------------------------------------------
+# --- a file side's statements -----------------------------------------------------
 
 FILES = json.loads((Path(__file__).parents[2] / "golden" / "engines" / "files_pair.json").read_text())
 PINNED = {"files": ["customers/a.csv"], "pins": [[1, 2, 3, 4, "0" * 64]]}
@@ -611,11 +611,11 @@ def test_a_files_statement_s_parts() -> None:
         " JOIN (VALUES (0, $v2)) AS a(i, k0) ON encode(CASE WHEN regexp_full_match(t.\"id\", '-?[0-9]{1,38}')"
         in rows
     )
-    # Every CSV statement reads every declared column (U13); a csv.keys integer reads through DECIMAL(38,0).
+    # Every CSV statement reads every declared column; a csv.keys integer reads through DECIMAL(38,0).
     every = 'WHERE ("id" IS NULL OR "id" IS NOT NULL) AND ("email" IS NULL OR "email" IS NOT NULL) AND'
     assert all(every in statement for statement, _ in csv.values() if statement)
     assert "read_csv($r_files, auto_detect=false, columns=$r_columns, header=$r_header" in csv["scan"][0]
-    # The order is each key text's UTF-8 bytes (U7); a resume bound compares them, bound as bytes.
+    # The order is each key text's UTF-8 bytes; a resume bound compares them, bound as bytes.
     integer = 'CAST(TRY_CAST(t."id" AS DECIMAL(38,0)) AS VARCHAR)'
     order = f"encode(CASE WHEN regexp_full_match(t.\"id\", '-?[0-9]{{1,38}}') THEN {integer} END)"
     assert csv["scan_after"][0].endswith(f" AND (({order} > $v2)) ORDER BY {order}")
@@ -635,7 +635,7 @@ def test_a_files_statement_s_parts() -> None:
 
 
 def test_a_file_pair_s_scan_hashes_in_duckdb(tmp_path: Path) -> None:
-    """D7, §9: the columns a file-to-file pair leaves out of ``digest`` are hashed by DuckDB: each rendered
+    """The columns a file-to-file pair leaves out of ``digest`` are hashed by DuckDB: each rendered
     text's SHA-256, ``-`` for a NULL, all of them hashed again to 32 bytes (bytes as their hexadecimal
     digits), which keeps a NULL and the boundary between two values apart; the worker's columns follow."""
     csv, parquet = CSV_SIDE | {"digest": ["balance"]}, PARQUET_SIDE | {"digest": []}
@@ -675,7 +675,7 @@ ROWS = [
 
 
 def test_files_statements_are_one_select_and_run(tmp_path: Path) -> None:
-    """Every statement is one SELECT (the cursor runs nothing else, U3), and runs on the locked instance with
+    """Every statement is one SELECT (the cursor runs nothing else), and runs on the locked instance with
     its reader's values bound."""
     with locked(tmp_path) as made:
         root = tmp_path / "files" / "root"
@@ -712,7 +712,7 @@ def test_files_statements_are_one_select_and_run(tmp_path: Path) -> None:
 @example(key="1'); DROP TABLE x; --", literal="' OR 1=1 --", prefix="$v0", delimiter="'")
 def test_duck_statements_hold_only_grammar(key: str, literal: str, prefix: str, delimiter: str) -> None:
     """Whatever a key, a filter literal, a key map's prefix or the dialect holds, a file side's statement is
-    the same text, every value bound (U5): no spec or key text is spliced in."""
+    the same text, every value bound: no spec or key text is spliced in."""
     where_ = f"status = '{literal.replace(chr(39), chr(39) * 2)}'"
     try:
         where.parse(where_)

@@ -1,4 +1,4 @@
--- DeltaSleuth MVP schema: a lean subset of docs/architecture/control-plane.sql (same names, same meanings).
+-- DeltaSleuth's base schema.
 --
 -- Raw keys live in run_keys.key and the columns that reference it (the fetch needs them); they are
 -- never displayed. Every value shown to people or models is masked by the caller before it is stored:

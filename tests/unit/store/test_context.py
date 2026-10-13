@@ -1,5 +1,5 @@
-"""Settings and the shared context: its keys (docs/mvp/RETENTION.md §1, §6.1) and its store, and what the
-first connection says of a database that refuses or does not answer (docs/mvp/FIRSTRUN.md §8)."""
+"""Settings and the shared context: its keys and its store, and what the
+first connection says of a database that refuses or does not answer."""
 
 from __future__ import annotations
 
@@ -145,7 +145,7 @@ async def test_the_context_opens_a_migrated_store_with_ai_off(tmp_path: Path, pg
 
 @pytest.mark.db
 async def test_the_pool_is_sized_for_mcp_s_calls(tmp_path: Path, pg_dsn: str) -> None:
-    """docs/mvp/MCP.md §4, §5.2: ``mcp.concurrency`` more connections where MCP is served over HTTP, and
+    """``mcp.concurrency`` more connections where MCP is served over HTTP, and
     the pool ``ds mcp`` asks for: one idle connection a process."""
     mcp = {"data_classes": ["aggregates"], "concurrency": 3}
     sizes = {}
@@ -212,7 +212,7 @@ async def test_the_server_s_context_builds_the_idp_client_in_oidc_mode_only(
     assert "warning: identity provider unreachable at start; sign-in retries on first use" in caplog.messages
 
 
-# -- keys at start (docs/mvp/RETENTION.md §6.1) ----------------------------------------------------
+# -- keys at start ----------------------------------------------------
 
 
 def observation(body: bytes) -> Observation:
@@ -359,7 +359,7 @@ async def test_a_run_s_sealer_is_cached_and_needs_its_kek(tmp_path: Path, pg_dsn
             await ctx.sealer(conn, RUN_ID)
 
 
-# -- the first connection (docs/mvp/FIRSTRUN.md §8 S3, S4) -----------------------------------------
+# -- the first connection -----------------------------------------
 
 
 @pytest.fixture
@@ -386,7 +386,7 @@ def tries(monkeypatch: pytest.MonkeyPatch) -> list[float]:
 @pytest.mark.db
 @pytest.mark.usefixtures("no_password_of_this_machine")
 async def test_admitted_tells_a_refusal_from_no_answer(pg_dsn: str, tries: list[float]) -> None:
-    """S3: a server that asked for a password and refused is said after three tries, and at once where no
+    """A server that asked for a password and refused is said after three tries, and at once where no
     password was given; one that does not answer is left to the pool's wait."""
     assert db.TRIES == 3
     refusals = {
@@ -414,8 +414,9 @@ async def test_admitted_tells_a_refusal_from_no_answer(pg_dsn: str, tries: list[
 async def test_a_connection_limit_that_frees_is_no_refusal(
     pg_server: str, pg_dsn: str, tries: list[float], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """S3: a role at its connection limit is refused after its right password, as a wrong password is. The
-    probe is repeated, so a limit that frees between the tries passes, and one that stays ends in C5."""
+    """A role at its connection limit is refused after its right password, as a wrong password is. The
+    probe is repeated, so a limit that frees between the tries passes, and one that stays ends in the refused
+    connection's message."""
     monkeypatch.setattr(db, "APART", 0.5)
     role = f"limited_{pg_dsn[-12:]}"
     dsn = pg_dsn.replace("postgres:test@", f"{role}:test@")
@@ -440,7 +441,7 @@ async def test_a_connection_limit_that_frees_is_no_refusal(
 
 
 async def test_an_address_the_driver_cannot_read_is_refused_before_any_connection(tries: list[float]) -> None:
-    """S3: the driver's words for such an address quote it, the password included, and an unencoded @ or /
+    """The driver's words for such an address quote it, the password included, and an unencoded @ or /
     turns the password's tail into a host or a database name that a connection error would name."""
     unreadable = {
         "an unencoded %": "postgresql://deltasleuth:Dsn-Passw0rd%Zanary@127.0.0.1:1/deltasleuth",
@@ -471,7 +472,7 @@ async def test_an_address_the_driver_cannot_read_is_refused_before_any_connectio
 @pytest.mark.db
 @pytest.mark.usefixtures("no_password_of_this_machine")
 async def test_a_refusal_never_carries_the_drivers_words(tmp_path: Path, pg_dsn: str) -> None:
-    """S3: the driver names the account and the database it was refused; the refusal and its traceback
+    """The driver names the account and the database it was refused; the refusal and its traceback
     name neither, and ``Context.open`` ends in it before its pool waits."""
     address = pg_dsn.split("@")[1].split("/")[0]
     dsn = f"postgresql://Account-Canary:Dsn-Passw0rd-Canary@{address}/Database-Canary"
@@ -487,7 +488,7 @@ async def test_a_refusal_never_carries_the_drivers_words(tmp_path: Path, pg_dsn:
 
 
 def test_a_pool_line_is_logged_once_while_the_store_opens(caplog: pytest.LogCaptureFixture) -> None:
-    """S4: the pool logs every failed try of its wait for the first connection in the same words."""
+    """The pool logs every failed try of its wait for the first connection in the same words."""
     pool, records = logging.getLogger("psycopg.pool"), []
     seen = logging.Handler()  # on the driver's logger itself: whatever an earlier test left above it
     seen.emit = records.append  # type: ignore[method-assign]

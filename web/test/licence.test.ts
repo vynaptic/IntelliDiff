@@ -1,6 +1,6 @@
-// What the screens say about the licence and which controls it disables (docs/mvp/LICENCE.md §10, §12), from
+// What the screens say about the licence and which controls it disables, from
 // GET /v1/licence and a run's `licence`; the server still decides. An open build's screens say that no licence
-// is needed, disable nothing and show no licence banner (§19).
+// is needed, disable nothing and show no licence banner.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
@@ -46,7 +46,7 @@ test('nothing is disabled while the licence is unknown or not loaded: the server
 });
 
 test('an open build needs no licence: its screens say so, disable nothing and show no banner', () => {
-  // GET /v1/licence in a build that embeds no vendor key (docs/mvp/LICENCE.md §19).
+  // GET /v1/licence in a build that embeds no vendor key.
   const open = standing({ state: 'open', licence: null, pairs: { limit: null, since: null, counted: [] } });
   assert.equal(namedLine(open), 'This build needs no licence and limits nothing.');
   assert.equal(

@@ -1,4 +1,4 @@
--- The golden corpus of canonical rendering 1 for files (docs/mvp/FILES.md §8, §18), as DuckDB's own writer
+-- The golden corpus of canonical rendering 1 for files, as DuckDB's own writer
 -- writes it to Parquet: one column per type a Parquet column is read as, with edge values (corpus), and the
 -- values every engine must render and digest alike (portable, its c_char a padded CSV field's). files.json
 -- and portable.json pin what each row renders as.

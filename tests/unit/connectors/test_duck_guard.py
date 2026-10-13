@@ -1,8 +1,8 @@
-"""The locked DuckDB instance (docs/mvp/FILES.md §3's U1 to U4, U12 and U17, §10, §14): the wheel, what is
-compiled in, the guard, the spill and its limit, the self-test, and P27 and P28. Every behaviour is observed
-on the locked version; no statement here may reach a network (an ``INSTALL`` names a closed local port).
+"""The locked DuckDB instance: the wheel, what is compiled in, the guard, the spill and its limit, the
+self-test, and a reader that does not start. Every behaviour is observed on the locked version; no statement
+here may reach a network (an ``INSTALL`` names a closed local port).
 What DuckDB itself does is observed on a connection in this process (``locked``); what the product does, on
-a reader, the process it reads through (``started``, ``duck.instance``; docs/mvp/READER.md)."""
+a reader, the process it reads through (``started``, ``duck.instance``)."""
 
 from __future__ import annotations
 
@@ -41,9 +41,9 @@ VERSION = "1.5.5"
 
 
 def test_duckdb_wheel() -> None:
-    """U1, from uv.lock without a download: pinned exactly, no required dependency, a cp313 manylinux wheel
+    """From uv.lock without a download: pinned exactly, no required dependency, a cp313 manylinux wheel
     for each of release.MACHINES. The installed macOS wheel vendors no ``*.libs`` file; the manylinux ones
-    are not inspected (FILES.md §3 and RELEASE §8 record that check as open)."""
+    are not inspected (that check is open)."""
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
     assert f"duckdb=={VERSION}" in pyproject["project"]["dependencies"]
     lock = tomllib.loads((ROOT / "uv.lock").read_text())
@@ -62,7 +62,7 @@ def test_duckdb_wheel() -> None:
 
 
 def test_needed_extensions_are_built_in(tmp_path: Path) -> None:
-    """U2: parquet and core_functions are loaded and statically linked, read before the lock; after it the
+    """Parquet and core_functions are loaded and statically linked, read before the lock; after it the
     listing needs the extension directory, which lies outside every allowed one (observed)."""
     con = duckdb.connect(
         ":memory:", config={"autoload_known_extensions": False, "autoinstall_known_extensions": False}
@@ -103,7 +103,7 @@ GUARDED = {
 
 @pytest.mark.parametrize("statement", GUARDED.values(), ids=GUARDED.keys())
 def test_guard_refuses(tmp_path: Path, statement: str) -> None:
-    """U3: after allowed_directories, enable_external_access=false and lock_configuration=true."""
+    """After allowed_directories, enable_external_access=false and lock_configuration=true."""
     base = tmp_path.resolve()
     (base / "files" / "rootx").mkdir(parents=True)
     (base / "files" / "rootx" / "a.csv").write_text("id\n1\n")
@@ -129,7 +129,7 @@ def test_guard_reads_inside_a_root(tmp_path: Path) -> None:
 
 
 def test_guard_does_not_refuse_writes_into_an_allowed_directory(tmp_path: Path) -> None:
-    """U3 as observed: DuckDB itself runs ATTACH, COPY TO and EXPORT into an allowed directory (a root, or the
+    """As observed: DuckDB itself runs ATTACH, COPY TO and EXPORT into an allowed directory (a root, or the
     spill it allows by itself), so the reader's cursor runs one SELECT a call and nothing else."""
     base = tmp_path.resolve()
     with locked(base) as made:
@@ -159,7 +159,7 @@ def test_guard_does_not_refuse_writes_into_an_allowed_directory(tmp_path: Path) 
 
 
 def test_no_replacement_scan(tmp_path: Path) -> None:
-    """U12: no SQL name resolves to a Python object."""
+    """No SQL name resolves to a Python object."""
     customers = [("1", "x")]  # noqa: F841 - what a replacement scan would read
     with locked(tmp_path) as made, pytest.raises(duckdb.CatalogException):
         made.con.execute("SELECT * FROM customers").fetchall()
@@ -171,7 +171,7 @@ def _mib(text: str) -> int:
 
 
 def test_limits_are_binary(tmp_path: Path) -> None:
-    """U17: memory_limit and max_temp_directory_size given as <n>MiB read back as n x 2^20 bytes."""
+    """memory_limit and max_temp_directory_size given as <n>MiB read back as n x 2^20 bytes."""
     with locked(tmp_path, memory_mib=2048, spill_mib=20 * 1024, threads=3) as made:
         memory, spill, threads = made.con.execute(
             "SELECT current_setting('memory_limit'), current_setting('max_temp_directory_size'),"
@@ -204,8 +204,8 @@ def _peak(con: Any, temp: Path, statement: str) -> tuple[int, int]:
 
 
 def test_spill_with_external_access_off(tmp_path: Path) -> None:
-    """U4: the sort spills to temp_directory under the lock and stops at max_temp_directory_size. 200,000
-    rows of 132 bytes spill from 72 MiB with 2 threads (recorded in RELEASE §5; 70 MiB fails, and from 90
+    """The sort spills to temp_directory under the lock and stops at max_temp_directory_size. 200,000
+    rows of 132 bytes spill from 72 MiB with 2 threads (70 MiB fails, and from 90
     MiB they fit in memory); the self-test sorts them at 80 MiB."""
     with locked(tmp_path / "a", memory_mib=duck.SELFTEST_MIB) as made:
         assert _peak(made.con, made.spill / "temp", duck.SPILL_SORT)[0] == 200_000
@@ -232,7 +232,7 @@ def test_spill_with_external_access_off(tmp_path: Path) -> None:
 
 
 def test_nothing_is_written_outside_the_spill(tmp_path: Path) -> None:
-    """§10: DuckDB writes under its own spill directory alone: its temporary files, its home, extension and
+    """DuckDB writes under its own spill directory alone: its temporary files, its home, extension and
     secret directories; and the spill directory of a live instance is kept by a sweep."""
     base = tmp_path.resolve()
     before = {p for p in base.rglob("*")}
@@ -245,7 +245,7 @@ def test_nothing_is_written_outside_the_spill(tmp_path: Path) -> None:
 
 
 def test_no_socket_is_opened(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """§14 point 1: building, proving and using the instance opens no Python socket (U3 covers DuckDB's)."""
+    """Building, proving and using the instance opens no Python socket (the lock covers DuckDB's)."""
     opened: list[Any] = []
     monkeypatch.setattr(socket.socket, "connect", lambda *a: opened.append(a))
     monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: opened.append(a) or [])
@@ -256,7 +256,7 @@ def test_no_socket_is_opened(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
 
 @pytest.mark.parametrize("limits", [True, False])
 def test_the_self_test_and_its_imports(tmp_path: Path, limits: bool) -> None:
-    """§3's smoke step in a process of its own, as the release runs it (READER.md §11): the line it prints,
+    """The release's smoke step in a process of its own, as the release runs it: the line it prints,
     with its limits (each as this platform has it) and without them; no pyarrow, pandas or numpy, and no
     DuckDB but in its readers, whose spill directories went with them. The reader it sent SIGSEGV is in its
     error output, by the warning of that end. On macOS without ``DS_FAULTS=1`` the self-test is handed the
@@ -313,7 +313,7 @@ def test_the_self_test_judges_its_limits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], restrict: str,
     holds: str, failure: str | None,
 ) -> None:  # fmt: skip
-    """READER.md §11, its step 3, by readers that take themselves for Linux ones on a machine of
+    """The self-test's proof of its limits, by readers that take themselves for Linux ones on a machine of
     ``FILTERED`` and report what the case says: the self-test fails unless its first reader's start saw
     the data limit hold and sockets denied, naming which did not and why, and unless the statement sent
     under the small limit does not complete; else it prints that both held."""
@@ -337,13 +337,13 @@ def test_the_self_test_judges_its_limits(
 def test_an_unproved_guard_is_p27(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """P27 sends its reader to the server log: each check that does not hold is logged there by its name
-    (no text of DuckDB's) before the instance is refused: the reader's process answers which check and its
-    names, and this one words them. A build that lacks an extension does not know its settings either, and
+    """The refusal sends its reader to the server log: each check that does not hold is logged there by its
+    name (no text of DuckDB's) before the instance is refused: the reader's process answers which check and
+    its names, and this one words them. A build that lacks an extension does not know its settings either, and
     parquet_metadata_cache is the Parquet reader's own: the extensions are judged before a cache is set, so
-    such a build is P27 and not DuckDB's CatalogException out of a plan. Simulated, since the locked wheel
-    links the reader: by httpfs, which it lacks, and a setting of that extension's, in a process whose
-    constants hold them."""
+    such a build is refused as a reader that did not start and not by DuckDB's CatalogException out of a plan.
+    Simulated, since the locked wheel links the reader: by httpfs, which it lacks, and a setting of that
+    extension's, in a process whose constants hold them."""
     base = tmp_path.resolve()
     found = settings(base)
     (base / "files" / "root").mkdir(parents=True)
@@ -437,13 +437,13 @@ def test_an_unwritable_or_small_spill_is_p28(tmp_path: Path, monkeypatch: pytest
 
 
 async def test_one_instance_a_process_built_anew_when_dropped(tmp_path: Path) -> None:
-    """§10: the reader is started at its first use and kept; a fatal error or an abandoned call drops it,
+    """The reader is started at its first use and kept; a fatal error or an abandoned call drops it,
     and the next use starts another, in a spill directory of its own. The dropped one makes no cursor more;
     a session that holds one of its cursors goes on with it (it was Busy('Dropped') at its next statement,
     which cost every file side's pass in flight). A statement that meets the database an earlier fatal
     error invalidated is Busy('Dropped'), and a result that was open is still fetched. Its process is
     killed, and its spill directory given up, once its last cursor is closed. The fatal error is DuckDB's
-    own: U16's aggregate over a line of invalid UTF-8."""
+    own: an aggregate over a line of invalid UTF-8."""
     base = tmp_path.resolve()
     found, roots = settings(base), [str(base / "files" / "root")]
     (base / "files" / "root").mkdir(parents=True)
@@ -492,7 +492,7 @@ async def test_one_instance_a_process_built_anew_when_dropped(tmp_path: Path) ->
 async def test_concurrent_first_uses_build_one_instance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """D9: one instance a process, one budget. Tasks that reach the reader before the first instance is
+    """One instance a process, one budget. Tasks that reach the reader before the first instance is
     stored (two schedules due together, a lane beside a resumed scan after a restart) wait for one build."""
     base = tmp_path.resolve()
     found, roots = settings(base), [str(base / "files" / "root")]
@@ -514,7 +514,7 @@ async def test_concurrent_first_uses_build_one_instance(
 def test_a_spill_directory_that_went_meanwhile_is_not_logged(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """§10: a spill directory that is gone between the sweep's listing and its look (its reader ended and
+    """A spill directory that is gone between the sweep's listing and its look (its reader ended and
     gave it up on a thread of its own, or another process swept it) is no directory left unswept: nothing
     is logged of it, and the others are removed."""
     stale = [tmp_path / "spill" / (letter * 26) for letter in "ab"]
@@ -529,9 +529,9 @@ def test_a_spill_directory_that_went_meanwhile_is_not_logged(
 def test_a_stale_spill_directory_that_cannot_be_swept_stops_no_start(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """§10: the sweep is best effort an entry. A leftover of another uid (one this process may not open, one
+    """The sweep is best effort an entry. A leftover of another uid (one this process may not open, one
     whose entries it may not remove) is logged by its position and passed over; the others are removed, and
-    the reader starts (it was P28's 'files.spill_dir is not a directory DeltaSleuth may write')."""
+    the reader starts (it was refused: 'files.spill_dir is not a directory DeltaSleuth may write')."""
     base = tmp_path.resolve()
     found = settings(base)
     (base / "files" / "root").mkdir(parents=True)
@@ -560,7 +560,7 @@ def test_a_stale_spill_directory_that_cannot_be_swept_stops_no_start(
 async def test_a_cursor_maps_each_failure_to_its_class(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§10's table, by the class DuckDB raises, never its text."""
+    """Each failure by the class DuckDB raises, never its text."""
     base = tmp_path.resolve()
     with ducked.started(base, memory_mib=48) as made:
         cursor = made.cursor()

@@ -1,4 +1,4 @@
--- Table pre-checks and the schema guard (docs/mvp/PRECHECKS.md). A pre-check is no run and no evidence:
+-- Table pre-checks and the schema guard. A pre-check is no run and no evidence:
 -- its rows go retention.standard_days after it was made; its audit rows stay. ds.runs.guard holds what
 -- the schema guard recorded of a run's tables: added without a default or a check, so ds.runs is neither
 -- rewritten nor scanned.
@@ -9,7 +9,7 @@ CREATE TABLE ds.prechecks (
     request      jsonb NOT NULL CHECK (jsonb_typeof(request) = 'object'),  -- ids, target ids, schemas, globs
     pairs        integer NOT NULL CHECK (pairs BETWEEN 1 AND 500),
     skipped      integer NOT NULL DEFAULT 0,
-    evaluation   boolean NOT NULL DEFAULT false,     -- made in an unlicensed evaluation (LICENCE O1's label)
+    evaluation   boolean NOT NULL DEFAULT false,     -- made in an unlicensed evaluation, and labelled so
     created_by   text NOT NULL,
     created_at   timestamptz NOT NULL DEFAULT now(),
     cancelled_by text,

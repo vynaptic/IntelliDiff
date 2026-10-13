@@ -1,7 +1,7 @@
-/** The licence (docs/mvp/LICENCE.md §12), open to every role: the installation id, the licence in force and
+/** The licence, open to every role: the installation id, the licence in force and
  *  its renewal, the state and its warnings, what it allows, the pairs counted with their seats, and who
  *  installed or withdrew each licence and why. Licences are installed on the host (ds licence install). In
- *  an open build (§19) it says that no licence is needed, with the id and what is allowed: no pair is
+ *  an open build it says that no licence is needed, with the id and what is allowed: no pair is
  *  counted, and only a licence an earlier vendor build stored is listed, as one that does not count. */
 import { api, type CountedPair, type InstalledLicence } from './api';
 import { allowsLine, installLine, licenceLine, namedLine, pairsLine } from './licensing';

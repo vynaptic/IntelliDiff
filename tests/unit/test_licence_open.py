@@ -1,8 +1,8 @@
-"""The open build (docs/mvp/LICENCE.md §19): without a vendor key the standing is ``open``, which judges
+"""The open build: without a vendor key the standing is ``open``, which judges
 no stored row, counts no pair, refuses and warns of nothing and records nothing on a run; a file is neither
 shown nor installed; ``watch`` audits the state once, and closes an evaluation's; a run made in an
-evaluation keeps its own label and gets no pack; a vendor key brings the evaluation back; and the guides
-say what an open build prints in its own words."""
+evaluation keeps its own label and gets no pack; a vendor key brings the evaluation back; and the Licence
+screen and SECURITY.md word an open build as the product does."""
 
 from __future__ import annotations
 
@@ -85,23 +85,15 @@ def test_a_file_is_neither_shown_nor_installed() -> None:
         with pytest.raises(LicenceError) as refused:
             licence.parse(data)
         assert str(refused.value) == I1
-    assert I1 == (
-        "this build embeds no vendor key: it needs no licence and can verify none (docs/mvp/LICENCE.md §19)"
-    )
+    assert I1 == "this build embeds no vendor key: it needs no licence and can verify none"
 
 
-def test_the_guides_quote_the_open_build_word_for_word(repo_root: Path) -> None:
-    """What the deployment guide and the runbook say an open build prints is what it prints, line breaks
-    aside: ``ds licence``'s lines (``cli/test_cli.py`` holds the command to them), I1 and the Licence
-    screen's line; and the release documents give the line its notes must carry as the tool asks for it."""
+def test_the_open_build_is_worded_as_the_product_words_it(repo_root: Path) -> None:
+    """The Licence screen has its own line for an open build, and SECURITY.md gives the line a release's
+    notes must carry as the release tool asks for it, line breaks aside."""
     screen = "This build needs no licence and limits nothing."
     assert f"return '{screen}';" in (repo_root / "web/src/licensing.ts").read_text()
-    printed = ("licence none: this build needs no licence", "state open", f"error: {I1}", screen,
-               "allows: runs yes, sso yes, signoff yes, packs yes")  # fmt: skip
-    quoted = {"docs/mvp/DEPLOY.md": printed, "docs/mvp/RUNBOOK.md": printed,
-              "docs/mvp/RELEASE.md": (release.OPEN_BUILD,), "SECURITY.md": (release.OPEN_BUILD,)}  # fmt: skip
-    said = {name: " ".join((repo_root / name).read_text().split()) for name in quoted}
-    assert [(name, text) for name, texts in quoted.items() for text in texts if text not in said[name]] == []
+    assert release.OPEN_BUILD in " ".join((repo_root / "SECURITY.md").read_text().split())
 
 
 def test_a_run_s_own_label_is_kept_and_new_runs_carry_none() -> None:
@@ -113,7 +105,7 @@ def test_a_run_s_own_label_is_kept_and_new_runs_carry_none() -> None:
         " pack is issued for it."
     )
     assert licence.file_name(old, "report.pdf") == f"{RUN}-unlicensed-evaluation-report.pdf"
-    # So no pack is issued for it, whose certificate would contradict that label (M8, D8): a new run gets one.
+    # So no pack is issued for it, whose certificate would contradict that label: a new run gets one.
     current = judged(day=STARTS, mode="oidc", packs=True)
     assert licence.pack_problems(current, new) == [] == licence.pack_problems(current, {**new, "params": {}})
     assert licence.pack_problems(current, old) == [

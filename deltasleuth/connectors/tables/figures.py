@@ -1,4 +1,4 @@
-"""What a table pre-check reads of one side (docs/mvp/PRECHECKS.md §5), inside one snapshot of its engine:
+"""What a table pre-check reads of one side, inside one snapshot of its engine:
 the figures ``core.precheck`` asks for, a few columns a statement, then the keys several rows hold and
 the distinct counts; and the closed code a failed read is recorded by.
 
@@ -48,7 +48,7 @@ def classed(side: Plan, relation: Relation) -> Plan:
 
 
 def failure(exc: BaseException, timeout_s: float, elapsed_s: float = 0) -> tuple[str, str]:
-    """A failed read as a pre-check records it (§5): its closed code, and what a line may show beside it,
+    """A failed read as a pre-check records it: its closed code, and what a line may show beside it,
     an engine's code or an error's class, never a driver's text; for a timeout, the seconds the statement
     was given. A MySQL statement the server interrupted (1317) once it had run ``elapsed_s`` past its
     timeout timed out too: the server's limit may end it so."""

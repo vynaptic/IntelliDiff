@@ -1,4 +1,4 @@
-"""DuckDB's Parquet reader on the locked instance (docs/mvp/FILES.md §3's U9 and U15; §8), on files DuckDB
+"""DuckDB's Parquet reader on the locked instance, on files DuckDB
 writes and on ``parquet_tiny``'s hand-built ones for the shapes its writer does not produce (observed, not
 stubbed)."""
 
@@ -39,7 +39,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_golden_renderings(tmp_path: Path) -> None:
-    """U9: CAST(DOUBLE AS VARCHAR) reads back exactly; epoch_us of an instant is its UTC microseconds
+    """CAST(DOUBLE AS VARCHAR) reads back exactly; epoch_us of an instant is its UTC microseconds
     whatever the session's zone (ICU's), so no ICU function is needed; a DECIMAL over 38 digits shows in
     parquet_schema, and DuckDB hands it over as a DOUBLE."""
     rng = random.Random(21)  # noqa: S311 (test data)
@@ -80,7 +80,7 @@ def test_golden_renderings(tmp_path: Path) -> None:
 
 
 def test_nanosecond_instants_are_found(tmp_path: Path) -> None:
-    """U15: parquet_schema shows a timestamp's unit and whether it is adjusted to UTC, for DuckDB's own files
+    """parquet_schema shows a timestamp's unit and whether it is adjusted to UTC, for DuckDB's own files
     and hand-built ones; DuckDB reads a UTC nanosecond timestamp to the microsecond, a naive one whole.
     A zoned value is never fetched as such (DuckDB would need pytz, which is not installed): it is
     rendered."""
@@ -134,7 +134,7 @@ def test_nanosecond_instants_are_found(tmp_path: Path) -> None:
 
 
 def test_a_time_is_written_from_its_microseconds() -> None:
-    """§8, U30: a TIME's text is built from its microseconds, never by DuckDB's own conversion, which is an
+    """A TIME's text is built from its microseconds, never by DuckDB's own conversion, which is an
     internal error, or ends the process, for a TIME outside a day (a crafted file's page may hold one; no
     such value is made here). Of every time of day it is DuckDB's text: no digit after a whole second,
     else up to six without trailing zeros, 24:00:00 the last."""
@@ -159,7 +159,7 @@ def test_a_time_is_written_from_its_microseconds() -> None:
     ]  # fmt: skip
 
 
-# --- the Parquet reader of a file side (FILES.md §6, §8) -------------------------------------------------
+# --- the Parquet reader of a file side -------------------------------------------------
 
 GOLDEN = Path(__file__).parents[2] / "golden" / "engines"
 NESTED = "nested columns are not read; list the columns to compare without it"
@@ -182,10 +182,10 @@ def _loaded(text: str) -> Any:
 
 
 async def test_golden_renderings_of_files(tmp_path: Path) -> None:
-    """§8's rows against tests/golden/engines/files.json: each type DuckDB reads a Parquet column as, its
-    class and its canonical value, edge values among them; and the values every engine renders alike
-    (portable.json),
-    a padded CSV field against PostgreSQL's char(5) among them, which digest as the other engines' do."""
+    """The Parquet types against tests/golden/engines/files.json: each type DuckDB reads a Parquet column as,
+    its class and its canonical value, edge values among them; and the values every engine renders alike
+    (portable.json), a padded CSV field against PostgreSQL's char(5) among them, which digest as the other
+    engines' do."""
     root = tmp_path / "files" / "root"
     root.mkdir(parents=True)
     con = unrestricted()
@@ -252,9 +252,9 @@ async def test_golden_renderings_of_files(tmp_path: Path) -> None:
 async def test_nested_columns_are_refused_where_the_plan_reads_them(
     tmp_path: Path, select: str, message: str
 ) -> None:
-    """P23, discovered columns included; listing the columns to compare leaves one out. A nested type is
+    """Discovered columns included; listing the columns to compare leaves one out. A nested type is
     named by its head alone: what follows holds a file's text (a field's name, which may be lines of its
-    own), and a plan's refusal words none of it (READER.md §6)."""
+    own), and a plan's refusal words none of it."""
     _parquet(tmp_path, "t.parquet", select)
     with pytest.raises(ValueError) as error:
         await planned(tmp_path, _table("t.parquet"))
@@ -265,8 +265,8 @@ async def test_nested_columns_are_refused_where_the_plan_reads_them(
 
 
 async def test_a_wide_decimal_and_a_utc_nanosecond_instant_are_found_in_the_footer(tmp_path: Path) -> None:
-    """P23 for parquet_tiny's 76-digit DECIMAL (which DuckDB hands over as a DOUBLE) and a UTC nanosecond
-    timestamp (read to the microsecond), read once the spec declares {as: timestamp}; observed, not
+    """The refusal of parquet_tiny's 76-digit DECIMAL (which DuckDB hands over as a DOUBLE) and a UTC
+    nanosecond timestamp (read to the microsecond), read once the spec declares {as: timestamp}; observed, not
     stubbed."""
     root = tmp_path / "files" / "root"
     root.mkdir(parents=True)
@@ -313,7 +313,7 @@ MICROSECOND = (
 async def test_legacy_shapes_are_read(tmp_path: Path) -> None:
     """An un-annotated BYTE_ARRAY is bytes, or text by binaryAsString. INT96 (a timestamp with the nanoseconds
     of its day) and a nanosecond time are read by DuckDB to the microsecond, as the UTC nanosecond timestamp
-    is: two values a nanosecond apart rendered alike without a word, so each is refused (P23) until the
+    is: two values a nanosecond apart rendered alike without a word, so each is refused until the
     approved spec declares that reading. From parquet_tiny's files, observed."""
     root = tmp_path / "files" / "root"
     root.mkdir(parents=True)
@@ -346,7 +346,7 @@ async def test_legacy_shapes_are_read(tmp_path: Path) -> None:
 
 
 async def test_every_footer_holds_file_one_s_columns(tmp_path: Path) -> None:
-    """P22: another type, a column missing, a file that is no Parquet, encrypted Parquet."""
+    """Another type, a column missing, a file that is no Parquet, encrypted Parquet."""
     _parquet(tmp_path, "d/1.parquet", "SELECT 1 AS k, 1.5::DECIMAL(12,2) AS amount")
     _parquet(tmp_path, "d/2.parquet", "SELECT 2 AS k, 1.5::DOUBLE AS amount")
     with pytest.raises(ValueError) as error:
@@ -374,9 +374,9 @@ async def test_every_footer_holds_file_one_s_columns(tmp_path: Path) -> None:
 
 
 async def test_every_footer_holds_file_one_s_unit(tmp_path: Path) -> None:
-    """P22, P23: DuckDB reads a timestamp of any unit, and INT96, as one type, so a later file's nanoseconds
+    """DuckDB reads a timestamp of any unit, and INT96, as one type, so a later file's nanoseconds
     were cut to file 1's microseconds without the declared typeMap. The comparison of each footer with file
-    1's includes the unit and whether the column is INT96; file 1's own is what P23 judges."""
+    1's includes the unit and whether the column is INT96; file 1's own is what the plan judges."""
     root = tmp_path / "files" / "root"
     key = parquet_tiny.byte_array("k", b"1")
     shapes = {
@@ -402,7 +402,7 @@ async def test_every_footer_holds_file_one_s_unit(tmp_path: Path) -> None:
         assert str(error.value) == (
             f"side a: file 2 of 2 has another type for column 'c' than file 1 ({said})"
         )
-    table = _table("u2/", binaryAsString=True)  # both in nanoseconds: file 1's is what P23 judges
+    table = _table("u2/", binaryAsString=True)  # both in nanoseconds: file 1's is what the plan judges
     with pytest.raises(ValueError, match="a UTC nanosecond timestamp"):
         await planned(tmp_path, table)
     plan, _ = await planned(tmp_path, table, typeMap={"c": {"as": "timestamp"}})
@@ -410,9 +410,9 @@ async def test_every_footer_holds_file_one_s_unit(tmp_path: Path) -> None:
 
 
 async def test_a_key_a_scan_emits_is_found_by_its_own_read(tmp_path: Path) -> None:
-    """§9: a DECIMAL(p,p) key's text holds its integer digit, as every engine's does, where DuckDB writes
+    """A DECIMAL(p,p) key's text holds its integer digit, as every engine's does, where DuckDB writes
     .5: the key a scan emits is one the per-key read finds (it answered 404 for each). A DATE key outside
-    the years 0001 to 9999 has a text of another form, which no key holds: the plan is refused (P6), where
+    the years 0001 to 9999 has a text of another form, which no key holds: the plan is refused, where
     its row was scanned, then answered 404."""
     _parquet(
         tmp_path,
@@ -443,7 +443,7 @@ async def test_a_key_a_scan_emits_is_found_by_its_own_read(tmp_path: Path) -> No
 
 
 async def test_a_text_key_is_not_pruned_by_statistics(tmp_path: Path) -> None:
-    """§9: the per-key read holds no predicate on a key column that reaches the reader. DuckDB prunes
+    """The per-key read holds no predicate on a key column that reaches the reader. DuckDB prunes
     a string column's row groups by the deprecated min and max, which writers before parquet-mr 1.10 computed
     in signed-byte order (for a group holding a, z and é: min é, max z): with an IN on it, the key a, which
     the scan read, was answered 404."""
@@ -458,7 +458,7 @@ async def test_a_text_key_is_not_pruned_by_statistics(tmp_path: Path) -> None:
             f"SELECT k FROM read_parquet($f) AS {predicate}",  # noqa: S608 (constants)
             {"f": [str(root / "old.parquet")]},
         )
-        assert pruned.fetchall() == []  # U23, observed on 1.5.5: the row group that holds a is skipped
+        assert pruned.fetchall() == []  # Observed on 1.5.5: the row group that holds a is skipped
     plan, found = await planned(tmp_path, _table("old.parquet", binaryAsString=True))
     assert plan["declared"]["k"] == "VARCHAR" and [row[0] for row in await scanned(found, plan)] == ["a"]
     assert (await read(found, plan, "a"))["a"][0][0] == '{"v": "x"}'
@@ -490,7 +490,7 @@ def _i(number: int) -> bytes:
 async def test_a_typed_key_is_not_pruned_by_statistics(
     tmp_path: Path, key: parquet_tiny.Column, text: str
 ) -> None:
-    """§9 (U30): DuckDB prunes an integer, a date and a decimal column's row groups by their statistics too,
+    """DuckDB prunes an integer, a date and a decimal column's row groups by their statistics too,
     whatever they hold: a minimum and a maximum that do not hold the group's values (100 to 200 for a group
     holding 5), and a decimal stored as bytes whose statistics are empty. With the typed IN the per-key
     read bound for such a key, the key the scan had read was answered 404 by its own read. No statement
@@ -516,7 +516,7 @@ async def test_a_typed_key_is_not_pruned_by_statistics(
 async def test_a_parquet_plan_s_figures_are_the_footer_walk_s(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§6 steps 6 and 8, U30: a Parquet side's rows and its worker columns' uncompressed bytes come from the
+    """A Parquet side's rows and its worker columns' uncompressed bytes come from the
     plan's own walk of each footer, the figures DuckDB's parquet_file_metadata and parquet_metadata give of a
     file of its own writer (five row groups in two files here; against a CSV side, so that its compared
     column is the worker's). No statement of a plan, a scan, a per-key read or ds target check calls either:
@@ -576,12 +576,12 @@ FOOTER = (
 async def test_a_footer_duckdb_is_not_handed_refuses_the_plan_and_the_check(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§14 point 7, P22: a plan, and ds target check, walk each Parquet footer before DuckDB reads the file:
+    """A plan, and ds target check, walk each Parquet footer before DuckDB reads the file:
     groups nested past the limit (DuckDB's own read of 2,000 ended the process; 200 here, which it survives),
     a negative count of children (an IndexError out of planning), the footers whose schema Thrift's reader
     takes deeper than a walk that stops at the first one (40 deep here), a row group that holds more column
     chunks than the schema has leaves, a negative type length (DuckDB's bind of it is an internal error) and
-    an encrypted column are refused in the contract's words, and no statement is sent."""
+    an encrypted column are refused in fixed words, and no statement is sent."""
     sent: list[str] = []
     monkeypatch.setattr(duck.Cursor, "_select", lambda self, statement, values: sent.append(statement))
     one = parquet_tiny.Column("k", parquet_tiny.INT64, (1).to_bytes(8, "little"))
@@ -677,7 +677,7 @@ async def _handed(base: str, depth: int, chunks: int) -> None:
 
 
 def test_a_crafted_footer_reaches_duckdb_in_no_process(tmp_path: Path) -> None:
-    """U26, U30, §14 point 7: the three footers the walk once took for flat while Thrift's reader took them
+    """The three footers the walk once took for flat while Thrift's reader took them
     9,000 groups deep ended the process that planned or checked them (SIGBUS in DuckDB's recursion), and a
     footer of a megabyte that held a second row group of a million column chunks took 672 MiB outside
     files.memory (100,000 here). In a process of its own, so that a walk that let one through would end that
@@ -758,14 +758,14 @@ def _listing(doubles: str | None = None) -> bytes:
 
 
 def test_the_reader_takes_a_list_s_elements_as_parquet_thrift_declares_them(tmp_path: Path) -> None:
-    """U29, on which the footer walk rests (§6 step 4): Thrift's generated reader, which DuckDB reads a
+    """What the footer walk rests on: Thrift's generated reader, which DuckDB reads a
     footer with, reads a list's elements as the type parquet.thrift declares for the list's field, whatever
     element type the list itself names; a list it does not know it passes over by the type named. A footer
     holding each list the walk knows, one of them in turn naming doubles, is read by DuckDB as the footer
     that names them rightly: each of the walk's lists is the reader's, of the walk's element type. The walk
     refuses each of those footers (there a reader that went by the name would pass over other bytes) and
     reads the right one. The reader takes the last of a schema written twice, also under an id it cuts to 16
-    bits, and a count of children from an i32 alone: the footers a walk once took for flat (U26) are read 40
+    bits, and a count of children from an i32 alone: the footers a walk once took for flat are read 40
     groups deep. And the rows of a column whose chunk says it is encrypted are an InternalException, which
     invalidates the database: the walk refuses such a file as encrypted."""
     path = tmp_path / "lists.parquet"
@@ -778,7 +778,7 @@ def test_the_reader_takes_a_list_s_elements_as_parquet_thrift_declares_them(tmp_
     read = []
     for doubles in (None, *LISTS):
         path.write_bytes(_listing(doubles))
-        con = unrestricted()  # one a file: DuckDB keeps a footer between statements (U28)
+        con = unrestricted()  # one a file: DuckDB keeps a footer between statements
         read.append([con.execute(statement, {"f": str(path)}).fetchall() for statement in asked])
         if doubles is None:
             manifest.footed(str(path))
@@ -805,7 +805,7 @@ def test_the_reader_takes_a_list_s_elements_as_parquet_thrift_declares_them(tmp_
 def test_a_parquet_file_replaced_in_place_is_read_by_its_own_footer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """U28, §10: DuckDB keeps a Parquet file's footer between statements and takes a file of the same size
+    """DuckDB keeps a Parquet file's footer between statements and takes a file of the same size
     whose modification time is the same to the second for the same file: a file replaced so was read with
     the first one's footer and no error, its nanoseconds as microseconds, though a run created on it hashes
     the new bytes. The instance switches the external file cache off, and the Parquet metadata cache, which
@@ -850,8 +850,8 @@ def test_a_parquet_file_replaced_in_place_is_read_by_its_own_footer(
 
 
 async def test_two_instants_a_nanosecond_apart_digest_alike_only_once_declared(tmp_path: Path) -> None:
-    """§8: an unzoned nanosecond timestamp keeps its nine digits; declared {as: timestamp} on both sides of a
-    pair, six (ENGINES §9's bridge)."""
+    """An unzoned nanosecond timestamp keeps its nine digits; declared {as: timestamp} on both sides of a
+    pair, six."""
     digests = {}
     for name, last in (("a", 9), ("b", 8)):
         _parquet(
@@ -868,7 +868,7 @@ async def test_two_instants_a_nanosecond_apart_digest_alike_only_once_declared(t
 
 
 async def test_typed_keys_a_column_cannot_hold_are_on_no_row(tmp_path: Path) -> None:
-    """§9: a key part not of its class's form, or out of its Parquet type's range, is on no row, answered
+    """A key part not of its class's form, or out of its Parquet type's range, is on no row, answered
     without a value of its column bound: an impossible date, an integer past a TINYINT, letters."""
     _parquet(
         tmp_path,
@@ -887,7 +887,7 @@ async def test_typed_keys_a_column_cannot_hold_are_on_no_row(tmp_path: Path) -> 
 
 
 async def test_a_partition_and_a_type_no_plan_reads_are_refused(tmp_path: Path) -> None:
-    """P26's second text (a partition's name is no column of the files) and P23's fourth (a type that is
+    """A partition's name that is also a column of the files, and a type no plan reads (one that is
     neither nested nor read: DuckDB's own writer produces none, so the text is asserted where it is made)."""
     _parquet(tmp_path, "dt=1/p.parquet", "SELECT 1 AS k, 'x' AS dt")
     with pytest.raises(ValueError) as error:
@@ -926,7 +926,7 @@ async def test_a_partition_and_a_type_no_plan_reads_are_refused(tmp_path: Path) 
 async def test_a_name_value_directory_above_the_partitions_is_refused(
     tmp_path: Path, path: str, column: str, value: str
 ) -> None:
-    """P26, U22: a name=value directory above the declared partitions is one more partition to DuckDB, whose
+    """A name=value directory above the declared partitions is one more partition to DuckDB, whose
     value stands for the files' own column of that name in every row (a compared column read 'eu' whatever
     the rows held; a key column gave every row one key): the plan is refused. Undeclared, no directory is
     read as a column."""
@@ -951,7 +951,7 @@ async def test_a_name_value_directory_above_the_partitions_is_refused(
 
 
 async def test_a_row_over_sixteen_mebibytes_stays_in_its_file(tmp_path: Path) -> None:
-    """§10, §14 point 7: a row whose bytes and JSON values pass 16 MiB is not fetched: its per-key read is a
+    """A row whose bytes and JSON values pass 16 MiB is not fetched: its per-key read is a
     resource limit and its scan digest the marker no row has, while the rows beside it are read."""
     _parquet(
         tmp_path,

@@ -1,9 +1,9 @@
 # Security
 
 How vulnerabilities in DeltaSleuth are handled, and how you verify and scan a release. This file
-is at the root of every signed release bundle and of its kit. The maintainer's side is in
-[docs/mvp/RELEASE.md](docs/mvp/RELEASE.md), the installation in [docs/mvp/DEPLOY.md](docs/mvp/DEPLOY.md)
-section 2, and the pen-test scope in [docs/mvp/PENTEST.md](docs/mvp/PENTEST.md).
+is at the root of every signed release bundle and of its kit. The maintainer builds and signs a release
+with `tools/release.py`; installing, updating and backing up are in
+[docs/deployment.md](docs/deployment.md).
 
 ## 1. Supported versions
 
@@ -45,7 +45,7 @@ High findings.
 the affected versions and `config`s, severity and vector, CVEs, the fixed version and its list digest
 (`sums_sha256`), mitigations, VEX and credit. Each is signed with the release key into
 `DS-SA-YYYY-NNN.txt.sig` and sent to your named security contacts; Critical ones also by phone. Check
-it, or a signed interim VEX (§3), with steps 1 and 2 of the procedure, against the `release-key.pem`
+it, or a signed interim VEX, with steps 1 and 2 of the procedure, against the `release-key.pem`
 of a bundle you verified. Accept it only if step 1 prints a fingerprint your register lists as
 `signing` or `standby` on the day it arrives, never a retired or withdrawn key's: older bundles still
 carry those keys' `release-key.pem`, and a withdrawn key may be in other hands.
@@ -55,19 +55,19 @@ openssl pkey -pubin -in release-key.pem -outform DER | sha256sum    # signing or
 openssl dgst -sha256 -verify release-key.pem -signature DS-SA-2026-001.txt.sig DS-SA-2026-001.txt   # Verified OK
 ```
 
-The compromise advisory (§7) is the exception: it is never signed with the stolen key, and you confirm
+The compromise advisory is the exception: it is never signed with the stolen key, and you confirm
 it by phone, where we read back its sha256 (`sha256sum DS-SA-YYYY-NNN.txt`).
 
 ## 6. Fixes, air-gapped
 
-A fix is always a complete signed bundle, never a delta. Verify it on the Docker host and install it as
-DEPLOY.md section 10 upgrades; the maintainer never needs remote access.
+A fix is always a complete signed bundle, never a delta. Verify it on the Docker host, take a backup,
+then install it ([docs/deployment.md](docs/deployment.md) has the backup and the update); the maintainer
+never needs remote access.
 
 ## 7. Verifying a release
 
 Each bundle's `SHA256SUMS` is signed with a release key; `VERIFY.txt` names the release, then repeats the
-procedure you filed with the key. Run the filed copy, all of it, on the Docker host (DEPLOY.md
-section 2). The release keys:
+procedure you filed with the key. Run the filed copy, all of it, on the Docker host. The release keys:
 
 | Fingerprint (step 1) | Status | procedure= (sha256 of the filed `procedure.txt`) |
 |---|---|---|
@@ -108,8 +108,8 @@ old one becomes `withdrawn`, and the supported versions are re-released as patch
 ## 8. Scanning our releases
 
 The bundle's `scan/` was right on its release date. We re-scan every supported release weekly, with a
-current database and our triage (RELEASE.md §10): a finding that would block a release, one with a fix
-that is Critical, High, of unknown severity or known exploited, starts §3's clock. To scan it again
+current database and our triage: a finding that would block a release, one with a fix
+that is Critical, High, of unknown severity or known exploited, starts section 3's clock. To scan it again
 yourselves, air-gapped, fetch elsewhere the grype database named by `from` in `scan/SUMMARY.txt`, or a
 newer one from `grype db list`, bring it across, `grype db import` it, and run in the bundle's folder:
 
@@ -120,18 +120,20 @@ GRYPE_DB_AUTO_UPDATE=false GRYPE_CHECK_FOR_APP_UPDATE=false GRYPE_DB_VALIDATE_AG
 Other scanners, Trivy and Dependency-Track among them, read the SBOMs (CycloneDX 1.6 and SPDX 2.3).
 Whether Trivy applies our VEX is untested, and Dependency-Track cannot import OpenVEX. Expect Debian
 `wont-fix` findings, the libraries wheels vendor in binary scanners (`sbom/vendored-libraries.txt` gives
-our decision on each), and newer findings: report those to us (§2).
+our decision on each), and newer findings: report those to us.
 
 ## 9. Pen testing
 
-The scope an independent firm tests DeltaSleuth against is in [PENTEST.md](docs/mvp/PENTEST.md).
+An independent firm tests a named signed release, or a release candidate, installed from its bundle with
+the verification of section 7 included. Its report names the version and the image's `config` digest; a
+finding on another build is re-checked on that one.
 
 ## 10. By design, not vulnerabilities
 
 - Membership of the Docker group is root-equivalent on the host: a member can run any `ds` command as
   any operator.
-- This build enforces no licence: it is an open build, which embeds no vendor key
-  ([LICENCE.md](docs/mvp/LICENCE.md) §19), and a release's `NOTES.txt` says so on a line of its own:
+- This build enforces no licence: it is an open build, which embeds no vendor key, and a release's
+  `NOTES.txt` says so on a line of its own:
   `This release is an open build: it embeds no licence vendor key and enforces no licence.` In a vendor
   build, which embeds keys, the licence is a contractual control, not a technical one.
 - Developer mode (no `auth` settings) serves loopback only, and every local user acts as admin.
@@ -139,9 +141,8 @@ The scope an independent firm tests DeltaSleuth against is in [PENTEST.md](docs/
   Teams leave the site's network for that service: a notification carries ids, counts, closed codes, a
   spec name (off by default for Slack and Teams) and a link, never a key or value. Every address a send
   reaches is checked (link-local and metadata addresses never, private ones only with the channel's
-  opt-in); behind `notify.proxy` only the declared host is checked, and the proxy resolves the rest
-  ([ALERTS.md](docs/mvp/ALERTS.md) §7, §16).
-- The MCP server ([MCP.md](docs/mvp/MCP.md) §2), which is off unless the settings have an `mcp` block: a
+  opt-in); behind `notify.proxy` only the declared host is checked, and the proxy resolves the rest.
+- The MCP server, which is off unless the settings have an `mcp` block: a
   tool result reaches the model host of the agent that asked for it, a host the installation does not
   run and DeltaSleuth's LLM egress policy does not govern; what a result may carry is the settings'
   `mcp.data_classes`, and retention, purge and erasure do not reach an agent's copies. Masked forms are
@@ -158,7 +159,7 @@ The scope an independent firm tests DeltaSleuth against is in [PENTEST.md](docs/
   client no request; where `mcp.work` lists it, `compare_key` reads the run's two declared targets as
   any compare does, at most 10 times a minute per caller.
 
-- A MySQL or Oracle target ([ENGINES.md](docs/mvp/ENGINES.md) §14): every session goes to an address
+- A MySQL or Oracle target: every session goes to an address
   DeltaSleuth resolved and vetted, with one exception by design: an Oracle listener may redirect a
   session and the driver follows it, so an Oracle target is only as contained as its listener and the
   egress rule around it. An IPv6 address that stands for an IPv4 one (IPv4-mapped, the well-known
@@ -172,7 +173,7 @@ The scope an independent firm tests DeltaSleuth against is in [PENTEST.md](docs/
   Values are compared as the account reads them: a database that masks or redacts both sides alike
   reads as a match, and the certificate says only whose view of the rows was compared. That the account
   cannot write is its grants' doing, not DeltaSleuth's.
-- A files target ([FILES.md](docs/mvp/FILES.md) §14, [READER.md](docs/mvp/READER.md)): CSV and Parquet
+- A files target: CSV and Parquet
   files are parsed by DuckDB, native code, locked to the declared directories and its own spill and
   running nothing but single `SELECT` statements DeltaSleuth composes. DuckDB runs in a child process
   of each `ds` process, the file reader, and in no process that holds the keyring: a fault or a memory
@@ -196,10 +197,11 @@ The scope an independent firm tests DeltaSleuth against is in [PENTEST.md](docs/
   and its check of a `gzip` or `zstd` stream do, there); that a crafted file is harmless (it can end
   the reader, cost other runs a pass, and fail its own run); a data limit or denied sockets on macOS,
   or on any host whose start line does not print them; and anything of an x86_64 kernel, on which the
-  filter and the limit were not observed before a site's own self-test ([DEPLOY.md](docs/mvp/DEPLOY.md)
-  section 5, item 25). Against a writer of the
+  filter and the limit were not observed before a site's own self-test, the command
+  `docker compose run --rm app python -c "from deltasleuth.connectors.tables import duck; duck.selftest()"`.
+  Against a writer of the
   export directory who can craft Parquet bytes, this much is bounded, by DeltaSleuth's own walk of each
-  Parquet footer before DuckDB sees the file ([FILES.md](docs/mvp/FILES.md) §14 point 7): the nesting
+  Parquet footer before DuckDB sees the file: the nesting
   of its schema (DuckDB follows it without a bound, and a deeply nested one ended the process), what
   its lists make DuckDB's reader hold (a footer of 1 MiB took 672 MiB outside `files.memory`; a row
   group's column chunks must be the schema's leaves, with at most 10,000 row groups, 200,000 column
@@ -231,7 +233,7 @@ The scope an independent firm tests DeltaSleuth against is in [PENTEST.md](docs/
   count of a side's files, their total bytes and the newest modification time are in the plan, the
   pack and the API's answers in clear, so a side of one file discloses that file's size and time, and
   its path where the spec names it. DuckDB's compiled-in third-party libraries are in no SBOM entry
-  and no scan ([RELEASE.md](docs/mvp/RELEASE.md) §7).
+  and no scan.
 
 ## 11. Scope
 

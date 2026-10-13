@@ -1,4 +1,4 @@
-"""Targets declared in the product (docs/mvp/DEPLOY.md §7, "In the product"): services a declarer adds
+"""Targets declared in the product: services a declarer adds
 through the API, beside the targets file an operator writes.
 
 They are a second targets document, ``<workspace_dir>/targets/targets.json``, which only the server

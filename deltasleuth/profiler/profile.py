@@ -1,4 +1,4 @@
-"""Per-path statistics of one side's samples (§8.6).
+"""Per-path statistics of one side's samples.
 
 Every object path is classified record or map as it is walked, so a map's member names (ids)
 never become paths: its values are profiled pooled under ``[*]``.

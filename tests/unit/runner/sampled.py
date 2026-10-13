@@ -1,4 +1,4 @@
-"""Hash-sample fixtures (docs/mvp/SAMPLING.md): specs whose frame is the scripted service's key listing, a
+"""Hash-sample fixtures: specs whose frame is the scripted service's key listing, a
 table of a fresh database (side a, against the service's side b), or both, and what a draw stored."""
 
 from __future__ import annotations

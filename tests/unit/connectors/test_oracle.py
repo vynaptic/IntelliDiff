@@ -1,4 +1,4 @@
-"""Table sides on a real Oracle (docs/mvp/ENGINES.md §6 to §11): the session, the column plan, per-key
+"""Table sides on a real Oracle: the session, the column plan, per-key
 reads, keys the column cannot hold, and what a scan is read in.
 """
 
@@ -148,7 +148,7 @@ async def connector(targets: TargetRegistry) -> AsyncIterator[Connect]:
         await table.aclose()
 
 
-# --- the session (§6) ------------------------------------------------------------------------------
+# --- the session ------------------------------------------------------------------------------
 
 
 async def test_a_session_s_settings_are_read_back_and_a_write_is_refused(targets: TargetRegistry) -> None:
@@ -199,7 +199,7 @@ async def test_a_setting_that_reads_back_differently_is_refused(
         await plan(targets, compiled({"name": "keyed", "keyColumns": ["k"]}))
     assert str(exc.value) == (
         "side a: the session could not be set (NLS_SORT is BINARY_CI): a logon trigger overrides it"
-    )  # P4
+    )
 
 
 async def test_a_snapshot_does_not_see_a_later_write_and_loses_a_table_changed_since(
@@ -222,7 +222,7 @@ async def test_a_snapshot_does_not_see_a_later_write_and_loses_a_table_changed_s
     assert str(exc.value) == "ORA-01466"  # the table's definition is later than the pass's moment
 
 
-# --- the column plan (§7) --------------------------------------------------------------------------
+# --- the column plan --------------------------------------------------------------------------
 
 
 async def test_a_pair_stores_each_side_s_engine_classes_and_declared_types(
@@ -253,7 +253,7 @@ async def test_a_pair_stores_each_side_s_engine_classes_and_declared_types(
     assert a["declared"] == {
         "USERID": "NUMBER(10)", "EMAIL": "VARCHAR2(100)", "NAME": "VARCHAR2(100 CHAR)", "STATUS": "CHAR(3)",
     }  # fmt: skip
-    # Both sides declare email alike, and the engine hashes it; name is declared in two ways there (§10).
+    # Both sides declare email alike, and the engine hashes it; name is declared in two ways there.
     assert (a["digest"], b["digest"], stored["rendering"]) == (["name"], ["name"], 1)
 
 
@@ -460,7 +460,7 @@ async def test_a_refused_connect_names_the_endpoint_and_glosses_the_code(
     assert (read.error_class, read.error_detail) == ("auth_error", "ORA-01017")  # the run pauses
 
 
-# --- per-key reads (§8, §9) ------------------------------------------------------------------------
+# --- per-key reads ------------------------------------------------------------------------
 
 
 def _row(obs: Observation) -> Any:
@@ -648,7 +648,7 @@ async def test_a_lookup_uses_the_key_s_index(
         assert explained == [("INDEX", "UNIQUE SCAN")], relation
 
 
-# --- what a scan is read in (§6, §8, §11) ------------------------------------------------------------
+# --- what a scan is read in ------------------------------------------------------------
 
 
 async def test_a_scan_orders_keys_by_code_point(targets: TargetRegistry) -> None:
@@ -704,7 +704,7 @@ async def test_outside_al32utf8_a_long_text_key_is_refused(
     assert str(exc.value) == (
         "key column 'LONGER' is VARCHAR2(1000) in a WE8MSWIN1252 database: a scan orders text keys of up to"
         " 500 bytes there (compare a view that shortens it)"
-    )  # P5
+    )
     assert str(denied.value) == (
         "the role may not execute UTL_I18N, which orders text keys in a WE8MSWIN1252 database:"
         " grant it EXECUTE"
@@ -743,7 +743,7 @@ async def test_closing_a_session_cancels_its_statement(
     assert oracle_server.execute(running, sid=sid, serial=serial) == [(0,)]
 
 
-# --- rows hashed in the engine (§10) -----------------------------------------------------------------
+# --- rows hashed in the engine -----------------------------------------------------------------
 
 
 async def _digests(targets: TargetRegistry, target: str, side: Plan) -> dict[str, bytes]:
@@ -797,7 +797,7 @@ async def test_two_sides_of_one_engine_hash_alike_what_they_declare_alike(target
     assert {key for key in here if here[key] != there[key]} == {"8"}
 
 
-# --- a filter and a key map behave as PostgreSQL's (§8, §10) -------------------------------------------
+# --- a filter and a key map behave as PostgreSQL's -------------------------------------------
 
 
 async def test_a_char_filter_and_prefix_pad_select_as_on_postgresql(
@@ -856,7 +856,7 @@ async def test_a_date_key_against_a_date_that_holds_a_time_is_refused(
     assert await plan(registry, compiled(moments | {"name": "moments_v"}, moments)) is not None  # a text key
 
 
-# --- what a table pre-check reads (docs/mvp/PRECHECKS.md §4, §5) ----------------------------------------
+# --- what a table pre-check reads ----------------------------------------
 
 # One row a class holds at its edge: a CHAR padded and blank, an emoji in an NVARCHAR2 (LENGTH counts it
 # twice), a CLOB (COUNT of one raises ORA-22849), a BOOLEAN, RAW bytes, a date before year 1, an instant

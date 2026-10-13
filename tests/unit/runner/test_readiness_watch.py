@@ -1,4 +1,4 @@
-"""Readiness's transitions (docs/mvp/READINESS.md §8): a pair's baseline, then a ``readiness.changed`` row
+"""Readiness's transitions: a pair's baseline, then a ``readiness.changed`` row
 per change only, by ``system:worker`` outside every pack segment; nothing during an upgrade's backfill but
 one baseline a pair after it, and nothing of a pair whose cycle is still to measure; each trigger, and the
 causes a row names from what differs for its pair, whatever entered the chain, after a restart and beside a
@@ -266,8 +266,8 @@ async def test_each_trigger_and_what_a_row_names(harness: Harness, monkeypatch: 
         await watch(harness, state, after=measuring.READINESS_MIN_S)
         last = (await changes(harness))[-1]
         assert (last["causes"], [c["gate"] for c in last["changed"]]) == (causes, [gate]), gate
-    # Another evidence cycle is the cycle's, whatever its gates then do; several causes are named in the
-    # contract's order, and the licence that cannot be read is none.
+    # Another evidence cycle is the cycle's, whatever its gates then do; several causes are named in a
+    # fixed order, and the licence that cannot be read is none.
     earlier = {"run_id": run_id, "cycle": 2}
     await unsettle(harness, evidence=earlier, gates=REQUIRED | {"fresh": "not_met"})
     await watch(harness, state, after=measuring.READINESS_EVERY_S)
@@ -305,7 +305,7 @@ async def test_a_new_version_and_changed_settings_are_causes(open_harness: OpenH
         config = readiness.config_sha256(h.ctx.settings.readiness)
         assert (
             judging.notes(found, config, worker)
-            == [  # Y16, until the worker restarts too
+            == [  # until the worker restarts too
                 f"this server judges with readiness settings {config[:12]}, the worker with"
                 f" {readiness.config_sha256(None)[:12]}: restart both after changing them"
             ]
@@ -636,8 +636,8 @@ async def test_a_row_names_its_pair_s_cause_after_a_restart_and_beside_a_late_co
 async def test_a_fall_after_an_unrelated_settings_edit_names_no_config_and_reaches_its_rule(
     open_harness: OpenHarness, tmp_path: Path, loopback: Any
 ) -> None:
-    """Editing the settings for another pair leaves this one's next row its own causes: the rule the
-    runbook gives (every cause but baseline and config) delivers its fall."""
+    """Editing the settings for another pair leaves this one's next row its own causes: a rule of
+    every cause but baseline and config delivers its fall."""
     listed = {"name": "cutover-q4", "pairs": [{"spec": PAIR}]}
     edited = [listed, {"name": "decom-q1", "pairs": [{"spec": "some-other-pair"}]}]
     causes = [cause for cause in readiness.CAUSES if cause not in ("baseline", "config")]
@@ -673,7 +673,7 @@ async def test_a_fall_after_an_unrelated_settings_edit_names_no_config_and_reach
 async def test_a_sampled_pair_s_draw_discipline_is_read_once_its_parity_gates_are_met(
     open_harness: OpenHarness, tmp_path: Path
 ) -> None:
-    """A sampled candidate's ledger is read only when every parity gate is met (§14); its pair then shows
+    """A sampled candidate's ledger is read only when every parity gate is met; its pair then shows
     the evidence cycle's strata as counts, never a pooled rate."""
     key = tmp_path / "secrets" / "pack-signing-key"
     key.parent.mkdir()
@@ -702,7 +702,7 @@ async def test_a_sampled_pair_s_draw_discipline_is_read_once_its_parity_gates_ar
     by = {gate["gate"]: gate for gate in found["gates"]}
     assert (by["sample_ledger"]["status"], by["sample_ledger"]["text"]) == (
         "met",
-        f"draw {drawn.draw_id} of {at} meets the draw discipline (SAMPLING §9)",
+        f"draw {drawn.draw_id} of {at} meets the draw discipline",
     )
     assert (found["state"], found["blocking"], found["precheck"]["problems"]) == (
         "signoff_ready", ["signoff", "pack"], [],
@@ -768,8 +768,8 @@ def signing_key(tmp_path: Path) -> Path:
 async def test_a_cycle_that_is_no_evidence_is_never_the_candidate(
     open_harness: OpenHarness, tmp_path: Path
 ) -> None:
-    """Under SSO: a four-eyes sign-off of five keys given at creation (no census: no evidence, D8) leaves
-    the pair unsigned, and an adjudication a person scored on a captured-sample replay (excluded, D13) does
+    """Under SSO: a four-eyes sign-off of five keys given at creation (no census: no evidence) leaves
+    the pair unsigned, and an adjudication a person scored on a captured-sample replay (excluded) does
     not make its cycle the candidate, whose sign-off would be refused."""
     T0 = datetime.now(UTC) - timedelta(hours=10)
     version = compile_spec(parse_yaml_text(SOAK))
@@ -881,7 +881,7 @@ async def test_a_revoked_sign_off_is_never_kept_met_by_an_unreadable_licence(
 async def test_measures_that_cannot_be_read_never_stop_the_other_pairs(
     harness: Harness, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """§4: a record of another format is an unknown point, whatever it says; and a record this build cannot
+    """A record of another format is an unknown point, whatever it says; and a record this build cannot
     read at all leaves its own pair unknown, told and logged by name, while the others are judged and their
     changes chained."""
     run_id = await converged(harness)

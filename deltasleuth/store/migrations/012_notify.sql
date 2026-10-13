@@ -1,4 +1,4 @@
--- Alerts and notifications (docs/mvp/ALERTS.md): the audit hash chain is the outbox. The cursor is the last chain row
+-- Alerts and notifications: the audit hash chain is the outbox. The cursor is the last chain row
 -- turned into deliveries, inserted at the head by the first pass with notify configured. Ids, counts and codes only.
 CREATE TABLE ds.notify_cursor (
     one      boolean PRIMARY KEY DEFAULT true CHECK (one),

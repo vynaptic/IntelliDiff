@@ -1,4 +1,4 @@
-"""``ds keys migrate`` (docs/mvp/RETENTION.md §7.2) over a store that releases before 006 left: sealed in
+"""``ds keys migrate`` over a store that releases before 006 left: sealed in
 resumable batches, interrupted in each phase and run again, then 007 applied, with the API's outputs
 byte-equal to the golden ones; refused while the worker lock is held; then a rotation, and a missing KEK
 that pauses a run until restored."""
@@ -86,7 +86,7 @@ profiles:
 """
 # What an uninterrupted migration of the store seals and moves (each rerun adds only what was left).
 TOTALS = {"runs": 5, "keys": 9, "headers": 14, "chat_messages": 4, "scans": 2, "blobs": 6, "missing_blobs": 2}
-MISSING = "legacy plaintext remains: stop the app and run 'ds keys migrate' (docs/mvp/RETENTION.md §7.2)"
+MISSING = "legacy plaintext remains: stop the app and run 'ds keys migrate'"
 
 _spec = compile_spec(parse_yaml_text(SPEC))
 _tokeniser = Tokeniser(TOKENISER_KEY)

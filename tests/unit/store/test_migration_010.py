@@ -1,4 +1,4 @@
-"""Migration 010 (docs/mvp/LICENCE.md §13): the installation id, made once, audited as it is made and
+"""Migration 010: the installation id, made once, audited as it is made and
 kept by a copy of the database, one taken before 010 included; ds.licences, whose rows are only ever
 withdrawn, once, as of now(); a store at 010 opened by a release that ships only 001-009."""
 
@@ -39,7 +39,7 @@ async def _installation(pool: AsyncConnectionPool) -> str:
 
 
 async def _derived(pool: AsyncConnectionPool) -> str:
-    """The id 010 derives from the first audit chain row when there is one (§5)."""
+    """The id 010 derives from the first audit chain row when there is one."""
     async with pool.connection() as conn:
         [(first,)] = await _all(conn, "SELECT hash FROM ds.audit_chain ORDER BY seq LIMIT 1")
     return "I-" + hashlib.sha256(f"deltasleuth-installation\n{first}".encode()).hexdigest()[:16]
@@ -181,7 +181,7 @@ async def test_template_copy_keeps_id_and_licence(pg_server: str, pg_dsn: str) -
 @pytest.mark.usefixtures("vendor_keys")
 async def test_backup_before_010_keeps_id(pg_server: str, pg_dsn: str) -> None:
     """A backup taken at 009, restored after the upgrade, gets the same id when 010 applies to it again:
-    the licence installed on the upgraded store installs on it (docs/mvp/LICENCE.md §5, DEPLOY §10)."""
+    the licence installed on the upgraded store installs on it."""
     pool = AsyncConnectionPool(pg_dsn, open=False)
     await pool.open(wait=True)
     assert await migrate(pool, upto=9) == list(range(1, 10))  # audited: system.migrate
@@ -203,7 +203,7 @@ async def test_backup_before_010_keeps_id(pg_server: str, pg_dsn: str) -> None:
 async def test_store_at_010_opens_with_001_to_009_files(
     pool: AsyncConnectionPool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The release before 010 beside the new one (docs/mvp/LICENCE.md §15): its migrate applies nothing."""
+    """The release before 010 beside the new one: its migrate applies nothing."""
     for path in MIGRATIONS.glob("00[1-9]_*.sql"):
         (tmp_path / path.name).write_bytes(path.read_bytes())
     monkeypatch.setattr(db, "MIGRATIONS", tmp_path)

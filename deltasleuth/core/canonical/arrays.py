@@ -1,4 +1,4 @@
-"""Array rewriting (§8.1): keyed, set and multiset arrays become ``KeyedMap``.
+"""Array rewriting: keyed, set and multiset arrays become ``KeyedMap``.
 
 The normalised tree and its raw twin are rewritten in lockstep from the normalised values, so
 the raw walk compares the same members: member keys come from normalised key fields, members

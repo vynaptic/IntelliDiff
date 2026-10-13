@@ -1,7 +1,7 @@
-"""The licence over the API (docs/mvp/LICENCE.md §8-§12): GET /v1/licence, for every viewer and unaudited,
+"""The licence over the API: GET /v1/licence, for every viewer and unaudited,
 in each state and when the standing cannot be read; each refusal answers 409, at a run's creation, a
 compare, the resume of a run paused for the licence, a sign-off's request and approval step and a pack's
-issue; a pack is refused by the licence at issue (M4, M7) or for a run made in evaluation (M8), and carries
+issue; a pack is refused by the licence at issue or for a run made in evaluation, and carries
 the licence it was issued under; a sign-off after the grace holds its cycle for a pack after renewal; runs
 and their report downloads are labelled; and nothing that needs no licence is ever locked out."""
 
@@ -39,7 +39,6 @@ from .conftest import OIDC, RAW_KEY, SPEC_YAML, TARGETS, Callers, approved, audi
 
 pytestmark = [pytest.mark.db, pytest.mark.usefixtures("vendor_keys")]  # a vendor build
 OpenClient = Callable[..., AbstractContextManager[TestClient]]
-DOCS = "docs/mvp/LICENCE.md"
 M5 = (
     "under SSO this installation keeps serving sign-in, reads, reports, exports, pack downloads and"
     " administration, and new runs, compares and soak cycles need an Enterprise licence (ds licence install"
@@ -123,8 +122,8 @@ def test_refusals_409(open_client: OpenClient, pack_key: Path) -> None:
             client.post(f"/v1/runs/{cycle.run_id}/cycles/1/packs", headers=olga),
         ]
         runs = client.portal.call(_runs, ctx)
-    m5 = f"SSO (auth.oidc) is an Enterprise feature and licence {pro.licence_id} is pro: {M5} ({DOCS} §6)"
-    m6 = f"four-eyes sign-off is an Enterprise feature and licence {pro.licence_id} is pro ({DOCS} §6)"
+    m5 = f"SSO (auth.oidc) is an Enterprise feature and licence {pro.licence_id} is pro: {M5}"
+    m6 = f"four-eyes sign-off is an Enterprise feature and licence {pro.licence_id} is pro"
     m7 = f"evidence packs are an Enterprise feature and licence {pro.licence_id} is pro"
     assert [said(reply) for reply in replies] == [
         (409, m5),
@@ -166,13 +165,13 @@ def test_packs_M4_M7_M8(open_client: OpenClient, pack_key: Path, standing: str) 
             f" {found.ends + timedelta(days=30)}: new runs, compares, soak cycles and evidence packs"
             " are refused until a renewed licence is installed (ds licence install FILE); reads, reports,"
             " exports, holds, erasure, purge, audit, pack downloads and sign-offs under an Enterprise"
-            f" licence keep working ({DOCS} §6)"
+            " licence keep working"
         )
     elif standing == "pro":
         assert found is not None
         expected = f"evidence packs are an Enterprise feature and licence {found.licence_id} is pro"
     elif standing == "made_in_evaluation":
-        expected = m8  # whatever licence is installed since (D8)
+        expected = m8  # whatever licence is installed since
     else:
         expected = (
             "no evidence pack is issued in an unlicensed evaluation: install an Enterprise licence for"
@@ -224,7 +223,7 @@ def test_get_licence_states_roles(open_client: OpenClient) -> None:
     assert (body["installation_id"], body["state"], body["licence"], body["renewal"]) == (
         installation, "evaluation", None, None,
     )  # fmt: skip
-    assert body["allows"] == {"runs": False, "sso": False, "signoff": False, "packs": False}  # SSO: M5
+    assert body["allows"] == {"runs": False, "sso": False, "signoff": False, "packs": False}  # under SSO
     assert (body["pairs"]["limit"], body["pairs"]["since"]) == (2, None)
     assert [(p["name"], p["seated"], p["targets"]) for p in body["pairs"]["counted"]] == [
         ("accounts", True, ["svc-a vs svc-b"]), ("loans", True, ["svc-a vs svc-b"]),

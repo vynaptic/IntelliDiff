@@ -131,11 +131,11 @@ async def _run_summary(ctx: Context, scope: Scope) -> Any:
     summary = _pick(run, _RUN) | {"progress": progress, "root_causes": _picks(causes[:TOP_CAUSES], _CAUSE)}
     if graph := (run["scan"] or {}).get("graph"):  # counts only: the scan's raw ``after`` key stays out
         summary["graph"] = graph
-    if sampled:  # the judgement the cycle's end stored, which the model only explains (SAMPLING.md §14)
+    if sampled:  # the judgement the cycle's end stored, which the model only explains
         summary["sample"] = (ended or {}).get("sample")
-    # The newest ended cycle's labelled accuracy as stored (docs/mvp/ACCURACY.md §10): a person's labels,
+    # The newest ended cycle's labelled accuracy as stored: a person's labels,
     # which the model only explains; its first root causes and rules, as the root causes above. No staff
-    # identity reaches the model (docs/mvp/AUTH.md): the line says what kind of actor labelled, not who.
+    # identity reaches the model: the line says what kind of actor labelled, not who.
     summary["accuracy"] = labelling and {
         "accuracy": _top(labelling["accuracy"]),
         "summary": accuracy.summary(labelling, signoff=attested, named=False),

@@ -1,7 +1,6 @@
-"""The shipped deployment works as DEPLOY.md says: the config examples start a trial as copied
-(docs/mvp/FIRSTRUN.md §2) and load as the image loads them with their office lines switched on, serving
-the mock specs and the chat, and the image, Compose files and guide keep secrets and state safe and run
-the release pinned and hardened (docs/mvp/RELEASE.md §5, §6)."""
+"""The shipped deployment's own files: the config examples start a trial as copied and load as the image
+loads them with their office lines switched on, serving the mock specs and the chat, and the image and the
+Compose files keep secrets and state safe and run the release pinned and hardened."""
 
 from __future__ import annotations
 
@@ -11,7 +10,6 @@ import re
 import shutil
 import subprocess
 import sys
-import textwrap
 import threading
 import tomllib
 from fnmatch import fnmatch
@@ -30,21 +28,22 @@ from deltasleuth.llm.model import EgressDenied
 from deltasleuth.llm.policy import EgressPolicy, check_egress
 from deltasleuth.llm.profiles import load_profiles
 from mocks.registry import PAIRS, pair_dir
+from tests.unit.deploy.test_up_script import OWN_SITE
 from tools import release
 
 P0_DIR = "/var/lib/deltasleuth/p0"
-SPILL_DIR = "/var/lib/deltasleuth/spill"  # a spill volume's mount point (docs/mvp/FILES.md §3)
+SPILL_DIR = "/var/lib/deltasleuth/spill"  # a spill volume's mount point
 PINNED = re.compile(r"[\w./-]+:[\w.-]+@sha256:[0-9a-f]{64}")  # name:tag@sha256:<64 hex>
 HASH = re.compile(r"--hash=sha256:[0-9a-f]{64}")
 BASE, SITE, SITE_EXAMPLE = "docker-compose.yml", "docker-compose.site.yml", "docker-compose.site.example.yml"
-SOURCE_BUILD = f"deploy/{BASE}:deploy/{SITE}:deploy/docker-compose.source.yml"  # DEPLOY section 2's value
+SOURCE_BUILD = f"deploy/{BASE}:deploy/{SITE}:deploy/docker-compose.source.yml"  # .env's, for a source build
 MARK = "## ---- optional blocks"  # the settings example: its required head, then the optional blocks
 TRIAL, OFFICE = (
     "http://localhost:8000",
     "https://deltasleuth.bank.example",
 )  # the example's public_url; an office's
 TABLES = ("examples/tables/README.md", "examples/tables/compose.yaml")  # the table demo's layering
-HARDENED = {  # docker-compose.yml's x-release, less the image (RELEASE.md §6)
+HARDENED = {  # docker-compose.yml's x-release, less the image
     "pull_policy": "never",
     "read_only": True,
     "tmpfs": ["/tmp:size=64m,mode=1777,noexec,nosuid,nodev"],  # noqa: S108
@@ -55,7 +54,7 @@ HARDENED = {  # docker-compose.yml's x-release, less the image (RELEASE.md §6)
 
 @pytest.fixture
 def config(repo_root: Path, tmp_path: Path) -> Path:
-    """deploy/config with the three examples copied to their real names, as DEPLOY.md section 3 does."""
+    """deploy/config with the three examples copied to their real names, as an installation holds them."""
     for name in ("deltasleuth", "targets", "llm_profiles"):
         shutil.copy(repo_root / "deploy" / "config" / f"{name}.example.yaml", tmp_path / f"{name}.yaml")
     return tmp_path
@@ -112,7 +111,7 @@ def test_one_rule_switches_every_setting_on(config: Path) -> None:
 
 
 def test_the_office_lines_load_when_uncommented(config: Path) -> None:
-    """The head's commented lines, switched on by the rule, are DEPLOY's office: the proxy and the IdP."""
+    """The head's commented lines, switched on by the rule, are an office's: the proxy and the IdP."""
     path = config / "deltasleuth.yaml"
     head, mark, optional = path.read_text().partition(MARK)
     path.write_text(office(head) + mark + optional)
@@ -134,7 +133,7 @@ def test_only_the_example_chat_profile_may_receive_what_the_chat_sends(config: P
     check_egress(
         profiles.get(str(settings.llm_profile)), DATA_CLASSES, EgressPolicy(settings.llm_environment)
     )
-    for external in ("claude", "openai"):  # DEPLOY: they serve the probe only, in eval
+    for external in ("claude", "openai"):  # they serve the probe only, in eval
         with pytest.raises(EgressDenied):
             check_egress(profiles.get(external), DATA_CLASSES, EgressPolicy("eval"))
 
@@ -163,7 +162,7 @@ def test_the_example_optional_blocks_load_when_uncommented(config: Path) -> None
     assert settings.notify is not None and sorted(settings.notify.channels) == ["ops-hook", "owners-mail"]
     assert settings.readiness is not None and settings.readiness.programmes[0].name == "cutover-q4"
     assert (settings.precheck.distinct_max_rows, settings.files.memory) == (20_000_000, "2GB")
-    assert settings.mcp == McpSettings(("aggregates", "production_tokenised"), http=True)  # MCP.md §4
+    assert settings.mcp == McpSettings(("aggregates", "production_tokenised"), http=True)
     targets = config / "targets.yaml"
     assert [load_targets(targets).get(name).engine for name in ("billing-mysql", "ledger-oracle")] == [
         "mysql", "oracle",
@@ -188,65 +187,8 @@ def _ignored(repo_root: Path, name: str) -> bool:
     return any(fnmatch(name, line.lstrip("/")) for line in lines if line and not line.endswith("/"))
 
 
-def test_deploy_writes_backups_outside_the_checkout(repo_root: Path) -> None:
-    """DEPLOY.md runs from the kit: a file its commands write lands outside it, in secrets/, or is .env. The
-    release procedure, which runs in the bundle's folder, writes beside that folder instead."""
-    guide = (repo_root / "docs" / "mvp" / "DEPLOY.md").read_text()
-    blocks = re.findall(r"```.*?```|`[^`]+`", guide, re.S)
-    quoted = {block for block in blocks if _fenced(block) == release.PROCEDURE}
-    code = "\n".join(block for block in blocks if block not in quoted)
-    written = re.findall(r"\s> *([^\s&)'\"`]+)", code)  # shell redirects, not <placeholders>
-    backups = [path for path in written if path.startswith("~/deltasleuth-backups/")]
-    assert "deploy/secrets/tokeniser" in written and len(backups) == 2  # the keys, a dump and the evidence
-    assert [p for p in written if not p.startswith(("~/", "/", "deploy/secrets/")) and p != ".env"] == []
-
-
 def test_a_key_backup_or_dump_in_the_checkout_is_git_ignored(repo_root: Path) -> None:
     assert [n for n in ("tokeniser.key.backup", "ds-2026-09-24.sql") if not _ignored(repo_root, n)] == []
-
-
-def test_a_restore_never_loads_a_dump_over_a_store(repo_root: Path) -> None:
-    """A dump loaded into a database that holds a store runs past every error unless psql is told to stop: it
-    keeps that store, repeats the rows of a table without a primary key and sets the sequences back (the
-    rehearsal of 2026-10-05). DEPLOY.md loads a dump in one transaction that stops at its first error, and
-    says how a rollback empties the database first."""
-    guide = (repo_root / "docs" / "mvp" / "DEPLOY.md").read_text()
-    loads = re.findall(r"^.*psql [^\n]*< ~/deltasleuth-backups/[^\n]*$", guide, re.M)
-    assert len(loads) == 1 and " -v ON_ERROR_STOP=1 -1 <" in loads[0]
-    restore = guide.partition("**Restore** in this order")[2].partition("\n### ")[0]
-    assert "docker compose stop app\n" in restore and "-c 'DROP SCHEMA ds CASCADE'" in restore
-    rollback = guide.partition("**Rolling back**")[2].partition("\n### ")[0]
-    assert "empty the database as Restore's step 2 says" in " ".join(rollback.split())
-
-
-def test_a_rollback_takes_out_what_the_newer_release_added(repo_root: Path, config: Path) -> None:
-    """A release refuses a settings block or a target member it does not know, so on a deploy/config extended
-    since the upgrade each command of the previous release exits 2 and its app restarts in a loop. DEPLOY.md
-    keeps a copy of deploy/config and the site file with the upgrade's backup, takes the additions out, or
-    puts the copies back, before the previous release's ds runs, and quotes the refusal as the loader words
-    it."""
-    guide = (repo_root / "docs" / "mvp" / "DEPLOY.md").read_text()
-    upgrade = guide.partition("### Upgrading from a release bundle")[2].partition("\n### ")[0]
-    backup, _, rollback = (" ".join(part.split()) for part in upgrade.partition("**Rolling back**"))
-    kept = backup.partition("2. **Back up**")[2].partition("3. **Extract")[0]
-    assert "a copy of `deploy/config` and of the site file" in kept
-    order = [
-        "empty the database as Restore's step 2 says",
-        "take out of `deploy/config` and the site file what you added for the newer release (its settings"
-        " blocks, the targets of its engines, their secrets and mounts) or put back the copies kept with"
-        " step 2's backup",
-        "then follow Restore with the previous release's `ds`",
-        "Without a migration too, what you added for the newer release comes out, or the copies go back,"
-        " before `docker compose up -d`",
-    ]
-    assert [step for step in order if step not in rollback] == []
-    assert sorted(order, key=rollback.index) == order
-    path = config / "deltasleuth.yaml"
-    path.write_text(path.read_text() + "newer: {}\n")  # a block of a release this one does not know
-    with pytest.raises(SettingsError) as refused:
-        load_settings(path)
-    said = f"error: {refused.value}".replace(str(path), "/etc/deltasleuth/deltasleuth.yaml")
-    assert f"(`{said.replace('newer:', 'files:')}`)" in rollback
 
 
 def test_compose_gives_the_cli_a_writable_p0_volume(repo_root: Path) -> None:
@@ -257,30 +199,22 @@ def test_compose_gives_the_cli_a_writable_p0_volume(repo_root: Path) -> None:
 
 
 def test_the_app_can_name_its_machine(repo_root: Path) -> None:
-    """An endpoint on the machine DeltaSleuth runs on is declared as host.docker.internal (DEPLOY section
-    7): Docker Desktop resolves the name by itself, Linux through this line; the mocks call no one."""
+    """An endpoint on the machine DeltaSleuth runs on is declared as host.docker.internal: Docker Desktop
+    resolves the name by itself, Linux through this line; the mocks call no one."""
     services = yaml.safe_load((repo_root / "deploy" / BASE).read_text())["services"]
     assert services["app"]["extra_hosts"] == ["host.docker.internal:host-gateway"]
     assert not [name for name in ("db", "mocks") if "extra_hosts" in services[name]]
 
 
 def test_the_image_holds_a_mount_point_for_a_spill_volume(repo_root: Path) -> None:
-    """docs/mvp/FILES.md §3: DEPLOY advises a volume of its own for the file reader's spill. Docker makes a
-    new volume mounted where the image holds no directory root's, which the service (uid 10001, every
-    capability dropped) cannot write: the reader then does not start. So the image creates the mount point
-    for the service's user, whose owner a new named volume takes, and DEPLOY mounts the volume there and
-    names that path as files.spill_dir."""
+    """The file reader's spill may have a volume of its own. Docker makes a new volume mounted where the
+    image holds no directory root's, which the service (uid 10001, every capability dropped) cannot write:
+    the reader then does not start. So the image creates the mount point for the service's user, whose owner
+    a new named volume takes; a site file mounts the volume there and the settings name that path as
+    files.spill_dir."""
     dockerfile = (repo_root / "deploy" / "Dockerfile").read_text()
     made = re.search(r"install -d -o deltasleuth -m 0700(?:\\\n|[^\n])*", dockerfile)[0]  # type: ignore[index]
     assert SPILL_DIR in made.split()
-    guide = (repo_root / "docs" / "mvp" / "DEPLOY.md").read_text()
-    assert f"      - spill:{SPILL_DIR}\nvolumes:\n  spill: {{}}\n" in guide
-    assert f"`files: {{spill_dir: {SPILL_DIR}}}`" in guide
-
-
-def _fenced(block: str) -> str:
-    """What a fenced code block holds, unindented."""
-    return textwrap.dedent(block.partition("\n")[2].rpartition("```")[0])
 
 
 def _stages(dockerfile: str) -> list[str]:
@@ -306,7 +240,7 @@ def _version(repo_root: Path) -> str:
 def test_dockerfile_pins_every_base_by_digest(repo_root: Path) -> None:
     """Every FROM, in any case, names its base by digest, directly or through a pinned ARG default, and every
     COPY --from or RUN --mount from= names a stage; the release tool knows the python index and one manifest
-    per platform, which a release builds from instead (RELEASE.md §5)."""
+    per platform, which a release builds from instead."""
     dockerfile = (repo_root / "deploy" / "Dockerfile").read_text()
     args = dict(re.findall(r"^ARG (\w+)=(\S+)$", dockerfile.split("\nFROM ", 1)[0], re.M))
     froms = re.findall(r"^FROM (?:--platform=\S+ )?(\S+)", dockerfile, re.M | re.I)
@@ -324,7 +258,7 @@ def test_dockerfile_pins_every_base_by_digest(repo_root: Path) -> None:
 
 def test_runtime_stage_holds_no_installer(repo_root: Path) -> None:
     """uv installs the environment in a build stage; the runtime stage takes only /app from it, uninstalls
-    pip and runs as a numeric user (RELEASE.md §5, D6)."""
+    pip and runs as a numeric user."""
     stages = _stages((repo_root / "deploy" / "Dockerfile").read_text())
     venv, runtime = next(stage for stage in stages if " AS venv\n" in stage), stages[-1]
     assert re.findall(r"pip install [^\n]*", venv) == [
@@ -355,7 +289,7 @@ def test_uv_requirements_reach_the_build(repo_root: Path) -> None:
 def test_the_image_carries_the_licence_text(repo_root: Path) -> None:
     """Apache-2.0 section 4(a): the venv stage copies LICENSE before it installs the project, so the
     package's dist-info holds the text (hatchling leaves it out, silently, when the file is absent), and a
-    release builds from an archive that holds it (RELEASE.md §2, §5)."""
+    release builds from an archive that holds it."""
     stages = _stages((repo_root / "deploy" / "Dockerfile").read_text())
     venv = next(stage for stage in stages if " AS venv\n" in stage)
     before, installs, _ = venv.partition("RUN uv sync --frozen --no-dev --no-cache\n")
@@ -365,7 +299,7 @@ def test_the_image_carries_the_licence_text(repo_root: Path) -> None:
 
 def test_compose_runs_the_release_hardened(repo_root: Path) -> None:
     """app and mocks run the loaded release under the hardening, never building or pulling it; db is as it
-    was, and the optional secrets live in the site file (RELEASE.md §6, D7, D8)."""
+    was, and the optional secrets live in the site file."""
     text = (repo_root / "deploy" / BASE).read_text()
     compose = yaml.safe_load(text)
     for name in ("app", "mocks"):
@@ -401,7 +335,7 @@ def test_site_example_adds_no_secret_until_its_lines_are_on(repo_root: Path) -> 
 
 def test_the_source_override_builds_once_and_tags_by_project(repo_root: Path) -> None:
     """One build, the app's, which mocks runs too, under a tag that carries the Compose project's name, so
-    two checkouts on one machine share no image (docs/mvp/FIRSTRUN.md §2). The default names the base
+    two checkouts on one machine share no image. The default names the base
     file's project, written out: Compose is not relied on to hand a file's ``name:`` to interpolation."""
     base, source = (
         yaml.safe_load((repo_root / "deploy" / name).read_text())
@@ -418,7 +352,7 @@ def test_the_source_override_builds_once_and_tags_by_project(repo_root: Path) ->
 
 def test_the_source_override_shows_ds_the_checkouts_mocks_and_examples(repo_root: Path) -> None:
     """A source build's app sees the checkout's mocks/ and examples/ read-only where the image's working
-    directory resolves their repository paths, so ``ds run mocks/customer/spec.yaml`` under the guide's
+    directory resolves their repository paths, so ``ds run mocks/customer/spec.yaml`` under the user guide's
     alias reads the checkout's file. Only the override says so: the base file, which a release runs, gives
     the app no such mount."""
     base, source = (
@@ -441,13 +375,12 @@ def test_the_source_override_shows_ds_the_checkouts_mocks_and_examples(repo_root
 
 
 def test_the_env_example_is_the_source_builds(repo_root: Path) -> None:
-    """deploy/env.source.example is .env for a source build as copied: its one active line is DEPLOY section
-    2's value, and it is that line's one source, since deploy/up.sh holds no compose file list."""
+    """deploy/env.source.example is .env for a source build as copied: its one active line names the base
+    file, the site file and the source override, and it is that line's one source, since deploy/up.sh holds
+    no compose file list."""
     lines = (repo_root / "deploy" / "env.source.example").read_text().splitlines()
     assert [line for line in lines if not line.startswith("#")] == [f"COMPOSE_FILE={SOURCE_BUILD}"]
     assert "# COMPOSE_PROJECT_NAME=deltasleuth2" in lines  # a second installation's, switched off
-    guide = (repo_root / "docs" / "mvp" / "DEPLOY.md").read_text()
-    assert f"COMPOSE_FILE={SOURCE_BUILD}" in guide and "cp deploy/env.source.example .env" in guide
     assert "docker-compose.yml:" not in (repo_root / "deploy" / "up.sh").read_text()
     assert _ignored(repo_root, ".env") and not _ignored(repo_root, "deploy/env.source.example")
 
@@ -487,7 +420,7 @@ def test_the_examples_render_in_compose_as_copied(repo_root: Path, tmp_path: Pat
     """The compose files with the site and .env examples copied render, in Compose itself, as project
     deltasleuth on port 8000 running one build, deltasleuth:source; with a project line in .env and the
     site file deploy/up.sh writes for another port and subnet, as a second installation that shares
-    nothing with the first (docs/mvp/FIRSTRUN.md §2, §4). Both hold the lines deploy/up.sh reads, and their
+    nothing with the first. Both hold the lines deploy/up.sh reads, and their
     app sees the checkout's mocks/ and examples/ read-only in /app; a release's .env, which names no
     source override, renders the release image with the settings as the app's one host folder."""
     if shutil.which("docker") is None:
@@ -512,21 +445,15 @@ def test_the_examples_render_in_compose_as_copied(repo_root: Path, tmp_path: Pat
     assert _binds(first, tmp_path) == settings | checkout
     with (tmp_path / ".env").open("a") as env:
         env.write("COMPOSE_PROJECT_NAME=dsprobe55\n")
-    written = (repo_root / "docs" / "mvp" / "FIRSTRUN.md").read_text().partition("it is this file instead")[2]
-    site = textwrap.dedent(written.partition("```yaml\n")[2].partition("```")[0])
-    site = (
-        site.replace("<port>", "18044")
-        .replace("<subnet>", "172.31.7.0/24")
-        .replace("<gateway>", "172.31.7.1")
-    )
-    (deploy / SITE).write_text(site)
+    assert OWN_SITE.count("18000") == 1 and OWN_SITE.count("172.31.10.") == 2  # the port; subnet and gateway
+    (deploy / SITE).write_text(OWN_SITE.replace("18000", "18044").replace("172.31.10.", "172.31.7."))
     second, lines = _rendered(tmp_path)
     read = {"name: dsprobe55", "image: dsprobe55:source", 'published: "18044"', "- subnet: 172.31.7.0/24"}
     assert read <= lines and second["services"]["mocks"]["image"] == "dsprobe55:source"
     assert len(_owned(first)) == len(_owned(second)) == 8 and not _owned(first) & _owned(second)
     assert _binds(second, tmp_path) == settings | checkout
     shutil.copy(deploy / SITE_EXAMPLE, deploy / SITE)
-    (tmp_path / ".env").write_text(f"COMPOSE_FILE=deploy/{BASE}:deploy/{SITE}\n")  # a release's (DEPLOY 2)
+    (tmp_path / ".env").write_text(f"COMPOSE_FILE=deploy/{BASE}:deploy/{SITE}\n")  # a release's
     loaded, _ = _rendered(tmp_path)
     services, image = loaded["services"], f"deltasleuth:{_version(repo_root)}"
     assert [services[name]["image"] for name in ("app", "mocks")] == [image, image]
@@ -539,7 +466,7 @@ def test_the_developer_example_runs_from_a_checkout(
 ) -> None:
     """deploy/config/deltasleuth.dev.example.yaml, copied to <checkout>/.deltasleuth/ as its header says and
     loaded from another working directory: developer mode, every path and the DSN reference its own
-    folder's (docs/mvp/FIRSTRUN.md §5), the workspace's keys made by ``ds init``, and both mock specs served
+    folder's, the workspace's keys made by ``ds init``, and both mock specs served
     by mocks/targets.yaml."""
     home = tmp_path / ".deltasleuth"
     home.mkdir()
@@ -556,55 +483,23 @@ def test_the_developer_example_runs_from_a_checkout(
     _serves_the_mock_specs(settings)
 
 
-def test_deploy_edits_only_the_site_file(repo_root: Path) -> None:
-    """Every compose change goes to the git-ignored site file, which no upgrade overwrites: DEPLOY.md names a
-    tracked compose file only in COMPOSE_FILE values, the rule never to edit them, and the move's git diff."""
-    guide = (repo_root / "docs" / "mvp" / "DEPLOY.md").read_text()
-    tracked = re.compile(r"docker-compose(?:\.source|\.ca)?\.yml")
-    values = re.findall(r"COMPOSE_FILE=([^\s'`]+)", guide)
-    assert "deploy/docker-compose.yml:deploy/docker-compose.site.yml" in values
-    assert {f"deploy/docker-compose.{layer}.yml" for layer in ("source", "ca")} <= {
-        layer for value in values for layer in value.split(":")
-    }
-    rule = [p for p in re.split(r"\n\s*\n", guide) if "Never edit the tracked compose files" in p]
-    move = "git diff deploy/docker-compose.yml > ~/"
-    assert len(rule) == 1 and move in guide
-    rest = re.sub(r"COMPOSE_FILE=[^\s'`]+", "", guide.replace(rule[0], "").replace(move, ""))
-    assert [line for line in rest.splitlines() if tracked.search(line)] == []
-    assert "cp deploy/docker-compose.site.example.yml deploy/docker-compose.site.yml" in guide
-    assert _ignored(repo_root, "deploy/docker-compose.site.yml") and _ignored(repo_root, ".env")
-
-
-def test_root_p0_cron_adds_dac_override_and_no_file_flag(repo_root: Path) -> None:
-    """Root in the hardened container lacks DAC_OVERRIDE, so it cannot enter the 0700 p0 folder unless the
-    cron adds it back; and the cron reads .env like every other command, with no -f (RELEASE.md §6). An
-    installation moving to the site file replaces its earlier cron, and checks the new one by hand."""
-    for doc in ("DEPLOY.md", "RETENTION.md"):
-        text = re.sub(r"\n\s*", " ", (repo_root / "docs" / "mvp" / doc).read_text())
-        runs = re.findall(r"docker compose [^`]*?-u root[^`]*", text)
-        assert runs and [run for run in runs if "-u root --cap-add DAC_OVERRIDE app find" not in run] == []
-        assert [run for run in runs if re.search(r"\s-f\s", run)] == []
-    guide = (repo_root / "docs" / "mvp" / "DEPLOY.md").read_text()
-    cron = "root cd /srv/deltasleuth && docker compose run --rm --no-deps -T -u root --cap-add DAC_OVERRIDE"
-    moving = guide.partition("### Moving from a source checkout")[2].partition("\n### ")[0]
-    check = cron.removeprefix("root ") + f" app find {P0_DIR} -mindepth 1 -maxdepth 1 -mtime +90 -print"
-    assert cron in guide and "/etc/cron.d/deltasleuth-p0" in moving and check in moving
+def test_the_site_file_and_env_are_git_ignored(repo_root: Path) -> None:
+    """Every compose change goes to the site file, which is git-ignored like .env, so no upgrade overwrites
+    either; the examples they are copied from are tracked."""
+    assert _ignored(repo_root, f"deploy/{SITE}") and _ignored(repo_root, ".env")
+    assert not _ignored(repo_root, f"deploy/{SITE_EXAMPLE}")
 
 
 def test_every_compose_file_value_keeps_the_site_file(repo_root: Path) -> None:
     """A command without the site file loses its secrets and, with a moved subnet, recreates the network and
-    cuts the app off from db (DEPLOY's introduction): every COMPOSE_FILE the kit gives names the base file,
-    then the site file, and goes in .env, never in an exported variable, which overrides .env. The guide's
-    chapters are held to it and need give none: theirs is the env example's, copied (FIRSTRUN.md §12)."""
-    texts = [
-        (repo_root / p).read_text() for p in ("docs/mvp/DEPLOY.md", "deploy/env.source.example", *TABLES)
-    ]
+    cuts the app off from db: every COMPOSE_FILE the kit gives names the base file, then the site file, and
+    goes in .env, never in an exported variable, which overrides .env. The documents are held to it too."""
+    texts = [(repo_root / p).read_text() for p in ("deploy/env.source.example", *TABLES)]
     assert all("COMPOSE_FILE=" in text for text in texts)
-    texts += [chapter.read_text() for chapter in sorted((repo_root / "docs" / "guide").glob("*.md"))]
+    texts += [page.read_text() for page in (repo_root / "README.md", *(repo_root / "docs").glob("*.md"))]
     values = [value for text in texts for value in re.findall(r"COMPOSE_FILE=([^\s'`]+)", text)]
-    # Not values: deploy/up.sh's refusal U12, which the guide quotes, and a sed pattern that adds a file
-    # to the line .env holds (the line it leaves is printed beside it, and is held).
-    values = [value for value in values if value != "…" and not value.startswith(".*")]
+    # Not a value: a sed pattern that adds a file to the line .env holds.
+    values = [value for value in values if not value.startswith(".*")]
     assert [value for value in values if value.split(":")[:2] != [f"deploy/{BASE}", f"deploy/{SITE}"]] == []
     assert [line for text in texts for line in text.splitlines() if "export COMPOSE_FILE=" in line] == []
 

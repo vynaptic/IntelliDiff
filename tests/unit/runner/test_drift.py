@@ -1,7 +1,7 @@
-"""The schema guard on PostgreSQL (docs/mvp/PRECHECKS.md §7, §13): what it records of a run's tables and
-where it looks (V1 to V5), what pauses a run and what only warns, the two modes and what a resume accepts,
+"""The schema guard on PostgreSQL: what it records of a run's tables and
+where it looks, what pauses a run and what only warns, the two modes and what a resume accepts,
 the basis of a new run, a run from before 016, a look that cannot be made, and its audit rows; and on MySQL
-and Oracle, a column dropped under per-key reads (V5: MySQL 1054, ORA-00904)."""
+and Oracle, a column dropped under per-key reads (MySQL 1054, ORA-00904)."""
 
 from __future__ import annotations
 
@@ -130,11 +130,11 @@ async def paused_seq(pair: Pair, run_id: str) -> int:
         return (await cur.fetchone())[0]  # type: ignore[index]
 
 
-# -- V1: creation ------------------------------------------------------------------------------------------
+# -- creation ----------------------------------------------------------------------------------------------
 
 
 async def test_a_first_run_records_its_tables_beside_its_plan_and_has_no_basis(pair: Pair) -> None:
-    """V1: the guard's record is ``ds.runs.guard``, outside ``params``: the plan a pack's facts hold and
+    """The guard's record is ``ds.runs.guard``, outside ``params``: the plan a pack's facts hold and
     ``create_run`` hashes is what it was, and nothing is audited of a run whose tables did not change."""
     run_id = await create_run(pair.h.ctx, await pair.spec(), "batch", who=TESTER)
     run = await pair.h.run(run_id)
@@ -163,7 +163,7 @@ async def test_a_first_run_records_its_tables_beside_its_plan_and_has_no_basis(p
 
 
 async def test_a_run_without_a_table_side_is_not_guarded(harness: Harness) -> None:
-    """D14: service sides are not guarded."""
+    """Service sides are not guarded."""
     from .conftest import spec_text
 
     run_id = await create_run(harness.ctx, await harness.spec(spec_text()), "batch", who=TESTER)
@@ -176,7 +176,7 @@ async def test_a_run_without_a_table_side_is_not_guarded(harness: Harness) -> No
 
 
 async def test_narrowing_is_created_paused_and_a_resume_accepts_it(pair: Pair) -> None:
-    """D10 under ``finding``: a new run that would not compare what its predecessor compared is created
+    """Under ``finding``: a new run that would not compare what its predecessor compared is created
     paused, before any table row is read; its audit rows come last and in order; a resume accepts the
     tables as they are, and from then on the run is the version's baseline."""
     ctx, spec_id = pair.h.ctx, await pair.spec()
@@ -202,7 +202,7 @@ async def test_narrowing_is_created_paused_and_a_resume_accepts_it(pair: Pair) -
     assert (told["paused"], told["accepts"], told["basis"]) == (True, True, first)
     rows = await pair.audited(run_id)
     assert [action for action, _, _ in rows] == ["create_run", "paused", "schema.drift"]
-    assert {actor for _, actor, _ in rows} == {TESTER.actor}  # the caller's, at V1
+    assert {actor for _, actor, _ in rows} == {TESTER.actor}  # the caller's, at creation
     hashes = {side: guard[side]["sha256"] for side in "ab"}
     assert rows[1][2] == {"reason": drift.SCHEMA_PAUSE, "schema": hashes}
     was = (await pair.h.run(first))["guard"]
@@ -242,7 +242,7 @@ async def test_narrowing_is_created_paused_and_a_resume_accepts_it(pair: Pair) -
 
 
 async def test_narrowing_is_refused_at_creation_when_the_spec_pauses_on_schema_drift(pair: Pair) -> None:
-    """D10 under ``pause`` (E6): 422, nothing written. A run that could only be cancelled would hold its
+    """Under ``pause``: 422, nothing written. A run that could only be cancelled would hold its
     schedule in ``overlap``."""
     ctx, spec_id = pair.h.ctx, await pair.spec(schemaDrift={"mode": "pause"})
     first = await create_run(ctx, spec_id, "batch", who=TESTER)
@@ -347,7 +347,7 @@ async def test_an_adopted_run_s_plan_is_the_basis_while_no_run_is_a_baseline(
     await pair.before_016(first)
     soak = await create_run(ctx, spec_id, "batch", who=TESTER)
     await pair.before_016(soak)
-    assert await scanning.scan(ctx, soak) is None  # V2 adopts it
+    assert await scanning.scan(ctx, soak) is None  # the scan pass adopts it
     assert (await pair.h.run(soak))["guard"]["adopted"] == 1
     pair.alter("b", "ALTER TABLE customers DROP COLUMN amount")
     run = await pair.h.run(await create_run(ctx, spec_id, "batch", who=TESTER))
@@ -431,9 +431,9 @@ async def test_a_one_shot_compare_warns_and_is_neither_paused_nor_a_basis(pair: 
 
 
 async def test_a_schedule_s_firing_meets_the_schema_guard(pair: Pair) -> None:
-    """docs/mvp/SCHEDULES.md §5: a firing the guard creates paused is a live run of its schedule, whose
+    """A firing the guard creates paused is a live run of its schedule, whose
     later times are ``overlap`` until a person resumes or cancels it, its audit rows in order after the
-    firing's; one the guard refuses (E6) starts no run, and its time is ``not_started``."""
+    firing's; one the guard refuses starts no run, and its time is ``not_started``."""
     ctx = pair.h.ctx
     finding, pausing = await pair.spec(), await pair.spec(version="1.1.0", schemaDrift={"mode": "pause"})
     for spec_id in (finding, pausing):
@@ -467,14 +467,14 @@ async def test_a_schedule_s_firing_meets_the_schema_guard(pair: Pair) -> None:
     assert await started(pair.h, refused) == [] and "amount" not in json.dumps(detail)
 
 
-# -- V2 and V4: a scan pass, and a resume --------------------------------------------------------------------
+# -- a scan pass, and a resume -------------------------------------------------------------------------------
 
 
 async def test_a_dropped_compared_column_pauses_before_the_cursor_opens_and_resumes_once_restored(
     pair: Pair, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """V2 and V4: the pass ends before either side's scan statement is sent; the run is paused, not
-    failed; a resume is refused while the change stands (U1) and goes on once the column is back."""
+    """The pass ends before either side's scan statement is sent; the run is paused, not
+    failed; a resume is refused while the change stands and goes on once the column is back."""
     ctx = pair.h.ctx
     run_id = await create_run(ctx, await pair.spec(), "batch", who=TESTER)
     pair.alter("b", "ALTER TABLE customers DROP COLUMN amount")
@@ -609,7 +609,7 @@ async def test_pause_mode_pauses_on_any_other_change_and_a_resume_accepts(pair: 
 async def test_a_resume_that_accepts_is_named_so_while_a_breaking_change_stands(pair: Pair) -> None:
     """Under ``pause`` a dropped column and a gained one pause the run. Once the column is put back, the
     resume accepts the gained one in the person's name, so the block says a resume accepts from the pause
-    on, while the dropped column still refuses it (U1)."""
+    on, while the dropped column still refuses it."""
     ctx = pair.h.ctx
     run_id = await create_run(ctx, await pair.spec(schemaDrift={"mode": "pause"}), "batch", who=TESTER)
     pair.alter("b", "ALTER TABLE customers DROP COLUMN amount")
@@ -627,7 +627,7 @@ async def test_a_resume_that_accepts_is_named_so_while_a_breaking_change_stands(
 
 
 async def test_a_resume_is_refused_while_a_side_cannot_be_looked_at(pair: Pair) -> None:
-    """U2."""
+    """The 409 of a table that could not be checked now."""
     ctx = pair.h.ctx
     run_id = await create_run(ctx, await pair.spec(schemaDrift={"mode": "pause"}), "batch", who=TESTER)
     pair.alter("a", "ALTER TABLE customers ADD COLUMN loyalty_tier text")
@@ -657,11 +657,11 @@ async def test_one_event_per_state(pair: Pair) -> None:
     assert [action for action, _, _ in rows] == ["paused", "schema.drift", "paused"]
 
 
-# -- V3: a key-list cycle's start ----------------------------------------------------------------------------
+# -- a key-list cycle's start --------------------------------------------------------------------------------
 
 
 async def test_an_added_column_warns_once_across_three_cycles(pair: Pair) -> None:
-    """V3: a change that breaks nothing is recorded with one row and the run goes on with its plan; the
+    """A change that breaks nothing is recorded with one row and the run goes on with its plan; the
     start of its first cycle was looked at when it was created."""
     ctx = pair.h.ctx
     run_id = await create_run(ctx, await pair.spec(execution=SOAK), "soak", ["1", "2"], who=TESTER)
@@ -706,7 +706,7 @@ async def test_a_run_from_before_016_is_adopted(pair: Pair) -> None:
     for run_id in (scanned, listed):
         await pair.before_016(run_id)
     pair.alter("b", "ALTER TABLE customers ADD COLUMN loyalty_tier text")
-    assert await scanning.scan(ctx, scanned) is None  # V2 adopts it: a gained column is not judged
+    assert await scanning.scan(ctx, scanned) is None  # the scan pass adopts it: a gained column is not judged
     run = await pair.h.run(scanned)
     guard = run["guard"]
     assert (guard["adopted"], guard["baseline"], guard["basis"], guard["since"]) == (1, False, None, None)
@@ -783,7 +783,7 @@ async def test_a_fault_of_the_guard_refuses_no_run_and_keeps_none_paused(
         "the schema guard could not check the run's tables before any table row was read (KeyError): the"
         " cycle went on unchecked"
     ]
-    assert await scanning.scan(ctx, run_id) is None  # V2 adopts it
+    assert await scanning.scan(ctx, run_id) is None  # the scan pass adopts it
     assert (await pair.h.run(run_id))["guard"]["adopted"] == 1
     await pair.next_cycle(run_id)
     pair.alter("a", "ALTER TABLE customers ADD COLUMN loyalty_tier text")
@@ -799,9 +799,9 @@ async def test_a_fault_of_the_guard_refuses_no_run_and_keeps_none_paused(
 async def test_unreachable_at_cycle_start_does_not_stall_leases(
     pair: Pair, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """V3's faults: a side that cannot be reached is tried twice, a lease period apart; then one row says
-    the cycle's start was not checked, and the census, the leases and the stop conditions go on as they
-    did before the guard existed."""
+    """A cycle start's faults: a side that cannot be reached is tried twice, a lease period apart; then one
+    row says the cycle's start was not checked, and the census, the leases and the stop conditions go on as
+    they did before the guard existed."""
     ctx = pair.h.ctx
     execution = {"concurrency": 1, "stop": {"maxConsecutiveErrors": 2}}
     run_id = await create_run(ctx, await pair.spec(execution=execution), "batch", ["1", "2", "3"], who=TESTER)
@@ -870,13 +870,13 @@ async def test_a_cycle_start_not_checked_is_never_claimed(pair: Pair) -> None:
     assert drift.lines(run) == [unmade, FIRST]
 
 
-# -- V5: a failed read ---------------------------------------------------------------------------------------
+# -- a failed read -------------------------------------------------------------------------------------------
 
 
 async def test_a_column_dropped_under_per_key_reads_pauses_the_run_at_v5(
     pair: Pair, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """V5: a read that failed on a column has the guard look before the run is failed: a change that
+    """A read that failed on a column has the guard look before the run is failed: a change that
     breaks its plan pauses it, its keys handed back, and it goes on once the column is back."""
     ctx = pair.h.ctx
     run_id = await create_run(ctx, await pair.spec(), "batch", ["1", "2", "3"], who=TESTER)
@@ -946,8 +946,8 @@ def engine_database(
 async def test_a_column_dropped_under_per_key_reads_pauses_the_run_at_v5_on_each_engine(
     engine: str, open_harness: OpenHarness, request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """V5 on MySQL and Oracle: a per-key read of a dropped column (MySQL 1054, ORA-00904: the denied class)
-    has the guard look first, and the run is paused, not failed."""
+    """A failed read on MySQL and Oracle: a per-key read of a dropped column (MySQL 1054, ORA-00904: the
+    denied class) has the guard look first, and the run is paused, not failed."""
     seed, dropped, restored = ENGINE_SEEDS[engine]
     entry, alter, schema = engine_database(engine, request, seed)
     relation = f"{schema}.{'CUSTOMERS' if engine == 'oracle' else 'customers'}"
@@ -1035,8 +1035,9 @@ async def test_a_type_its_engine_reads_otherwise_pauses_the_run_on_each_engine(
 ) -> None:
     """A planned column's type changed within its class under a running plan: where the engine builds other
     statements of the new type (Oracle's DATE and TIMESTAMP, MySQL's BIT), the scan's statements would read
-    it otherwise, and V2 pauses the run before its cursor opens, rather than letting it read a wrong match
-    or fail. Oracle's NUMBER(*,2) is its NUMBER(38,2): one key text, a warning, and the run goes on."""
+    it otherwise, and the scan pass pauses the run before its cursor opens, rather than letting it read a
+    wrong match or fail. Oracle's NUMBER(*,2) is its NUMBER(38,2): one key text, a warning, and the run goes
+    on."""
     sides = {side: engine_database(engine, request, seed) for side in "ab"}
     targets = json.dumps({"targets": {f"db-{side}": found[0] for side, found in sides.items()}})
     async with open_harness(targets, readiness={}, lease_seconds=1) as h:
@@ -1075,7 +1076,7 @@ async def test_a_misclassified_error_at_v5_still_fails(pair: Pair, monkeypatch: 
     assert drifts(await pair.audited(run_id)) == [] and run["guard"]["checked"]["where"] == "read"
 
 
-# -- every text (§10) ----------------------------------------------------------------------------------------
+# -- every text ----------------------------------------------------------------------------------------
 
 BASIS = "R-" + "0" * 25 + "1"
 
@@ -1150,13 +1151,13 @@ POSTGRES = (
 
 
 def test_messages_golden() -> None:
-    """Every text of the schema guard that the runs above do not print (§10)."""
+    """Every text of the schema guard that the runs above do not print."""
     lead = "Paused by the schema guard at the start of cycle 7: "
     replan = (
         "Cancel the run and start a new one, which plans the table as it is now, or change the column back"
         " and resume."
     )
-    # E4: a number key whose text is built from its scale and, on Oracle, its precision.
+    # A number key whose text is built from its scale and, on Oracle, its precision.
     run = _guarded(ORACLE, POSTGRES)
     _seen(run, (_column("ID", "NUMBER(10,4)", "decimal", False), *ORACLE[1:]), POSTGRES)
     assert drift.lines(run)[0] == (
@@ -1178,7 +1179,8 @@ def test_messages_golden() -> None:
         "no earlier run of this version recorded its tables' shapes: this run records them",
     ]
     assert drift.told(run)["accepts"] is False and run["status"] == "running"
-    # E3 and E1 at once: the first stops the pause's line, the other follows it.
+    # A table that is gone and a column that is gone at once: the first stops the pause's line, the other
+    # follows it.
     run = _guarded(ORACLE, POSTGRES)
     _seen(run, None, POSTGRES[:2])
     assert drift.lines(run)[:2] == [
@@ -1186,7 +1188,7 @@ def test_messages_golden() -> None:
         " run, or cancel it.",
         "side b: column 'amount' of public.customers is gone, or the role may no longer read it",
     ]
-    # E5 and E6: a column both runs plan whose class or key rendering differs, against the basis.
+    # A column both runs plan whose class or key rendering differs, against the basis.
     was = _guarded(ORACLE, POSTGRES)["guard"]
     retyped = (_column("ID", "NUMBER(10,4)", "decimal", False), ORACLE[1], _column("AMOUNT", "CLOB", "text"))
     run = _guarded(retyped, POSTGRES, basis={"run_id": BASIS, "guard": was, "tables": None})
@@ -1206,7 +1208,7 @@ def test_messages_golden() -> None:
         f"spec 12 (customers 1.0.0) pauses on schema drift and a run of it would not compare what run {BASIS}"
         f" compared: {amount} (and 1 more). Upload a new version to compare the tables as they are."
     )
-    # E7 during a run: any other change pauses a spec that asks for it.
+    # During a run: any other change pauses a spec that asks for it.
     run = _guarded(ORACLE, POSTGRES, mode="pause")
     _seen(run, wider, POSTGRES)
     assert drift.lines(run)[0] == (
@@ -1257,8 +1259,8 @@ def test_the_report_s_sentence_adds_up_the_rows_through_its_cycle() -> None:
 
 
 def test_never_told_that_a_schema_is_unchanged() -> None:
-    """N9: the guard says ``no change observed``, with what it reads and when it looked, never that a
-    schema is unchanged; and none of its texts uses a word a reader could take for parity (N1)."""
+    """The guard says ``no change observed``, with what it reads and when it looked, never that a
+    schema is unchanged; and none of its texts uses a word a reader could take for parity."""
     tree = ast.parse(inspect.getsource(drift))
     docstrings = {
         ast.get_docstring(node, clean=False)

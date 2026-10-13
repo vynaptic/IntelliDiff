@@ -1,5 +1,5 @@
 """A revoke against a run's creation, its resume, a soak's boundary attach and a sign-off decision, on
-two connections in both lock orders (docs/mvp/APPROVALS.md §2): each reads the spec approval FOR SHARE
+two connections in both lock orders: each reads the spec approval FOR SHARE
 first, so it either commits first and the revoke's cascade catches it, or waits for the revoke and
 finds the approval revoked. Never a running run, nor an approved sign-off, under a revoked approval."""
 

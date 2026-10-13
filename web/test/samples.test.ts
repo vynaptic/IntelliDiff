@@ -1,5 +1,5 @@
 // What the Run screen and a sign-off's review say about a sampled run's draws, in the server's words, and what
-// they send (docs/mvp/SAMPLING.md §9, §10, §14).
+// they send.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 

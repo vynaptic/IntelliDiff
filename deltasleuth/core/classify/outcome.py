@@ -1,4 +1,4 @@
-"""Per-key outcome (§7.1): two side states in, one ``KeyResult`` out.
+"""Per-key outcome: two side states in, one ``KeyResult`` out.
 
 An unusable side makes the key INCONCLUSIVE, and so do two absent sides or two documents holding
 no value (they hash equal, but nothing was compared). A one-sided key is NOT_FOUND unless a rule
@@ -138,7 +138,7 @@ def _document_finding(key: str, present: Side, canonical: Canonical) -> Finding:
 
 
 def _membership_finding(key: str, selected_a: bool, selected_b: bool) -> Finding:
-    """One side's filter selects the key's row, the other's does not (TABLES.md §9)."""
+    """One side's filter selects the key's row, the other's does not."""
     return Finding(
         key=key,
         json_pointer="",

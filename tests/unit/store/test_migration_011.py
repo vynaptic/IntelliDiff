@@ -1,4 +1,4 @@
-"""Migration 011 (docs/mvp/SAMPLING.md §12): the run_keys labels, added without a rewrite or a scan and
+"""Migration 011: the run_keys labels, added without a rewrite or a scan and
 checked on new rows; a run's pending draw and each cycle's judgement; ds.sample_draws, made as of now()
 for a running run's current cycle before its keys and only ever closed, once; the sampling scope; closers
 excluded from a sign-off; and the repo functions storage needs."""
@@ -325,7 +325,7 @@ async def _now(conn: repo.Conn) -> Any:
 
 
 async def test_a_sign_off_excludes_whoever_closed_a_draw_of_its_ledger(pool: AsyncConnectionPool) -> None:
-    """011's ds.approval_authors adds the closers of the ledger a sign-off attests (§10); the scorer of its
+    """011's ds.approval_authors adds the closers of the ledger a sign-off attests; the scorer of its
     adjudication stays excluded (tests/unit/reports/test_adjudications.py)."""
     async with pool.connection() as conn:
         amy, olga = await person(conn, "amy", "spec_author"), await person(conn, "olga", "operator")

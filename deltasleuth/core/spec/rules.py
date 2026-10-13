@@ -71,7 +71,7 @@ _DEFERRED = {
     "noise/masks": "noise masks",
     "identity/crosswalk": "an identity crosswalk",
 }
-# Table-side members the product does not run yet (docs/mvp/TABLES.md §2).
+# Table-side members the product does not run yet.
 _TABLE_DEFERRED = {
     "template": "an SQL template side",
     "session": "session settings; every session is read-only and renders values in UTC",
@@ -199,7 +199,7 @@ def _unique_rules(doc: dict[str, Any]) -> Iterator[SpecIssue]:
     for path, at in clear.items():
         if path in tokenised:
             yield _error(at, "security_path_conflict", f"{path} is both tokenised and clear")
-    if _get(doc, "security/unlisted") == "clear":  # the runner gates it (docs/mvp/APPROVALS.md §4)
+    if _get(doc, "security/unlisted") == "clear":  # the runner gates it
         yield _warning(
             "security/unlisted",
             "unapproved_clear",
@@ -281,7 +281,7 @@ def _placeholders(text: str) -> Iterator[str]:
 def _inline_keys(doc: dict[str, Any]) -> Iterator[SpecIssue]:
     """Inline keys must be requestable after ``key.normalize`` and satisfy ``key.pattern``, part by part
     when the key has several (``_key_parts``). Keys of a class other than ``business_code`` are flagged:
-    stored in clear with the spec, they are never purged (docs/mvp/RETENTION.md §4.1)."""
+    stored in clear with the spec, they are never purged."""
     value_class = _get(doc, "key/class")
     stored = isinstance(value_class, str) and value_class != "business_code"
     for base, source in _key_sources(doc):
@@ -324,7 +324,7 @@ def _key_pattern(doc: dict[str, Any]) -> Iterator[SpecIssue]:
     """Warn of keys of a value class that no ``key.pattern`` tells from other text, a missing one (two
     table sides need none: the schema requires it beside a service side) or one that matches the empty
     string: a pack's raw-value gate refuses every run of such a spec, and only once its cycle is signed
-    off (docs/mvp/PACK.md §2.3). ``business_code`` keys are never searched for."""
+    off. ``business_code`` keys are never searched for."""
     value_class, pattern = _get(doc, "key/class"), _get(doc, "key/pattern")
     if not isinstance(value_class, str) or value_class == "business_code":
         return
@@ -336,7 +336,7 @@ def _key_pattern(doc: dict[str, Any]) -> Iterator[SpecIssue]:
         return  # it tells a key, or the schema or invalid_key_pattern reports it
     message = (
         f"key.pattern {found}: a raw key cannot be told from other text, so no evidence pack is issued for"
-        " a run of this spec (docs/mvp/PACK.md §2.3); declare a pattern that fits its keys only, or class"
+        " a run of this spec; declare a pattern that fits its keys only, or class"
         " keys that are not personal business_code"
     )
     yield _warning("key/pattern", "key_pattern_empty", message)
@@ -413,7 +413,7 @@ def _replacement_error(pattern: str, replacement: str) -> str | None:
 
 def _tables(doc: dict[str, Any]) -> Iterator[SpecIssue]:
     """Each table side has one key column per key part (one, or ``key.parts`` for a composite key),
-    and a filter in the predicate language (TABLES.md §9); so has a key table (``_tabled``)."""
+    and a filter in the predicate language; so has a key table (``_tabled``)."""
     parts = _get(doc, "key/parts") if _get(doc, "key/type") == "composite" else None
     expected = len(parts) if isinstance(parts, list) else 1
     for base, side in _tabled(doc):
@@ -448,7 +448,7 @@ def _tables(doc: dict[str, Any]) -> Iterator[SpecIssue]:
             yield from _file(base, side, file)
 
 
-# A typeSpec's format (docs/mvp/FILES.md §5, L11): strptime's directives of no locale or pivot year.
+# A typeSpec's format: strptime's directives of no locale or pivot year.
 _FORMAT = re.compile(r"(?:%[YmdHMSfz]|[-/.: T])+")
 _TYPE_FORMAT = (
     "format goes with as: date or as: timestamp and holds only %Y %m %d %H %M %S %f %z and the characters - /"
@@ -457,7 +457,7 @@ _TYPE_FORMAT = (
 
 
 def _type_text(at: Parts, spec: dict[str, Any]) -> Iterator[SpecIssue]:
-    """L11: a typeSpec's ``format`` and ``decimalSeparator``, each with the types that read a text by it."""
+    """A typeSpec's ``format`` and ``decimalSeparator``, each with the types that read a text by it."""
     form = spec.get("format")
     if form is not None and (spec.get("as") not in ("date", "timestamp") or not _FORMAT.fullmatch(form)):
         yield _error((*at, "format"), "invalid_type_map", _TYPE_FORMAT)
@@ -469,7 +469,7 @@ def _type_text(at: Parts, spec: dict[str, Any]) -> Iterator[SpecIssue]:
 
 _COLUMN = re.compile(r"[A-Za-z_][A-Za-z0-9_$#]*")  # $defs/columnName
 _CSV_KEYS = ({"as": "integer"}, {"as": "date"})
-# L10's texts by what each judges (docs/mvp/FILES.md §15); the path's is manifest.PATH_REFUSED.
+# The texts of a refused ``table.file`` by what each judges; the path's is manifest.PATH_REFUSED.
 _L10 = {
     "format": "format csv needs csv (columns, delimiter); format parquet takes none",
     "columns": "csv.columns names every field once, in file order",
@@ -484,9 +484,9 @@ _L10 = {
 
 
 def _file(owner: Parts, side: dict[str, Any], file: dict[str, Any]) -> Iterator[SpecIssue]:
-    """A file side (docs/mvp/FILES.md §5), or a key table's files (``owner``: where its table is declared):
-    L10's form of ``table.file``, and what a file side does not run (D10: ``table.schema``, ILIKE and a
-    regex key map, L7 to L9)."""
+    """A file side, or a key table's files (``owner``: where its table is declared):
+    the form of ``table.file``, and what a file side does not run (``table.schema``, ILIKE and a
+    regex key map)."""
     from deltasleuth.connectors.tables import manifest  # it imports this package: avoid the cycle
 
     base, csv, path = (*owner, "table", "file"), file.get("csv"), file.get("path")
@@ -544,12 +544,12 @@ def _file(owner: Parts, side: dict[str, Any], file: dict[str, Any]) -> Iterator[
 
 def _graph(doc: dict[str, Any]) -> Iterator[SpecIssue]:
     """Graph parity reads link facts: two table sides, a composite key, and members and groups that
-    split its parts between them (GRAPH.md §1)."""
+    split its parts between them."""
     graph = doc.get("graph")
     if not isinstance(graph, dict):
         return
     members, groups, parts = graph.get("members"), graph.get("groups"), _get(doc, "key/parts")
-    if any(_get(side, "table/file") is not None for _, side in _sides(doc)):  # FILES.md L6
+    if any(_get(side, "table/file") is not None for _, side in _sides(doc)):
         why = "graph parity with a file side; load the link facts into PostgreSQL"
         yield _error("graph", UNSUPPORTED, f"not supported: {why}")
     if sum("table" in side for _, side in _sides(doc)) < 2 or _get(doc, "key/type") != "composite":
@@ -583,7 +583,7 @@ def _targets(doc: dict[str, Any], registry: TargetRegistry) -> Iterator[SpecIssu
         elif isinstance(target_id, str) and registry.get(target_id).engine:
             message = "a key listing needs a service target, not a database"
             yield _error((*base, "target"), "target_kind", message)
-    declared = False  # a side's database declares its engine (docs/mvp/ENGINES.md D9)
+    declared = False  # a side's database declares its engine
     for name, side in _sides(doc):
         target_id, at = side.get("target"), ("sides", name)
         if not isinstance(target_id, str):
@@ -599,7 +599,7 @@ def _targets(doc: dict[str, Any], registry: TargetRegistry) -> Iterator[SpecIssu
             continue
         if "request" not in side:  # a table side
             filed = _get(side, "table/file") is not None
-            if filed != (engine == "files"):  # docs/mvp/FILES.md L5: table.file goes exactly with one
+            if filed != (engine == "files"):  # table.file goes exactly with a files target
                 message = "a files target needs table.file (path, format)"
                 message = "table.file is for a files target (engine: files)" if filed else message
                 yield _error((*at, "target"), "target_kind", message)
@@ -628,7 +628,7 @@ def _targets(doc: dict[str, Any], registry: TargetRegistry) -> Iterator[SpecIssu
 
 def _key_table_target(base: Parts, source: dict[str, Any], engine: str | None) -> Iterator[SpecIssue]:
     """A key table's target is a database or a files target, its ``table.file`` going exactly with a files
-    one (docs/mvp/FILES.md L5), and on MySQL or Oracle its table runs what a side's does."""
+    one, and on MySQL or Oracle its table runs what a side's does."""
     filed = _get(source, "table/file") is not None
     if not engine:
         message = "a key table needs a database target (dsn_ref or engine)"
@@ -744,7 +744,7 @@ def _gating(doc: dict[str, Any]) -> Iterator[SpecIssue]:
         yield _warning("time/skewBudget", IGNORED, f"/time/skewBudget is not applied: {why}")
     if isinstance(sampling := _get(doc, "sampling/mode"), str) and sampling != "all":
         yield unsupported("sampling/mode", f"sampling.mode {sampling!r}; every key is compared")
-    if _get(doc, "schemaDrift/mode") == "pause" and not tables:  # docs/mvp/PRECHECKS.md §7
+    if _get(doc, "schemaDrift/mode") == "pause" and not tables:
         yield unsupported("schemaDrift/mode", "pausing a run on schema drift between two service sides")
     for path, feature in _DEFERRED.items():
         if _get(doc, path):
@@ -764,7 +764,7 @@ def _predicates(doc: dict[str, Any]) -> Iterator[tuple[Parts, str, CelKind]]:
 
 
 def _sampling(doc: dict[str, Any]) -> Iterator[SpecIssue]:
-    """A hash sample's frame, strata and sizes (docs/mvp/SAMPLING.md §2.2): each frame source enumerates
+    """A hash sample's frame, strata and sizes: each frame source enumerates
     one side, once, exposing the columns the strata read; every dimension has buckets, so labels are spec
     constants; nothing cuts the sample; its sizes fit a sample and can pass as one."""
     from deltasleuth.core import sampling  # it imports this package: avoid the cycle
@@ -860,7 +860,7 @@ def _key_shaped_labels(
 ) -> Iterator[SpecIssue]:
     """Warn of a label, or a bucket's value (a string or number, which the gate reads as its text), a pack's
     raw-value gate would refuse: of keys of a value class, one that, or a part of which (split as the gate
-    splits words), passes the spec's key check (docs/mvp/PACK.md §2.3)."""
+    splits words), passes the spec's key check."""
     value_class, pattern = _get(doc, "key/class"), _get(doc, "key/pattern")
     chain = _get(doc, "key/normalize") or []
     if not isinstance(chain, list) or not all(isinstance(n, str) and n in KEY_NORMALISERS for n in chain):
@@ -878,7 +878,7 @@ def _key_shaped_labels(
         parts = {label, *re.split(r"[-_/.:@+#~]", label), *re.split(r"[^0-9A-Za-z]+", label)} - {""}
         if any(key_matches(compiled, normalise_key(part, chain)) for part in parts):
             message = f"the {noun} {label} ({what}) is shaped like a key of this spec: a pack would refuse it"
-            yield _warning(at, f"{noun}_key_shaped", f"{message} (docs/mvp/PACK.md §2.3); {advice}")
+            yield _warning(at, f"{noun}_key_shaped", f"{message}; {advice}")
 
 
 def _frame(doc: dict[str, Any]) -> list[tuple[Parts, dict[str, Any]]]:

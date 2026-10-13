@@ -1,4 +1,4 @@
-/** What the Readiness screens draw and say besides the API's own texts (docs/mvp/READINESS.md §10): a state's or a
+/** What the Readiness screens draw and say besides the API's own texts: a state's or a
  *  gate's words and shape, "k of m gates", a programme's line, the sparkline of a pair's last evidence cycles, the
  *  pairs-ready steps of a programme's recorded transitions, and a pair's brief: its figures, where its notes
  *  stand and its trend. Counts, and in a brief the mismatch rate a cycle's counters store, as stored: nothing
@@ -68,7 +68,7 @@ export interface Download {
   file: string;
 }
 
-/** The downloads of a selection (§11): dashboard.pdf once for each of its volumes of 100 pairs, so that no pair
+/** The downloads of a selection: dashboard.pdf once for each of its volumes of 100 pairs, so that no pair
  *  is out of the screen's reach, then the two CSVs. */
 export const downloads = (volumes: number): Download[] => [
   ...Array.from({ length: Math.max(1, volumes) }, (_, i) => ({
@@ -197,7 +197,7 @@ export function trendChart(
   return { ...chart, line: line.join(' ') };
 }
 
-/** A pair's reports of its brief (§11), saved under the names `ds readiness report --pair` writes. */
+/** A pair's reports of its brief, saved under the names `ds readiness report --pair` writes. */
 export const briefDownloads = (pair: string): Download[] =>
   ['brief.pdf', 'brief.csv', 'causes.csv'].map((name) => ({ label: name, name, file: name.replace('.', `-${pair}.`) }));
 
@@ -239,7 +239,7 @@ export function briefFigures(c: BriefCycle): Figure[] {
   ];
 }
 
-/** Where a reported cycle's notes stand (§11), told by what the cycle holds: that the gates judge another cycle
+/** Where a reported cycle's notes stand, told by what the cycle holds: that the gates judge another cycle
  *  (`evidence`: the pair's) above its figures; under them its stored rate, or how its sample is judged, which
  *  its strata follow; and last that its counts are of keys only. */
 export function briefNotes(c: BriefCycle, evidence: CycleRef | null) {

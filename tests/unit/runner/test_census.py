@@ -1,4 +1,4 @@
-"""The census of a cycle (docs/mvp/PACK.md §1.2, §1.3): a key-list run's table sides counted exactly in
+"""The census of a cycle: a key-list run's table sides counted exactly in
 one snapshot each (key maps, composite keys, a filter), an out-of-filter key never standing in for an
 omitted one, a timeout and a removed target recorded and warned while the cycle goes on, each cycle of a
 key-list soak counted again before a key of it is leased, a resumed scan's snapshots, and a listing's
@@ -567,10 +567,10 @@ async def test_the_key_census_of_a_file_side(
     tmp_path: Path,
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
-    """docs/mvp/FILES.md §9, §11: a file side's key census counts its rows, the keys several of its rows hold
+    """A file side's key census counts its rows, the keys several of its rows hold
     and its lines that were not rows, hashes its files again when its read ends and records no snapshot; a
     file changed since its run was created is the count's failure."""
-    exports = tmp_path_factory.mktemp("exports").resolve()  # outside the harness's own directories (T10)
+    exports = tmp_path_factory.mktemp("exports").resolve()  # outside the harness's own directories
     export = exports / "accounts.csv"
     export.write_bytes(b"id|email\n1|a\n2|b\n2|b2\n4|d\n|n\nx7|e\nshort\n")  # 2 twice, no key, no row
     (tmp_path / "dsn_tables").write_text(databases(ACCOUNTS))
@@ -620,11 +620,11 @@ async def test_rows_moved_in_the_key_census_fails_the_run(
     monkeypatch: pytest.MonkeyPatch,
     side: str,
 ) -> None:
-    """docs/mvp/FILES.md §7, F10: a file side whose census read met another number of rows than its plan
+    """A file side whose census read met another number of rows than its plan
     counted fails the run, as a scan's does (here its count of rows without a key is made to disagree). The
     count was recorded as failed and the cycle went on: the run completed on a reader that disagreed with
     itself, its keys MATCH, and no later read checks rows."""
-    exports = tmp_path_factory.mktemp("exports").resolve()  # outside the harness's own directories (T10)
+    exports = tmp_path_factory.mktemp("exports").resolve()  # outside the harness's own directories
     targets = {}
     for name in "ab":
         (exports / name).mkdir()
@@ -657,10 +657,10 @@ async def test_rows_moved_in_the_key_census_fails_the_run(
 
 
 def test_a_file_side_s_record_says_what_it_was_read_from() -> None:
-    """docs/mvp/FILES.md §11: a file side's census record holds its files' count, bytes and times, its mount,
+    """A file side's census record holds its files' count, bytes and times, its mount,
     its lines that were not rows and its repeated keys, never a snapshot or a digest; its wording is an
-    export's, not the system's; its warnings W1 to W3; its run.census detail; side a's lines that were not
-    rows are no census (C1), and a whole scan's basis then keys (READINESS Y2)."""
+    export's, not the system's; its three warnings; its run.census detail; side a's lines that were not
+    rows are no census, and a whole scan's basis then keys."""
     from types import SimpleNamespace
 
     from deltasleuth.core.types import Side
@@ -709,7 +709,7 @@ def test_a_file_side_s_record_says_what_it_was_read_from() -> None:
         "SIDE B: 5 KEY(S) ARE HELD BY MORE THAN ONE ROW: each is inconclusive, never paired\n"
         "SIDE B WAS READ FROM A DIRECTORY DELTASLEUTH COULD WRITE TO"
     )
-    assert "LINE(S)" not in (census.warning("a", lines) or "")  # side a's are C1, never a warning
+    assert "LINE(S)" not in (census.warning("a", lines) or "")  # side a's are no census, never a warning
     table = found | {"basis": "table", "missing": 0, "extra": 1, "at": "2026-10-01T02:20:00Z"}
     assert census._detail(1, "a", table) == {
         "cycle": 1, "side": "a", "basis": "table", "rows": 9, "missing": 0, "extra": 1,

@@ -1,12 +1,12 @@
-/** What the Run screen says about an AI draft (docs/mvp/CONTRACTS.md §6, "Fixed questions"): why none can be
- *  asked, the engine's facts shown beside one, which stored answer is a refusal, and which key each cited
- *  finding and observation belongs to. The facts are stored ones the model was given too, never the answer's. */
+/** What the Run screen says about an AI draft, the answer to a fixed question: why none can be asked, the
+ *  engine's facts shown beside one, which stored answer is a refusal, and which key each cited finding and
+ *  observation belongs to. The facts are stored ones the model was given too, never the answer's. */
 // Type imports only, so that Node runs the tests of this module without a bundler.
 import type { Message, Run } from './api';
 
 const TOP_CAUSES = 10; // agent/tools.py: get_run_summary sends the first root causes only
 
-export const AI_OFF = 'AI is off: no LLM profile is configured (DEPLOY.md, section 8).';
+export const AI_OFF = 'AI is off: no LLM profile is configured.';
 export const NO_SUMMARY =
   'No AI summary: a draft must cite a root cause, and this cycle has none (they are written when a cycle ends).';
 export const FACTS = 'Engine facts (the comparison decided these, not the AI)';

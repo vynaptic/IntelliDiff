@@ -1,5 +1,5 @@
-"""Browser sessions (docs/mvp/AUTH.md §3): the ``__Host-ds_session`` cookie (``ds_session_<port>`` on a
-plain-http loopback ``public_url``, exception E1), its CSRF token, and the role-mapping digest a user's
+"""Browser sessions: the ``__Host-ds_session`` cookie (``ds_session_<port>`` on a
+plain-http loopback ``public_url``), its CSRF token, and the role-mapping digest a user's
 session is granted under."""
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ COOKIE = "__Host-ds_session"  # under https; named(COOKIE, auth) is the name a s
 
 
 def plain(auth: AuthSettings | None) -> bool:
-    """Exception E1 (docs/mvp/AUTH.md §3): ``auth.public_url`` is plain http, which the settings admit
+    """Whether ``auth.public_url`` is plain http, which the settings admit
     for a loopback host only. The cookies then carry neither ``__Host-`` nor ``Secure``, which only some
     browsers keep over http. From the settings alone, never from a request."""
     url = urlsplit(auth.public_url) if auth is not None else None
@@ -29,8 +29,9 @@ def plain(auth: AuthSettings | None) -> bool:
 
 def named(name: str, auth: AuthSettings | None) -> str:
     """The cookie a server sets and reads for ``name`` (COOKIE or ``oidc.LOGIN_COOKIE``): the name itself,
-    or under E1 the name without its prefix, ``_`` and the port of ``public_url`` (80 when it names none):
-    a browser keeps cookies by host, not by port, and two installations on one machine share the host."""
+    or on plain http the name without its prefix, ``_`` and the port of ``public_url`` (80 when it names
+    none): a browser keeps cookies by host, not by port, and two installations on one machine share the
+    host."""
     if not plain(auth):
         return name
     assert auth is not None

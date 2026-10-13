@@ -1,4 +1,4 @@
-"""Table pre-check reports (docs/mvp/PRECHECKS.md §11): each export headed by what a pre-check is not, a
+"""Table pre-check reports: each export headed by what a pre-check is not, a
 catalogue's hostile names escaped in every CSV cell, the cells of a withheld figure empty, and the PDF's
 pairs worst first with a section for each of the first that show a difference."""
 

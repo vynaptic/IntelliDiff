@@ -1,4 +1,4 @@
-"""Firing schedules (docs/mvp/SCHEDULES.md §3, §5 to §7): a due time starts one run as ``system:worker``,
+"""Firing schedules: a due time starts one run as ``system:worker``,
 with the schedule's advance and their audit rows in one transaction, or is settled as missed with a closed
 reason; the window, the overlap, missed and late times, a person's write settling what is due, the standing
 refusals held and chained as ranges, the tries, the setter and the auth mode, the gate and the licence at
@@ -118,7 +118,7 @@ async def fillers(h: Harness, count: int) -> None:
         )
 
 
-# -- what a schedule is, and what saving one checks (§3, §9) -------------------------------------------
+# -- what a schedule is, and what saving one checks -------------------------------------------
 
 
 async def test_what_saving_a_schedule_checks(harness: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -692,7 +692,7 @@ async def test_resume_without_catch_up(harness: Harness) -> None:
     assert await fire(harness, row) is None and await started(harness, row) == []
 
 
-# -- actors, the auth mode, the gate and the licence at each firing (§6, §7) ---------------------------
+# -- actors, the auth mode, the gate and the licence at each firing ---------------------------
 
 
 async def test_other_mode_missed(open_harness: OpenHarness, service: ScriptedService) -> None:
@@ -868,10 +868,10 @@ async def test_licence_expired_sso_pairs_then_renewal_no_backlog(
         spec_id = await h.spec(PLAIN)
         other = await h.spec(PLAIN.replace("name: unit-runner", "name: unit-other"))
         row = await scheduled(h, spec_id, due)
-        assert await fire(h, row) is None  # M5: SSO without an Enterprise licence
+        assert await fire(h, row) is None  # SSO without an Enterprise licence
         await licensed(h.ctx, tier="enterprise", pairs=1)
         await create_run(h.ctx, other, "batch", who=TESTER)  # the one seat
-        assert await fire(h, row, due + DAY + SECOND) is None  # M1: a new pair past the limit
+        assert await fire(h, row, due + DAY + SECOND) is None  # a new pair past the limit
         await unlicensed(h.ctx)
         await licensed(h.ctx, tier="enterprise")
         assert await fire(h, row, due + 2 * DAY + SECOND) is None
@@ -900,7 +900,8 @@ async def test_licence_expired_sso_pairs_then_renewal_no_backlog(
             stored = await repo._rows(
                 conn, "SELECT detail::text AS text FROM ds.audit_log WHERE object LIKE 'SC-%%'"
             )
-        assert not any("Enterprise" in found["text"] or "docs/mvp" in found["text"] for found in stored)
+        refusals = ("Enterprise", "would be pair", "renewed licence")
+        assert not any(said in found["text"] for found in stored for said in refusals)
 
 
 async def test_standing_refusal_one_row_then_one_a_day(sso: Harness) -> None:
@@ -956,7 +957,7 @@ async def test_standing_refusal_one_row_then_one_a_day(sso: Harness) -> None:
     )
 
 
-# -- sampling's ledger (§7) ----------------------------------------------------------------------------
+# -- sampling's ledger ----------------------------------------------------------------------------
 
 
 def served(service: ScriptedService, *discrepant: str) -> None:
@@ -997,7 +998,7 @@ async def test_r1_waits(harness: Harness, service: ScriptedService) -> None:
     row = await scheduled(harness, await harness.spec(listed()), due)
     other = await harness.spec(listed(name="unit-runner-2"))  # samples the same population
     live = await create_run(harness.ctx, other, "batch", who=TESTER)
-    assert await fire(harness, row) == Retry(RETRY_S, 0, due)  # R1: waits while that run is live
+    assert await fire(harness, row) == Retry(RETRY_S, 0, due)  # waits while that run is live
     assert await missed(harness, row) == [] and await started(harness, row) == []
     assert await fire(harness, row, due + 59 * MINUTE + 30 * SECOND) is None  # its last try in the window
     assert reasons(await missed(harness, row)) == [("sample", "live", cron.utc(due), None, None)]
@@ -1015,7 +1016,7 @@ async def test_unclosed_draw_blocks(harness: Harness, service: ScriptedService) 
     await harness.finish(failed)
     draw_id = (await drawn(harness, failed))["draw_id"]  # type: ignore[index]
     row = await scheduled(harness, spec_id, due)
-    assert await fire(harness, row) is None  # SAMPLING D7, for an unattended firing
+    assert await fire(harness, row) is None  # held by the draw that did not pass, for an unattended firing
     assert await fire(harness, row, due + DAY + SECOND) is None
     (detail,) = await missed(harness, row)
     assert reasons([detail]) == [("sample", "unclosed", cron.utc(due), None, None)]
@@ -1046,7 +1047,7 @@ async def test_rate_sample_free(harness: Harness, service: ScriptedService) -> N
     assert len(await started(harness, row)) == 2 and await missed(harness, row) == []
 
 
-# -- readiness (§7) ------------------------------------------------------------------------------------
+# -- readiness ------------------------------------------------------------------------------------
 
 
 async def test_scheduled_runs_are_evidence_points(harness: Harness, service: ScriptedService) -> None:
@@ -1055,7 +1056,7 @@ async def test_scheduled_runs_are_evidence_points(harness: Harness, service: Scr
     due = await minute(harness)
     spec_id = await harness.spec(spec_text())
     row = await scheduled(harness, spec_id, due)
-    for day in range(2):  # nothing is built for them: every batch run is measured (READINESS D13)
+    for day in range(2):  # nothing is built for them: every batch run is measured
         assert await fire(harness, row, due + day * DAY + SECOND if day else None) is None
         assert (await harness.finish((await started(harness, row))[-1]["run_id"]))["status"] == "completed"
     await measure(harness)
@@ -1063,7 +1064,7 @@ async def test_scheduled_runs_are_evidence_points(harness: Harness, service: Scr
     assert [(p["pair"], p["evidence"], p["spec_id"]) for p in points] == [("unit-runner", True, spec_id)] * 2  # type: ignore[index]
 
 
-# -- pinned or followed (§6) ---------------------------------------------------------------------------
+# -- pinned or followed ---------------------------------------------------------------------------
 
 NEWER = spec_text().replace('version: "1.0.0"', 'version: "1.1.0"')
 
@@ -1127,7 +1128,7 @@ async def test_pinned_keeps_version(harness: Harness) -> None:
     assert detail["changed"] == ["spec_id"] and detail["spec_id"] == second
 
 
-# -- a run that cannot be created (§5 steps 5 and 6) ---------------------------------------------------
+# -- a run that cannot be created ---------------------------------------------------
 
 CANARY = "K999-4929123456789012"  # a key, as a refusal's message may hold one
 
@@ -1169,7 +1170,7 @@ async def test_not_started_three_tries(harness: Harness, monkeypatch: pytest.Mon
 async def test_an_absent_export_is_missed_with_its_code(
     harness: Harness, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """docs/mvp/FILES.md §12: an export a file side reads that is not ready yet (the manifest's ``NotReady``)
+    """An export a file side reads that is not ready yet (the manifest's ``NotReady``)
     is tried again every RETRY_S until the window closes, never counted among three tries, and settled as
     ``not_started`` with its code, which the alert's model and the firing text take."""
     exports = tmp_path.resolve()
@@ -1202,13 +1203,13 @@ async def test_an_absent_export_is_missed_with_its_code(
 async def test_a_late_export_starts_in_its_window(
     open_harness: OpenHarness, service: ScriptedService, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    """docs/mvp/FILES.md §12, §18: a schedule fired against a real files target, whose spec's file side
+    """A schedule fired against a real files target, whose spec's file side
     declares a stamp file. No test stub raises here: ``create_run`` plans the files and the manifest finds
     the export absent, then written but unstamped, and the due time stays due (tried every RETRY_S, no try
     counted, no miss row). The stamp lands 30 minutes after the due time under start_within 60: one run, no
-    miss row. The next day's stamp never lands: missed at its window's end as ``unstamped`` (F11, whose text
+    miss row. The next day's stamp never lands: missed at its window's end as ``unstamped`` (its text
     names what shows that cause: not ``ds target check``, which reads no stamp)."""
-    exports = tmp_path_factory.mktemp("exports").resolve()  # outside the harness's own directories (T10)
+    exports = tmp_path_factory.mktemp("exports").resolve()  # outside the harness's own directories
     (exports / "legacy" / "daily").mkdir(parents=True)
     legacy = {"engine": "files", "root": str(exports / "legacy"), "settle_s": 0, "allow_writable": True}
     declared = "targets:\n  fa: " + json.dumps(legacy) + targets(service).removeprefix("targets:")
@@ -1237,7 +1238,7 @@ async def test_a_late_export_starts_in_its_window(
         (detail,) = await missed(h, row)
         assert reasons([detail]) == [("not_started", "unstamped", cron.utc(due + DAY), None, None)]
         assert detail["error_type"] == "NotReady" and len(await started(h, row)) == 1
-        # F11 points to what shows the cause. ``ds target check`` reads no stamp file: of this export it
+        # The line points to what shows the cause. ``ds target check`` reads no stamp file: of this export it
         # prints the file and ``settled`` and says nothing of the stamp; a run's creation says the cause.
         assert schedules.line("missed", detail, at=due + DAY) == (
             "not started: the export a file side reads was not ready before its window closed (unstamped):"
@@ -1504,7 +1505,7 @@ async def test_unscheduled_run_unchanged(harness: Harness) -> None:
         assert await repo._rows(conn, "SELECT 1 FROM ds.audit_log WHERE action LIKE 'schedule.%%'") == []
 
 
-# -- zone data (§4) ------------------------------------------------------------------------------------
+# -- zone data ------------------------------------------------------------------------------------
 
 
 async def test_rezone_audited(harness: Harness) -> None:
@@ -1605,8 +1606,8 @@ async def test_unknown_zone_pauses_never_stops_sweep(
 async def test_a_pause_before_a_time_is_due_is_notified(
     open_harness: OpenHarness, tmp_path: Path, loopback: Any
 ) -> None:
-    """T6 at a rezone (§4, §8): a schedule paused before its time is due has no missed row, so its pause's
-    own row is delivered; one paused as its time was due is delivered by its missed row alone, and a
+    """The worker's pause at a rezone: a schedule paused before its time is due has no missed row, so its
+    pause's own row is delivered; one paused as its time was due is delivered by its missed row alone, and a
     person's pause not at all."""
     rules = [
         rule("missed", ["schedule.missed"], ["ops-hook"], specs=["unit-*"]),

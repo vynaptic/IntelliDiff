@@ -1,9 +1,6 @@
-"""Taxonomy registry and domain packs, against the DDL seed."""
+"""Taxonomy registry and domain packs."""
 
 from __future__ import annotations
-
-import re
-from pathlib import Path
 
 import pytest
 
@@ -18,30 +15,9 @@ from deltasleuth.core.classify.taxonomy import (
 )
 from deltasleuth.core.types import ChangeType, Severity
 
-ROW = re.compile(
-    r"\('(?P<code>[A-Z0-9_]+)',\s*'(?P<pack>[a-z-]+)',\s*'(?P<sev>[A-Z]+)',\s*'(?P<presence>[a-z]+)',"
-    r"\s*(?:'(?P<alias>[A-Z_]+)'|NULL)"
-)
-
-
-def ddl_rows(repo_root: Path, pack: str) -> dict[str, tuple[str, str, str, str | None]]:
-    sql = (repo_root / "docs/architecture/control-plane.sql").read_text(encoding="utf-8")
-    seed = sql[sql.index("INSERT INTO ds.taxonomy_codes") :]
-    rows = (m for m in ROW.finditer(seed[: seed.index(";\n")]) if m["pack"] == pack)
-    return {m["code"]: (m["pack"], m["sev"], m["presence"], m["alias"]) for m in rows}
-
-
-def rows(codes) -> dict[str, tuple[str, str, str, str | None]]:
-    return {c.code: (c.pack, c.default_severity.value, c.presence, c.alias_of) for c in codes}
-
-
-def test_the_registry_mirrors_the_ddl_seed(repo_root: Path) -> None:
-    assert len(CORE_CODES) == 15
-    assert rows(CORE_CODES.values()) == ddl_rows(repo_root, "core")
-    assert rows(installed_packs()["entity-linking"].codes) == ddl_rows(repo_root, "entity-linking")
-
 
 def test_every_change_type_has_a_default_core_code() -> None:
+    assert len(CORE_CODES) == 15
     assert set(DEFAULT_CODES) == set(ChangeType)
     assert all(CORE_CODES[code].allows(change) for change, code in DEFAULT_CODES.items())
 

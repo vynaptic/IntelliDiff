@@ -1,4 +1,4 @@
-"""Table sides (docs/mvp/TABLES.md, docs/mvp/ENGINES.md §5): the engine seam, the column plan a run reads
+"""Table sides: the engine seam, the column plan a run reads
 by, and per-key and batched reads, whichever engine a side's database runs. A database is read black-box
 too: only the declared columns of a table or view.
 """

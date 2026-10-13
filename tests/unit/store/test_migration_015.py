@@ -1,4 +1,4 @@
-"""Migration 015 (docs/mvp/SCHEDULES.md §12) over a populated 014 store with runs: the schedules table,
+"""Migration 015 over a populated 014 store with runs: the schedules table,
 each of its checks, the one live schedule per name, and on ``ds.runs`` the unique index that refuses a
 second run of one schedule and due time and the check on what a run records of its schedule, added without
 rewriting a table or adding a trigger."""

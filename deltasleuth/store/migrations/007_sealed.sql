@@ -1,4 +1,4 @@
--- The end of plaintext storage (docs/mvp/RETENTION.md §7.1): the raw keys, headers and chat that
+-- The end of plaintext storage: the raw keys, headers and chat that
 -- releases before 006 stored in clear go, once 'ds keys migrate' sealed them and moved every blob to its
 -- keyed hk1: address. While legacy data remains the migration refuses, and the transaction that would
 -- apply it (with 006, on a first start) rolls back: every entry point stops with the message.
@@ -8,7 +8,7 @@ BEGIN
        OR EXISTS (SELECT 1 FROM ds.observations WHERE headers_enc IS NULL OR content_hash LIKE 'sha256:%')
        OR EXISTS (SELECT 1 FROM ds.chat_messages WHERE sealed IS NULL)
        OR EXISTS (SELECT 1 FROM ds.scans WHERE jsonb_typeof(state->'after') = 'array') THEN
-        RAISE EXCEPTION 'legacy plaintext remains: stop the app and run ''ds keys migrate'' (docs/mvp/RETENTION.md §7.2)';
+        RAISE EXCEPTION 'legacy plaintext remains: stop the app and run ''ds keys migrate''';
     END IF;
 END $$;
 

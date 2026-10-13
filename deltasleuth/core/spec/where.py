@@ -1,4 +1,4 @@
-"""A table side's row filter (docs/mvp/TABLES.md §9): a small predicate language, parsed into a tree.
+"""A table side's row filter: a small predicate language, parsed into a tree.
 
 Comparisons of a column with literals, IS [NOT] NULL, [NOT] IN, [NOT] BETWEEN, [NOT] [I]LIKE and a
 bare boolean column, combined with AND, OR, NOT and parentheses. There are no functions, subqueries

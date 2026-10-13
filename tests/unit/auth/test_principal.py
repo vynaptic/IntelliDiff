@@ -1,4 +1,4 @@
-"""Principals and roles (docs/mvp/AUTH.md §1, §4.2), the token format (§5) and the denial throttle (§6)."""
+"""Principals and roles, the token format and the denial throttle."""
 
 from __future__ import annotations
 
@@ -105,7 +105,7 @@ def test_local_with_the_auth_settings_needs_ds_operator(
         monkeypatch.delenv("DS_OPERATOR", raising=False)
     else:
         monkeypatch.setenv("DS_OPERATOR", operator)
-    with pytest.raises(ValueError, match=r"^set DS_OPERATOR to your user name \(docs/mvp/AUTH\.md §4\.2\)$"):
+    with pytest.raises(ValueError, match=r"^set DS_OPERATOR to your user name$"):
         local(required=True)
     monkeypatch.setenv("DS_OPERATOR", "jdoe")
     assert local(required=True).name == "jdoe"

@@ -1,8 +1,8 @@
 """Shared data contracts for DeltaSleuth.
 
-Every module imports these types; nothing redefines them. They mirror docs/architecture.md
-(§6 data model, §7.1 outcomes, §7.2 taxonomy, §8 pseudo-code) and the control-plane DDL, so
-names here are the names in the DDL and the reports.
+Every module imports these types; nothing redefines them. They mirror the data model, the outcomes and
+the taxonomy that docs/architecture.md describes and the migrations' DDL, so names here are the names in
+the DDL and the reports.
 
 Black-box rule: nothing in this module (or in the core) knows how a target system is built.
 A target is an endpoint plus a declared behavioural contract (``TargetCapabilities``).
@@ -56,7 +56,7 @@ class Outcome(StrEnum):
 
 
 class Verdict(StrEnum):
-    """Derived three-value verdict (§7.1). Computed, never stored."""
+    """Derived three-value verdict. Computed, never stored."""
 
     MATCH = "MATCH"
     DIFFERENT = "DIFFERENT"
@@ -64,7 +64,7 @@ class Verdict(StrEnum):
 
 
 def derive_verdict(outcome: str, bug: bool) -> Verdict:
-    """The verdict (§7.1) of an outcome, a member or its stored value. ``bug``: a ``bug`` rule matched,
+    """The verdict of an outcome, a member or its stored value. ``bug``: a ``bug`` rule matched,
     which makes a KNOWN_DIFF a known bug (DIFFERENT)."""
     if outcome in (Outcome.MATCH, Outcome.NOISE_ONLY) or (outcome == Outcome.KNOWN_DIFF and not bug):
         return Verdict.MATCH
@@ -122,7 +122,7 @@ class RuleClassification(StrEnum):
     EXPECTED_BY_DESIGN = "expected_by_design"
 
 
-# Inconclusive reasons (§7.1). Precedence when several apply: ERROR_REASONS in order, then
+# Inconclusive reasons. Precedence when several apply: ERROR_REASONS in order, then
 # INCOMPLETE_REASONS in order, then OTHER_REASONS in order.
 ERROR_REASONS: tuple[str, ...] = (
     "both_error",
@@ -161,7 +161,7 @@ ERROR_CLASSES: tuple[str, ...] = (
     "not_rows",  # a file side with lines that are not rows holds no row of the key: INCOMPLETE(unparseable)
 )
 
-# Value classes of a difference (§8.2 enrich). Attached to findings, never codes of their own.
+# Value classes of a difference (``classify.enrich``). Attached to findings, never codes of their own.
 VALUE_CLASSES: tuple[str, ...] = (
     "case_only",
     "whitespace",
@@ -202,7 +202,7 @@ class TruncationIndicators:
 
 @dataclass(frozen=True)
 class TargetCapabilities:
-    """Declared, observable behaviour of an endpoint (§4.12). Never implementation details."""
+    """Declared, observable behaviour of an endpoint. Never implementation details."""
 
     authoritative_absence: AuthoritativeAbsence | None = None
     absence_shapes: dict[str, str] = field(default_factory=dict)  # shape name -> CEL predicate on body
@@ -225,7 +225,7 @@ class TargetAuth:
 
 @dataclass(frozen=True)
 class DatabaseTarget:
-    """A database whose endpoint the target declares (docs/mvp/ENGINES.md §4), so the SSRF guard sees it."""
+    """A database whose endpoint the target declares, so the SSRF guard sees it."""
 
     engine: Literal["mysql", "oracle"]
     host: str  # a DNS name or an IP literal
@@ -250,7 +250,7 @@ class Target:
     capabilities: TargetCapabilities = field(default_factory=TargetCapabilities)
     allow_private_network: bool = False  # SSRF guard: loopback/private IPs need an explicit opt-in
     database: DatabaseTarget | None = None  # a MySQL or Oracle database target (no base_url, no dsn_ref)
-    # A files target (docs/mvp/FILES.md §4): the directory its exports are mounted in, read-only.
+    # A files target: the directory its exports are mounted in, read-only.
     root: str | None = None
     settle_s: int = 60  # a file modified more recently is not read
     allow_writable: bool = False  # a mount DeltaSleuth could write to (development)
@@ -348,16 +348,16 @@ class NotFoundRule:
 
 @dataclass(frozen=True)
 class TableConfig:
-    """A table side (docs/mvp/TABLES.md §2): a table or view, read by key columns."""
+    """A table side: a table or view, read by key columns."""
 
     name: str
     key_columns: tuple[str, ...]
     columns: tuple[tuple[str, str], ...] | None = None  # (column, canonical); None: every non-key one
     schema: str | None = None
-    where: str | None = None  # the row filter as written (TABLES.md §9)
-    key_maps: tuple[dict[str, Any] | None, ...] = ()  # per key column; None: identity (§10)
-    types: dict[str, dict[str, Any]] = field(default_factory=dict)  # typeMap: column -> typeSpec (§10)
-    file: dict[str, Any] | None = None  # a file side's files (docs/mvp/FILES.md §5): the spec's table.file
+    where: str | None = None  # the row filter as written
+    key_maps: tuple[dict[str, Any] | None, ...] = ()  # per key column; None: identity
+    types: dict[str, dict[str, Any]] = field(default_factory=dict)  # typeMap: column -> typeSpec
+    file: dict[str, Any] | None = None  # a file side's files: the spec's table.file
 
 
 @dataclass(frozen=True)
@@ -457,12 +457,12 @@ class StratumDimension:
 
 @dataclass(frozen=True)
 class FrameMember:
-    """One source of a hash sample's frame (docs/mvp/SAMPLING.md §3): a table side's population, or a
+    """One source of a hash sample's frame: a table side's population, or a
     listing of a side's keys by its target."""
 
     kind: Literal["table", "paginated_endpoint"]
     side: Side  # the side whose keys it enumerates
-    member_id: str  # table:<target>/<name> or listing:<target>:<METHOD> <path> (§9)
+    member_id: str  # table:<target>/<name> or listing:<target>:<METHOD> <path>
     columns: tuple[str, ...] = ()  # a table's strataColumns
     fields: dict[str, str] = field(default_factory=dict)  # a listing's strataFields: column -> JSONPath
     source: dict[str, Any] = field(default_factory=dict)  # the member as written
@@ -470,7 +470,7 @@ class FrameMember:
 
 @dataclass(frozen=True)
 class Resolve:
-    """How often a sign-off member no read compared is retried, and after how long (§7)."""
+    """How often a sign-off member no read compared is retried, and after how long."""
 
     times: int = 3
     delay_s: float = 600.0
@@ -478,12 +478,12 @@ class Resolve:
 
 @dataclass(frozen=True)
 class Sample:
-    """A ``hash_sample`` key source (docs/mvp/SAMPLING.md §2.1)."""
+    """A ``hash_sample`` key source."""
 
     method: Literal["bottom_k", "rate"]
     label: str  # the salt: the campaign label, to which each draw adds a nonce
     members: tuple[FrameMember, ...]
-    population: tuple[str, ...]  # the members' ids, sorted: its draws share one ledger (§9)
+    population: tuple[str, ...]  # the members' ids, sorted: its draws share one ledger
     dimensions: tuple[StratumDimension, ...] = ()
     rate: int | None = None  # the base rate's u threshold
     signoff_stratum: str | None = None  # CEL
@@ -563,7 +563,7 @@ class SideState:
     reason: str | None = None  # INCOMPLETE / ERROR reason, from INCONCLUSIVE_PRECEDENCE
     canonical: Canonical | None = None  # set iff kind == COMPLETE
     detail: str | None = None  # diagnostic text (never contains raw payload values)
-    selected: bool = True  # False: a table row outside its side's filter (TABLES.md §9)
+    selected: bool = True  # False: a table row outside its side's filter
 
     @classmethod
     def complete(cls, canonical: Canonical, *, selected: bool = True) -> SideState:
@@ -615,10 +615,10 @@ class Counted:
 
 @dataclass
 class Finding:
-    """One difference at one pointer for one key (long format, §6 ``ds.findings``)."""
+    """One difference at one pointer for one key (long format, ``ds.findings``)."""
 
     key: str
-    json_pointer: str  # RFC 6901, grammar per §6 (member keys escaped; '@i' duplicates; '@@')
+    json_pointer: str  # RFC 6901, with DeltaSleuth's own forms (member keys escaped; '@i' duplicates; '@@')
     path_pattern: str  # RFC 9535 normalised form with every index / member key replaced by [*]
     change_type: ChangeType
     a_value: JSON = None  # normalised value on side a (None when absent)
@@ -649,7 +649,7 @@ class Finding:
 
 @dataclass
 class KeyResult:
-    """One result row per key (§6 ``ds.results``), matches included."""
+    """One result row per key (``ds.results``), matches included."""
 
     key: str
     outcome: Outcome
@@ -669,14 +669,14 @@ class KeyResult:
 
     @property
     def verdict(self) -> Verdict:
-        """Derived verdict (§7.1)."""
+        """Derived verdict."""
         bug = any(f.rule_classification is RuleClassification.BUG for f in self.findings if f.rule_id)
         return derive_verdict(self.outcome, bug)
 
 
 @dataclass
 class RootCause:
-    """A group of findings with one probable cause (§8.2)."""
+    """A group of findings with one probable cause."""
 
     root_cause_id: str
     kind: Literal["member_key", "identifier", "signature"]

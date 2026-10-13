@@ -1,4 +1,4 @@
-"""What a table pre-check reads of a side (docs/mvp/PRECHECKS.md §4, §5) without a database: each engine's
+"""What a table pre-check reads of a side without a database: each engine's
 statements at each level, pinned by a golden file each; that they aggregate over the filtered rows, those
 without a key among them, while the duplicate keys are counted over the population; that whatever a name
 or a filter literal holds a statement holds only grammar (MySQL), or no value at all (Oracle); the
@@ -351,7 +351,7 @@ async def test_postgresql_sends_no_parameter_it_does_not_bind() -> None:
     assert session.params == {"w0": "1"}
 
 
-# --- MySQL and Oracle (docs/mvp/PRECHECKS.md §4: their statement forms) ------------------------------
+# --- MySQL and Oracle: their statement forms ----------------------------------------------------------
 
 PAIRS = {name: json.loads((ENGINES_DIR / f"{name}_pair.json").read_text()) for name in ("mysql", "oracle")}
 DIALECTS = {"mysql": mysql.PRIMITIVES, "oracle": oracle.PRIMITIVES}

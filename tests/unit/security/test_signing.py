@@ -1,4 +1,4 @@
-"""The evidence packs' signing key (docs/mvp/PACK.md §3.1, §3.2, §9): EC P-256 only, refused unechoed
+"""The evidence packs' signing key: EC P-256 only, refused unechoed
 otherwise; deterministic signatures that ``openssl dgst`` verifies (OpenSSL 3, and LibreSSL where it is
 installed); the fingerprint step 1 prints; and VERIFY.txt as ``ds packs key``'s procedure but for its two
 filled lines."""
@@ -34,7 +34,7 @@ from deltasleuth.security.signing import (
     verifies,
 )
 from deltasleuth.store.chain import FIELDS
-from tests.conftest import REPO_ROOT, encryption
+from tests.conftest import encryption
 from tests.unit.reports.packs import tools
 
 LIBRESSL = Path("/usr/bin/openssl")
@@ -174,13 +174,6 @@ def _settings(tmp_path: Path, key: Path | None) -> Path:
     return tmp_path / "ds.yaml"
 
 
-def _procedure_in_the_contract() -> str:
-    """PACK.md §3.3's block without its two pack-specific lines."""
-    text = (REPO_ROOT / "docs/mvp/PACK.md").read_text()
-    block = text.split("### 3.3", 1)[1].split("```text\n", 1)[1].split("\n```", 1)[0]
-    return block.split("\n", 2)[2] + "\n"
-
-
 def test_verify_txt_is_ds_packs_key_s_procedure_but_its_two_filled_lines(tmp_path: Path) -> None:
     key = _key_file(tmp_path, _pem(ec.generate_private_key(ec.SECP256R1())))
     signer = PackSigner.load(f"file:{key}")
@@ -198,7 +191,7 @@ def test_verify_txt_is_ds_packs_key_s_procedure_but_its_two_filled_lines(tmp_pat
     )
     verify = pack.verify_text(f"P-{'0' * 26}", "prod-eu-1", f"A-{'1' * 26}", f"A-{'2' * 26}", 81234, 5120)
     first, second, rest = verify.split("\n", 2)
-    assert rest == procedure == _procedure_in_the_contract()
+    assert rest == procedure
     assert ", ".join(FIELDS) in procedure  # step 7 compares every audited field of a row up to UPGRADE
     pack_id = f"P-{'0' * 26}"
     assert first == (

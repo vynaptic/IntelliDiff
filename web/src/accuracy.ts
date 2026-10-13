@@ -1,5 +1,5 @@
 /** Which controls the Run screen's "Labelled accuracy" block offers, which labelling it prints, and its draw
- *  dialog's hint (docs/mvp/ACCURACY.md §6.3, §10). Every figure, warning and limit shown is the API's text: none is
+ *  dialog's hint. Every figure, warning and limit shown is the API's text: none is
  *  built here. The server still decides. */
 // Type imports only, so that Node runs the tests of this module without a bundler.
 import type { ApiError, Labelling, RunDetail } from './api';

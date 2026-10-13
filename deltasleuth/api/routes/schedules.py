@@ -1,4 +1,4 @@
-"""Schedules (docs/mvp/SCHEDULES.md §10): the schedules with their banners, the zones a schedule takes, one
+"""Schedules: the schedules with their banners, the zones a schedule takes, one
 schedule with its next times and its firings, a preview of a cron's times, and the writes, each audited as
 its caller: create, replace, pause, resume and delete (operators; a token or developer mode too). A viewer
 reads everything. Firings are projections of the worker's audit rows (ids, times and closed codes), so
@@ -18,7 +18,7 @@ from deltasleuth.api.routes.runs import RunOptions
 from deltasleuth.store import repo
 
 router = APIRouter(prefix="/schedules")
-CRON, ZONE = 1000, 64  # the longest texts a body's cron (C9 judges it once trimmed) and time_zone may be
+CRON, ZONE = 1000, 64  # the longest texts a body's cron (judged again once trimmed) and time_zone may be
 
 
 class ScheduleIn(Payload):

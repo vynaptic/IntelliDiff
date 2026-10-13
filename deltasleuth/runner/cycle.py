@@ -1,24 +1,23 @@
 """The end of a cycle: root causes and counters from the stored results, then the run's next step.
 
-The worker calls ``finish_cycle`` for every running or cancelling run; the first to find the cycle
-done takes the run's row lock and ends it, the others find it ended. A soak's next cycle is due
-``execution.cycleInterval`` after the previous one's nominal start (the same keys, or re-resolved
-when ``soak.rolling``) unless a stop condition ends the soak at the boundary; any other run gets its
-final status. A rolling listing or key table is read before the row lock is taken, and when it fails the
-soak goes on with the same keys: an outage at a boundary never ends a long soak. A key table whose target
-refuses the credential is raised instead (``KeyAuthRefused``): the worker pauses the run. A soak over two
-tables opens its next cycle with a fresh scan, due at the cycle's start. The run's final status is audited
-as ``run.finished``, and each soak cycle that starts as ``run.cycle``, by whoever ended the cycle.
-Every ended cycle, a failed run's too, gets its ``ds.cycles`` row: its retention runs from then
-(docs/mvp/RETENTION.md §4.1), and a sign-off judges it by the approval it ran under and how maxKeys cut
-its keys. Under SSO a soak without the approval its version needs attaches the active one at a
-boundary, or starts its next cycle paused (docs/mvp/APPROVALS.md §4); so does a soak the licence does
-not allow, or whose name it does not seat, as of when that cycle falls due (``licence.stopped``,
-docs/mvp/LICENCE.md §8). Every end of a drawn cycle, a failed run's too, stores its sample's judgement
-(``runner.sample``, docs/mvp/SAMPLING.md §5); a sampled soak's next cycle opens with no keys and its own
-draw pending, paused when the ending cycle's ``bottom_k`` draw did not pass. A cycle end on a store whose
-tables were never analysed analyses them first (``repo.analyse_new``), so the planner joins its rows by key;
-the root causes it then links are analysed with them (``repo.replace_root_causes``).
+The worker calls ``finish_cycle`` for every running or cancelling run; the first to find the cycle done
+takes the run's row lock and ends it, the others find it ended. A soak's next cycle is due
+``execution.cycleInterval`` after the previous one's nominal start (the same keys, or re-resolved when
+``soak.rolling``) unless a stop condition ends the soak at the boundary; any other run gets its final
+status. A rolling listing or key table is read before the row lock is taken, and when it fails the soak goes
+on with the same keys: an outage at a boundary never ends a long soak. A key table whose target refuses the
+credential is raised instead (``KeyAuthRefused``): the worker pauses the run. A soak over two tables opens
+its next cycle with a fresh scan, due at the cycle's start. The run's final status is audited as
+``run.finished``, and each soak cycle that starts as ``run.cycle``, by whoever ended the cycle. Every ended
+cycle, a failed run's too, gets its ``ds.cycles`` row: its retention runs from then, and a sign-off judges
+it by the approval it ran under and how maxKeys cut its keys. Under SSO a soak without the approval its
+version needs attaches the active one at a boundary, or starts its next cycle paused; so does a soak the
+licence does not allow, or whose name it does not seat, as of when that cycle falls due
+(``licence.stopped``). Every end of a drawn cycle, a failed run's too, stores its sample's judgement
+(``runner.sample``); a sampled soak's next cycle opens with no keys and its own draw pending, paused when
+the ending cycle's ``bottom_k`` draw did not pass. A cycle end on a store whose tables were never analysed
+analyses them first (``repo.analyse_new``), so the planner joins its rows by key; the root causes it then
+links are analysed with them (``repo.replace_root_causes``).
 """
 
 from __future__ import annotations
@@ -48,7 +47,7 @@ from deltasleuth.security.tokenise import mask_key, mask_pointer
 from deltasleuth.store import repo
 
 CANCELLED = "cancelled"  # the stop reason of a cancel asked for through the API
-ERASURE = "erasure"  # an erasure's (docs/mvp/RETENTION.md §8): its cycle ends cancelled, unsummarised
+ERASURE = "erasure"  # an erasure's: its cycle ends cancelled, unsummarised
 _ACTIVE = ("running", "cancelling")
 log = logging.getLogger(__name__)
 
@@ -125,14 +124,14 @@ async def finish_cycle(
     soak = run["status"] == "running" and run["mode"] == "soak"
     next_at, reason = _boundary(spec, run) if soak else (None, None)
     going_on = soak and reason is None
-    rescan = run["scan"] is not None  # a soak over two tables scans them again (TABLES.md §11)
+    rescan = run["scan"] is not None  # a soak over two tables scans them again
     keys, cut, walk = None, None, None  # a new key set (None: the same), how maxKeys cut it, its listing
     if going_on:
         keys, cut, walk = ({}, None, None) if rescan else await _rolled(ctx, spec, run)
     attach = going_on and _unapproved(ctx, spec, run)
     stopped = await licence.stopped(ctx, run, spec, next_at) if going_on else None  # its reason wins
     async with repo.audited(ctx.pool) as (conn, audit):
-        # The approval is read FOR SHARE before the run's row lock (docs/mvp/APPROVALS.md §2).
+        # The approval is read FOR SHARE before the run's row lock.
         attached = await _attached(ctx, conn, spec, run) if attach else None
         # Takes the run's row lock: a concurrent ender waits here, then finds the cycle ended.
         if not await repo.set_run_status(conn, run_id, run["status"], when=[run["status"]]):
@@ -180,7 +179,7 @@ async def finish_cycle(
             if why is not None:
                 detail = {"reason": why, "approval_id": attached}
                 if stopped is not None:
-                    detail["licence"] = stopped  # M3, M4 or M5 as data: its message is logged
+                    detail["licence"] = stopped  # the refusal as data: its message is logged
                 if why == sample.SAMPLE_PAUSE:
                     detail["draw_id"] = drawn["draw_id"]  # type: ignore[index]
                 await audit(WORKER, "paused", run_id, detail)
@@ -249,7 +248,7 @@ async def _attached(ctx: Context, conn: repo.Conn, spec: CompiledSpec, run: repo
 
 def failure(exc: BaseException) -> str:
     """What a failed run shows: an unreadable secret names its file (never its content), a table side's
-    error its class and code and the SSRF guard's its text, an address (docs/mvp/ENGINES.md §12), anything
+    error its class and code and the SSRF guard's its text, an address, anything
     else only its type (a message may hold keys or values)."""
     if isinstance(exc, TableError | UnsafeTargetError):
         return f"{type(exc).__name__}: {exc}"

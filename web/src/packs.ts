@@ -1,5 +1,5 @@
-/** What the screens say about a cycle's census, adjudications and evidence packs (docs/mvp/PACK.md §1.2, §5,
- *  §7.3), and which of their controls a cycle takes. The server still decides. */
+/** What the screens say about a cycle's census, adjudications and evidence packs, and which of their controls
+ *  a cycle takes. The server still decides. */
 // Type imports only, so that Node runs the tests of this module without a bundler.
 import type { Adjudication, AttestedAdjudication, Census, CensusSide, Engined, Mode, RunDetail, TablePlan } from './api';
 
@@ -8,7 +8,7 @@ const day = (iso: string) => new Date(iso).toISOString().slice(0, 10);
 const num = (n: number) => n.toLocaleString('en-US');
 const on = (iso: string | null) => (iso ? `, ${day(iso)}` : '');
 
-/** How a side its engine could not pin was read, where a snapshot stands, and why (docs/mvp/ENGINES.md §13). */
+/** How a side its engine could not pin was read, where a snapshot stands, and why. */
 const UNPINNED = {
   unverified: ['transaction', 'transactions', 'a snapshot not observable (a MySQL view)'],
   none: ['pass', 'passes', 'not a snapshot (a MySQL table outside InnoDB)'],
@@ -18,7 +18,7 @@ const unpinned = (found: Engined) =>
   found.consistency === 'unverified' || found.consistency === 'none' ? UNPINNED[found.consistency] : PINNED;
 
 /** `in 1 snapshot`, what a side its engine could not pin was read in instead, or the files a file side was
- *  read from (docs/mvp/FILES.md §11): an export, never the system it came from, and no digest. */
+ *  read from: an export, never the system it came from, and no digest. */
 function read(found: Engined, count = 1): string {
   if (found.consistency === 'fixed')
     return `from ${num(found.files ?? 0)} fixed file(s), ${num(found.bytes ?? 0)} bytes (an export, not the system it came from)`;
@@ -37,7 +37,7 @@ export function sideLine(side: 'a' | 'b', found: CensusSide | null | undefined):
   if (!found) return `side ${side} not covered`;
   if ('failed' in found) return `census of side ${side} failed (${found.failed}): no pack will cover side ${side}`;
   if (found.basis === 'listing') return `side ${side} counted, ${num(found.items)} keys listed${on(found.last_at)}`;
-  if (found.basis === 'frame') // a hash sample's frame (docs/mvp/SAMPLING.md §3)
+  if (found.basis === 'frame') // a hash sample's frame
     return `side ${side} counted, ${num(found.rows)} rows of ${found.relation} read to the end ${read(found)} as the sampling frame${on(found.at)}${asRead(found)}`;
   if (found.basis === 'table') {
     const missing = found.missing ? `${num(found.missing)} key(s) missing` : 'none missing';
@@ -51,9 +51,9 @@ export function sideLine(side: 'a' | 'b', found: CensusSide | null | undefined):
 /** An ended cycle's census, side a (the baseline) first. */
 export const censusLine = (census: Census) => `${sideLine('a', census.a)}; ${sideLine('b', census.b)}`;
 
-/** The certificate's warning for each side its engine could not read in a snapshot, and a file side's
- *  (docs/mvp/FILES.md §11): side b's lines that were not rows, keys held by several rows and a mount DeltaSleuth
- *  could write to. Side a's lines that were not rows are no warning: its cycle is no census and gets no pack. */
+/** The certificate's warning for each side its engine could not read in a snapshot, and a file side's:
+ *  side b's lines that were not rows, keys held by several rows and a mount DeltaSleuth could write to.
+ *  Side a's lines that were not rows are no warning: its cycle is no census and gets no pack. */
 export function censusWarnings(census: Census): string[] {
   return (['a', 'b'] as const).flatMap((side) => {
     const found = census[side];
@@ -74,7 +74,7 @@ export function censusWarnings(census: Census): string[] {
   });
 }
 
-/** A file side in a table scan's line (docs/mvp/FILES.md §16): its format, files and bytes, then its lines that
+/** A file side in a table scan's line: its format, files and bytes, then its lines that
  *  were not rows and its keys held by several rows, when there are any. Never a file's name or a digest. */
 export function fileSide(side: 'A' | 'B', plan: TablePlan, repeated = 0): string {
   return (

@@ -1,4 +1,4 @@
-// What the comparison builder and the Targets screen build in the browser (docs/mvp/CONTRACTS.md §7): the starter,
+// What the comparison builder and the Targets screen build in the browser: the starter,
 // a form's body, a curl command read into a side's rows with its credential headers set aside by the loader's
 // rules (one fixture, which tests/unit/spec/test_rules.py reads too) and DeltaSleuth's own cookies left out, an
 // endpoint's body, the credential handed to the target a command reached, and that a credential and a sample key

@@ -3,9 +3,8 @@ processes, read its results and a key's masked view, download reports, and chat 
 on: a scripted OpenAI-compatible model answering with valid citations; AI off: 503, all else works),
 and have a root cause explained and the run summarised (cited, or refused when the answer cites another
 root cause). Nothing the API returns, the model receives or the reports hold carries raw personal data.
-In tokens mode, which has no approvers, runs are labelled unapproved and approvals are refused
-(docs/mvp/APPROVALS.md §4). A trial declares its two endpoints in the product, tries each and compares
-them, the targets file naming neither (docs/mvp/DEPLOY.md §7)."""
+In tokens mode, which has no approvers, runs are labelled unapproved and approvals are refused. A trial
+declares its two endpoints in the product, tries each and compares them, the targets file naming neither."""
 
 from __future__ import annotations
 
@@ -174,10 +173,10 @@ def test_tokens_mode_labels_runs_unapproved_and_refuses_approvals(serve: Any, ma
 def test_two_endpoints_declared_tried_and_compared_without_a_file(
     serve: Any, make_stack: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A one-machine trial whose targets file names neither service (docs/mvp/DEPLOY.md §7, "In the
-    product"): its first token declares both, pastes the pair's spec into the builder's form, tries each
-    side for one key and reads the answer as it came, then saves the form and compares. ``ds compare``, a
-    process of its own, reads the product's list at its start, the 404 capability with it."""
+    """A one-machine trial whose targets file names neither service: its first token declares both in the
+    product, pastes the pair's spec into the builder's form, tries each side for one key and reads the
+    answer as it came, then saves the form and compares. ``ds compare``, a process of its own, reads the
+    product's list at its start, the 404 capability with it."""
     served = serve("customer")
     stack = make_stack(FILED, auth=TRIAL)
     app = create_app(load_settings(stack.settings), worker=True)

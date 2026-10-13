@@ -42,4 +42,4 @@ Everything else matches after normalisation. A new difference would show as MISM
 - **In a deployment:**
   1. Append the entries of `targets.yaml` under `targets:` in the deployment's targets file.
   2. Upload `spec.yaml` on the Specs screen.
-  3. Start a batch run with the keys from `keys.txt` (see `docs/mvp/DEPLOY.md`).
+  3. Start a batch run with the keys from `keys.txt` (see `docs/user-guide.md`).

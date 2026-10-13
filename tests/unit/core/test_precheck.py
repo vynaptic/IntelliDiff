@@ -1,4 +1,4 @@
-"""Table pre-checks, pure (docs/mvp/PRECHECKS.md §4, §6, §10): what a level reads, the schema codes and
+"""Table pre-checks, pure: what a level reads, the schema codes and
 their groups, each class's figures, when a sum is exact and when it is shown, the verdict ladder, and
 every text of a pair."""
 
@@ -125,7 +125,7 @@ def test_module_names_no_engine() -> None:
     assert not constants & set(ENGINES)
 
 
-# -- the two catalogues (§4, §7) ---------------------------------------------------------------------------
+# -- the two catalogues ---------------------------------------------------------------------------
 
 
 def test_shape_ignores_column_order() -> None:
@@ -191,8 +191,8 @@ def test_schema_diff_per_code_and_group() -> None:
         ("nullable_differs", "code", "schema"),
         ("family_differs", "opened", "not_compared"),
         ("family_differs", "flag", "not_compared"),
-        ("uncomparable", "geom", "not_compared"),  # a type no plan reads (P7)
-        ("uncomparable", "span", "not_compared"),  # other never crosses engines (P8)
+        ("uncomparable", "geom", "not_compared"),  # a type no plan reads
+        ("uncomparable", "span", "not_compared"),  # other never crosses engines
         ("only_a", "legacy_flag", "not_compared"),  # the plan takes the common columns
         ("only_b", "loyalty_tier", "not_compared"),
     ]  # the same declared size, a size in another unit and one side's alone are no difference
@@ -319,7 +319,7 @@ def test_key_parts_are_judged_as_columns_and_one_whose_texts_never_meet_is_not_c
         "schema_differs",
         "schema: 1 difference: key column id is integer on side a and numeric(10,0) on side b",
     )
-    # Across engines: two relations paired by name plan the key P6 would refuse in a spec, and say so.
+    # Across engines: two relations paired by name plan the key a spec's plan would refuse, and say so.
     oracle = Relation(
         "APP", "T", (col("ID", "NUMBER(10,2)", "decimal", size=("digits", 10, 2), nullable=False), v),
         ORACLE_FACTS | {"key": ["ID"]},
@@ -348,7 +348,7 @@ def test_key_parts_are_judged_as_columns_and_one_whose_texts_never_meet_is_not_c
     )
 
 
-# -- what a level reads, and each class's figures (§4) -----------------------------------------------------
+# -- what a level reads, and each class's figures -----------------------------------------------------
 
 CLASSES = [
     col("name", "text"), col("code", "character(3)", "char"), col("qty", "bigint", "integer"),
@@ -451,13 +451,13 @@ def test_figures_per_class() -> None:
         "figures": {
             "nulls": {"a": 2, "b": 2, "verdict": "same", "reason": None},
             "sum": {"a": "4999950000.00", "b": "4999950000.00", "verdict": "same", "reason": None},
-            "min": {"verdict": "same"},  # D6: its verdict alone
+            "min": {"verdict": "same"},  # its verdict alone
             "max": {"verdict": "same"},
             "distinct": {"a": 8, "b": 8, "verdict": "same"},
         },
         "reason": None,
     }
-    # No minimum, maximum or text is in a result (N4); a sum only where the spec clears its column.
+    # No minimum, maximum or text is in a result; a sum only where the spec clears its column.
     stored = jsonio.dumps(same.result)
     for value in ("2024-01-01", "2024-05-01", "03:04:05", "-0.50", "99.00"):
         assert value not in stored.replace(AT, "")
@@ -533,7 +533,7 @@ def test_numbers_compare_exactly_and_any_other_rendering_as_its_text() -> None:
     )
 
 
-# -- sums: exact, or not compared; shown, or withheld (§4, §6) ---------------------------------------------
+# -- sums: exact, or not compared; shown, or withheld ---------------------------------------------
 
 
 def test_sum_exact_bounds() -> None:
@@ -722,7 +722,7 @@ def test_under_a_filter_a_protected_column_s_counts_are_verdicts() -> None:
     assert unfiltered.result["columns"]["vip"]["figures"]["true"] == {"a": 1, "b": 0, "verdict": "differs"}
 
 
-# -- NULLs, empty strings and typeMaps (§4) ----------------------------------------------------------------
+# -- NULLs, empty strings and typeMaps ----------------------------------------------------------------
 
 ORACLE = {"engine": "oracle", "sum_digits": 38, "empty_null": True}
 
@@ -767,7 +767,7 @@ def test_oracle_empty_stays_a_difference() -> None:
 
 
 def test_a_protected_column_s_nulls_under_a_filter_tell_no_empty_string() -> None:
-    """Under a filter a protected column's empty count is a verdict (§6): the reason beside its NULLs names
+    """Under a filter a protected column's empty count is a verdict: the reason beside its NULLs names
     no count, and the bridge is offered whatever the other side holds, so it tells no value is empty."""
     a = relation(col("EMAIL", "VARCHAR2(120 CHAR)", "text"), name="APP.CUSTOMERS", server="19.21")
     b = relation(col("Email", "text"))
@@ -819,7 +819,7 @@ def test_typemap_gives_nulls_only() -> None:
     assert found.result["columns"]["opened"]["figures"] == {}
 
 
-# -- the verdict (§4) --------------------------------------------------------------------------------------
+# -- the verdict --------------------------------------------------------------------------------------
 
 
 def test_missing_column_outranks_a_differing_figure() -> None:
@@ -918,7 +918,7 @@ def test_compare_is_symmetric(
     assert jsonio.dumps(one.result)  # a result is JSON: counts, verdicts, names
 
 
-# -- the schema guard (§7) ---------------------------------------------------------------------------------
+# -- the schema guard ---------------------------------------------------------------------------------
 
 EMAIL, AMOUNT = col("email", "varchar(20)", "text", nullable=False), col("amount", "numeric(12,2)", "decimal")
 FLAG = col("legacy_flag", "boolean")  # a column no plan reads
@@ -935,7 +935,7 @@ def kinds(found: list[dict[str, Any]]) -> list[tuple[str, bool, str | None]]:
 
 def test_a_shape_holds_only_what_the_account_reads() -> None:
     """A column the role may not read is not in the shape, on any engine: one revoked reads as one
-    dropped (N10: as the account reads it)."""
+    dropped (as the account reads it)."""
     hidden = Column("salary", "numeric(12,2)", "decimal", False, False)
     assert precheck.shape(relation(EMAIL, hidden)) == precheck.shape(relation(EMAIL))
 
@@ -1012,7 +1012,7 @@ def test_respelled_integer_is_not_breaking() -> None:
 
 
 def test_key_scale_and_oracle_precision_are_breaking() -> None:
-    """ENGINES §8 builds a number key's text from its scale, and on Oracle, whose key text is a mask of
+    """An engine builds a number key's text from its scale, and on Oracle, whose key text is a mask of
     both, from its precision too: the key text the engine builds (``built``) is what is compared."""
     planned, oracle = {"ID": "key"}, ENGINES["oracle"].built
 
@@ -1140,7 +1140,7 @@ def test_an_unplanned_column_is_never_breaking(
     assert jsonio.dumps(found)  # what the guard holds is JSON
 
 
-# -- every text (§10) --------------------------------------------------------------------------------------
+# -- every text --------------------------------------------------------------------------------------
 
 
 def test_messages_golden() -> None:
@@ -1393,7 +1393,7 @@ def test_a_stored_result_s_figures_are_listed_in_one_order() -> None:
 
 @pytest.mark.parametrize("word", ["match", "identical", "passed", "verified", "validated", "reconciled", "✓"])
 def test_no_text_of_the_module_says_what_is_never_told(word: str) -> None:
-    """N1: none of the words a pre-check may not say is in a text the module builds."""
+    """None of the words a pre-check may not say is in a text the module builds."""
     tree = ast.parse(inspect.getsource(precheck))
     texts = [
         node.value
@@ -1409,7 +1409,7 @@ def test_no_text_of_the_module_says_what_is_never_told(word: str) -> None:
     assert not [text for text in said if re.search(rf"\b{word}", text, re.I)]
 
 
-# -- two relations paired by name (§3) ---------------------------------------------------------------------
+# -- two relations paired by name ---------------------------------------------------------------------
 
 ORACLE_FACTS = {"kind": "table", "server": "23.26", "consistency": "snapshot"}
 POSTGRES_FACTS = {"kind": "table", "server": "16.4", "consistency": "snapshot"}

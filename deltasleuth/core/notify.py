@@ -1,15 +1,15 @@
-"""Alerts and notifications (docs/mvp/ALERTS.md): the events fed audit rows make, the rules that route them
+"""Alerts and notifications: the events fed audit rows make, the rules that route them
 and the closed texts and bodies they are sent as. Pure: ``runner.notify`` reads the store and sends.
 
 ``EVENTS`` maps each fed audit action to its projector and the kinds it may yield. A projector turns the
 row and what the feed read for it (``Seen``) into events; each event's facts must pass its kind's model
-(§2.3: ids, counts, closed codes, slugs, versions and times) or it is never sent (``Unsafe``), so a bug can
-drop a notification, never leak one. ``fires`` matches a rule (§3); ``payload`` and ``body`` make one
-channel's delivery (§6), rendered once, so every attempt sends the same bytes. A pair's change of
-cut-over readiness is one such event (``readiness.changed``, docs/mvp/READINESS.md §8), a schedule's time
-that started no run another (``schedule.missed``, docs/mvp/SCHEDULES.md §8), as is the worker's pause of a
+(ids, counts, closed codes, slugs, versions and times) or it is never sent (``Unsafe``), so a bug can
+drop a notification, never leak one. ``fires`` matches a rule; ``payload`` and ``body`` make one
+channel's delivery, rendered once, so every attempt sends the same bytes. A pair's change of
+cut-over readiness is one such event (``readiness.changed``), a schedule's time
+that started no run another (``schedule.missed``), as is the worker's pause of a
 schedule before a time of it came due; and what the schema guard recorded of a run's tables a third
-(``schema.drift``, docs/mvp/PRECHECKS.md §9), its pause of the run being a ``run.paused`` as any other.
+(``schema.drift``), its pause of the run being a ``run.paused`` as any other.
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ Kind = Literal[
     "notify.test",
 ]  # fmt: skip
 KINDS: tuple[str, ...] = get_args(Kind)
-RESERVED: dict[str, str] = {}  # an event refused in rules until its feature is built (§2.4): none now
+RESERVED: dict[str, str] = {}  # an event refused in rules until its feature is built: none now
 UNSPECIFIC = ("licence.state", "notify.dead", "notify.skipped", "notify.daily")  # they match no spec
 # runner.runs.AUTH_PAUSE, KEY_PAUSE, approvals.APPROVAL_PAUSE, licence.LICENCE_PAUSE, sample.SAMPLE_PAUSE,
 # drift.SCHEMA_PAUSE
@@ -68,8 +68,8 @@ Reason = Literal[
     "stop_condition:maxUnexplainedCritical", "stop_condition:until", "stop_condition:maxDuration",
     "stop_condition:maxCycles", "stop_condition:maxKeys",
 ]  # fmt: skip
-State = Literal["open", "evaluation", "valid", "ending", "grace", "expired"]  # open: LICENCE.md §19
-# Cut-over readiness (docs/mvp/READINESS.md §5, §8): core.readiness' STATES, GATES and CAUSES, in order.
+State = Literal["open", "evaluation", "valid", "ending", "grace", "expired"]  # open: no vendor key
+# Cut-over readiness: core.readiness' STATES, GATES and CAUSES, in order.
 Ready = Literal[
     "no_evidence", "not_ready", "unknown", "parity_ready", "signoff_ready", "signed_off", "evidenced"
 ]
@@ -82,7 +82,7 @@ Cause = Literal[
     "baseline", "cycle", "version", "signoff", "pack", "adjudication", "accuracy", "ledger", "licence",
     "config", "closed", "time",
 ]  # fmt: skip
-# Why a schedule's time started no run (docs/mvp/SCHEDULES.md §8): each reason's codes and its severity.
+# Why a schedule's time started no run: each reason's codes and its severity.
 MISSED: dict[str, tuple[tuple[str | None, ...], str]] = {
     "late": (("down", "busy", "fired_already"), "alert"),
     "superseded": (("update", "pause", "delete"), "alert"),
@@ -96,7 +96,7 @@ MISSED: dict[str, tuple[tuple[str | None, ...], str]] = {
     "licence": (("expired", "sso", "pairs"), "warning"),
     "sample": (("live", "unclosed", "refused"), "warning"),
 }
-# What the schema guard tells of a table (docs/mvp/PRECHECKS.md §7): core.precheck's BREAKING and OTHER.
+# What the schema guard tells of a table: core.precheck's BREAKING and OTHER.
 Drift = Literal[
     "relation_missing", "column_missing", "class_changed", "key_render_changed", "render_changed",
     "compared_lost", "column_added", "column_removed", "type_changed", "nullable_changed", "key_changed",
@@ -132,12 +132,12 @@ class Unsafe(ValueError):
     """An event's facts fail its kind's model: it is never sent."""
 
 
-# -- addresses (§7) -------------------------------------------------------------------------------------
+# -- addresses -------------------------------------------------------------------------------------
 
 
 def refusal(address: str, allow_private: bool) -> str | None:
     """Why ``address`` is no notification destination (``address_rule``'s judgement, which a database
-    target shares: docs/mvp/ENGINES.md §4); None when it is one."""
+    target shares); None when it is one."""
     rule = address_rule(address)
     if rule == "never":
         return (
@@ -148,7 +148,7 @@ def refusal(address: str, allow_private: bool) -> str | None:
     return None
 
 
-# -- facts that may leave (§2.3) ------------------------------------------------------------------------
+# -- facts that may leave ------------------------------------------------------------------------
 
 _FACTS = ConfigDict(extra="forbid", strict=True)
 Id = Annotated[str, Field(pattern=r"^(R|A|D|LI|N|P|SC|V)-[0-9A-Z]{26}$")]
@@ -159,7 +159,7 @@ Day = Annotated[str, Field(pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")]
 Rate = Annotated[str, Field(pattern=r"^[0-9]+(\.[0-9]+)?$")]
 Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 Minute = Annotated[str, Field(pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}Z$")]  # cron.utc
-# The codes a delivery dies with (§5).
+# The codes a delivery dies with.
 Death = Literal[
     "retries_exhausted", "http_3xx", "http_4xx", "unsafe_destination", "url_mismatch", "smtp_permanent",
     "smtp_no_starttls", "payload_too_large", "channel_removed", "channel_changed", "expired",
@@ -276,7 +276,7 @@ class DriftSide(_Model):
 
 
 class SchemaDrift(_Model):
-    """What the schema guard recorded of a run's tables (docs/mvp/PRECHECKS.md §9): counts, closed kinds,
+    """What the schema guard recorded of a run's tables: counts, closed kinds,
     an id and hashes; never a relation's or a column's name, nor a declared type."""
 
     cycle: Cycle
@@ -284,7 +284,7 @@ class SchemaDrift(_Model):
     mode: Literal["finding", "pause"]
     checked: bool
     paused: bool
-    paused_seq: Count | None  # the paused row of its trip, whose dedup key it shares (§2.1)
+    paused_seq: Count | None  # the paused row of its trip, whose dedup key it shares
     basis: Id | None
     sides: dict[Literal["a", "b"], DriftSide]
     error_type: Annotated[str, Field(pattern=f"^{_ERROR_TYPE.pattern}$")] | None
@@ -349,7 +349,7 @@ class CycleRef(_Model):
 
 
 class ReadinessChanged(_Model):
-    pair: Slug  # a label, as are programme and entity (§6.4): withheld per channel
+    pair: Slug  # a label, as are programme and entity: withheld per channel
     programme: Slug | None
     entity: Slug | None
     from_: Ready | None = Field(alias="from")  # None: the pair's baseline
@@ -447,7 +447,7 @@ MODELS: dict[str, type[_Model]] = {
 }  # fmt: skip
 
 
-# -- events (§2.1) --------------------------------------------------------------------------------------
+# -- events --------------------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -570,7 +570,7 @@ def _paused(row: Mapping[str, Any], seen: Seen) -> list[Event]:
 
 
 def _drift(row: Mapping[str, Any], seen: Seen) -> list[Event]:
-    """What the schema guard recorded of the run's tables (docs/mvp/PRECHECKS.md §9): the row's own
+    """What the schema guard recorded of the run's tables: the row's own
     members and no other, each side's as counts, closed kinds and two hashes."""
     detail = row["detail"]
     names = ("cycle", "where", "mode", "checked", "paused", "paused_seq", "basis", "error_type")
@@ -584,7 +584,7 @@ def _draw_failed(row: Mapping[str, Any], seen: Seen) -> list[Event]:
 
 
 def _measured(row: Mapping[str, Any], seen: Seen) -> list[Event]:
-    """A labelling labelled (docs/mvp/ACCURACY.md §10): its id and counts, never a label or a share."""
+    """A labelling labelled: its id and counts, never a label or a share."""
     counts = {name: row["detail"].get(name) for name in ("labelled", "undecidable", "not_reviewed")}
     facts = {"cycle": seen.cycle, "labelling_id": row["object"]} | counts
     return [_event(seen, row, "accuracy.measured", facts)]
@@ -626,7 +626,7 @@ def _licence(row: Mapping[str, Any], seen: Seen) -> list[Event]:
 
 
 def _readiness(row: Mapping[str, Any], seen: Seen) -> list[Event]:
-    """A pair's readiness changed (docs/mvp/READINESS.md §8): ids, states, counts and slugs, the pair as its
+    """A pair's readiness changed: ids, states, counts and slugs, the pair as its
     row's object names it; each changed gate's statuses, never its counts or its text."""
     detail = row["detail"]
     names = ("programme", "entity", "from", "to", "was_regressed", "regressed", "score", "causes", "gates",
@@ -637,11 +637,11 @@ def _readiness(row: Mapping[str, Any], seen: Seen) -> list[Event]:
 
 
 def _missed(row: Mapping[str, Any], seen: Seen) -> list[Event]:
-    """A schedule's time, or counted range of times, that started no run (docs/mvp/SCHEDULES.md §8): ids,
-    times, closed codes and an exception's type. The spec's name and the mode are the row's own, for rules
-    to match: no payload carries them. Of the ``schedule.pause`` rows, only the worker's that chained no
-    missed row (T6 before a time is due) is sent, as the same event without a time: a person's pause sends
-    nothing, and a missed row beside the worker's is the notification."""
+    """A schedule's time, or counted range of times, that started no run: ids, times, closed codes and an
+    exception's type. The spec's name and the mode are the row's own, for rules to match: no payload carries
+    them. Of the ``schedule.pause`` rows, only the worker's that chained no missed row (a cron or zone this
+    build cannot load, before a time is due) is sent, as the same event without a time: a person's pause
+    sends nothing, and a missed row beside the worker's is the notification."""
     detail = row["detail"]
     if row["action"] == "schedule.pause" and not (
         detail.get("reason") == "zone" and detail.get("missed") is False
@@ -709,7 +709,7 @@ def checked(event: Event) -> Event:
 
 
 def dedup(event: Event, seq: int | str | None) -> str:
-    """The event's de-duplication key (§2.1); ``seq``: its audit row's, a daily's date or a test's id."""
+    """The event's de-duplication key; ``seq``: its audit row's, a daily's date or a test's id."""
     f, run_id = event.facts, (event.run or {}).get("run_id")
     match event.kind:
         case "cycle.ended" | "sample.judged":
@@ -750,13 +750,13 @@ def dedup(event: Event, seq: int | str | None) -> str:
 
 
 def superseded(event: Event) -> str | None:
-    """The prefix of the dedup keys of which only a channel's newest delivery makes a duplicate (§3): a
+    """The prefix of the dedup keys of which only a channel's newest delivery makes a duplicate: a
     pair's readiness, so that a fall its recovery followed is sent again. None: any delivery of the key."""
     return f"readiness.changed|{event.facts['pair']}|" if event.kind == "readiness.changed" else None
 
 
 def severity(event: Event, held: bool) -> str:
-    """``alert``, ``warning`` or ``info`` (§2.1); ``held``: a firing rule's condition held or crossed."""
+    """``alert``, ``warning`` or ``info``; ``held``: a firing rule's condition held or crossed."""
     f = event.facts
     match event.kind:
         case "cycle.ended":
@@ -796,7 +796,7 @@ def severity(event: Event, held: bool) -> str:
     return "info"
 
 
-# -- rules (§3) -----------------------------------------------------------------------------------------
+# -- rules -----------------------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -855,7 +855,7 @@ def fires(rule: RuleSettings, event: Event) -> Fired | None:
 
 
 def _readiness_fires(rule: RuleSettings, f: Mapping[str, Any]) -> bool:
-    """A readiness rule's own keys (docs/mvp/READINESS.md §8), each checked when present: a pair in no
+    """A readiness rule's own keys, each checked when present: a pair in no
     programme matches only a rule without ``programmes``; a listed gate is among those changed; a listed
     cause is among the row's (any of them: a fall is never dropped for the causes it names besides)."""
     programme = f["programme"]
@@ -876,7 +876,7 @@ def _level_holds(value: Any, bound: Any, condition: str) -> bool:
     return value > limit if LEVELS[condition][1] else value < limit
 
 
-# -- wording (§6.2) -------------------------------------------------------------------------------------
+# -- wording -------------------------------------------------------------------------------------
 
 _PAUSED = {
     "run_paused_auth_error": "a side refused its credential. A person fixes it and resumes the run.",
@@ -896,7 +896,7 @@ _FINISHED = {
     "completed_with_issues": "completed with issues",
     "cancelled": "cancelled",
 }
-# Why a schedule's time started no run, one closed clause per reason and code (docs/mvp/SCHEDULES.md §8).
+# Why a schedule's time started no run, one closed clause per reason and code.
 _MISSED = {
     ("late", "down"): "no worker could start a run in time (none that fires schedules ran, the store was"
     " down, or the clock moved); a schedule never runs a backlog",
@@ -915,7 +915,7 @@ _MISSED = {
     " person is disabled). Another operator saves the schedule again to run it",
     ("not_started", None): "the run could not be created ({error_type}); starting one on the Runs screen"
     " shows the cause",
-    # docs/mvp/FILES.md §12, F11: ds target check shows the files and whether they are settled, never a
+    # Ds target check shows the files and whether they are settled, never a
     # stamp file, an age against the spec's maxAge or a plan's time.
     **{
         ("not_started", code): "the export a file side reads was not ready before its window closed"
@@ -938,7 +938,7 @@ _MISSED = {
     " closes it with the fix, then the next firing draws",
     ("sample", "refused"): "the sample's rules refused the run",
 }
-# Why the worker paused a schedule before a time of it came due, one closed clause per code (T6).
+# Why the worker paused a schedule before a time of it came due, one closed clause per code.
 _ZONE = {
     "zone": "the worker's time zone data did not hold its zone. A person saves the schedule with a zone the"
     " build holds, then resumes it",
@@ -1075,7 +1075,7 @@ def _drift_text(event: Event) -> tuple[str, str]:
     title = f"{_who(event)}: a table of run {run['run_id']} changed"
     if f["where"] == "creation":
         since, goes = f"since run {f['basis']} of its version", "this run reads the tables as they are now"
-    elif f["where"] == "read":  # V5: nothing found breaks the plan, so the read's failure fails the run
+    elif f["where"] == "read":  # nothing found breaks the plan, so the read's failure fails the run
         since, goes = "since the run was planned", "the run fails on the read that failed"
     else:
         since, goes = "since the run was planned", "the run goes on reading by its plan"
@@ -1100,7 +1100,7 @@ def _other_text(event: Event) -> tuple[str, str]:
             title = f"the licence is {f['to']}"
             ends = f", which ends on {f['ends']}" if f["ends"] else ""
             named = f"licence {f['licence_id']}{ends}" if f["licence_id"] else "no licence"
-            if f["to"] == "open":  # a build without a vendor key (docs/mvp/LICENCE.md §19)
+            if f["to"] == "open":  # a build without a vendor key
                 title, named = "no licence is needed", "this build enforces none"
             return (
                 title,
@@ -1183,12 +1183,12 @@ def text(
     if event.run is not None:
         if event.run["now"]["approval"] in ("unapproved", "revoked"):
             body += f" {NOT_EVIDENCE}"
-        if event.run["now"]["licence"] == "evaluation":  # LICENCE O1
+        if event.run["now"]["licence"] == "evaluation":  # an unlicensed evaluation's label
             body = f"[unlicensed evaluation] {body}"
     return title, body
 
 
-# -- payloads and bodies (§6.1, §6.3, §6.4) -------------------------------------------------------------
+# -- payloads and bodies -------------------------------------------------------------
 
 
 def _route(event: Event) -> str:

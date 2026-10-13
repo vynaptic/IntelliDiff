@@ -126,7 +126,7 @@ def test_a_database_target_takes_no_service_members(write_yaml: WriteYaml, membe
     assert _problems(write_yaml, targets) == {(f"/targets/db/{member}", "schema.not")}
 
 
-# --- a database that declares its endpoint (docs/mvp/ENGINES.md §4) ----------------------------------
+# --- a database that declares its endpoint ----------------------------------
 
 MYSQL = {
     "engine": "mysql",
@@ -663,7 +663,7 @@ T9 = "root must be an absolute path without . or .. segments or a trailing or do
 
 
 def test_a_files_target_loads(write_yaml: WriteYaml) -> None:
-    """docs/mvp/FILES.md §4: a root, a settle time, the writable opt-in and a smaller rate budget by
+    """A root, a settle time, the writable opt-in and a smaller rate budget by
     default; a database's capabilities and no secret."""
     registry = _load(write_yaml, {"legacy": FILES, "dev": FILES | {"settle_s": 0, "allow_writable": True}})
     legacy, dev = registry.live("legacy"), registry.get("dev")
@@ -675,7 +675,7 @@ def test_a_files_target_loads(write_yaml: WriteYaml) -> None:
     assert (dev.settle_s, dev.allow_writable, dev.database, dev.dsn_ref) == (0, True, None, None)
     budget = _load(write_yaml, {"legacy": FILES | {"rate_per_s": 50, "max_concurrency": 8}}).get("legacy")
     assert (budget.rate_per_s, budget.max_concurrency) == (50.0, 8)
-    # Where a root may lie needs the settings (T10): loading the targets never judges it.
+    # Where a root may lie needs the settings: loading the targets never judges it.
     assert _load(write_yaml, {"etc": FILES | {"root": "/etc"}}).get("etc").root == "/etc"
 
 
@@ -697,7 +697,7 @@ def test_a_files_target_loads(write_yaml: WriteYaml) -> None:
         (FILES | {"root": "/var/lib/deltasleuth/files/./legacy"}, "/root", "invalid_root", T9),
         (FILES | {"root": "/var/lib/deltasleuth/files/.."}, "/root", "invalid_root", T9),
         (FILES | {"root": "/" + "a" * 1024}, "/root", "invalid_root", T9),
-        # Not its own real path: a plan refused each as "is, or is reached through, a symbolic link" (P14).
+        # Not its own real path: a plan refused each as "is, or is reached through, a symbolic link".
         (FILES | {"root": "/var/lib/deltasleuth/files/legacy/"}, "/root", "invalid_root", T9),
         (FILES | {"root": "/var/lib/deltasleuth/files//legacy"}, "/root", "invalid_root", T9),
         (FILES | {"root": "//var/lib/deltasleuth/files/legacy"}, "/root", "invalid_root", T9),

@@ -3,8 +3,8 @@ test must not do for real: call an LLM), a run stored through the engine as a wo
 callers of each auth mode (tokens, and sessions inserted as a sign-in would insert them), a spec
 version's four-eyes approval (``approved``), a fake identity provider to sign in through, and an oidc
 client with evidence packs (``packs_client``) over a signed-off census cycle (``signed``). An oidc client
-of a vendor build (``vendor_keys``) runs under an Enterprise licence (docs/mvp/LICENCE.md §4); the open
-build's, the tests' own, needs none (§19)."""
+of a vendor build (``vendor_keys``) runs under an Enterprise licence; the open
+build's, the tests' own, needs none."""
 
 from __future__ import annotations
 
@@ -145,10 +145,10 @@ def open_client(
     Without ``auth``, developer mode: a loopback client sending ``X-CSRF-Token: dev``. With ``auth``
     (the settings block; ``public_url`` defaults to PUBLIC_URL), a client of that URL at 10.1.2.3.
     ``packs``: the evidence pack settings; ``notify``: the notification settings; ``readiness``: the
-    readiness settings; ``files``: the file reader's (docs/mvp/FILES.md §4); ``mcp``: the MCP server's
-    (docs/mvp/MCP.md §4). In oidc mode of a vendor build (``vendor_keys``) a licence of ``tier`` (None:
-    none, an evaluation) is installed once the server has started, unless the store names one, so that its
-    runs, sign-offs and packs go ahead, as they do in the open build without one.
+    readiness settings; ``files``: the file reader's; ``mcp``: the MCP server's. In oidc mode of a vendor
+    build (``vendor_keys``) a licence of ``tier`` (None: none, an evaluation) is installed once the server has
+    started, unless the store names one, so that its runs, sign-offs and packs go ahead, as they do in the
+    open build without one.
     """
 
     def settings(
@@ -308,7 +308,7 @@ async def _approved(ctx: Context, spec_id: int) -> str:
 
 
 def approved(client: TestClient, spec_id: int) -> str:
-    """Approve the spec version's needs (docs/mvp/APPROVALS.md), as people other than its uploaders would:
+    """Approve the spec version's needs, as people other than its uploaders would:
     one approver, or two when an upload was not a person's; the approval's id. Under SSO a run of a version
     that needs one starts only then."""
     return client.portal.call(_approved, client.app.state.ctx, spec_id)
@@ -403,7 +403,7 @@ def callers() -> Callable[[TestClient], Callers]:
     return Callers
 
 
-# -- evidence packs (docs/mvp/PACK.md) -------------------------------------------------------------
+# -- evidence packs -------------------------------------------------------------
 
 
 @pytest.fixture

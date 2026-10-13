@@ -1,4 +1,4 @@
-"""SSRF address rules, the vetted address of a database target (docs/mvp/ENGINES.md §4), the circuit
+"""SSRF address rules, the vetted address of a database target, the circuit
 breaker's states and retry timing."""
 
 from __future__ import annotations
@@ -128,9 +128,7 @@ class TestVetted:
         resolved["db.example"] = ["93.184.216.34", "10.1.2.3"]  # one private answer refuses them all
         with pytest.raises(UnsafeTargetError) as exc:
             await vetted("db.example", 3306, False)
-        assert (
-            str(exc.value) == "10.1.2.3 is a private address: set allow_private_network on the target"
-        )  # G1
+        assert str(exc.value) == "10.1.2.3 is a private address: set allow_private_network on the target"
         assert await vetted("db.example", 3306, True) == ["93.184.216.34", "10.1.2.3"]
 
     @pytest.mark.parametrize(
@@ -162,7 +160,7 @@ class TestVetted:
         with pytest.raises(UnsafeTargetError) as exc:
             await vetted("db.example", 1521, True)  # whatever the target allows
         assert str(exc.value) == (
-            f"{address} is never a target (link-local, unspecified, multicast or metadata)"  # G2
+            f"{address} is never a target (link-local, unspecified, multicast or metadata)"
         )
         assert "notification" not in str(exc.value)
 

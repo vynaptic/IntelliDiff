@@ -1,8 +1,8 @@
-"""The security review points of table sides on MySQL and Oracle that a test can hold (docs/mvp/ENGINES.md
-§14): the drivers load no client library and read no client configuration (points 1, 3), nothing a server
-says or a statement holds is logged (5), and a plan carries a side's engine and its server's major and minor
-version, never its patch level, host, port or user (9); a MySQL endpoint that is hostile or broken is
-contained (6): what it makes the driver raise shows its class alone, its handshake ends with the connect
+"""The security review points of table sides on MySQL and Oracle that a test can hold: the drivers load no
+client library and read no client configuration, nothing a server says or a statement holds is logged, and
+a plan carries a side's engine and its server's major and minor
+version, never its patch level, host, port or user; a MySQL endpoint that is hostile or broken is
+contained: what it makes the driver raise shows its class alone, its handshake ends with the connect
 budget and a packet it sends in parts is bounded. The other points are held where their behaviour is
 tested: the vetted address in ``test_guards``, TLS in ``test_tables_tls``, the bounds on what is fetched in
 ``test_mysql`` and ``test_oracle``, what a certificate says in ``runner/test_census``, and what a scan
@@ -76,7 +76,7 @@ async def test_a_plan_names_the_engine_and_never_the_endpoint_and_nothing_a_serv
     assert [line for line in logged if "2024-02-31" in line or "SELECT" in line or "Incorrect" in line] == []
 
 
-# --- a MySQL endpoint that is hostile or broken (point 6) ----------------------------------------------
+# --- a MySQL endpoint that is hostile or broken --------------------------------------------------------
 
 PART = bytes(2**24 - 1)  # one part of a packet sent in parts: the most a part holds
 
@@ -173,7 +173,7 @@ async def test_what_a_server_makes_the_driver_raise_shows_its_class_alone(
     port = targets.get("db-a").database.port  # type: ignore[union-attr]
     not_mysql = f"{code}: the answer is not a MySQL server's"
     if "answers" in members:  # a statement of the pre-flight is answered with the request
-        with pytest.raises(ValueError) as refused:  # P14: once the neutral error itself, a traceback
+        with pytest.raises(ValueError) as refused:  # once the neutral error itself, a traceback
             await preflight(targets.get("db-a"), "t")
         said = "target db-a: the session's account of its server could not be read"
         assert str(refused.value) == f"{said}: {not_mysql}" and refused.value.__cause__ is None

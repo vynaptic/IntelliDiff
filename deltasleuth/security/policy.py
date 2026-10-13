@@ -1,4 +1,4 @@
-"""Tokenisation policy (§13.1, D.1): which value class protects a position (None = clear).
+"""Tokenisation policy: which value class protects a position (None = clear).
 
 A matching tokenise rule of a PII floor class always tokenises, whatever ``security.clear`` says.
 Otherwise the most specific rule wins, a clear entry only when strictly more specific (a tie

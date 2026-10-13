@@ -1,4 +1,4 @@
-"""The signals the tests end a file reader's process by (docs/mvp/READER.md §15). On macOS every process
+"""The signals the tests end a file reader's process by. On macOS every process
 that ends by SIGSEGV, SIGBUS, SIGABRT or SIGTRAP is a crash to the system, which writes a report and shows
 a dialog for it: a real fault is made there only with ``DS_FAULTS=1``, and on Linux always. Test-only.
 

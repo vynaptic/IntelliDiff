@@ -1,4 +1,4 @@
-"""Cycle counters (§7.1): verdict buckets, outstanding and cancelled keys, rates, exact reconciliation."""
+"""Cycle counters: verdict buckets, outstanding and cancelled keys, rates, exact reconciliation."""
 
 from __future__ import annotations
 
@@ -80,7 +80,7 @@ def test_counters_that_do_not_reconcile_are_refused_by_name(results: list, total
 
 @pytest.mark.parametrize("live", [True, False])
 def test_a_cycle_tallied_a_page_at_a_time_counts_as_the_whole_cycle_does(live: bool) -> None:
-    """SCALE S2: every outcome, an accepted and a bug rule, normalisation-only keys, schema drift (a reason
+    """Every outcome, an accepted and a bug rule, normalisation-only keys, schema drift (a reason
     and a finding), a scan's bulk match and cancelled keys; each page brings only its own keys' findings."""
     results = [
         *RESULTS,

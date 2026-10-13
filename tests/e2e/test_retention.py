@@ -1,7 +1,7 @@
-"""Retention end to end (docs/mvp/RETENTION.md §4, §10). A finished run whose cycle ended longer ago than
+"""Retention end to end. A finished run whose cycle ended longer ago than
 its retention is purged by ``ds purge``: its cycle's routes, reports and compares then answer 410 and its
 chat is gone, while the run and its retention stay readable; its blobs go a day later. And the canary:
-after ``ds keys migrate``, DEPLOY's VACUUM FULL and a CHECKPOINT, no planted raw key, header, chat text
+after ``ds keys migrate``, the upgrade's VACUUM FULL and a CHECKPOINT, no planted raw key, header, chat text
 or body marker is left in the database files ($PGDATA/base, read as the fixture's superuser) or the
 evidence directory, where the same store as 005 left it holds every one: raw keys in ds.runs' dropped
 003 column and legacy blobs' sha256 names included."""
@@ -39,15 +39,18 @@ from deltasleuth.core.types import Observation, Side
 from deltasleuth.evidence.store import observation_id
 from deltasleuth.store.db import MIGRATIONS
 from mocks.registry import pair_dir
-from tests.conftest import REPO_ROOT, encryption
+from tests.conftest import encryption
 
 from .conftest import Stack, pdf_text
 
 pytestmark = [pytest.mark.e2e, pytest.mark.db]
 DEVELOPER = {"base_url": "http://127.0.0.1", "client": ("127.0.0.1", 50000)}
-# The canary runs the upgrade's ANALYZE and VACUUM FULL as DEPLOY.md (section 10) spells them.
-DEPLOY = (REPO_ROOT / "docs" / "mvp" / "DEPLOY.md").read_text()
-UPGRADE = re.findall(r"-c '([^']+)'", re.search(r"^.*-c 'VACUUM FULL .*$", DEPLOY, re.M)[0])  # type: ignore[index]
+# The canary runs the upgrade's ANALYZE and VACUUM FULL.
+UPGRADE = (
+    "ANALYZE ds.scans, ds.observations",
+    "VACUUM FULL ds.run_keys, ds.observations, ds.results, ds.findings, ds.scans, ds.chat_messages, ds.runs,"
+    " pg_catalog.pg_statistic",
+)
 
 
 @pytest.fixture(autouse=True)
@@ -180,7 +183,7 @@ def test_an_expired_cycle_is_purged_then_answers_410(
     assert [r["action"].removeprefix("retention.") for r in audited] == [
         "hold", "release", "expire", "purged", "finished",
     ]  # fmt: skip
-    local = ("asserted", "os_account")  # every local: row's (docs/mvp/AUTH.md §4.2)
+    local = ("asserted", "os_account")  # every local: row's
     assert {name: value for name, value in audited[3]["detail"].items() if name not in local} == {
         "cycle": 1, "keys": 40, "results": 40, "blobs_queued": stored["blobs"], "data_key_destroyed": True,
         "packs": [], **{name: stored[name] for name in ("observations", "findings", "chat_messages")},
@@ -341,7 +344,6 @@ def test_canary_no_planted_plaintext_survives_the_migration(tmp_path: Path, pg_d
     assert planted["scan point two"] in str(stats)  # the planner's statistics hold them, as autovacuum's
 
     migrated = ds("keys", "migrate", "--config", tmp_path / "ds.yaml").stdout
-    assert UPGRADE[0].startswith("ANALYZE") and "ds.runs" in UPGRADE[1]
     execute(pg_dsn, *UPGRADE, "CHECKPOINT")
     assert migrated == (
         "sealed: 2 key(s), 4 header(s), 1 chat message(s) and 2 scan point(s) under 4 new run data key(s);"

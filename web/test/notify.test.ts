@@ -1,5 +1,5 @@
 // What the Notifications screen and every screen's banners say, in `ds notify`'s words, who sees the Mute form,
-// and what the screen sends (docs/mvp/ALERTS.md §10, §11).
+// and what the screen sends.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 

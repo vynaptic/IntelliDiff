@@ -1,4 +1,4 @@
-"""The session and login cookies' names, and when they are plain (docs/mvp/AUTH.md §3, exception E1)."""
+"""The session and login cookies' names, and when they are plain."""
 
 from __future__ import annotations
 

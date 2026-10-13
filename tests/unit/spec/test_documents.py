@@ -10,7 +10,7 @@ import yaml
 from deltasleuth.core.spec import SpecError, load_spec_file
 from deltasleuth.core.spec.documents import MAX_DOCUMENT_BYTES, parse_json_text, parse_yaml_text
 
-EXAMPLES = Path(__file__).resolve().parents[3] / "docs" / "architecture" / "examples"
+EXAMPLES = Path(__file__).resolve().parents[2] / "fixtures" / "specs"
 
 
 def _issue(text: str, parse: object = parse_yaml_text) -> tuple[str, str]:

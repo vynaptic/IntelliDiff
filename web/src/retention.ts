@@ -1,4 +1,4 @@
-/** What the screens say about a cycle's evidence (docs/mvp/RETENTION.md §4.4): until when it is kept, in
+/** What the screens say about a cycle's evidence: until when it is kept, in
  *  report.pdf's words, or that it was purged; and whether the chat can still answer. */
 import type { RunDetail } from './api';
 

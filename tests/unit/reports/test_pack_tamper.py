@@ -1,10 +1,10 @@
-"""A pack checked offline (docs/mvp/PACK.md §3.3, §7.3, §9): its own VERIFY.txt run with ``sh``, with
+"""A pack checked offline: its own VERIFY.txt run with ``sh``, with
 ``sha256sum`` and then ``shasum -a 256`` (and macOS's LibreSSL where it is installed), and ``ds packs
 verify``. The untouched pack passes; each tamper fails the step the procedure says catches it; the
 revocation list and the zip limits refuse what they must. A sampled pack also passes its certificate's hand
-check, which catches a draw row or a salt that does not match (docs/mvp/SAMPLING.md §11.4); a pack
-attesting a labelling passes its own, which catches its labels, its score or its accuracy.label row changed
-(docs/mvp/ACCURACY.md §9)."""
+check, which catches a draw row or a salt that does not match; a pack
+attesting a labelling passes its own, which catches its labels, its score or its accuracy.label row
+changed."""
 
 from __future__ import annotations
 

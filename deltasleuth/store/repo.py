@@ -3,7 +3,7 @@
 Each function takes an open connection (``async with ctx.pool.connection() as conn``; the pool
 commits when the block exits cleanly, and ``audited`` is that block for a transaction that writes
 audit rows) and returns dict rows. Keys are named by ``key_masked``. Raw keys, headers and chat are
-sealed under the run's data key (docs/mvp/RETENTION.md §3): rows carry ``key_enc``, ``headers_enc``
+sealed under the run's data key: rows carry ``key_enc``, ``headers_enc``
 or ``sealed``, never a column named ``key``, ``headers`` or ``content``, so a caller must open them
 with the run's ``Sealer.open_row``. Callers mask what they store (see 001_init.sql). Read functions
 take ``cycle=None`` for the run's current cycle; paged ones return ``(rows, cursor)`` with an opaque
@@ -57,7 +57,7 @@ _FINDING_COLUMNS = (
 _AUDIT_COLUMNS: LiteralString = (
     "id, at, actor, actor_name, action, object, detail, request_id, session_id, client_addr"
 )
-# The chain entry of the audit row ``a`` (docs/mvp/PACK.md §4.1); null for a row the trigger never saw.
+# The chain entry of the audit row ``a``; null for a row the trigger never saw.
 _CHAIN_ENTRY: LiteralString = """(SELECT jsonb_build_object('seq', c.seq, 'hash', c.hash)
     FROM ds.audit_chain c WHERE c.id = a.id) AS chain"""
 # A chain row with its audit row's action and columns as ``audit_<column>`` (null without one), which
@@ -73,8 +73,8 @@ _TOKEN_COLUMNS: LiteralString = """token_id, name, owner, owner_user_id, role, c
 _SESSION_COLUMNS: LiteralString = """session_id, user_id, token_id, actor, name, roles, client_addr,
     auth_time, acr, amr, created_at, last_seen_at, expires_at, revoked_at, revoked_by"""
 # A key-list run with a table side whose current cycle lacks a key census of each table side
-# (docs/mvp/PACK.md §1.3; runner.census.pending says the same in Python). A hash sample's frame is its
-# census: a key census would count every unsampled key missing (docs/mvp/SAMPLING.md §3).
+# (runner.census.pending says the same in Python). A hash sample's frame is its
+# census: a key census would count every unsampled key missing.
 _CENSUS_PENDING: LiteralString = """(r.mode <> 'one_shot'
     AND coalesce(r.params->>'keys_source', '') NOT IN ('table_scan', 'hash_sample')
     AND EXISTS (SELECT 1 FROM unnest(ARRAY['a', 'b']) AS s (side)
@@ -209,8 +209,7 @@ def _sortable_id(prefix: str) -> str:
 
 
 def new_run_id() -> str:
-    """An ``R-`` id. A run's id comes before its row, as its sealed values are bound to it
-    (docs/mvp/RETENTION.md §3.1)."""
+    """An ``R-`` id. A run's id comes before its row, as its sealed values are bound to it."""
     return _sortable_id("R-")
 
 
@@ -314,7 +313,7 @@ async def run_scans(conn: Conn, run_id: str) -> dict[int, Row]:
 
 
 async def replace_graph_diffs(conn: Conn, run_id: str, cycle: int, rows: Sequence[Mapping[str, Any]]) -> None:
-    """The cycle's graph parity rows (GRAPH.md §4), masked by the caller, replacing any before."""
+    """The cycle's graph parity rows, masked by the caller, replacing any before."""
     async with conn.transaction(), conn.cursor() as cur:
         await cur.execute("DELETE FROM ds.graph_diffs WHERE run_id = %s AND cycle = %s", (run_id, cycle))
         await cur.executemany(
@@ -394,7 +393,7 @@ async def list_runs(
         {"spec_id": spec_id, "status": status, "schedule_id": schedule_id, "after": cursor,
          "limit": limit + 1},
     )  # fmt: skip
-    for row in rows:  # a file side's sealed pins, about 200 bytes a file (docs/mvp/FILES.md §6)
+    for row in rows:  # a file side's sealed pins, about 200 bytes a file
         row["params"].pop("pinned", None)
     return _page(rows, limit, "run_id")
 
@@ -477,7 +476,7 @@ async def set_counters(conn: Conn, run_id: str, counters: Mapping[str, Any]) -> 
 
 
 async def set_census(conn: Conn, run_id: str, census: Mapping[str, Any]) -> bool:
-    """Record the census of the run's current cycle (``census["cycle"]``, docs/mvp/PACK.md §1.2), merged
+    """Record the census of the run's current cycle (``census["cycle"]``), merged
     into what that cycle recorded before; False when the run is in another cycle now."""
     return bool(
         await _changed(
@@ -491,7 +490,7 @@ async def set_census(conn: Conn, run_id: str, census: Mapping[str, Any]) -> bool
 
 
 async def census_due(conn: Conn) -> list[str]:
-    """The running runs whose current cycle awaits its key census (docs/mvp/PACK.md §1.3)."""
+    """The running runs whose current cycle awaits its key census."""
     rows = await _rows(
         conn,
         f"SELECT run_id FROM ds.runs r WHERE r.status = 'running' AND {_CENSUS_PENDING} ORDER BY run_id",  # noqa: S608
@@ -500,7 +499,7 @@ async def census_due(conn: Conn) -> list[str]:
 
 
 async def set_guard(conn: Conn, run_id: str, guard: Mapping[str, Any], *, cycle: int | None = None) -> bool:
-    """Record what the schema guard holds of the run's tables (docs/mvp/PRECHECKS.md §7), replacing it
+    """Record what the schema guard holds of the run's tables, replacing it
     whole; with ``cycle``, only while the run is in that cycle. False when it is in another now."""
     return bool(
         await _changed(
@@ -593,10 +592,9 @@ async def lease_due(
 
     Concurrent callers never get the same key (SKIP LOCKED). Keys are looked up run by run, so
     the keys of paused runs are never scanned. ``run_id``: that run's keys only (a batch). ``census``
-    (packs or readiness configured): no key of a run whose cycle awaits its key census (docs/mvp/PACK.md
-    §1.3). Rows:
-    run_id, cycle, key_masked, key_enc, pass_no (1 for the first reads, 2+ for a recheck), signoff_member
-    and retries (a sample's, docs/mvp/SAMPLING.md §7) and spec_id.
+    (packs or readiness configured): no key of a run whose cycle awaits its key census. Rows: run_id,
+    cycle, key_masked, key_enc, pass_no (1 for the first reads, 2+ for a recheck), signoff_member and
+    retries (a sample's) and spec_id.
     """
     return await _rows(
         conn,
@@ -693,7 +691,7 @@ async def schedule_retries(
     conn: Conn, run_id: str, cycle: int, due: Mapping[str, datetime], owner: str
 ) -> int:
     """Give up ``owner``'s lease of each masked key and read it again from its first pass at its due time,
-    one more retry, its stored result's reason appended to ``attrs.retried`` (docs/mvp/SAMPLING.md §7);
+    one more retry, its stored result's reason appended to ``attrs.retried``;
     how many ``owner`` still held."""
     moved = await _rows(
         conn,
@@ -756,7 +754,7 @@ async def analyse_new(conn: Conn) -> bool:
     """ANALYZE the tables a cycle end joins when one of them holds rows but no column statistics, as in a
     new store autovacuum has not analysed yet (its insert-driven VACUUM counts the rows, reltuples, but
     gathers no statistics): without them the planner takes a run's rows for one and joins each key to all
-    of the run's findings and results, quadratic in differing keys (docs/mvp/BENCHMARK.md §16). An
+    of the run's findings and results, quadratic in differing keys. An
     analysed empty table has neither. Whether it analysed."""
     if not await _value(
         conn,
@@ -822,7 +820,7 @@ async def list_keys(
 
 async def lock_blobs(conn: Conn, *, exclusive: bool = False) -> None:
     """Hold the blob lock until the transaction ends: shared for a writer of observations, exclusive for
-    a drain deleting unreferenced blobs (docs/mvp/RETENTION.md §5.4)."""
+    a drain deleting unreferenced blobs."""
     if exclusive:
         await conn.execute("SELECT pg_advisory_xact_lock(%s)", (_BLOB_LOCK,))
     else:
@@ -961,7 +959,7 @@ async def save_key_results(
 ) -> list[int]:
     """``save_key_result`` for each (key_masked, result, masked findings), with one statement per table.
     A key in ``fresh`` (masked) was read from its first pass again, a sample's retry: its result's first
-    outcome is taken afresh. Every write keeps a result's ``attrs.retried`` (docs/mvp/SAMPLING.md §7)."""
+    outcome is taken afresh. Every write keeps a result's ``attrs.retried``."""
     async with conn.transaction(), conn.cursor() as cur:
         await cur.executemany(
             """INSERT INTO ds.results (run_id, cycle, key_masked, outcome, side_a_state, side_a_reason,
@@ -1469,7 +1467,7 @@ async def insert_llm_call(conn: Conn, session_id: str | None, call: Mapping[str,
     return call_id
 
 
-# -- users, sessions, API tokens (docs/mvp/AUTH.md §7) ---------------------------------------------
+# -- users, sessions, API tokens ---------------------------------------------
 
 
 async def upsert_user(
@@ -1752,7 +1750,7 @@ async def revoke_user_tokens(conn: Conn, user_id: str, revoked_by: str) -> list[
     return sorted(row["token_id"] for row in rows)
 
 
-# -- retention and purge (docs/mvp/RETENTION.md §4, §5) --------------------------------------------
+# -- retention and purge --------------------------------------------
 
 # A run of retention class r keeps a cycle's raw data this long after the cycle ends (days read at purge
 # time: the queries take standard_days and audit_days).
@@ -1771,9 +1769,9 @@ async def end_cycle(
     """Record the end of the run's current cycle (``ended_at``, default now), with its counters and its
     census if they are the cycle's, the spec approval it ran under (none before
     ``params["approval"]["from_cycle"]``, set by ``set_run_approval``), how maxKeys cut it and a drawn
-    cycle's ``sample`` judgement (docs/mvp/SAMPLING.md §8.1); the tombstone the retention clock starts
-    from and a sign-off judges. A one-shot or captured-sample run's cycle is marked excluded from readiness
-    (docs/mvp/READINESS.md §4); any other is measured by the worker. Once per cycle."""
+    cycle's ``sample`` judgement; the tombstone the retention clock starts from and a sign-off judges. A
+    one-shot or captured-sample run's cycle is marked excluded from readiness; any other is measured by the
+    worker. Once per cycle."""
     await conn.execute(
         """INSERT INTO ds.cycles (run_id, cycle, ended_at, counters, approval_id, keys_cut, census, sample,
                readiness)
@@ -2067,7 +2065,7 @@ async def blob_addresses(conn: Conn, after: str = "", limit: int = 10_000) -> li
     return [row["content_hash"] for row in rows]
 
 
-# -- data keys (docs/mvp/RETENTION.md §1) ----------------------------------------------------------
+# -- data keys ----------------------------------------------------------
 
 
 async def data_keys(conn: Conn) -> list[Row]:
@@ -2095,7 +2093,7 @@ async def rewrap_data_key(conn: Conn, scope: str, kek: str, wrapped: bytes) -> N
     )
 
 
-# -- approvals (docs/mvp/APPROVALS.md) -------------------------------------------------------------
+# -- approvals -------------------------------------------------------------
 
 # An approval with its spec's name, version and owner, its actors' names and how many people approve it:
 # two when an author is unattributed (as stored at a step, else as the exclusion set stands now).
@@ -2170,7 +2168,7 @@ async def create_approval(
 async def get_approval(conn: Conn, approval_id: str, *, lock: bool = False) -> Row | None:
     """The approval with its spec's name, version and owner and its actors' names. ``lock`` reads it
     FOR SHARE: a revoke then waits for this transaction, or this read waits for the revoke and finds
-    it revoked (docs/mvp/APPROVALS.md §2)."""
+    it revoked."""
     return await _row(
         conn,
         f"""SELECT {_APPROVAL_COLUMNS} FROM ds.approvals a JOIN ds.specs s USING (spec_id)
@@ -2389,7 +2387,7 @@ async def set_run_approval(
     )
 
 
-# -- sample draws (docs/mvp/SAMPLING.md §5, §9) -----------------------------------------------------
+# -- sample draws -----------------------------------------------------
 _DRAW_LOCK = 0x4453534D  # pg advisory lock "DSSM", with each population id: a live bottom_k run's draws
 # Whether a finding of the key of the row ``k`` is under a bug rule, which makes its KNOWN_DIFF DIFFERENT.
 # ``k`` is a row of cycle ``%(c)s`` of run ``%(r)s``: named, they keep the subquery to that cycle's findings
@@ -2455,12 +2453,12 @@ async def get_draw(conn: Conn, run_id: str, cycle: int) -> Row | None:
 
 
 async def stratum_counts(conn: Conn, run_id: str, cycle: int) -> list[Row]:
-    """The cycle's keys as a sample is judged (docs/mvp/SAMPLING.md §8.1), in one grouped query: ``n`` keys
+    """The cycle's keys as a sample is judged, in one grouped query: ``n`` keys
     of each sign-off stratum, membership, whether done, whether retried, outcome, first outcome,
     confirmation, reasons (``truncated``: the sides an INCONCLUSIVE result's are truncated on, as ``a``,
     ``b`` or ``ab``, whatever its reason: a failed recheck of a truncated read too) and ``bug``, a finding
     under a bug rule; a key without a result has a NULL outcome. The only reader of the labels besides
-    ``selection_lines``: no key leaves it (§11.5)."""
+    ``selection_lines``: no key leaves it."""
     return await _rows(
         conn,
         f"""SELECT stratum, member, done, retried, outcome, first_outcome, confirmation, inconclusive_reason,
@@ -2485,7 +2483,7 @@ async def stratum_counts(conn: Conn, run_id: str, cycle: int) -> list[Row]:
 
 async def live_sampled_runs(conn: Conn, population: Sequence[str], *, lock: bool = False) -> list[Row]:
     """The live runs (queued, running, paused or cancelling) of any spec drawing ``bottom_k`` samples of
-    a population sharing an id with ``population`` (R1), with ``spec_name``. ``lock`` first takes the
+    a population sharing an id with ``population``, with ``spec_name``. ``lock`` first takes the
     DSSM lock of each id, in sorted order, until the transaction ends: a run created under it is seen."""
     for member_id in sorted(population) if lock else ():
         await conn.execute("SELECT pg_advisory_xact_lock(%s, hashtext(%s))", (_DRAW_LOCK, member_id))
@@ -2501,7 +2499,7 @@ async def live_sampled_runs(conn: Conn, population: Sequence[str], *, lock: bool
 
 
 async def close_draws(conn: Conn, draw_ids: Sequence[str], by: str, note: str) -> list[Row]:
-    """Close each of the draws not closed yet, as of now(), by ``by`` with ``note`` (§9); the closed
+    """Close each of the draws not closed yet, as of now(), by ``by`` with ``note``; the closed
     rows. The trigger refuses a draw whose cycle has not ended."""
     return await _rows(
         conn,
@@ -2524,9 +2522,9 @@ async def selection_lines(
             yield row
 
 
-# A draw as its ledger lists it, never its nonce: the chain seqs of its sample.draw and sample.close rows
-# (docs/mvp/SAMPLING.md §9), its spec's name and its status: live (its cycle has not ended), unjudged (it
-# ended without a judgement), else the stored judgement's.
+# A draw as its ledger lists it, never its nonce: the chain seqs of its sample.draw and sample.close rows,
+# its spec's name and its status: live (its cycle has not ended), unjudged (it ended without a judgement),
+# else the stored judgement's.
 _LEDGER: LiteralString = """SELECT d.draw_id, d.run_id, d.spec_id, s.name AS spec_name, d.cycle, d.method,
         d.population, d.salt_label, d.drawn_at, d.keys, d.frame, d.strata, d.selection_sha256, d.closed_by,
         ds.actor_name(d.closed_by) AS closed_by_name, d.closed_at, d.close_note, c.ended_at,
@@ -2543,7 +2541,7 @@ _LEDGER: LiteralString = """SELECT d.draw_id, d.run_id, d.spec_id, s.name AS spe
 
 
 async def ledger(conn: Conn, population: Sequence[str]) -> list[Row]:
-    """Every draw, of any spec, of a population sharing an id with ``population``, in commit order (§9)."""
+    """Every draw, of any spec, of a population sharing an id with ``population``, in commit order."""
     return await _rows(
         conn,
         f"{_LEDGER} WHERE d.population && %s::text[] ORDER BY draw_seq, d.draw_id",
@@ -2579,7 +2577,7 @@ async def run_draws(conn: Conn, run_id: str) -> list[Row]:
 
 
 async def retrying(conn: Conn, run_id: str, cycle: int) -> bool:
-    """Whether every key of the cycle still to be read is a retry (docs/mvp/SAMPLING.md §7)."""
+    """Whether every key of the cycle still to be read is a retry."""
     first = await _value(
         conn,
         """SELECT bool_or(retries = 0) FROM ds.run_keys
@@ -2605,7 +2603,7 @@ async def newest_spec(conn: Conn, name: str) -> Row | None:
     return await _row(conn, "SELECT * FROM ds.specs WHERE name = %s ORDER BY spec_id DESC LIMIT 1", (name,))
 
 
-# -- adjudications (docs/mvp/PACK.md §5) -----------------------------------------------------------
+# -- adjudications -----------------------------------------------------------
 
 _ADJUDICATION_COLUMNS: LiteralString = """j.*, ds.actor_name(j.drawn_by) AS drawn_by_name,
     ds.actor_name(j.scored_by) AS scored_by_name"""
@@ -2712,10 +2710,10 @@ async def cycle_adjudication(conn: Conn, run_id: str, cycle: int, adjudication_i
     )
 
 
-# -- labelled accuracy (docs/mvp/ACCURACY.md §3, §5, §8) ----------------------------------------------
+# -- labelled accuracy ----------------------------------------------
 
 # A labelling with its actors' names, its sides' roles, its cycle's labellings counted (drawn, labelled)
-# and its labeller's independence (§4): whether the labeller answers for the run's start, and the spec
+# and its labeller's independence: whether the labeller answers for the run's start, and the spec
 # approval the cycle cites when the labeller wrote it.
 _LABELLINGS: LiteralString = """SELECT v.*, ds.actor_name(v.drawn_by) AS drawn_by_name,
         ds.actor_name(v.labelled_by) AS labelled_by_name, s.body #>> '{sides,a,role}' AS role_a,
@@ -2732,7 +2730,7 @@ _LABELLINGS: LiteralString = """SELECT v.*, ds.actor_name(v.drawn_by) AS drawn_b
            AND p.authors && ds.accountable(v.labelled_by)) AS spec_author
     FROM ds.labellings v JOIN ds.runs r ON r.run_id = v.run_id JOIN ds.specs s ON s.spec_id = r.spec_id
     JOIN ds.cycles c ON (c.run_id, c.cycle) = (v.run_id, v.cycle)"""
-# A labelling as lists show it (§10): no sheet and no selection, of which only the items drawn are counted,
+# A labelling as lists show it: no sheet and no selection, of which only the items drawn are counted,
 # and of its score what its one-line summary reads, without each root cause's and rule's figures.
 _LISTED: LiteralString = """SELECT v.labelling_id, v.run_id, v.cycle, v.salt, v.size, v.per_cause,
         v.accepted, v.agreed, v.truth_source, v.truth_as_of, v.selection_sha256, v.drawn_by, v.drawn_at,
@@ -2743,7 +2741,7 @@ _LISTED: LiteralString = """SELECT v.labelling_id, v.run_id, v.cycle, v.salt, v.
             + (v.selection #>> '{counts,agreed,drawn}')::int AS item_count,
         v.accuracy #- '{discrepant,by_cause}' #- '{accepted,by_rule}' AS accuracy
     FROM ds.labellings v JOIN ds.runs r ON r.run_id = v.run_id JOIN ds.specs s ON s.spec_id = r.spec_id"""
-# The population of the result ``k`` (§2.1): what ``types.derive_verdict`` calls DIFFERENT is discrepant.
+# The population of the result ``k``: what ``types.derive_verdict`` calls DIFFERENT is discrepant.
 _POPULATION: LiteralString = f"""CASE
         WHEN k.outcome IN ('MISMATCH', 'NOT_FOUND_A', 'NOT_FOUND_B') THEN 'discrepant'
         WHEN k.outcome = 'KNOWN_DIFF' THEN CASE WHEN {_BUG} THEN 'discrepant' ELSE 'accepted' END
@@ -2765,7 +2763,7 @@ async def labelling_draw(
     agreed: int,
     timeout_s: int,
 ) -> list[Row]:
-    """A labelled sample's draw from the ended cycle (§3), in one statement stopped after ``timeout_s``
+    """A labelled sample's draw from the ended cycle, in one statement stopped after ``timeout_s``
     (QueryCanceled): the cycle's results and discrepant findings each read once, every item (a discrepant
     key in a root cause, ``*`` without one; an accepted or agreed key, when asked for) hashed once with
     ``salt`` as ``sampling.digest`` hashes ``key_masked U+001F cause``. Its joins are hash or merge joins
@@ -2885,7 +2883,7 @@ async def insert_labelling(conn: Conn, labelling: Mapping[str, Any]) -> Row:
 
 async def repeated_labelling(conn: Conn, labelling: Mapping[str, Any], seconds: int) -> Row | None:
     """The first unlabelled labelling of the cycle that ``labelling``'s drawer drew in the last ``seconds``
-    with its sizes, truth and acknowledgement (§3 step 2); None without one."""
+    with its sizes, truth and acknowledgement; None without one."""
     return await _row(
         conn,
         """SELECT * FROM ds.labellings
@@ -2969,7 +2967,7 @@ async def cycle_labelling(conn: Conn, run_id: str, cycle: int, labelling_id: str
     )
 
 
-# -- evidence packs (docs/mvp/PACK.md §1.1, §6) ------------------------------------------------------
+# -- evidence packs ------------------------------------------------------
 
 _PACK_COLUMNS: LiteralString = """p.pack_id, p.run_id, p.cycle, p.signoff_id, p.adjudication_id,
     p.sums_sha256, p.zip_sha256, p.key_fingerprint, p.audit_seq, p.issued_by,
@@ -3147,7 +3145,7 @@ async def applied_at(conn: Conn, version: int) -> datetime | None:
     return await _value(conn, "SELECT applied_at FROM ds.schema_version WHERE version = %s", (version,))
 
 
-# -- licences (docs/mvp/LICENCE.md §5, §7) --------------------------------------------------------------
+# -- licences --------------------------------------------------------------
 
 _LICENCE_COLUMNS: LiteralString = """licence_id, text, sha256, installed_by,
     ds.actor_name(installed_by) AS installed_by_name, installed_at, withdrawn_by,
@@ -3232,15 +3230,15 @@ async def pair_targets(conn: Conn, names: Sequence[str]) -> dict[str, list[str]]
 
 async def lock_pairs(conn: Conn) -> None:
     """Hold the pair lock until the transaction ends: a run of a new pair recounts under it, and
-    installs serialise on it (docs/mvp/LICENCE.md §7)."""
+    installs serialise on it."""
     await conn.execute("SELECT pg_advisory_xact_lock(%s)", (_PAIRS_LOCK,))
 
 
-# -- notifications (docs/mvp/ALERTS.md §4, §5, §13) ----------------------------------------------------
+# -- notifications ----------------------------------------------------
 
 _DISCREPANT = ["MISMATCH", "NOT_FOUND_A", "NOT_FOUND_B"]
 _CLEAN = ["MATCH", "NOISE_ONLY", "KNOWN_DIFF"]  # read identical, or explained
-# A level fact of a cycle ``c`` (docs/mvp/ALERTS.md §2.2), as text; null where the cycle does not hold it.
+# A level fact of a cycle ``c``, as text; null where the cycle does not hold it.
 _LEVEL_FACTS: dict[str, LiteralString] = {
     "mismatch_rate": "nullif(c.counters->>'mismatch_rate', 'unavailable')",
     "coverage": "nullif(c.counters->>'coverage', 'unavailable')",
@@ -3311,7 +3309,7 @@ async def installation_id(conn: Conn) -> str:
 async def previous_fact(
     conn: Conn, run_id: str, cycle: int, fact: str, bug_rules: Sequence[str]
 ) -> Row | None:
-    """A level fact's baseline for ``cycle`` (docs/mvp/ALERTS.md §2.2): ``{cycle, value}`` of the latest
+    """A level fact's baseline for ``cycle``: ``{cycle, value}`` of the latest
     earlier cycle that holds it (``unexplained_critical``: whose purge has not started), backwards on the
     ds.cycles key; None when none does."""
     value = _LEVEL_FACTS[fact]
@@ -3347,7 +3345,7 @@ async def root_cause_changes(conn: Conn, run_id: str, cycle: int) -> Row:
 async def discrepant_changes(
     conn: Conn, run_id: str, cycle: int, *, read_all_before: bool, read_all: bool
 ) -> Row:
-    """Over the keys read in both the cycle and the one before (docs/mvp/ALERTS.md §2.2), ``newly``
+    """Over the keys read in both the cycle and the one before, ``newly``
     discrepant (MISMATCH, NOT_FOUND_A or NOT_FOUND_B) in it and not before, and ``no_longer`` discrepant, read
     MATCH, NOISE_ONLY or KNOWN_DIFF in it; O(discrepant keys), from each cycle's discrepant subset
     (results_outcome_idx). In a cycle that read every key (``read_all_before`` for the one before,
@@ -3410,7 +3408,7 @@ async def active_mute(conn: Conn, channel: str, run_id: str | None) -> str | Non
 async def held_back(
     conn: Conn, channel: str, dedup_key: str, dedup_hours: int, *, among: str | None = None
 ) -> Row:
-    """What a new delivery to the channel is judged by (docs/mvp/ALERTS.md §3): whether a pending or sent one
+    """What a new delivery to the channel is judged by: whether a pending or sent one
     of ``dedup_key`` is under ``dedup_hours`` old (``duplicate``; with ``among``, a key prefix, only while no
     pending or sent delivery of another key beginning with it followed: the newest of them alone counts),
     the pending and sent ones of the last hour (``last_hour``) and the suppressed ones since the last that
@@ -3531,7 +3529,7 @@ async def deaths(conn: Conn, channel: str, delivery_id: str) -> Row:
 
 
 async def daily_counts(conn: Conn, actions: Sequence[str]) -> Row:
-    """What ``notify.daily`` says (docs/mvp/ALERTS.md §2.1), as of ``now``: live runs by status, paused
+    """What ``notify.daily`` says, as of ``now``: live runs by status, paused
     ones by reason, cycles ended and runs finished in 24 h, approvals waiting, the newest recorded licence
     state, each channel's counts and the age of its pending head, the feed's lag (the age of the oldest
     unread row of ``actions``, 0 when none) and the active mutes."""
@@ -3755,7 +3753,7 @@ async def active_mutes(conn: Conn) -> list[Row]:
     )
 
 
-# -- cut-over readiness (docs/mvp/READINESS.md §4, §13, §14) -------------------------------------------
+# -- cut-over readiness -------------------------------------------
 
 # An ended cycle readiness has still to measure, as cycles_unmeasured_idx holds them: never measured, or
 # failed under five times; the second is due again 1, 2, 4 and 8 hours after its last try.
@@ -3799,7 +3797,7 @@ def _timed(facts: Row | None, *names: str) -> Row | None:
 
 
 async def unmeasured_cycles(conn: Conn, *, backfill: bool = False) -> list[Row]:
-    """The next ended cycles readiness measures (§4), newest first: those ended since 014, up to 10; or,
+    """The next ended cycles readiness measures, newest first: those ended since 014, up to 10; or,
     ``backfill``, before it: up to 10, and with those whose purge started, which are read from the
     tombstone alone, up to 100. Each ``run_id``, ``cycle``, ``ended_at``, the run's ``pair`` (its spec's
     name) and ``spec_id``. A cycle whose measure failed comes again 1, 2, 4 and 8 hours later."""
@@ -3819,7 +3817,7 @@ async def unmeasured_cycles(conn: Conn, *, backfill: bool = False) -> list[Row]:
 
 
 async def backfill_owed(conn: Conn) -> bool:
-    """Whether a cycle ended before 014 is still to measure (§8: no transition is written until none is):
+    """Whether a cycle ended before 014 is still to measure (no transition is written until none is):
     one probe of cycles_unmeasured_idx."""
     return await _value(
         conn,
@@ -3831,7 +3829,7 @@ async def backfill_owed(conn: Conn) -> bool:
 async def unmeasured_pairs(conn: Conn, pairs: Sequence[str]) -> tuple[Row, dict[str, Row]]:
     """The ended cycles readiness has still to measure. Of the installation, how many were never measured
     (``cycles``) and how many ended before 014 (``backfill``: those and the ones to be tried again; while
-    any is left, no transition is written, §8), each counted up to ``OWED`` and one more. And each of
+    any is left, no transition is written), each counted up to ``OWED`` and one more. And each of
     ``pairs`` with cycles never measured: how many (``cycles``, up to ``COUNTED`` and one more) and the
     ``oldest`` (``{run_id, cycle, ended_at}``). The cycles ended since 014 that wait are few, and are read
     whole; while a backfill is owed, each run of the pairs is probed instead (cycles_unmeasured_run_idx),
@@ -3892,7 +3890,7 @@ async def set_readiness(conn: Conn, run_id: str, cycle: int, record: Mapping[str
 
 async def cycle_changes(conn: Conn, run_id: str, cycle: int) -> Row:
     """How the cycle's DIFFERENT keys (MISMATCH, NOT_FOUND_A or NOT_FOUND_B, or KNOWN_DIFF under a bug rule:
-    those still owed a recheck too) moved since the cycle before (§4): ``new`` in this one only,
+    those still owed a recheck too) moved since the cycle before: ``new`` in this one only,
     ``persistent`` in both, and of those in the one before only, ``fixed`` read MATCH in this one and
     ``other`` the rest (read otherwise, or not read: a table scan reads again every key that did not match
     before, so one without a result left both tables). Each cycle's discrepant keys come from
@@ -3942,7 +3940,7 @@ async def readiness_series(
 ) -> dict[str, dict[str, Any]]:
     """What each of ``pairs`` (``{pair, tier, needed, window, until}``: judged at ``tier``, needing
     ``needed`` evidence cycles in a row and counting ``window`` at most, on cycles ended up to ``until``,
-    None for now) is judged from (§14), in one statement whatever the history, each cycle as ``{run_id,
+    None for now) is judged from, in one statement whatever the history, each cycle as ``{run_id,
     cycle, ended_at, readiness}`` (a point's ``readiness`` only when ``whole``: a streak counts its points,
     and only a pair's detail lists them):
 
@@ -4081,14 +4079,14 @@ async def readiness_series(
 async def readiness_governance(conn: Conn, pairs: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
     """What each of ``pairs`` (``{pair, spec_id, after, until, run_id, cycle}``: its current version, when
     its streak began, None for ever, the end it is judged up to, None for now, and its evidence cycle) has
-    stored of governance and evidence (§14), in one statement:
+    stored of governance and evidence, in one statement:
 
     - ``signoffs``: of the pair's sign-offs requested, approved or revoked, the newest of each status in
       the streak, of the current version outside it and of other versions, of evidence cycles and of
       others apart, and every one of the candidate cycles: ``{approval_id, status, run_id, cycle, spec_id,
       version, ended_at, decided_at, revoked_at, evidence, readiness}`` (``evidence``: its cycle is an
       evidence point, which alone is in a streak; ``readiness``: the measures of one that is not);
-    - ``cycles``: the cycles the candidate is chosen from (§3), evidence points all: those of the streak's
+    - ``cycles``: the cycles the candidate is chosen from, evidence points all: those of the streak's
       newest approved sign-off and open request, its newest cycle holding a passed adjudication a person
       scored or a labelling a person labelled, and the evidence cycle. Each ``{run_id, cycle, ended_at,
       spec_id, readiness, sample, started, worked, cited, adjudication, labelling, packs}``: the auth mode
@@ -4246,7 +4244,7 @@ async def last_readiness(conn: Conn, pairs: Sequence[str], *, at: datetime | Non
 
 
 async def readiness_pairs(conn: Conn, names: Sequence[str]) -> Row:
-    """The database's ``now`` and the ``pairs`` readiness judges (§3) that are stored: the spec names with
+    """The database's ``now`` and the ``pairs`` readiness judges that are stored: the spec names with
     a batch or soak run that read no captured samples, and those of ``names`` (the settings', or one asked
     for) a stored spec carries."""
     return await _row(  # type: ignore[return-value]
@@ -4263,7 +4261,7 @@ async def readiness_pairs(conn: Conn, names: Sequence[str]) -> Row:
 
 
 async def readiness_entered(conn: Conn, after: int, actions: Sequence[str]) -> Row:
-    """What entered the audit chain after row ``after`` (§8): its ``head`` now (``after`` when nothing
+    """What entered the audit chain after row ``after``: its ``head`` now (``after`` when nothing
     did) and the last row of ``actions`` (``seq``; None without one), which tells an evaluation is due.
     The chain's seq is commit order, so a row committed after one of a higher id is still found."""
     return await _row(  # type: ignore[return-value]
@@ -4296,7 +4294,7 @@ async def readiness_transitions(
     return _page(rows, limit, "id")
 
 
-# A pair's points as its trend reads them (§6): every measured cycle, or by day or ISO week (UTC) each
+# A pair's points as its trend reads them: every measured cycle, or by day or ISO week (UTC) each
 # bucket's last evidence point.
 _POINTS: LiteralString = """SELECT c.readiness->>'pair' AS pair, c.run_id, c.cycle, c.ended_at, c.readiness
     FROM ds.cycles c
@@ -4437,7 +4435,7 @@ async def readiness_measured(conn: Conn) -> AsyncIterator[Row]:
             yield row
 
 
-# -- schedules (docs/mvp/SCHEDULES.md §3, §5, §12) -----------------------------------------------------
+# -- schedules -----------------------------------------------------
 
 # A schedule with its ``state``, the database's ``now``, its actors' names, what a firing would run now
 # (``runs_spec_id``, ``runs_version``: its pinned version, else the name's newest), the name's newest stored
@@ -4520,7 +4518,7 @@ async def list_schedules(
 
 async def count_schedules(conn: Conn, *, lock: bool = False) -> Row:
     """How many schedules are not deleted (``count``), and the database's ``now``; ``lock`` first takes the
-    schedules lock until the transaction ends, so that creates count one at a time (D12)."""
+    schedules lock until the transaction ends, so that creates count one at a time."""
     if lock:
         await conn.execute("SELECT pg_advisory_xact_lock(%s)", (_SCHEDULES_LOCK,))
     return await _row(  # type: ignore[return-value]
@@ -4623,7 +4621,7 @@ async def delete_schedule(
 async def schedules_due(conn: Conn) -> list[Row]:
     """The schedules the worker looks at now, oldest due first, each with its ``next_due`` and the
     database's ``now``: those due (schedules_due_idx), and those holding a standing refusal's range whose
-    first time is 24 hours old (§5 step 7; ``next_due`` may then be later, or None)."""
+    first time is 24 hours old (``next_due`` may then be later, or None)."""
     return await _rows(
         conn,
         """SELECT schedule_id, next_due, now() AS now FROM ds.schedules WHERE next_due <= now()
@@ -4686,7 +4684,7 @@ async def rezone_schedule(
     conn: Conn, schedule_id: str, revision: int, was: datetime, to: datetime | None
 ) -> bool:
     """Move the next due time of the schedule seen at ``revision`` from ``was`` to ``to``, as this build's
-    tz data reads its cron (§4); False when it was settled or written since."""
+    tz data reads its cron; False when it was settled or written since."""
     return bool(
         await _changed(
             conn,
@@ -4698,7 +4696,7 @@ async def rezone_schedule(
 
 
 async def setter_live(conn: Conn, set_by: str) -> bool:
-    """Whether the actor who last saved a schedule still answers for it (§6): a person is enabled and
+    """Whether the actor who last saved a schedule still answers for it: a person is enabled and
     their stored roles hold operator; a token's accountable person, if it has one, is not disabled (its
     own expiry and revoke are not read: rotation stops nothing); any other actor is."""
     return await _value(
@@ -4734,7 +4732,7 @@ async def schedule_firings(
     return _page(rows, limit, "id")
 
 
-# -- table pre-checks (docs/mvp/PRECHECKS.md §8) ---------------------------------------------------
+# -- table pre-checks ---------------------------------------------------
 
 # A pre-check with the database's ``now``, its actors' names, when a pair of it was last settled, when a
 # worker last took or renewed a running pair of it, and its pairs counted by status (``progress``) and by
@@ -4837,7 +4835,7 @@ async def list_prechecks(conn: Conn, *, limit: int = 50, cursor: str | None = No
 
 async def count_open_prechecks(conn: Conn, *, lock: bool = False) -> int:
     """How many pre-checks are unfinished (prechecks_open_idx); ``lock`` first takes the pre-checks lock
-    until the transaction ends, so that creates count one at a time (K10)."""
+    until the transaction ends, so that creates count one at a time."""
     if lock:
         await conn.execute("SELECT pg_advisory_xact_lock(%s)", (_PRECHECKS_LOCK,))
     return await _value(conn, "SELECT count(*) FROM ds.prechecks WHERE finished_at IS NULL", None)
@@ -5052,18 +5050,18 @@ async def prune_prechecks(conn: Conn, days: int, limit: int = 1000) -> int:
     )
 
 
-# -- audit (docs/mvp/AUTH.md §6) -------------------------------------------------------------------
+# -- audit -------------------------------------------------------------------
 
 
 async def insert_audit(
     conn: Conn, who: Principal, action: str, obj: str, detail: Mapping[str, Any] | None = None
 ) -> Row:
     """Append a row for ``who`` (masked detail only) and return it with its ``chain`` entry (``{seq,
-    hash}``, docs/mvp/PACK.md §4.1; None before 009, as 'ds keys migrate' writes rows on 006). Callers
+    hash}``; None before 009, as 'ds keys migrate' writes rows on 006). Callers
     write audit rows through ``audited``, as the last statement of the transaction that does what the
     row records."""
     extra: dict[str, Any] = {} if who.via is None else {"via": who.via}
-    if who.actor.startswith("local:"):  # asserted, not verified (docs/mvp/AUTH.md §4.2)
+    if who.actor.startswith("local:"):  # asserted, not verified
         extra |= {"asserted": True, "os_account": who.os_account}
     row: Row = await _row(  # type: ignore[assignment]
         conn,
@@ -5174,7 +5172,7 @@ async def audit_head(conn: Conn) -> Row | None:
 
 
 async def audit_upgrade_seq(conn: Conn) -> int:
-    """The last row 009 chained as it applied (docs/mvp/PACK.md §8): rows up to it were written, and
+    """The last row 009 chained as it applied: rows up to it were written, and
     their SIEM lines logged, before the chain existed."""
     return await _value(conn, "SELECT min(upgrade_seq) FROM ds.audit_chain_upgrade", None)
 
@@ -5200,7 +5198,7 @@ async def audit_chain(
 
 
 async def audit_segment(conn: Conn, objects: Sequence[str], head: int) -> list[Row]:
-    """A pack's audit segment (docs/mvp/PACK.md §4.3): the chain rows of ``objects``, each object's from
+    """A pack's audit segment: the chain rows of ``objects``, each object's from
     its first, up to row ``head``, in seq order (``_CHAIN_COLUMNS``)."""
     return await _rows(
         conn,

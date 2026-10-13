@@ -1,8 +1,8 @@
-"""A sampled run's draws (docs/mvp/SAMPLING.md §5): created at once with its draw pending, drawn by the worker
+"""A sampled run's draws: created at once with its draw pending, drawn by the worker
 from a table of the local postgres against the scripted service, committed before any key with its audit row
 last, deterministic under its nonce, refused by the trigger out of turn, discarded when the run stops
 meanwhile, paused on its frame's refusal until a resume draws again with a new nonce, and rolling in a soak
-that pauses after a draw that did not pass until it is closed; the creation refusals R1-R4 and R5."""
+that pauses after a draw that did not pass until it is closed; and the creation refusals."""
 
 from __future__ import annotations
 
@@ -286,8 +286,8 @@ async def test_a_frame_that_meets_a_dropped_column_has_the_schema_guard_look_fir
     request: pytest.FixtureRequest,
 ) -> None:
     """A draw whose frame meets a strata column dropped since the run was created (UndefinedColumn, MySQL
-    1054, ORA-00904: docs/mvp/ENGINES.md §11's denied class) has the schema guard look before the run is
-    failed, as a scan's or a key's read does (docs/mvp/PRECHECKS.md §7, V5): the column is gone, so the run
+    1054, ORA-00904: the denied class) has the schema guard look before the run is
+    failed, as a scan's or a key's read does: the column is gone, so the run
     is paused, not failed, its draw still due, and it resumes once the column is back."""
     if engine == "postgresql":
         dsn, harness = on_tables()
@@ -444,7 +444,7 @@ async def test_a_hash_sample_refuses_keys_a_fixed_soak_captured_samples_and_a_li
     assert await refusal(spec_id=other) == (
         409,
         f"spec unit-runner-2 samples the population of live sampled run {live} (spec unit-runner,"
-        " listing:svc-a:GET /list): stop it before drawing another sample (docs/mvp/SAMPLING.md §5)",
+        " listing:svc-a:GET /list): stop it before drawing another sample",
     )
     await stop_run(harness.ctx, live, CANCELLED, who=TESTER)
     assert await refusal(spec_id=other)  # cancelling: still live

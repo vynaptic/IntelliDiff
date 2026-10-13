@@ -1,4 +1,4 @@
-/** What the Schedules screens build besides the API's own texts (docs/mvp/SCHEDULES.md §10): the cron text a preset
+/** What the Schedules screens build besides the API's own texts: the cron text a preset
  *  writes, the body a form sends, a schedule's spec and due-time labels in `ds schedules`' words, the zone a new
  *  schedule starts with, and the list read over its pages. Every firing's text, banner, warning and note is the
  *  API's: nothing here words one. The server still decides. */

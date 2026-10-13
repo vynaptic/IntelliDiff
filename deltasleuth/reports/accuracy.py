@@ -1,4 +1,4 @@
-"""Labelled accuracy, "which side is right" (docs/mvp/ACCURACY.md): a uniform salted sample of an ended
+"""Labelled accuracy, "which side is right": a uniform salted sample of an ended
 cycle's items, labelled once offline against a truth source named at the draw, and its counts.
 
 ``store_draw`` draws in the store (``repo.labelling_draw``): a server salt orders every item (a discrepant
@@ -9,9 +9,9 @@ sheet with its labels and no note, and stores the score once. ``tally`` counts t
 from the uniform items only, a cause's or a rule's from its own, each with its exact two-sided 95%
 Clopper-Pearson interval (``sampling.interval``) and, where items are undecidable, the range counting them
 either way. Both are refused while the cycle has a requested or approved sign-off, which attests the
-newest labelling a person labelled. ``lines``, ``summary``, ``gate`` (cut-over readiness's accuracy gate,
-docs/mvp/READINESS.md §9) and ``LIMITS`` are the only texts built from a score: DeltaSleuth counts a
-person's labels and never decides which side is right.
+newest labelling a person labelled. ``lines``, ``summary``, ``gate`` (cut-over readiness's accuracy gate)
+and ``LIMITS`` are the only texts built from a score: DeltaSleuth counts a person's labels and never
+decides which side is right.
 """
 
 from __future__ import annotations
@@ -111,7 +111,7 @@ NOT_MEASURED = "Not measured: no labelled sample of this cycle."
 
 
 def not_measured(drawn: int) -> str:
-    """§11's report text 4, of a cycle none of whose ``drawn`` labellings is labelled."""
+    """The report's text for a cycle none of whose ``drawn`` labellings is labelled."""
     if not drawn:
         return NOT_MEASURED
     return f"{NOT_MEASURED} {_n(drawn, 'labelling was', 'labellings were')} drawn, none labelled."
@@ -121,11 +121,11 @@ class DrawTimeout(Exception):
     """The draw's statement was stopped after ``DRAW_TIMEOUT_S``: nothing is stored; the API answers 504."""
 
 
-# -- the draw (§3) ----------------------------------------------------------------------------------------
+# -- the draw ----------------------------------------------------------------------------------------
 
 
 def _parameters(sizes: Mapping[str, int], truth: Mapping[str, Any]) -> tuple[str, date]:
-    """The truth's source and as-of date, once the draw's sizes and truth pass (§11's 422s, in order)."""
+    """The truth's source and as-of date, once the draw's sizes and truth pass (each a 422, in order)."""
     size, per_cause, accepted, agreed = (sizes[name] for name in ("size", "per_cause", "accepted", "agreed"))
     if not (0 <= size <= 1000 and 0 <= per_cause <= 20 and 0 <= accepted <= 500 and 0 <= agreed <= 500):
         raise AdjudicationError("size must be 0 to 1,000, per_cause 0 to 20, accepted and agreed 0 to 500")
@@ -153,7 +153,7 @@ def _parameters(sizes: Mapping[str, int], truth: Mapping[str, Any]) -> tuple[str
 
 
 def names_side(source: str, spec: CompiledSpec, tables: Mapping[str, Any] | None = None) -> str | None:
-    """The side a truth ``source`` names, ignoring case (§2.3): its target id, alone or followed by ``.``,
+    """The side a truth ``source`` names, ignoring case: its target id, alone or followed by ``.``,
     ``:`` or ``/``, or its table's ``name`` or ``schema.name`` (the schema the run's plan, ``tables``,
     read); None when it names neither side. Labels resting on a compared side are circular."""
     found = source.casefold()
@@ -169,7 +169,7 @@ def names_side(source: str, spec: CompiledSpec, tables: Mapping[str, Any] | None
 
 
 def _unlocatable(spec: CompiledSpec) -> bool:
-    """Whether labellers cannot find a record in the truth source (§4): the key is tokenised and the spec
+    """Whether labellers cannot find a record in the truth source: the key is tokenised and the spec
     shows no path in clear. Judged by the compiled policy, under which a tokenise rule of a PII class voids
     a clear entry beneath it: none of ``security.clear``'s paths resolves clear, nor the root where
     unlisted paths are clear."""
@@ -264,7 +264,7 @@ def _warnings(
         found.append(
             f"truth.source {truth['source']} names side {side} ({role}): labels resting on a compared side"
             " are circular and measure nothing; name an authoritative system other than both sides"
-            " (docs/mvp/ACCURACY.md §2.3)"
+            ""
         )
     if unlocatable:
         found.append(
@@ -293,7 +293,7 @@ def _warnings(
 
 
 def repeated(row: Mapping[str, Any]) -> str:
-    """What a repeated draw is answered with: the first labelling, not drawn again (§11)."""
+    """What a repeated draw is answered with: the first labelling, not drawn again."""
     return (
         f"labelling {row['labelling_id']} with these parameters was drawn by you at"
         f" {row['drawn_at'].astimezone(UTC):%H:%M:%S} UTC and is returned, not drawn again"
@@ -344,9 +344,9 @@ async def store_draw(
     if unlocatable and not acknowledge_unlocatable:
         raise AdjudicationError(
             f"the key is tokenised (class {spec.key.value_class}) and the spec shows no path in clear:"
-            " labellers cannot find records in the truth source until the per-key reveal (AUTH §11) exists;"
+            " labellers cannot find records in the truth source until the per-key reveal exists;"
             " set acknowledge_unlocatable to draw for labels a business rule decides without the record"
-            " (docs/mvp/ACCURACY.md §4)"
+            ""
         )
     salt = sampling.nonce()
     try:
@@ -423,11 +423,11 @@ def _sheet_row(item: Mapping[str, Any], shown: Mapping[str, Any]) -> dict[str, A
     }  # fmt: skip
 
 
-# -- upload and scoring (§5, §6.2) ------------------------------------------------------------------------
+# -- upload and scoring ------------------------------------------------------------------------
 
 
 def _check_rows(rows: Sequence[Mapping[str, str]], drawn: Sequence[Mapping[str, str]]) -> None:
-    """§11's checks of an upload, in order: every row is a drawn item, once, with the labelling's engine
+    """The checks of an upload, in order: every row is a drawn item, once, with the labelling's engine
     columns; every drawn item is labelled; label, basis and reason are their enumerations' and agree."""
     lines: dict[str, list[int]] = {}
     for line_no, row in enumerate(rows, start=2):
@@ -500,7 +500,7 @@ def _digits(value: Decimal) -> str:
 
 
 def share(x: int, n: int, N: int | None = None, *, census: bool = False) -> dict[str, Any]:
-    """``{x, n, share, low, high, items_low, items_high}`` (§6.2): x/n to 4 significant digits, half-even,
+    """``{x, n, share, low, high, items_low, items_high}``: x/n to 4 significant digits, half-even,
     and its interval; ``N``, a label share's population, bounds the items the interval stands for. A
     census (every item labelled) has exact counts and no interval; nothing is shared out of n = 0."""
     low, high = (None, None) if census or not n else sampling.interval(x, n)
@@ -590,7 +590,7 @@ def _hidden(rows: Sequence[Mapping[str, str]], keys: int) -> dict[str, Any]:
 def tally(
     rows: Sequence[Mapping[str, str]], selection: Mapping[str, Any], truth: Mapping[str, Any]
 ) -> dict[str, Any]:
-    """The score (§6.2) of a labelled sheet's ``rows`` (its keyless columns suffice), from its
+    """The score of a labelled sheet's ``rows`` (its keyless columns suffice), from its
     ``selection``'s counts, causes and acknowledgement and its ``truth`` (``{source, as_of, names_side}``).
     Pure and without actor or time, so a stored score is re-derived from ``keyless``'s rows."""
     counts = selection["counts"]
@@ -624,7 +624,7 @@ def tally(
 
 def _discrepant(rows: Sequence[Mapping[str, str]], selection: Mapping[str, Any]) -> dict[str, Any]:
     """The discrepant items' score: overall shares from the uniform items only, a cause's from all its
-    items (§3's validity)."""
+    items."""
     population = selection["counts"]["discrepant"]
     uniform = [row for row in rows if row["selected_for"] == "uniform"]
     labels = Counter(row["label"] for row in uniform)
@@ -679,7 +679,7 @@ async def store_labels(ctx: Context, labelling_id: str, data: bytes, *, who: Pri
 
     UploadTooLarge (413); LookupError for an unknown labelling; AdjudicationConflict (409) for a cycle with
     a sign-off or a labelling labelled already; CyclePurged (410); AdjudicationError (422) for a sheet
-    that fails §11's checks, which changes nothing."""
+    that fails its checks (``_check_rows``), which changes nothing."""
     if len(data) > MAX_UPLOAD:
         raise UploadTooLarge(
             f"the labelled sheet is over {MAX_UPLOAD // (1 << 20)} MiB: empty the notes column and upload it"
@@ -757,7 +757,7 @@ def attesting(signoffs: Sequence[Mapping[str, Any]]) -> dict[str, str]:
 async def reported(
     conn: repo.Conn, run_id: str, cycle: int, signoffs: Sequence[Mapping[str, Any]]
 ) -> tuple[Row | None, str | None]:
-    """The labelling a report of the ended cycle states (§10) and the sign-off attesting it: the one its
+    """The labelling a report of the ended cycle states and the sign-off attesting it: the one its
     requested or approved sign-off (of ``signoffs``) attests; else, attested by none, the newest a person
     labelled, else the newest labelled; None without one."""
     active = next((s for s in signoffs if s["status"] in ("requested", "approved")), None)
@@ -771,7 +771,7 @@ async def reported(
     return found, None
 
 
-# -- what it claims (§7) ----------------------------------------------------------------------------------
+# -- what it claims ----------------------------------------------------------------------------------
 
 _ALONE = {"B_RIGHT": "b", "A_RIGHT": "a"}
 _SHORT = {"BOTH_WRONG": "neither", "BOTH_RIGHT": "did not matter", "UNDECIDABLE": "undecidable"}
@@ -861,8 +861,8 @@ def _warned(row: Mapping[str, Any]) -> list[str]:
 
 
 def _first(row: Mapping[str, Any], signoff: str | None, *, named: bool = True) -> str:
-    """§11's report texts 1 to 3; not ``named``, without who drew it and with the kind of actor that
-    labelled it alone."""
+    """The report's first line of a labelled labelling; not ``named``, without who drew it and with the
+    kind of actor that labelled it alone."""
     drawn = f" by {row['drawn_by_name']}" if named else ""
     head = (
         f"Labelling {row['labelling_id']} drawn {_day(row['drawn_at'])}{drawn}, labelled"
@@ -876,8 +876,8 @@ def _first(row: Mapping[str, Any], signoff: str | None, *, named: bool = True) -
 
 
 def lines(row: Mapping[str, Any], *, signoff: str | None) -> list[str]:
-    """What a labelled labelling (``repo.get_labelling``'s row) says, printed whole, never a line alone
-    (§7): who labelled against what and whether ``signoff`` (the attesting sign-off's id) attests it, its
+    """What a labelled labelling (``repo.get_labelling``'s row) says, printed whole, never a line alone:
+    who labelled against what and whether ``signoff`` (the attesting sign-off's id) attests it, its
     warnings, the uniform discrepancy shares with their intervals, each root cause's and rule's own
     figures and the agreed and accepted samples. Empty for a labelling not labelled yet."""
     score = row["accuracy"]
@@ -970,7 +970,7 @@ def _b_wrong(row: Mapping[str, Any], sides: Mapping[str, Any]) -> str:
 def gate(
     row: Mapping[str, Any] | None, *, at: str, min_decided: int, max_b_wrong: int, signoff: str | None = None
 ) -> tuple[str, list[str]]:
-    """Cut-over readiness's accuracy gate (docs/mvp/READINESS.md §9 Y18) over the labelling of the cycle
+    """Cut-over readiness's accuracy gate over the labelling of the cycle
     ``at`` names (``row``: ``repo.readiness_governance``'s, None without one; ``signoff``: the sign-off
     attesting it): ``met`` or ``not_met``, and its lines, the verdict, then ``lines``' labelling line
     without its actors' names (readiness names no person) and side b's wrong share verbatim. Met when at
@@ -1017,9 +1017,9 @@ def _range(found: Mapping[str, Any]) -> str:
 
 
 def summary(row: Mapping[str, Any], *, signoff: str | None, named: bool = True) -> str:
-    """A labelling in one line (the CLI, run lists; §7): its uniform discrepancy counts and side b's wrong
+    """A labelling in one line (the CLI, run lists): its uniform discrepancy counts and side b's wrong
     share, else what its agreed or accepted sample found; whether ``signoff`` attests it. Not ``named``
-    (the agent's, §10), a labelled labelling's line says what kind of actor labelled it, without a name
+    (the agent's), a labelled labelling's line says what kind of actor labelled it, without a name
     or an id."""
     head = f"{row['labelling_id']} run {row['run_id']} cycle {row['cycle']}:"
     score = row["accuracy"]

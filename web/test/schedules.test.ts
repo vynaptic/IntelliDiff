@@ -1,6 +1,5 @@
 // What the Schedules screens build besides the API's texts: the cron a preset writes, the body a form sends, the
-// zone a new schedule starts with and the labels of `ds schedules`; and that no screen words a firing
-// (docs/mvp/SCHEDULES.md §9, §10).
+// zone a new schedule starts with and the labels of `ds schedules`; and that no screen words a firing.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
@@ -79,7 +78,7 @@ test('the default zone is the browser\'s when listed, else what it was renamed t
 
 test('a stored schedule whose zone this build does not list is edited with no zone chosen, and a note naming it', () => {
   const zones = { zones: ['Europe/London', 'UTC'], renamed: { 'Europe/Kiev': 'Europe/Kyiv' } };
-  const stored = draftOf({ ...NIGHTLY, time_zone: 'Europe/Kyiv' }).time_zone; // as the worker paused it (T6)
+  const stored = draftOf({ ...NIGHTLY, time_zone: 'Europe/Kyiv' }).time_zone; // as the worker paused it
   assert.deepEqual(defaultZone(zones, stored, true), {
     zone: '', note: "this build's zone data does not hold Europe/Kyiv, the zone this schedule was saved with: choose its time zone",
   });
@@ -129,7 +128,7 @@ test('no screen builds a firing text, a banner or a share: they print the server
   }
   for (const file of ['../src/scheduling.ts', '../src/Schedules.tsx']) {
     const source = readFileSync(new URL(file, import.meta.url), 'utf8');
-    assert.equal(/%|percent|uptime|success rate/i.test(source), false, file); // N5
+    assert.equal(/%|percent|uptime|success rate/i.test(source), false, file); // a schedule states no rate
   }
   assert.equal(readFileSync(new URL('../src/Run.tsx', import.meta.url), 'utf8').includes('{run.schedule.text}'), true);
 });

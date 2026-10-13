@@ -1,4 +1,4 @@
-"""What a file side reads, without DuckDB (docs/mvp/FILES.md §4, §6, §10, §11): where a files target's root
+"""What a file side reads, without DuckDB: where a files target's root
 may lie, the spec path's grammar, the path expanded into files in path order, their arrival, their pins
 (size, times, inode and SHA-256) taken when a run is created and compared at each later read, a Parquet
 file's footer walked before DuckDB is handed the file, the spill directory a process holds and the sweep of
@@ -89,7 +89,7 @@ PATH_REFUSED = (
     f"file.path is a relative path under the target's root: {ALPHABET} in each segment, none starting with"
     " a dot; * matches inside one segment; a trailing / reads the whole directory"
 )
-# What is never claimed of a file side (docs/mvp/FILES.md §2), as patterns no text built of one matches: the
+# What is never claimed of a file side, as patterns no text built of one matches: the
 # messages of this module and of ``duck``, a fixed side's census wording and the certificate's line.
 NOT = (
     r"snapshot",  # a file side is fixed files
@@ -101,7 +101,7 @@ NOT = (
     r"types? (is |are |were )?verified|keys are unique",  # a CSV declares its types; a file promises no key
     r"object stor|s3://",  # not built
     r"sandbox|encrypted spill|spill (is|was) encrypted",  # DuckDB is neither
-    r"isolat|confin",  # nor is its reader's process: it runs as the same user (READER.md §2)
+    r"isolat|confin",  # nor is its reader's process: it runs as the same user
     r"tested on",  # Parquet of DuckDB's own writer and the tests' hand-built files are observed
 )
 log = logging.getLogger("deltasleuth.files")
@@ -156,11 +156,11 @@ _stuck_lock = threading.Lock()
 
 class Stuck(TargetUnreachable):
     """``STUCK_MAX`` calls of the target's root past their deadline still wait, or ``STUCK_ALL`` of all
-    (§10: P28 at plan)."""
+    (a plan is refused for it)."""
 
 
 class Busy(TargetUnreachable):
-    """The reader did not take the work, and no mount is judged by it (§10: P34 at plan): no thread of
+    """The reader did not take the work, and no mount is judged by it (at plan, not ready): no thread of
     ``POOL`` was free within ``STAT_S`` (``Busy``), so the call was withdrawn and is never run; or its
     reader was discarded for another read's failure (``Dropped``, ``duck``) as it asked for a cursor, or
     after an error that invalidated its database; or the reader's process ended (``Died``) or did not
@@ -168,7 +168,7 @@ class Busy(TargetUnreachable):
 
 
 class Late(Exception):
-    """A run's planning passed ``files.plan_s`` (§6: P30)."""
+    """A run's planning passed ``files.plan_s``."""
 
 
 def stuck(root: str | None = None) -> int:
@@ -208,8 +208,8 @@ def _admitted(root: str | None = None) -> None:
 
 
 def unanswered(exc: TargetUnreachable, who: str, target: Target) -> ValueError:
-    """What a plan's file work met in place of an answer, worded for ``who``: P28's third text (``Stuck``),
-    P34 (``Busy``: not ready, tried again) or P14's third."""
+    """What a plan's file work met in place of an answer, worded for ``who``: reads still waiting
+    (``Stuck``), work not taken (``Busy``: not ready, tried again) or a directory that did not answer."""
     if isinstance(exc, Stuck) and stuck(target.root) >= STUCK_MAX:
         return ValueError(
             f"{who}: the file reader takes no work of target {target.target_id}: {stuck(target.root)} reads"
@@ -275,7 +275,7 @@ def size_bytes(size: str) -> int:
     return int(size[:-2]) * _SIZE[size[-2:]]
 
 
-# -- where roots lie (T10) ------------------------------------------------------------------------
+# -- where roots lie ------------------------------------------------------------------------------
 
 
 def _refs(value: Any) -> Iterator[str]:
@@ -293,7 +293,7 @@ def _refs(value: Any) -> Iterator[str]:
 def forbidden(
     settings: Settings, registry: TargetRegistry, *, resolve: bool = True, config: Path | None = None
 ) -> list[str]:
-    """T10 for each files target whose root, after ``realpath`` (``resolve``), does not lie under
+    """A refusal for each files target whose root, after ``realpath`` (``resolve``), does not lie under
     ``files.roots_under``, or is, holds or lies inside a directory DeltaSleuth uses: the evidence volume,
     the workspace, the spill directory, the targets file's (and ``config``'s, the settings file, where
     the caller knows it) and every ``file:`` reference's."""
@@ -325,9 +325,9 @@ def forbidden(
 
 async def opened(settings: Settings, registry: TargetRegistry, config: Path | None = None) -> list[str]:
     """What every ``ds`` command does as it opens a context, and ``ds target check`` (with ``config``, its
-    settings file) before it looks at a files target (§4, §10): the spill directories of processes that
-    ended are swept, and T10 is judged; a root that does not answer within ``STAT_S`` is judged as written,
-    so one dead mount stops no command."""
+    settings file) before it looks at a files target: the spill directories of processes that ended are
+    swept, and where each root lies is judged (``forbidden``); a root that does not answer within ``STAT_S``
+    is judged as written, so one dead mount stops no command."""
     try:
         await call(sweep, settings.spill_dir)
     except (OSError, TargetUnreachable) as exc:
@@ -340,11 +340,11 @@ async def opened(settings: Settings, registry: TargetRegistry, config: Path | No
         return forbidden(settings, registry, resolve=False, config=config)
 
 
-# -- the path (L10) -------------------------------------------------------------------------------
+# -- the path -------------------------------------------------------------------------------------
 
 
 def path_error(path: str) -> str | None:
-    """L10's text when ``path`` is not a relative path of the closed grammar (§5): segments of the
+    """The refusal's text when ``path`` is not a relative path of the closed grammar: segments of the
     alphabet, none starting with a dot; ``*`` inside one segment, or a trailing ``/``; else None."""
     segments = path.split("/")
     if path.endswith("/"):
@@ -367,7 +367,7 @@ def _globbed(pattern: str, name: str) -> bool:
 
 
 def stamp_error(path: str, name: str) -> bool:
-    """Whether ``name`` is no stamp file of ``path`` (L10): a name of the alphabet, in the path's fixed
+    """Whether ``name`` is no stamp file of ``path``: a name of the alphabet, in the path's fixed
     directory, that the path does not match."""
     if not _NAME.fullmatch(name) or name.startswith("."):
         return True
@@ -377,7 +377,7 @@ def stamp_error(path: str, name: str) -> bool:
     return len(rest) == 1 and _globbed(rest[0], name)
 
 
-# -- expansion (§6 steps 1 and 2) -----------------------------------------------------------------
+# -- expansion -----------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -469,8 +469,8 @@ async def _walk(root: str, path: str, end: float | None) -> list[Found]:
 
 async def _matched(root: str, base: str, rest: list[str], end: float | None) -> list[Found]:
     """The candidates of ``rest`` (a name or a glob, then literal names) under ``base``. A matched directory
-    whose name is outside the alphabet is a candidate that refuses the plan (P18), never entered: a file
-    below it would be pinned under a path DuckDB reads as a glob (D3)."""
+    whose name is outside the alphabet is a candidate that refuses the plan, never entered: a file
+    below it would be pinned under a path DuckDB reads as a glob."""
     here, (segment, *after) = os.path.join(root, base), rest
     if "*" not in segment:
         found = await call(_entry, here, segment, end=end, root=root)
@@ -498,7 +498,7 @@ async def _matched(root: str, base: str, rest: list[str], end: float | None) -> 
 
 async def _below(root: str, base: str, depth: int, end: float | None) -> list[Found]:
     """A directory read: every file below ``base`` whose name starts with neither ``.`` nor ``_``, in no
-    directory whose name does; a directory deeper than ``DEPTH`` is refused (P17)."""
+    directory whose name does; a directory deeper than ``DEPTH`` is refused."""
     listed = await call(_listed, os.path.join(root, base), end=end, root=root)
     if listed is None:
         return [Found(base, "unreadable")]
@@ -521,8 +521,8 @@ class _Deep(Exception):
 
 
 async def rooted(target: Target, who: str, *, end: float | None = None) -> str:
-    """Step 1: the target's mount, ``read-only`` or ``writable`` (P15 unless ``allow_writable``), of a root
-    that is its own real path and a directory DeltaSleuth may list (P14)."""
+    """Step 1: the target's mount, ``read-only`` or ``writable`` (refused unless ``allow_writable``), of a
+    root that is its own real path and a directory DeltaSleuth may list."""
     target_id = target.target_id
     mount = await call(_rooted, target.root or "", end=end, root=target.root)
     if mount == "absent":
@@ -557,7 +557,7 @@ async def expand(
     end: float | None = None,
 ) -> list[Found]:
     """Step 2: the files the path names under the target's root, in the order of their relative paths'
-    UTF-8 bytes. Refused with P16 to P18 and P26, worded for ``who`` (``side a``, or ``target <id>``): a
+    UTF-8 bytes. A refusal is worded for ``who`` (``side a``, or ``target <id>``): a
     link, what is not a regular file or a name outside the alphabet is never skipped."""
     target_id = target.target_id
     try:
@@ -596,11 +596,11 @@ async def expand(
     return found
 
 
-# -- arrival and pins (§6 steps 3, 4 and 9; §11) --------------------------------------------------
+# -- arrival and pins --------------------------------------------------
 
 
 def _stamped(path: str) -> str:
-    """The stamp file's instant (P20), or why not: ``absent``, ``unread`` (a link, not a regular file, not
+    """The stamp file's instant, or why not: ``absent``, ``unread`` (a link, not a regular file, not
     readable or over ``STAMP_MAX`` bytes) or ``malformed``."""
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -623,7 +623,7 @@ def _stamped(path: str) -> str:
 
 
 def _age(seconds: float) -> str:
-    """A length of time as P19 says it: ``3 d 4 h``, ``5 h 12 min``, ``12 min``."""
+    """A length of time as a refusal says it: ``3 d 4 h``, ``5 h 12 min``, ``12 min``."""
     minutes = int(seconds // 60)
     days, hours = divmod(minutes // 60, 24)
     if days:
@@ -644,7 +644,7 @@ def arrival(
     now: float | None = None,
 ) -> str:
     """Step 3, from the listing: no file was modified within the target's ``settle_s`` of the host's clock
-    (``now``) and, with ``max_age``, the newest is not older (P19); the newest modification time, in UTC."""
+    (``now``) and, with ``max_age``, the newest is not older; the newest modification time, in UTC."""
     now = time.time() if now is None else now
     newest = max(f.stat.st_mtime for f in found if f.stat is not None)
     age = now - newest
@@ -664,7 +664,7 @@ def arrival(
 
 
 async def stamp(target: Target, path: str, name: str, who: str, *, end: float | None = None) -> str:
-    """Step 3: the instant the stamp file ``name``, in the path's fixed directory, declares (P20)."""
+    """Step 3: the instant the stamp file ``name``, in the path's fixed directory, declares."""
     where = os.path.join(target.root or "", *_fixed(path)[0], name)
     found = await call(_stamped, where, end=end, root=target.root)
     if found == "absent":
@@ -690,7 +690,7 @@ class _Moved(Exception):
 
 
 class Damaged(Exception):
-    """A compressed export's stream is cut short or damaged: its class is what the plan names (P29)."""
+    """A compressed export's stream is cut short or damaged: its class is what the plan names."""
 
     def __init__(self, stream: str) -> None:
         super().__init__("BadGzipFile" if stream == "gzip" else "ZstdError")
@@ -699,7 +699,7 @@ class Damaged(Exception):
 class _Stream:
     """A gzip or zstd export's stream, checked as the file is hashed: each member read to its end and its
     checksum, by Python's zlib or by zstandard. DuckDB reads a stream cut short, or a damaged gzip one, as
-    fewer rows without an error (observed on 1.5.5: FILES.md §3), so its rows would be lost silently. What
+    fewer rows without an error (observed on 1.5.5), so its rows would be lost silently. What
     it decompresses is dropped a slice at a time, so a stream that expands far holds no memory."""
 
     SLICE = 256  # compressed bytes of a zstd step, which expands to some MiB at most (gzip's is bounded)
@@ -782,7 +782,7 @@ def _digest(
 
 
 class BadFooter(Exception):
-    """A Parquet file DuckDB is not handed (FILES.md §14 point 7): its footer is over ``FOOTER_MAX``, its
+    """A Parquet file DuckDB is not handed: its footer is over ``FOOTER_MAX``, its
     schema over ``FOOTER_ELEMENTS`` or nested over ``FOOTER_DEPTH``, it holds over ``FOOTER_GROUPS`` row
     groups or ``FOOTER_CHUNKS`` column chunks, a row group's chunks are not the schema's leaves, or the
     footer is one this module does not walk to its end exactly as a Thrift reader reads it; ``encrypted``
@@ -1059,7 +1059,7 @@ def summed(footers: Iterable[Footed | None]) -> Footed:
 
 
 def footer_refused(who: str, n: int, of: int, why: BadFooter) -> str:
-    """P22's text for a Parquet file DuckDB is not handed: an encrypted one, or one whose footer is not
+    """The refusal of a Parquet file DuckDB is not handed: an encrypted one, or one whose footer is not
     walked to its end."""
     if str(why) == "encrypted":
         return f"{who}: file {n} of {of} is encrypted Parquet, which is not read"
@@ -1084,7 +1084,7 @@ async def _hashed(
 
 
 def files_sha256(pins: Sequence[Pin], files: Sequence[str] | None = None) -> str:
-    """The SHA-256 of each file's hex digest and a newline, in path order (§6): ``cut -c1-64 | sha256sum``
+    """The SHA-256 of each file's hex digest and a newline, in path order: ``cut -c1-64 | sha256sum``
     of ``sha256sum``'s lines gives it. Of a side that declares partitions (``files``: its relative paths),
     whose directories' names are compared values, the SHA-256 of ``sha256sum``'s lines whole (``<hex>
     <path>`` and a newline each), so the digest binds them too."""
@@ -1094,7 +1094,7 @@ def files_sha256(pins: Sequence[Pin], files: Sequence[str] | None = None) -> str
 
 
 # What ``files_sha256`` is the SHA-256 of, with the command that prints it from the files: said wherever a
-# pack shows the digest (§11, §16), since it is no file's own, which the holder of one file would compare.
+# pack shows the digest, since it is no file's own, which the holder of one file would compare.
 SHA256_OF = (
     "the list of its files' SHA-256 values, a line each, in the byte order of their paths under the target's"
     " root, not a file's own (sha256sum FILE... | cut -c1-64 | sha256sum)"
@@ -1107,7 +1107,7 @@ SHA256_OF_PATHS = (  # of a side that declares partitions
 
 @dataclass(frozen=True)
 class Pinned:
-    """A file side's files as its run was created on them (§6): the relative paths and their pins, sealed
+    """A file side's files as its run was created on them: the relative paths and their pins, sealed
     together; and what the stored plan holds of them."""
 
     files: tuple[str, ...]
@@ -1120,7 +1120,7 @@ class Pinned:
     footed: Footed = (0, {})  # a Parquet side's rows and columns' bytes, of all its footers: the plan's
 
     def facts(self) -> dict[str, Any]:
-        """The stored plan's members (§6): counts, times and the one aggregate digest, no file's."""
+        """The stored plan's members: counts, times and the one aggregate digest, no file's."""
         digest = files_sha256(self.pins, self.files if self.partitioned else None)
         return {
             "file_count": len(self.files), "bytes": sum(pin[0] for pin in self.pins),
@@ -1143,12 +1143,11 @@ async def pin(
     end: float | None = None,
 ) -> Pinned:
     """Steps 1 to 4 of a side's plan, before ``end`` (its run's creation's deadline; ``files.plan_s`` from
-    now without one; P30): the root, the expansion, the arrival, and each file opened without following a
+    now without one): the root, the expansion, the arrival, and each file opened without following a
     link, hashed and its ``fstat`` compared with the listing's and before and after its reads, its own mount
-    read-only as the root's is (P15); a compressed ``stream`` (``gzip``, ``zstd``) checked whole as it is
-    hashed, a ``parquet`` file's footer walked (P22). Steps 5 to 8 are DuckDB's (``duck``); step 9 is
-    ``verify(..., planning=True)``. Refused with P14 to P20, P22, P26, P28 to P30 and P34, worded for
-    ``who``."""
+    read-only as the root's is; a compressed ``stream`` (``gzip``, ``zstd``) checked whole as it is
+    hashed, a ``parquet`` file's footer walked. Steps 5 to 8 are DuckDB's (``duck``); step 9 is
+    ``verify(..., planning=True)``. A refusal is worded for ``who``."""
     end = end or time.monotonic() + files.plan_s
     pins: list[Pin] = []
     found: list[Found] = []
@@ -1228,12 +1227,13 @@ async def verify(
     partitions: Sequence[str] = (),
     planning: bool = False,
 ) -> None:
-    """§11: the path expanded again, and each position's name, kind, size, times and inode compared with
-    its pin; ``full`` also hashes each file, never from the cache. ``FilesChanged`` names the first
-    difference (F9), or at plan (``planning``, step 9) P19's first text. A root that cannot be listed, a
-    call past its deadline and a read of the closing hash that the mount answers with an error are
+    """The path expanded again, and each position's name, kind, size, times and inode compared with its pin;
+    ``full`` also hashes each file, never from the cache. ``FilesChanged`` names the first difference; at
+    plan (``planning``, step 9) it is ``_changed``'s ``NotReady``. A root that cannot be listed, a call past
+    its deadline and a read of the closing hash that the mount answers with an error are
     ``TargetUnreachable`` (a refused permission ``TargetDenied``): no claim that the export changed. So is,
-    after the plan, a root that holds no entry at all (``Empty``): a mount point whose mount is not there."""
+    after the plan, a root that holds no entry at all (``Empty``): a mount point whose mount is not
+    there."""
     who, of, root = f"side {side}", len(pins), target.root or ""
 
     def changed(why: str, n: int) -> Exception:
@@ -1249,10 +1249,10 @@ async def verify(
             raise TargetUnreachable("Empty")
     except _Deep:
         found = []
-    except OSError:  # a listing or a stat the mount answered with an error (§10's table)
+    except OSError:  # a listing or a stat the mount answered with an error
         raise TargetUnreachable("OSError") from None
     if len(found) != of:
-        if planning:  # the first position whose file is not its pin's (P19 names a position of the plan's)
+        if planning:  # the first position whose file is not its pin's (the text names one of the plan's)
             moved = [n for n, (f, name) in enumerate(zip(found, files, strict=False), 1) if f.path != name]
             raise _changed(who, min([*moved, of]), of)
         raise FilesChanged(f"{who}: {len(found):,} files match now, {of:,} when the run was created")
@@ -1281,7 +1281,7 @@ async def verify(
                 raise changed("content", n)
 
 
-# -- the spill (§10) ------------------------------------------------------------------------------
+# -- the spill ------------------------------------------------------------------------------
 
 
 def held(spill_dir: Path) -> Path:

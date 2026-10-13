@@ -1,4 +1,4 @@
-"""Cross-side path alignment (§8.6): which side-b path carries each side-a path?
+"""Cross-side path alignment: which side-b path carries each side-a path?
 
 Both sides answered the same keys, so corresponding paths hold the same values (DUMAS). A pair
 scores 0.8 * value (IDF-weighted Jaccard of light tokens per sample pair, corrected for chance

@@ -1,5 +1,5 @@
 # The Oracle acceptance kit: DS_KIT_A against DS_KIT_B, the two tables of seed.sql, in one schema.
-# Target: targets.yaml. Expected result: expected.json. Contract: docs/mvp/ENGINES.md.
+# Target: targets.yaml. Expected result: expected.json.
 #
 # Every non-key column is compared. Both sides are Oracle, so the server hashes the columns both tables
 # declare alike and the worker the others (amount, doc); each differing key is then read per key and

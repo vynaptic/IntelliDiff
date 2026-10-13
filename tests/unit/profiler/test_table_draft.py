@@ -1,4 +1,4 @@
-"""A starter spec for two relations a table pre-check paired by name (docs/mvp/PRECHECKS.md §3): its
+"""A starter spec for two relations a table pre-check paired by name: its
 tables in the catalogue's spelling, the common primary key or a placeholder, the columns both sides hold of
 one family, a comment for each column left out, its issues; and that a catalogue's name, whatever it holds,
 changes nothing a parser reads of it."""

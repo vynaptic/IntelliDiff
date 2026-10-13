@@ -1,4 +1,4 @@
-"""What a result never holds (docs/mvp/MCP.md §8): planted raw keys, protected values, a staff name, a user
+"""What a result never holds: planted raw keys, protected values, a staff name, a user
 and a token id, a target's id and address, a DSN's password and a file's name appear in no result, error,
 log line or audit detail of any tool, its failures included, nor in what ``ds mcp`` writes to stderr of any
 logger's record; nor does a relation or a target that readiness words a gate with; a run that declares
@@ -87,7 +87,7 @@ async def planted(world: World) -> tuple[str, ...]:
 
 @pytest.fixture
 def stdio_logging() -> Iterator[Callable[[], None]]:
-    """``ds mcp``'s logging (§9), set when called and undone afterwards: its handlers on ``deltasleuth.mcp``,
+    """``ds mcp``'s logging, set when called and undone afterwards: its handlers on ``deltasleuth.mcp``,
     on the library's ``mcp`` and on the root logger, which every other logger's records reach, and the
     audit copy on ``deltasleuth.audit``, whichever test ran before."""
     loggers = [logging.getLogger(name) for name in (None, "mcp", "deltasleuth.mcp", "deltasleuth.audit")]
@@ -157,7 +157,7 @@ async def test_planted_values_appear_nowhere(
     # No identity but the caller's own in a call's line, and nothing planted in any.
     assert not [line for line in calls if line.count("token:") != 1 or "user:" in line or "local:" in line]
     faults = [r for r in records if r.name == "deltasleuth.mcp" and r.levelno > logging.INFO]
-    assert len(faults) == 3 * 11  # T16 and T17: the reason is the server log's
+    assert len(faults) == 3 * 11  # the reason is the server log's
     trace = logging.Formatter().formatException
     shown = [(r.name, r.getMessage() + (trace(r.exc_info) if r.exc_info else ""))
              for r in records if r not in faults or via == tools.STDIO]  # fmt: skip
@@ -203,7 +203,7 @@ async def gates_unworded(ctx: Context, pair: str, status: str, worded: str, *nev
 
 
 async def test_no_result_names_the_relation_a_gate_is_worded_with(on_tables: Tables) -> None:  # noqa: F811
-    """§8: a key-list run counted against a table side is evidence, and readiness words its population
+    """A key-list run counted against a table side is evidence, and readiness words its population
     gate with the relation it was counted against."""
     seed = (
         "CREATE SCHEMA corebank_canary; CREATE TABLE corebank_canary.ledger_canary (id text, email text);"
@@ -223,7 +223,7 @@ async def test_no_result_names_the_relation_a_gate_is_worded_with(on_tables: Tab
 async def test_no_result_names_the_target_a_gate_is_worded_with(
     harness: Harness, service: ScriptedService
 ) -> None:
-    """§8: a key listing on side b's target is no census of side a, and readiness says so by the target's
+    """A key listing on side b's target is no census of side a, and readiness says so by the target's
     id."""
     service.listings = [["K001", "K002"]]
     for key in ("K001", "K002"):
@@ -237,7 +237,7 @@ async def test_no_result_names_the_target_a_gate_is_worded_with(
 
 
 async def test_clear_declared(world: World) -> None:
-    """With ``production_tokenised`` alone such a run answers T12 and nothing of it is shown; with
+    """With ``production_tokenised`` alone such a run is not served and nothing of it is shown; with
     ``production_clear_declared`` its clear value shows at the path its spec declares, and its key as
     ``key_masked`` only."""
     ctx, shown = world.ctx, []

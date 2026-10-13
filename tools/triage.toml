@@ -1,4 +1,4 @@
-# What the release gate accepts (docs/mvp/RELEASE.md §8), each decision with an expiry.
+# What the release gate accepts, each decision with an expiry.
 # tools/release.py reads this file. It does not ship, but its decisions do: each matched [[finding]] as an
 # OpenVEX statement (scan/vex.openvex.json), and every decision in scan/SUMMARY.txt, [[vendored]] ones also in
 # sbom/vendored-libraries.txt. The maintainer decides; there are no decisions yet. The two kinds, for example:

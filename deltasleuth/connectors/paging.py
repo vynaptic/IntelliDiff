@@ -5,7 +5,7 @@ bytes. ``eof`` is False when the walk stopped before the last page; ``unstable``
 item repeats across pages, or offset/page windows span pages of a target without declared
 ``stable_ordering``. Only an empty window proves the end (servers cap page sizes silently), so a
 short window is followed by one more request, even at ``maxPages``. A walk that does not merge (a hash
-sample's key listing, docs/mvp/SAMPLING.md §3) keeps only the page it took last and that page's item
+sample's key listing) keeps only the page it took last and that page's item
 identities, so a repeat is judged against the previous page only; its caller finds the others.
 """
 

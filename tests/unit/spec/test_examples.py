@@ -27,7 +27,7 @@ _REPORTING = {"/reporting/formats", "/reporting/fields"}
 _NOT_IN_MVP = {"/inferredSchema", "/sides/a/rawClear", "/sides/b/rawClear"}
 _EXPECTED: dict[str, tuple[set[str], set[str]]] = {  # stem -> (unsupported, ignored) pointers
     "generic-customer-services": (
-        {"/noise/calibration", "/time/mode"},  # its hash sample over two listings runs (SAMPLING.md §2.1)
+        {"/noise/calibration", "/time/mode"},  # its hash sample over two listings runs
         {*_NOT_IN_MVP, *_REPORTING},
     ),
     "entity-linking-services": (

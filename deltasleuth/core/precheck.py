@@ -1,4 +1,4 @@
-"""Table pre-checks, pure (docs/mvp/PRECHECKS.md §4): what a level reads of a pair of tables, what the two
+"""Table pre-checks, pure: what a level reads of a pair of tables, what the two
 catalogues and the figures read say of the pair, its verdict and every text a surface prints of it.
 
 A pre-check counts and adds up; it compares no row (``NOT``). ``wanted`` names the figures a level reads
@@ -12,9 +12,9 @@ check not made reads ``not checked`` or ``not compared`` with its reason, never 
 
 The module names no engine: what an engine is like (the digits its sums hold, whether it stores an empty
 string as NULL) comes with what was read of its side. A relation is the engine seam's (its ``schema``,
-``name``, ``columns`` and ``facts``), a plan is a run's (TABLES.md §3).
+``name``, ``columns`` and ``facts``), a plan is a run's.
 
-The schema guard's pure parts are here too (§7): ``shape`` is what it holds of a relation, ``roles`` what a
+The schema guard's pure parts are here too: ``shape`` is what it holds of a relation, ``roles`` what a
 run's plan reads each column as, ``changes`` how a shape differs from the one a run was planned on, or from
 the one the version's run before it read, and ``verdict`` what follows: a warning, a pause or a refusal.
 """
@@ -42,7 +42,7 @@ NOT = (
     " where to look first. It is observed, not evidence, readiness or a sign-off, and no evidence pack"
     " contains it: run a comparison to compare rows."
 )
-# docs/mvp/FILES.md K1: what a pre-check that names a files target, or a spec's file side, is refused with.
+# What a pre-check that names a files target, or a spec's file side, is refused with.
 FILE_SIDE = (
     "not supported: a table pre-check with a file side; its run counts rows, lines that are not rows and"
     " repeated keys"
@@ -61,7 +61,7 @@ NAME = 128  # characters of a catalogue's name in a text
 Plan = Mapping[str, Any]
 Wanted = tuple[str, str | None]  # a figure and the canonical name of its column (None: of the rows)
 
-# The figures compared of a column beside its NULLs, by its class (§4): of two classes, those both have.
+# The figures compared of a column beside its NULLs, by its class: of two classes, those both have.
 _FIGURES = {
     **dict.fromkeys(("text", "char"), ("empty", "length")),
     **dict.fromkeys(("integer", "decimal"), ("sum", "min", "max")),
@@ -74,7 +74,7 @@ _READ = {"length": ("shortest", "longest")}  # what a figure is read as, when no
 ORDER = ("nulls", "empty", "length", "sum", "min", "max", "true", "distinct")
 _FLOATS = ("float", "float32")
 _NUMBERS = ("integer", "decimal")
-# Families, a typeMap entry's, how each reads and how a spec bridges two (ENGINES.md §7, §9, §12 P9): the
+# Families, a typeMap entry's, how each reads and how a spec bridges two: the
 # words of ``connectors.tables``, whose plan refuses across engines what a pre-check reports.
 _FAMILIES = dict.fromkeys(("text", "char"), "text") | dict.fromkeys(
     ("integer", "decimal", "float", "float32"), "number"
@@ -156,7 +156,7 @@ def line(result: Mapping[str, Any]) -> str:
 
 
 def worded(verdict: str) -> str:
-    """A verdict as words: its code's, and the best one as what it is, never as agreeing (N1)."""
+    """A verdict as words: its code's, and the best one as what it is, never as agreeing."""
     best = "no difference observed in the checks made (not parity)"
     return best if verdict == VERDICTS[-1] else verdict.replace("_", " ")
 
@@ -165,7 +165,7 @@ def worded(verdict: str) -> str:
 
 
 def shape(relation: Any) -> dict[str, Any]:
-    """What is held of a relation's catalogue entry (§7): its kind, its primary key and each column the
+    """What is held of a relation's catalogue entry: its kind, its primary key and each column the
     account may read, with its declared type, class and whether it may hold NULL, by name. The columns'
     order is not in it."""
     columns = {c.name: [c.declared, c.cls, c.nullable] for c in relation.columns if c.readable}
@@ -199,8 +199,8 @@ def _sides(canonical: str, plan: Plan, held: Mapping[str, Mapping[str, Any]]) ->
 
 
 def _unlike(canonical: str, plan: Plan, a: Any, b: Any) -> str | None:
-    """The code of a compared column whose two sides are not compared at all (ENGINES.md §12): a type no
-    plan reads (P7), one that stays in its engine (P8), two families (P9). None: they are compared."""
+    """The code of a compared column whose two sides are not compared at all: a type no
+    plan reads, one that stays in its engine, two families. None: they are compared."""
     if a.cls is None or b.cls is None:
         return "uncomparable"
     if "other" in (a.cls, b.cls) and plan["a"].get("engine") != plan["b"].get("engine"):
@@ -229,7 +229,7 @@ def _nullable(kinds: Sequence[str], a: Any, b: Any) -> bool:
 
 
 def _never(a: Any, b: Any) -> bool:
-    """Whether two key parts' key texts are never equal (ENGINES.md §8, P6): of two families neither of
+    """Whether two key parts' key texts are never equal: of two families neither of
     which is text (2024-01-01 is never 2024-01-01 00:00:00), or two numbers of two declared scales, which
     their texts hold (1.00 is never 1). A part of no class says nothing."""
     if None in (a.cls, b.cls):
@@ -241,7 +241,7 @@ def _never(a: Any, b: Any) -> bool:
 
 
 def schema_diff(plan: Plan, relations: Mapping[str, Any], listed: bool) -> list[dict[str, Any]]:
-    """How the two relations differ as their catalogues hold them: a code a column (§4), each with its
+    """How the two relations differ as their catalogues hold them: a code a column, each with its
     group. ``not_compared``: a comparison would leave the column out (two families, a type it does not
     read, a column on one side only where the plan takes the common ones: no side of the spec lists its
     ``columns``, and of two relations paired by name a column named alike ignoring case by another of its
@@ -303,7 +303,7 @@ def schema_diff(plan: Plan, relations: Mapping[str, Any], listed: bool) -> list[
 
 
 def implied(a: Any, b: Any, engines: Sequence[str]) -> dict[str, Any]:
-    """The plan of two relations paired by name (§3), whose engines are ``engines``: no spec's. The key is
+    """The plan of two relations paired by name, whose engines are ``engines``: no spec's. The key is
     the primary key when both catalogues show one over the same lower-cased columns, each of a class (side
     b's in side a's order), else none; the columns are every other name both sides read, by its lower-cased
     name, those of two families or of a type no plan reads among them, which no figure compares; no filter,
@@ -430,7 +430,7 @@ def _scale(column: Any) -> int | None:
 
 
 def shown(pair: Pair, plan: Plan, canonical: str) -> str | None:
-    """Why a column's sums are withheld (§6); None: they are shown as numbers, where findings already
+    """Why a column's sums are withheld; None: they are shown as numbers, where findings already
     show the column's values in clear. Two relations paired by name have no security policy; two filters
     one row apart would give that row's value; the spec's policy must give the column no class; and
     under SSO the approval gate must admit the version."""
@@ -452,8 +452,8 @@ def _protected(pair: Pair, canonical: str) -> bool:
 
 
 def filtered(pair: Pair, plan: Plan, canonical: str) -> str | None:
-    """Why a column's ``empty``, ``true`` and ``distinct`` counts and its lengths are kept as verdicts
-    (§6); None: they are numbers. A side declares a filter and the spec's policy protects the column: a
+    """Why a column's ``empty``, ``true`` and ``distinct`` counts and its lengths are kept as verdicts;
+    None: they are numbers. A side declares a filter and the spec's policy protects the column: a
     filter that selects one row would tell whether its value is true or empty and how long it is, and two
     rows' distinct count whether they hold one value. Its NULLs stay a number, as the rows do."""
     for side in "ab":
@@ -463,7 +463,7 @@ def filtered(pair: Pair, plan: Plan, canonical: str) -> str | None:
     return None
 
 
-# -- texts (§10) -------------------------------------------------------------------------------------------
+# -- texts -------------------------------------------------------------------------------------------
 
 
 def _cut(text: Any) -> str:
@@ -486,7 +486,7 @@ def _key(columns: Sequence[str]) -> str:
 
 
 def _bridge(column: str, families: Sequence[str], names: Sequence[str]) -> str:
-    """What to declare for a compared column whose two sides are of two families (ENGINES.md §12 P9)."""
+    """What to declare for a compared column whose two sides are of two families."""
     for first, second in ((0, 1), (1, 0)):
         bridge = _BRIDGES.get((families[first], families[second]))
         if bridge:
@@ -549,7 +549,7 @@ def _key_lines(plan: Plan, relations: Mapping[str, Any], differs: bool) -> list[
 
 
 def _unread(side: str, check: str, failed: Sequence[str], relation: str | None, target: str) -> str:
-    """Why a side's read gave nothing, by its failure's code (§5)."""
+    """Why a side's read gave nothing, by its failure's code."""
     code, said = failed
     of = f"side {side}'s {_CHECKS[check]}" if check in _CHECKS else f"side {side}"
     if code == "timeout":
@@ -573,7 +573,7 @@ def _moment(at: str) -> str:
 
 
 def _read_line(sides: Mapping[str, Mapping[str, Any]], apart: int | None) -> str:
-    """How and when each side was read (N5): the two sides are never read at one moment."""
+    """How and when each side was read: the two sides are never read at one moment."""
     said = []
     for side, read in sides.items():
         if read.get("at") is None or read.get("relation") is None:
@@ -613,7 +613,7 @@ def alone(level: str, line: str) -> Judged:
 
 
 def totals(verdicts: Mapping[str, int], pending: int = 0, cancelled: int = 0) -> str:
-    """A pre-check's pairs counted by verdict, worst first: never a share, never a score (N2). ``pending``
+    """A pre-check's pairs counted by verdict, worst first: never a share, never a score. ``pending``
     pairs are those not read yet."""
     pairs = sum(verdicts.values()) + pending + cancelled
     said = [f"{verdicts[v]:,} {_TOTALS[v]}" for v in VERDICTS if verdicts.get(v)]
@@ -647,7 +647,7 @@ def _same(a: Any, b: Any) -> str:
 
 def _nulls(of: _Column, hidden: bool = False) -> dict[str, Any]:
     """The NULLs of a column, as counted: a side whose typeMap declares ``emptyAsNull`` counts its empty
-    strings with them, as a comparison would. A side that stores an empty string as NULL (D7) differs
+    strings with them, as a comparison would. A side that stores an empty string as NULL differs
     from one that does not by its empty strings until the spec says so. ``hidden`` (``filtered``): no
     reason tells how many values are empty, or whether any is, since its ``empty`` count is a verdict."""
     found, reasons = {s: int(of.texts[s]["nulls"]) for s in "ab"}, []
@@ -679,7 +679,7 @@ def _nulls(of: _Column, hidden: bool = False) -> dict[str, Any]:
 
 
 def _bound(of: _Column, figure: str) -> dict[str, Any]:
-    """A minimum or a maximum: compared in memory, kept as its verdict alone (D6). Two numbers compare
+    """A minimum or a maximum: compared in memory, kept as its verdict alone. Two numbers compare
     exactly; any other rendering, a number that is not finite among them, as its text."""
     a, b = of.texts["a"][figure], of.texts["b"][figure]
     numbers = [_number(text) for text in (a, b)] if all(of.own[s].cls in _NUMBERS for s in "ab") else [None]
@@ -687,8 +687,8 @@ def _bound(of: _Column, figure: str) -> dict[str, Any]:
 
 
 def _sum(of: _Column, pair: Pair) -> dict[str, Any]:
-    """A column's sums: compared exactly, or not compared when either engine can have rounded its own
-    (N6), and kept as numbers only where ``shown`` allows."""
+    """A column's sums: compared exactly, or not compared when either engine can have rounded its own, and
+    kept as numbers only where ``shown`` allows."""
     for side in "ab":
         rendered = [of.texts[side][f] for f in ("sum", "min", "max")]
         if any(text is not None and _number(text) is None for text in rendered):
@@ -836,7 +836,7 @@ def _skipped(
     sides: Mapping[str, Any],
     most: int,
 ) -> list[tuple[str, str]]:
-    """Each check of the level asked that a limit, or an unapproved filter (D15), left out: its code and
+    """Each check of the level asked that a limit, or an unapproved filter, left out: its code and
     its line."""
     found = []
     compared, counted = len(plan["a"]["columns"]), len(_counted(plan, held))
@@ -874,7 +874,7 @@ def compare(
     distinct_max_rows: int = 0,
 ) -> Judged:
     """Judge a pair read at ``level`` (below the level ``asked`` when an unapproved filter kept its rows
-    unread, D15). ``plan`` is the pair's (None when a run of it would be ``refused``, or a side's catalogue
+    unread). ``plan`` is the pair's (None when a run of it would be ``refused``, or a side's catalogue
     was not read); ``relations`` holds each side's relation (None: not described); ``sides`` what was read
     of each: its ``engine``, when it was read (``at``), its engine's ``sum_digits`` and ``empty_null``, and
     ``connectors.tables.figures.read``'s members, ``failed`` naming each check that gave nothing with its
@@ -957,7 +957,7 @@ def compare(
     return Judged(VERDICTS[min(worst, 10) - 1], differing, result)
 
 
-# -- the schema guard (§7) ---------------------------------------------------------------------------------
+# -- the schema guard ---------------------------------------------------------------------------------
 
 MODES = ("finding", "pause")  # schemaDrift.mode: what a change that breaks nothing does to a run
 # A change's closed kinds. The first group stops a run: its plan's statements would read another table, or
@@ -982,7 +982,7 @@ def roles(side: Plan) -> dict[str, str]:
 
 
 def _rendering(column: str, held: Sequence[Any], built: Built | None) -> tuple[Any, ...]:
-    """What a key column's key text is built from (ENGINES.md §8): a number's scale (an integer's is 0;
+    """What a key column's key text is built from: a number's scale (an integer's is 0;
     None: none), which the text of a value holds on every engine, and the key text the side's engine builds
     of the declared type (``built``: an Oracle ``NUMBER(p,s)``'s mask holds its precision too)."""
     declared, cls, scale = held[0], held[1], None
@@ -993,7 +993,7 @@ def _rendering(column: str, held: Sequence[Any], built: Built | None) -> tuple[A
 
 
 def _rendered(column: str, held: Sequence[Any], built: Built | None) -> str | None:
-    """How the side's engine renders a planned column of the declared type it held (ENGINES.md §9)."""
+    """How the side's engine renders a planned column of the declared type it held."""
     return built and built(column, held[1], held[0], False)
 
 
@@ -1062,7 +1062,7 @@ def changes(
 
 
 def verdict(mode: str, found: Sequence[Mapping[str, Any]], *, creation: bool = False) -> str | None:
-    """What the changes ``found`` do to a run under ``schemaDrift.mode`` ``mode`` (D10): ``paused``,
+    """What the changes ``found`` do to a run under ``schemaDrift.mode`` ``mode``: ``paused``,
     ``warned`` or, at its creation, ``refused``; None without a change. A breaking change always pauses;
     a narrowing one creates the run paused, or refuses it under ``pause``: a run that could only be
     cancelled would hold its schedule. Any other change warns, or pauses under ``pause``."""

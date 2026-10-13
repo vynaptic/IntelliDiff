@@ -1,4 +1,4 @@
-/** What the screens say about four-eyes approvals (docs/mvp/APPROVALS.md §4, §5, §6.3): a run's label and a
+/** What the screens say about four-eyes approvals: a run's label and a
  *  cycle's sign-off, in the words of report.pdf, the P0 summary and `ds runs` (deltasleuth/approvals.py); the
  *  fresh sign-in an approval step may need; and what a review shows and a decision echoes. */
 // Type imports only, so that Node runs the tests of this module without a bundler.
@@ -56,7 +56,7 @@ export const ssoOnly = (mode?: Mode) =>
   `Approvals need SSO (auth.oidc); this deployment runs in ${mode === 'tokens' ? 'tokens mode' : 'developer mode'}.`;
 
 /** Where an approver signs in again when an approval step answers 403 reauth_required: the identity provider
- *  authenticates afresh (docs/mvp/AUTH.md §2) and the sign-in returns to the review. */
+ *  authenticates afresh and the sign-in returns to the review. */
 export const reauthUrl = (approvalId: string) =>
   '/v1/auth/login?reauth=1&next=' + encodeURIComponent(`#/approvals/${encodeURIComponent(approvalId)}`);
 
@@ -83,7 +83,7 @@ export const explicitKeys = (source: string | null) => source === 'explicit' || 
 
 export interface Check { check: string; attested: string; note?: string; flag?: boolean }
 
-/** A sign-off's checklist from what it attests (§1.2): the checks a request passed (a table scan's counts
+/** A sign-off's checklist from what it attests: the checks a request passed (a table scan's counts
  *  among them), then the approver's own judgement of the key source and the coverage. */
 export function checklist(t: Attests): Check[] {
   const c = t.counters;

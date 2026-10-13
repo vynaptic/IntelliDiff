@@ -1,4 +1,4 @@
-"""The population's ledger and its closes (docs/mvp/SAMPLING.md §9, §13): a draw that did not pass, under
+"""The population's ledger and its closes: a draw that did not pass, under
 any spec name, blocks the sign-off of every later draw of its population until a person closes it with a
 note, and only a draw made after the close is signed off; a later failure spends an earlier pass; chain
 order, never the clock, decides what came first. Draws are written as the worker commits them."""
@@ -100,7 +100,7 @@ async def test_cherry_picking_a_redraw_is_refused_until_a_person_closes_the_fail
     assert closed == [failed] and allowed == []
     assert closes == [(amy.actor, failed, {"spec_name": "customer-profile", "note": NOTE})]
     assert stored is not None and (stored["closed_by"], stored["close_note"]) == (amy.actor, NOTE)
-    with pytest.raises(sample.SampleRefused) as nothing:  # C4: every ended bottom_k draw passed or is closed
+    with pytest.raises(sample.SampleRefused) as nothing:  # every ended bottom_k draw passed or is closed
         await _close(pool, "customer-profile-2", amy)
     assert (nothing.value.status, str(nothing.value)) == (
         409,
@@ -146,7 +146,8 @@ async def test_a_later_failure_spends_an_earlier_pass_whatever_its_close(pool: A
     spent = await _problems(pool, passed_run, PROFILE)
     await _close(pool, "customer-profile-2", amy)
     after_close = await _problems(pool, passed_run, PROFILE)
-    without_later = await _problems(pool, passed_run, PROFILE, later=False)  # a pack reads R-c from the grant
+    # a pack reads the later draws from the grant
+    without_later = await _problems(pool, passed_run, PROFILE, later=False)
     async with pool.connection() as conn:
         later = await sample.later_draws(conn, passed_run, 1)
     refusal = (
@@ -320,8 +321,8 @@ async def test_a_ledger_draw_no_sample_draw_row_names_refuses_a_later_sign_off(
 async def test_every_spelling_of_a_listing_s_path_shares_its_population(
     harness: Harness, service: ScriptedService
 ) -> None:
-    """/list, /%6Cist and /%6cist name one endpoint (RFC 3986 §6.2.2), so one population: R1 refuses a run
-    over another spelling while one is live, and G9 names the earlier draw that failed."""
+    """/list, /%6Cist and /%6cist name one endpoint (RFC 3986 §6.2.2), so one population: a run over another
+    spelling is refused while one is live, and a later draw's judgement names the earlier draw that failed."""
     service.listings = [KEYS]
     for key in KEYS:
         service.both(key, doc(key), doc(key))
@@ -343,7 +344,7 @@ async def test_every_spelling_of_a_listing_s_path_shares_its_population(
     assert (live.value.status, str(live.value)) == (
         409,
         f"spec unit-0 samples the population of live sampled run {first} (spec unit-runner, listing:svc-a:GET"
-        " /list): stop it before drawing another sample (docs/mvp/SAMPLING.md §5)",
+        " /list): stop it before drawing another sample",
     )
     assert redrawn["population"] == failed["population"] == ["listing:svc-a:GET /list"]
     assert _unclosed(failed["draw_id"], first, redrawn["draw_id"], "unit-runner") in found

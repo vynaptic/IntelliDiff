@@ -203,5 +203,5 @@ def test_explain_under_a_lost_kek_is_a_503_that_leaves_an_empty_session(
         client.portal.call(lose, client.app.state.ctx, run_id)
         reply = client.post("/v1/chat/sessions/explain", json={"run_id": run_id})
         assert audit(client) == ["chat.create"]
-    unreadable = f"evidence unreadable: the keyring lacks {lost} (docs/mvp/RETENTION.md §6.1)"
+    unreadable = f"evidence unreadable: the keyring lacks {lost}"
     assert (reply.status_code, reply.json()) == (503, {"detail": unreadable})

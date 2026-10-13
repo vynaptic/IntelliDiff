@@ -1,11 +1,11 @@
-"""Four-eyes approvals and sign-off (docs/mvp/APPROVALS.md §5, §6.1): list and review requests, request a
+"""Four-eyes approvals and sign-off: list and review requests, request a
 spec version's approval or an ended cycle's sign-off, decide, revoke.
 
 People decide: ``require("rule_approver")`` refuses every non-person, an approval step needs a sign-in at
 most 15 minutes old (``deps.fresh``; rejecting and revoking only restrict), the route refuses whoever is
 in the request's exclusion set, and ds.tg_approvals checks every decision again. Requests need SSO:
 tokens and developer modes have no approvers. In a vendor build a sign-off's request and approval steps
-also need an Enterprise licence (docs/mvp/LICENCE.md §6); an open build asks for none (§19).
+also need an Enterprise licence; an open build asks for none.
 """
 
 from __future__ import annotations
@@ -138,7 +138,7 @@ async def review(ctx: Ctx, who: Viewer, approval_id: str) -> Response:
             ]
             if drawn := facts.get("sample"):
                 found["ledger"] = await _ledger(conn, drawn["population"], drawn["draw_id"])
-            if "accuracy" in facts:  # attests format 3 (docs/mvp/ACCURACY.md §8)
+            if "accuracy" in facts:  # attests format 3
                 found |= await _labelled(conn, row)
         refusal = await _refusal(conn, row, who, persons)
     you = {"can_decide": refusal is None, "reason": refusal}
@@ -146,12 +146,12 @@ async def review(ctx: Ctx, who: Viewer, approval_id: str) -> Response:
 
 
 async def _ledger(conn: repo.Conn, population: Sequence[str], draw_id: str | None = None) -> list[repo.Row]:
-    """A review's ledger (docs/mvp/SAMPLING.md §9, §10): every draw of the population under any name, in
+    """A review's ledger: every draw of the population under any name, in
     commit order, with its status and close, and whether each was made before or after ``draw_id``."""
     rows = await repo.ledger(conn, population)
     seq = next((d["draw_seq"] for d in rows if d["draw_id"] == draw_id), None)
 
-    def order(at: int | None) -> str | None:  # None without a sample.draw row naming the draw (P2)
+    def order(at: int | None) -> str | None:  # None without a sample.draw row naming the draw
         if seq is None or at is None:
             return None
         return "this" if at == seq else "before" if at < seq else "after"
@@ -160,7 +160,7 @@ async def _ledger(conn: repo.Conn, population: Sequence[str], draw_id: str | Non
 
 
 async def _labelled(conn: repo.Conn, row: repo.Row) -> dict[str, Any]:
-    """A sign-off's review of labelled accuracy (docs/mvp/ACCURACY.md §8): what the labelling it attests
+    """A sign-off's review of labelled accuracy: what the labelling it attests
     says (``lines``, attested while the request is open or approved; none without one) and every labelling
     of its cycle, newest first."""
     run_id, cycle, named = row["run_id"], row["cycle"], (row["attests"]["accuracy"] or {}).get("labelling_id")
@@ -189,7 +189,7 @@ async def _masked(ctx: Context, conn: repo.Conn, stored: repo.Row) -> dict[str, 
 
 
 def _needed(body: Mapping[str, Any], scopes: Sequence[str]) -> list[dict[str, Any]]:
-    """What each scope covers in a spec body (docs/mvp/APPROVALS.md §1.1), by JSON pointer."""
+    """What each scope covers in a spec body, by JSON pointer."""
     security, compare = body.get("security", {}), body.get("compare", {})
     filters = [
         (("sides", side, "table", name), entry["table"][name])
@@ -197,7 +197,7 @@ def _needed(body: Mapping[str, Any], scopes: Sequence[str]) -> list[dict[str, An
         for name in ("where", "columns")
         if entry.get("table", {}).get(name) is not None
     ]
-    filters += [  # the first lines of each file a file side leaves unread (docs/mvp/FILES.md §5)
+    filters += [  # the first lines of each file a file side leaves unread
         (("sides", side, "table", "file", "csv", "skip"), skip)
         for side, entry in body.get("sides", {}).items()
         if (skip := ((entry.get("table", {}).get("file") or {}).get("csv") or {}).get("skip"))
@@ -263,7 +263,7 @@ def _first_is_author(row: repo.Row) -> str:
 
 
 async def _why(conn: repo.Conn, row: repo.Row, who: Principal) -> str:
-    """Why ``who`` is in the request's exclusion set (docs/mvp/APPROVALS.md §3)."""
+    """Why ``who`` is in the request's exclusion set."""
     requester = await repo.accountable(conn, row["requested_by"])
     if who.actor in requester["persons"]:
         return "you requested it" + _through(row["requested_by"], requester["name"])
@@ -274,13 +274,13 @@ async def _why(conn: repo.Conn, row: repo.Row, who: Principal) -> str:
             return f"you started run {row['run_id']}" + _through(creator, started["name"])
         attested = row["attests"].get("adjudication")
         scored = attested and await repo.get_adjudication(conn, attested["adjudication_id"])
-        if scored and scored["scored_by"] == who.actor:  # docs/mvp/PACK.md §5
+        if scored and scored["scored_by"] == who.actor:
             return f"you scored its adjudication {scored['adjudication_id']}"
         labelled = row["attests"].get("accuracy")
-        if labelled and labelled["labelled_by"] == who.actor:  # docs/mvp/ACCURACY.md §8
+        if labelled and labelled["labelled_by"] == who.actor:
             return f"you labelled its labelling {labelled['labelling_id']}"
         ledger = (row["attests"].get("sample") or {}).get("ledger", [])
-        if closed := next((d for d in ledger if d["closed_by"] == who.actor), None):  # SAMPLING.md §10
+        if closed := next((d for d in ledger if d["closed_by"] == who.actor), None):
             return f"you closed draw {closed['draw_id']} of its ledger"
     uploads = await repo.uploads_by(conn, row["spec_id"], who.actor)
     if uploads:
@@ -351,7 +351,7 @@ async def request_approval(ctx: Ctx, who: SpecAuthor, spec_id: int, body: NoteIn
 async def request_signoff(
     ctx: Ctx, who: Operator, run_id: str, cycle: int, body: NoteIn | None = None
 ) -> Response:
-    """Ask for the ended cycle to be accepted as parity evidence (docs/mvp/APPROVALS.md §1.2): refused
+    """Ask for the ended cycle to be accepted as parity evidence: refused
     with each problem it has; 410 once its purge has started."""
     note = checked(body.note if body else None)
     _sso(ctx)
@@ -460,7 +460,7 @@ async def _approve(
         if await repo.set_hold(conn, row["run_id"], hold, who.actor) is None:
             hold = None  # held already
         await refuse_purged(conn, row["run_id"], row["cycle"])  # a purge that started meanwhile: 410
-        if row["attests"].get("sample"):  # R-c as this step judged it: a pack reads it (SAMPLING.md §9)
+        if row["attests"].get("sample"):  # R-c as this step judged it: a pack reads it
             later = {"later_draws": await sample.later_draws(conn, row["run_id"], row["cycle"])}
     step, of = (1, 2) if first else (2, 2) if row["first_by"] else (1, 1)
     shown_row = await repo.get_approval(conn, approval_id)
@@ -543,7 +543,7 @@ async def _refused(ctx: Context, exc: repo.ApprovalRefused, approval_id: str, wh
 async def revoke(ctx: Ctx, who: RuleApprover, approval_id: str, body: RevokeIn) -> Response:
     """Revoke an approved spec approval or sign-off, and what rests on it (``approvals.revoke``): the runs
     it paused and stopped and the sign-offs it revoked. Its reason, which audit rows and evidence packs
-    carry forever, must hold no raw key-shaped value (docs/mvp/PACK.md §2.3)."""
+    carry forever, must hold no raw key-shaped value."""
     reason = checked(body.reason, "reason", REASON_CHARS)
     assert reason is not None
     try:

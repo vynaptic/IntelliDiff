@@ -1,16 +1,16 @@
-"""Retention and purge (docs/mvp/RETENTION.md §4, §5): whole ended cycles are deleted once the days of
+"""Retention and purge: whole ended cycles are deleted once the days of
 their run's retention class have passed, by an audited pass that is safe to interrupt.
 
 A pass (``purge``: hourly in the worker, or ``ds purge``) holds the purge lock on a connection of its
 own, so one purger runs at a time. It ends the runs past the ceiling first (``abandon``: one the schema
-guard paused among them, as any paused run, docs/mvp/PRECHECKS.md §7), drains the
+guard paused among them, as any paused run), drains the
 blob queue, purges each due cycle (an interrupted purge first) and drains again. A cycle's purge is
 recorded before anything irreversible (from then on its reads answer 410), then deletes its keys a
 chunk per transaction in dependency order, queuing the blobs of the deleted observations, and ends
 under the run's row lock. A crash leaves the cycle purging, and the next pass resumes it first. A
 blob goes 24 h after its last reference, under the blob lock writers share (``repo.lock_blobs``). An
 erasure (``erase``) purges one run, or one of its ended cycles, on demand. A pass ends by deleting the
-table pre-checks made over ``retention.standard_days`` ago (docs/mvp/PRECHECKS.md §8): they hold no key and
+table pre-checks made over ``retention.standard_days`` ago: they hold no key and
 no value, so no hold or erasure applies to them, and their audit rows stay.
 """
 
@@ -37,7 +37,7 @@ from deltasleuth.security import rawvalues
 from deltasleuth.store import repo
 
 LOCK_ID = 0x44535047  # pg advisory lock "DSPG": one purger per database
-CHUNK = 5_000  # keys (run_keys.seq) purged per transaction: well under a second each (RETENTION.md §10)
+CHUNK = 5_000  # keys (run_keys.seq) purged per transaction: well under a second each
 DRAIN = 500  # blob addresses per blob-lock transaction
 PRECHECKS = 1_000  # table pre-checks deleted per transaction
 ORPHAN_AGE_S = 3600  # an unreferenced blob file this new may belong to a write in flight
@@ -212,7 +212,7 @@ async def _purge_cycle(
     ctx: Context, who: Principal, run_id: str, cycle: int, reason: str, done: Summary
 ) -> None:
     """Purge one ended cycle: record the decision (revoking the cycle's sign-off, whose facts go, unless an
-    issued evidence pack cites it: the pack holds them, docs/mvp/PACK.md §6), delete its keys a chunk at
+    issued evidence pack cites it: the pack holds them), delete its keys a chunk at
     a time, then the rest (its stored pack zips among them)."""
     async with repo.audited(ctx.pool) as (conn, audit):
         row = await repo.start_purge(conn, run_id, cycle, reason)
@@ -392,7 +392,7 @@ async def _end_for_erasure(ctx: Context, who: Principal, run: repo.Row) -> None:
 
 async def _unkeyed(ctx: Context, conn: repo.Conn, run: repo.Row, text: str) -> None:
     """Refuse a hold's or an erasure's reason holding a raw key-shaped value of the run's spec: audit rows,
-    and the evidence packs citing them, carry it forever (docs/mvp/PACK.md §2.3)."""
+    and the evidence packs citing them, carry it forever."""
     if rawvalues.key_shaped(await ctx.spec(conn, run["spec_id"]), text):
         raise ValueError(rawvalues.KEY_SHAPED)
 

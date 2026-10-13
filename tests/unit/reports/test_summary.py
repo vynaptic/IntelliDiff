@@ -1,5 +1,5 @@
 """The P0 contract report: checklist states from the P0 tools, PARTIAL runs and escaping; an ended
-cycle's labelled accuracy (docs/mvp/ACCURACY.md §10)."""
+cycle's labelled accuracy."""
 
 from __future__ import annotations
 
@@ -134,7 +134,7 @@ async def test_report_files_render_hostile_text_as_text(ctx: Context, tmp_path: 
 async def test_the_report_files_print_an_ended_cycle_s_labelling_whole_or_that_none_was_labelled(
     pack_ctx: Context, tmp_path: Path
 ) -> None:
-    """docs/mvp/ACCURACY.md §7, §11: every line of ``accuracy.lines`` and LIMITS verbatim, in both files."""
+    """Every line of ``accuracy.lines`` and LIMITS verbatim, in both files."""
     signed, row = await labelled_cycle(pack_ctx)
     outputs = await summary_report(pack_ctx, signed.run_id, tmp_path / "labelled")
     said = accuracy.lines(row, signoff=signed.signoff_id)

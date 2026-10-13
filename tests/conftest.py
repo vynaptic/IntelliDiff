@@ -48,16 +48,16 @@ MYSQL_IMAGE = "mysql:8.4"
 ORACLE_IMAGE = "gvenzl/oracle-free:23-slim-faststart"
 # The principal of every test call that takes ``who`` or ``created_by``: the CLI's, as a tester.
 TESTER = Principal("local:tester@test", "tester", frozenset(ROLES), os_account="tester")
-# Fixed keys for contexts and evidence stores built without a database (docs/mvp/RETENTION.md §1).
+# Fixed keys for contexts and evidence stores built without a database.
 TEST_KEYRING = Keyring([b"k" * 32])
 TEST_ADDRESS_KEY = DataKey("address", TEST_KEYRING.current, b"a" * 32)
 TEST_EVIDENCE_KEY = DataKey(key_id("E-", b"e" * 32), TEST_KEYRING.current, b"e" * 32)
 # The data key of runs a test stores without a Context: (its KEK id, the key wrapped) and its sealer,
-# bound to one run id (docs/mvp/RETENTION.md §3.1), which only such tests' own reads open with.
+# bound to one run id, which only such tests' own reads open with.
 TEST_DATA_KEY = TEST_KEYRING.wrap(b"r" * 32)
 TEST_SEALER = Sealer(b"r" * 32, "R-" + "T" * 26)
 # The vendor key of every licence a test signs, made in memory: no private key is committed, and a
-# test's vendor build trusts it alone (docs/mvp/LICENCE.md §4).
+# test's vendor build trusts it alone.
 VENDOR_KEY = ec.generate_private_key(ec.SECP256R1())
 TIER_PAIRS = {"community": 2, "pro": 5, "enterprise": "unlimited"}
 BUILDS = ("vendor_keys", "open_build")  # ``build``'s parameters: a test of both asks for it first
@@ -65,7 +65,7 @@ BUILDS = ("vendor_keys", "open_build")  # ``build``'s parameters: a test of both
 
 @pytest.fixture(scope="session", autouse=True)
 def open_build() -> Iterator[None]:
-    """The build under test is open (docs/mvp/LICENCE.md §19): ``licence.VENDOR_KEYS`` is empty for the
+    """The build under test is open: ``licence.VENDOR_KEYS`` is empty for the
     session, whatever ``SHIPPED_KEYS`` holds, which stays."""
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(licence, "VENDOR_KEYS", ())
@@ -74,7 +74,7 @@ def open_build() -> Iterator[None]:
 
 @pytest.fixture
 def vendor_keys(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A vendor build for the test, which enforces the licence (§4): ``licence.VENDOR_KEYS`` is
+    """A vendor build for the test, which enforces the licence: ``licence.VENDOR_KEYS`` is
     ``VENDOR_KEY``'s public key."""
     monkeypatch.setattr(licence, "VENDOR_KEYS", (PackSigner(VENDOR_KEY).public_pem,))
 
@@ -322,7 +322,7 @@ def pg_dsn(pg_server: str) -> Iterator[str]:
         conn.execute(f'DROP DATABASE IF EXISTS "{db}" WITH (FORCE)')
 
 
-# --- a throwaway MySQL server for table sides (docs/mvp/ENGINES.md §16) -----------------------------
+# --- a throwaway MySQL server for table sides -----------------------------
 
 
 def make_ca(name: str) -> tuple[x509.Certificate, ec.EllipticCurvePrivateKey]:
@@ -494,7 +494,7 @@ def mysql_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[MySQLServ
         subprocess.run(["docker", "rm", "-f", "-v", name], capture_output=True, check=False)
 
 
-# --- a throwaway Oracle server for table sides (docs/mvp/ENGINES.md §16) ----------------------------
+# --- a throwaway Oracle server for table sides ----------------------------
 
 ORACLE_PASSWORD = "test"  # noqa: S105 (every account's, of a throwaway server on loopback)
 ORACLE_SERVICE = "FREEPDB1"

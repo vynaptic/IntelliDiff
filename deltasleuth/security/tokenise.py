@@ -1,4 +1,4 @@
-"""Keyed tokens and masked renditions of keys, findings, pointers and documents (§9.6, §13.1).
+"""Keyed tokens and masked renditions of keys, findings, pointers and documents.
 
 Tokens are deterministic, one-way HMACs separated by value class; the key sits in a local
 ``file:`` (0600). A class-only value (``date_of_birth``) shows as its class, never a linkable
@@ -200,7 +200,7 @@ def _published(pattern: str, security: SecurityPolicy) -> str:
 def mask_pointer(
     parts: tuple[tuple[str, str], ...], spec: CompiledSpec, tok: Tokeniser | None, *, key: str | None = None
 ) -> str:
-    """``pointer_parts`` as a §6 pointer with protected member keys and data names masked.
+    """``pointer_parts`` as a finding's pointer with protected member keys and data names masked.
 
     Each segment's class comes from the pattern walked so far (its array for a member key, its
     object for a name); with every class clear this is the differ's json_pointer. ``tok`` None

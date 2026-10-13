@@ -1,4 +1,4 @@
-/** What the sign-in page says beyond the server's answers (docs/mvp/FIRSTRUN.md §6, docs/mvp/AUTH.md §9).
+/** What the sign-in page says beyond the server's answers.
  *  Nothing here comes from the server: an anonymous visitor learns its own address bar and a command's name.
  *  Pure, so that Node runs its tests and api.ts may use it: it loads no other module and asks no server. */
 

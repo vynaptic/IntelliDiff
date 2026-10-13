@@ -1,4 +1,4 @@
-"""Four-eyes enforcement in the runner (docs/mvp/APPROVALS.md §4): the gate at each entry point in each
+"""Four-eyes enforcement in the runner: the gate at each entry point in each
 auth mode, a soak's boundary attaching the active approval or pausing, a run started outside SSO never
 signed off whatever it resumes or attaches under, a one-shot compare stopped by a revoke, and how
 maxKeys cut each cycle's keys (``runs.keys_cut``, copied into ``ds.cycles``)."""

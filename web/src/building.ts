@@ -1,4 +1,4 @@
-/** What the comparison builder and the Targets screen build in the browser (docs/mvp/CONTRACTS.md §7): the starter
+/** What the comparison builder and the Targets screen build in the browser: the starter
  *  of a new comparison, each side's request as its rows hold it, the form a validation, a save and a Send post, a
  *  pasted curl command read into those rows, the line that says what a Send met, an endpoint's form and the body
  *  it sends, and what stays in memory while a screen is left. A credential never enters a spec: the import sets
@@ -8,8 +8,8 @@ import { isRaw, parseExact, stringifyExact, type AuthKind, type SpecForm, type T
 
 export type Side = 'a' | 'b';
 
-/** A new comparison: the guide's smallest spec without the sides' target and request, under a scratch name, with a
- *  key pattern and a truncation rule that fit any service until they are changed. */
+/** A new comparison: the smallest spec without the sides' target and request, under a scratch name, with a key
+ *  pattern and a truncation rule that fit any service until they are changed. */
 export const STARTER: SpecForm = {
   text: `apiVersion: deltasleuth/v1
 kind: ComparisonSpec

@@ -1,9 +1,8 @@
 /** Specs: the stored specs with their four-eyes approval and their name's schedules, a YAML editor that validates
  *  and saves, and drafting from sample pairs, with the draft's notes, unmatched paths and evidence under the
- *  form. Under SSO a spec author requests a version's approval here (docs/mvp/APPROVALS.md §6.3); an operator
- *  opens the schedule form of a version (docs/mvp/SCHEDULES.md §10) and the table pre-check form of one
- *  (docs/mvp/PRECHECKS.md §11). A version's name opens its stored document: read-only, or for a spec author in
- *  the builder, which "New comparison" opens on a starter (docs/mvp/CONTRACTS.md §7). */
+ *  form. Under SSO a spec author requests a version's approval here; an operator opens the schedule form of
+ *  a version and the table pre-check form of one. A version's name opens its stored document: read-only, or
+ *  for a spec author in the builder, which "New comparison" opens on a starter. */
 import { useState, type FormEvent } from 'react';
 import { ApiError, api, parseExact, type Draft, type Issue, type Pair, type Saved, type Spec } from './api';
 import { Builder } from './Builder';

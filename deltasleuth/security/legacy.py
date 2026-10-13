@@ -1,5 +1,4 @@
-"""What releases before 006 stored in clear, sealed offline by ``ds keys migrate`` (docs/mvp/RETENTION.md
-§7.2).
+"""What releases before 006 stored in clear, sealed offline by ``ds keys migrate``.
 
 The only reader of legacy data: the raw keys, headers, chat and scan points of those releases, and the
 ``blobs/sha256/`` blobs (zstd frames of plaintext bodies, named by their SHA-256). Holding the worker

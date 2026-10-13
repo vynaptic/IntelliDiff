@@ -1,4 +1,4 @@
-"""The data keys at start (docs/mvp/RETENTION.md §6.1).
+"""The data keys at start.
 
 ``start`` creates the blob address key and an evidence key when absent, and loads those the keyring can
 unwrap. In ``ds serve`` only (``rewrap``) it also adds an evidence key when the newest was not wrapped

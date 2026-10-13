@@ -1,4 +1,4 @@
-"""Judging each stratum (docs/mvp/SAMPLING.md §8): counts over a stratum's members that reconcile, a bug
+"""Judging each stratum: counts over a stratum's members that reconcile, a bug
 rule's KNOWN_DIFF discrepant, every gate of a sampled and a census stratum with the refusal it words, the
 failures certain while the cycle is live, bounds reported but never gated; and a drawn cycle judged however
 it ends (a failed run, an erasure, an abandoned run), unjudged when judging raises, its stored judgement
@@ -129,7 +129,7 @@ CASES = {
                          [G7.format(4, 0, 6)]),
     "live, retrying": (record(3011), [group(6), unresolved(4, done=False), group(3001, None)], "unfinished",
                        []),
-    # A truncated key whose recheck was truncated again ends recheck_failed: still above the API cap (D13).
+    # A truncated key whose recheck was truncated again ends recheck_failed: still above the API cap.
     "G11 after its recheck": (record(3011), [group(3010), unresolved(1, "recheck_failed", truncated="b")],
                               "failed", [G11.format("side b's")]),
     # First reads still due a recheck, which may find the key: never a certain failure.
@@ -233,7 +233,7 @@ def test_a_rate_sample_without_strata_judges_its_keys_as_contrast() -> None:
     )
 
 
-# -- every end of a drawn cycle (§5 Ends) -------------------------------------------------------------
+# -- every end of a drawn cycle -------------------------------------------------------------
 
 
 async def _drawn_run(h: Harness, service: ScriptedService) -> str:
@@ -298,7 +298,7 @@ async def test_a_cycle_stopped_while_a_member_waits_for_its_retry_is_never_signe
 ) -> None:
     """Every member holds a result, so the cycle's counters cancel and owe nothing, but K001 waits for its
     retry: the judgement its end stores is incomplete, its unfinished stratum words the gate it does not
-    hold, and the sign-off is refused (R-b)."""
+    hold, and the sign-off is refused."""
     service.listings = [KEYS]
     for key in KEYS:
         service.both(key, doc(key), doc(key))

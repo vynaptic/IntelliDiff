@@ -9,7 +9,7 @@ from typing import Any
 from deltasleuth.connectors.base import KeyRejectedError
 from deltasleuth.core.spec.keys import join_parts, split_parts
 
-Plan = dict[str, Any]  # runs.params["tables"] (TABLES.md §3), or one side of it
+Plan = dict[str, Any]  # runs.params["tables"], or one side of it
 encode_key = join_parts
 
 
@@ -33,7 +33,7 @@ def side_values(key: str, side: Plan) -> list[list[str]] | None:
     composite key."""
     parts = decode_key(key, len(side["keys"]))
     if side.get("engine") == "files" and not key.isascii():
-        try:  # a lone surrogate: rejected without a pass over the files (docs/mvp/FILES.md §9)
+        try:  # a lone surrogate: rejected without a pass over the files
             key.encode()
         except UnicodeEncodeError:
             raise KeyRejectedError("the key has no UTF-8 form") from None
@@ -42,7 +42,7 @@ def side_values(key: str, side: Plan) -> list[list[str]] | None:
 
 
 def to_side(part: str, key_map: Mapping[str, Any] | None) -> list[str] | None:
-    """The values a side may store for one canonical key part (TABLES.md §10), or None."""
+    """The values a side may store for one canonical key part, or None."""
     kind = key_map["kind"] if key_map else "identity"
     if kind == "prefix_pad":  # exactly the values that prefix || lpad(v, width, '0') (never cut) maps here
         prefix, width = key_map["prefix"], key_map["width"]  # type: ignore[index]

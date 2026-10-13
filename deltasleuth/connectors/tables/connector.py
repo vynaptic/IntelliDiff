@@ -1,5 +1,5 @@
-"""Per-key reads of a table side (TABLES.md §4, §9, §10, §12): one statement for one key or a batch,
-through the side's engine (ENGINES.md §5).
+"""Per-key reads of a table side: one statement for one key or a batch,
+through the side's engine.
 
 A key its side's key maps cannot map back holds no row there: 404 without a query. A row outside the
 side's filter is still read and recorded as not selected. typeMap columns are converted before
@@ -48,7 +48,7 @@ Observed = dict[str, Observation]  # by key
 
 
 def relation(side: Plan) -> str:
-    """The side's table or view as people read it; a file side's label (docs/mvp/FILES.md §6)."""
+    """The side's table or view as people read it; a file side's label."""
     return f"{side['schema']}.{side['name']}" if side.get("schema") else side["name"]
 
 
@@ -67,20 +67,20 @@ class TableConnector:
 
     @property
     def large(self) -> bool:
-        """Whether a row of the side may hold large values (ENGINES.md §6): its keys are read few at a
+        """Whether a row of the side may hold large values: its keys are read few at a
         time, since a group's rows are held together."""
         return bool(self._side) and self._engine.large(self._side)
 
     @property
     def fixed(self) -> bool:
-        """Whether the side reads fixed files (docs/mvp/FILES.md §11): each read of it is a pass over them,
+        """Whether the side reads fixed files: each read of it is a pass over them,
         and what a read observed stands."""
         return self._side.get("consistency") == "fixed"
 
     async def unchanged(self, side_cfg: SideConfig) -> bool:
-        """One stat check of a fixed side's files, for a group of rechecks that read none of them again
-        (docs/mvp/FILES.md §12): a changed file fails the run; False when the files do not answer, so
-        nothing of them stands for this pass and its keys are read as any others."""
+        """One stat check of a fixed side's files, for a group of rechecks that read none of them again: a
+        changed file fails the run; False when the files do not answer, so nothing of them stands for this
+        pass and its keys are read as any others."""
         engine = planned(side_cfg.side.value, self._side, self._target)
         try:
             async with self._lock:
@@ -136,7 +136,7 @@ class TableConnector:
         if asked:
             found |= await self._guarded(asked, observation)
         if len(asked) > 1:  # a batch slower than the per-key timeout: each of its keys alone, on its terms,
-            # but on a file side, where each would be a pass over its files (docs/mvp/FILES.md §6)
+            # but on a file side, where each would be a pass over its files
             timeouts = [
                 k for k, o in found.items() if o.error_class == "timeout" and self._engine.retry_alone
             ]
@@ -179,8 +179,8 @@ class TableConnector:
                 TargetTempSpace,
             ) as exc:
                 # An outage, a refused login, the guard, or a server's code a later read may not meet; a
-                # full disk or a privilege gone propagates and fails the run (ENGINES.md §11), but a file
-                # side's read met its sort's budget, which the spec's retries read again (FILES.md §10).
+                # full disk or a privilege gone propagates and fails the run, but a file
+                # side's read met its sort's budget, which the spec's retries read again.
                 if isinstance(exc, TargetTempSpace) and self._engine.name != "files":
                     raise
                 await self.aclose()  # the next read opens a fresh session
@@ -224,9 +224,9 @@ class TableConnector:
     def _observed(
         self, observation: Callable[..., Observation], rows: list[tuple[str | ValueError, bool]]
     ) -> Observation:
-        if not rows and self._side.get("rejected"):  # D6: the key may be on a line that was not a row
+        if not rows and self._side.get("rejected"):  # the key may be on a line that was not a row
             lines = self._side["rejected"]
-            why = f"no row read holds the key, and {lines} line(s) of this side's files were not rows"  # M1
+            why = f"no row read holds the key, and {lines} line(s) of this side's files were not rows"
             return observation(http_status=None, body=None, error_class="not_rows", error_detail=why)
         if not rows:
             return observation(http_status=404, body=None)
@@ -235,7 +235,7 @@ class TableConnector:
             return failed(error_class="identity_ambiguous", error_detail="the key selects more than one row")
         text, selected = rows[0]
         try:
-            if isinstance(text, ValueError):  # its engine could not render the row (ENGINES.md §9)
+            if isinstance(text, ValueError):  # its engine could not render the row
                 raise text
             if self._side.get("types"):
                 text = jsonio.dumps(convert_text(text, self._side["types"]))

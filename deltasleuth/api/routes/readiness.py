@@ -1,4 +1,4 @@
-"""Cut-over readiness (docs/mvp/READINESS.md §10): every pair's gates and its place on the ladder, a pair's
+"""Cut-over readiness: every pair's gates and its place on the ladder, a pair's
 detail, trend and brief, the transitions the worker recorded, and the readiness reports. A viewer
 reads everything and nothing here writes readiness (the gates are the host administrator's settings); only
 a report download is audited. Transitions and ``as_of`` are projections of the worker's rows (ids, states,

@@ -16,7 +16,7 @@ never overwritten (``force`` archives it) and a new sheet deletes the old score.
 sheet in place; ``score`` accepts only the selected keys, once each, with the run's engine columns,
 and records the sheet's SHA-256 so a later edit makes the score stale.
 
-In the store (docs/mvp/PACK.md §5), ``store_draw`` draws an ended cycle's sheet with a server salt and
+In the store, ``store_draw`` draws an ended cycle's sheet with a server salt and
 ``store_score`` scores its upload once, keeping the sheet as drawn with the reviewer's verdicts and the
 score, without notes; both are refused while the cycle has a requested or approved sign-off, which
 attests the newest adjudication a person scored.
@@ -370,13 +370,13 @@ def score_rows(
     }  # fmt: skip
 
 
-# -- in the store (docs/mvp/PACK.md §5) ----------------------------------------------------------------
+# -- in the store ----------------------------------------------------------------
 
 
 async def _unfrozen(conn: repo.Conn, run_id: str, cycle: int, what: str = "adjudication") -> None:
     """Refuse a draw or score of a cycle that has not ended, was purged (CyclePurged) or has a requested or
     approved sign-off, judged under the cycle's row lock (``repo.open_signoff``); ``what`` a new one would
-    be (a labelling: docs/mvp/ACCURACY.md §3)."""
+    be (a labelling)."""
     from deltasleuth.runner.purge import refuse_purged
 
     signoff = await repo.open_signoff(conn, run_id, cycle)

@@ -1,5 +1,4 @@
-"""``release``: the maintainer's release tool (docs/mvp/RELEASE.md), dsv's sibling, outside the shipped
-product.
+"""``release``: the maintainer's release tool, dsv's sibling, outside the shipped product.
 
     uv run python tools/release.py keygen --out DIR [--passphrase file:/abs]
     uv run python tools/release.py build --key file:/abs/release-<fp16>.key.pem --notes FILE --out DIR
@@ -53,41 +52,41 @@ from tools.dsv import fail
 ROOT = Path(__file__).resolve().parents[1]  # the checkout a release builds from
 # The python:3.13-slim index that deploy/Dockerfile's PYTHON default pins, and its platform manifests, looked
 # up once and never pulled by this tool: a release builds from its platform's manifest digest, so the local
-# index reference, which source builds use, never changes (RELEASE.md §5).
+# index reference, which source builds use, never changes.
 INDEX = "sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa725dd7cb2cd3b"
 BASES = {
     "linux/amd64": "sha256:37134a49d21d2120e4c4d73bb76f8a4ab9aef31f096f7ec2ead48c2feead4332",
     "linux/arm64": "sha256:e2a5fce94bd761967528a12f16d707c2613e1522f3f2d77fa45766f45962547f",
 }
 MACHINES = {"linux/amd64": "x86_64", "linux/arm64": "aarch64"}  # platform_machine, for uv.lock's markers
-# The canonical verification procedure (RELEASE.md §3): VERIFY.txt repeats it from line 3, and each release
-# key is filed with its sha256. A changed procedure is a new format, filed at every site like a new key.
+# The canonical verification procedure: VERIFY.txt repeats it from line 3, and each release key is filed
+# with its sha256. A changed procedure is a new format, filed at every site like a new key.
 PROCEDURE = Path(__file__).with_name("release-procedure.txt").read_text(encoding="utf-8")
 FORMAT = "deltasleuth-release/1"
-SYFT, GRYPE = "1.52.0", "0.119.0"  # the approved scanners (§7): build and rescan refuse any other
-# What the source archive, and so the build context, holds (§2): never tests, tools or site files.
+SYFT, GRYPE = "1.52.0", "0.119.0"  # the approved scanners: build and rescan refuse any other
+# What the source archive, and so the build context, holds: never tests, tools or site files.
 SHIPPED = ("LICENSE", "README.md", "SECURITY.md", "pyproject.toml", "uv.lock", "deltasleuth", "web",
-           "deploy", "docs/mvp", "docs/guide", "mocks", "examples")  # fmt: skip
+           "deploy", "docs", "mocks", "examples")  # fmt: skip
 TOOLS = ("docker", "git", "grype", "npm", "syft", "uv")
 POSTGRES = "postgres:16-alpine"  # the smoke test's database, from the local store
 GRYPE_DB = Path.home() / "Library" / "Caches" / "grype" / "db"  # the maintainer's: grype db update fills it
 SYNCED = ("Desktop", "Documents", "Library/Mobile Documents", "Library/CloudStorage")  # under ~
-# docker-compose.yml's x-release (§6), under which the smoke test runs the image
+# docker-compose.yml's x-release, under which the smoke test runs the image
 HARDENED = ("--read-only", "--tmpfs", "/tmp:size=64m,mode=1777,noexec,nosuid,nodev", "--cap-drop", "ALL",  # noqa: S108
             "--security-opt", "no-new-privileges:true")  # fmt: skip
 SMOKE_SECONDS = 180
-# The files reader's self-test (docs/mvp/FILES.md §3, READER.md §11): its guard, both readers, a sort that
-# spills, a process replaced when it ends, and its limits.
+# The files reader's self-test: its guard, both readers, a sort that spills, a process replaced when it
+# ends, and its limits.
 DUCK = "from deltasleuth.connectors.tables import duck; duck.selftest()"
-# The MCP server's self-test (docs/mvp/MCP.md §3): built without a store, it lists its tools to the library's
-# own client in both protocol eras.
+# The MCP server's self-test: built without a store, it lists its tools to the library's own client in
+# both protocol eras.
 MCP = "from deltasleuth.mcp import server; server.selftest()"
 ONE_DAY = timedelta(days=1)  # triage dates are the maintainer's local days; today is UTC's
 HEALTH = (
     "import sys, urllib.request as u; sys.exit(u.build_opener(u.ProxyHandler({}))"
     ".open('http://127.0.0.1:8000/v1/health', timeout=4).status != 200)"
 )
-# Run in the built image: its python version, then each file a wheel vendors (``*.libs/*``, §7).
+# Run in the built image: its python version, then each file a wheel vendors (``*.libs/*``).
 LIBS = """import importlib.metadata as m, platform
 print(platform.python_version())
 for d in m.distributions():
@@ -95,7 +94,7 @@ for d in m.distributions():
         if f.parts[0].endswith(".libs"):
             print(d.metadata["Name"], d.version + "\\t" + f.as_posix())
 """
-CHECKS = (  # after the gate (§9 step 8), in the checkout, with DS_REQUIRE_DB=1 DS_REQUIRE_TOOLS=1
+CHECKS = (  # after the gate, in the checkout, with DS_REQUIRE_DB=1 DS_REQUIRE_TOOLS=1
     ("uv", "run", "--frozen", "pytest", "-q", "-p", "no:cacheprovider"),
     ("uv", "run", "--frozen", "ruff", "check", "deltasleuth", "mocks", "tests", "examples", "tools"),
     ("npm", "--prefix", "web", "ci"),
@@ -108,14 +107,14 @@ KEY_LINE = re.compile(
 )
 ADVISORY = re.compile(r"# DeltaSleuth security advisory DS-SA-\d{4}-\d{3}")
 TRANSITION = "# DeltaSleuth release key transition"
-# A line that sha256sum -c or shasum -c would check (§9, sign): blanks and a backslash, then a digest and a
-# blank (shasum takes SHA-1's 40 hex digits and up, whatever -a says), or the tagged SHA256 (name) = digest.
+# A line that sha256sum -c or shasum -c would check: blanks and a backslash, then a digest and a blank
+# (shasum takes SHA-1's 40 hex digits and up, whatever -a says), or the tagged SHA256 (name) = digest.
 CHECKSUM = re.compile(r"^[ \t]*\\?(?:[0-9A-Fa-f]{40,}[ \t]|SHA\S*[ \t]*\(.*\)[ \t]*=)", re.M)
-CHECKLIST = "## Before the first release (the vendor's checklist)"  # SECURITY.md's maintainer section (§11)
+CHECKLIST = "## Before the first release (the vendor's checklist)"  # SECURITY.md's maintainer section
 # What the notes of a release without vendor keys say, on a line of its own, and those of a release with
-# vendor keys never do (docs/mvp/LICENCE.md §19).
+# vendor keys never do.
 OPEN_BUILD = "This release is an open build: it embeds no licence vendor key and enforces no licence."
-BLOCKING = ("Critical", "High", "Unknown")  # with a fix, or known exploited (§8)
+BLOCKING = ("Critical", "High", "Unknown")  # with a fix, or known exploited
 JUSTIFICATIONS = ("component_not_present", "vulnerable_code_not_present",
                   "vulnerable_code_not_in_execute_path", "vulnerable_code_cannot_be_controlled_by_adversary",
                   "inline_mitigations_already_exist")  # OpenVEX's five  # fmt: skip
@@ -164,7 +163,7 @@ def _short(ref: str) -> str:
 
 
 def _gzip(source: Path, target: Path) -> None:
-    """``source`` gzipped as a release ships it: no name, mtime 0, level 9 (§2)."""
+    """``source`` gzipped as a release ships it: no name, mtime 0, level 9."""
     target.parent.mkdir(parents=True, exist_ok=True)
     with source.open("rb") as src, target.open("xb") as raw:
         with gzip.GzipFile(filename="", mode="wb", fileobj=raw, compresslevel=9, mtime=0) as packed:
@@ -173,7 +172,7 @@ def _gzip(source: Path, target: Path) -> None:
 
 def _transport(folder: Path, target: Path, mtime: int) -> None:
     """The bundle's transport tar: ustar, sorted, folders and regular files only, 0755 and 0644, owner 0 with
-    no names, the commit's mtime (§2)."""
+    no names, the commit's mtime."""
     with tarfile.open(target, "x", format=tarfile.USTAR_FORMAT) as tar:
         for path in [folder, *sorted(folder.rglob("*"))]:
             info = tar.gettarinfo(path, path.relative_to(folder.parent).as_posix())
@@ -184,7 +183,7 @@ def _transport(folder: Path, target: Path, mtime: int) -> None:
 
 
 def _outside(path: Path, what: str) -> None:
-    """Refuse a path, symlinks resolved, in a git working tree or a cloud-synced folder (§4), by name or by
+    """Refuse a path, symlinks resolved, in a git working tree or a cloud-synced folder, by name or by
     file identity: APFS ignores case, so ~/documents is ~/Documents."""
     path = path.resolve()
     if any((folder / ".git").exists() for folder in (path, *path.parents)):
@@ -199,7 +198,7 @@ def _outside(path: Path, what: str) -> None:
 
 
 def release_keys() -> dict[str, tuple[str, str]]:
-    """tools/release-keys.txt: each key's status and the sha256 of the procedure filed with it (§4)."""
+    """tools/release-keys.txt: each key's status and the sha256 of the procedure filed with it."""
     keys = {}
     for number, line in enumerate((ROOT / "tools" / "release-keys.txt").read_text().splitlines(), 1):
         if line and not line.startswith("#"):
@@ -212,7 +211,7 @@ def release_keys() -> dict[str, tuple[str, str]]:
 
 
 def _release_key(key: str, passphrase: str | None, *, building: bool) -> PackSigner:
-    """The release key, unlocked, refused where it may not sign (§4, §9 step 1)."""
+    """The release key, unlocked, refused where it may not sign."""
     signer = dsv.signer(key, passphrase)
     if building:
         _outside(Path(key.removeprefix("file:")), "--key: the key file is")
@@ -228,7 +227,7 @@ def _release_key(key: str, passphrase: str | None, *, building: bool) -> PackSig
             fail(f"--key: key {fp[:12]}… is not the signing key tools/release-keys.txt lists")
         if filed != hashlib.sha256(PROCEDURE.encode()).hexdigest():
             fail(f"release.PROCEDURE differs from the procedure filed with key {fp[:12]}…: a changed"
-                 " procedure is filed like a new key (RELEASE.md §4)")  # fmt: skip
+                 " procedure is filed like a new key")  # fmt: skip
     elif status.startswith(("retired", "withdrawn")):
         fail(f"--key: key {fp[:12]}… is {status} in tools/release-keys.txt: it signs nothing more")
     return signer
@@ -355,7 +354,7 @@ def gate(
     today: date,
     vendored: Iterable[tuple[str, str, str]] = (),
 ) -> Gate:
-    """The release gate (§8), pure: grype's matches and pip-audit's report against tools/triage.toml's
+    """The release gate, pure: grype's matches and pip-audit's report against tools/triage.toml's
     decisions in force (decided, not expired), and each vendored file, ``(distribution, version, path)``,
     against its decision."""
     live = {kind: [e for e in entries.get(kind, []) if e["decided"] - ONE_DAY <= today <= e["expires"]]
@@ -410,7 +409,7 @@ def lacks(
     sbom: Mapping[str, Any], *, dpkg: Iterable[str], python: str, exported: str, version: str,
     lock: Mapping[str, Any], machine: str,
 ) -> list[str]:  # fmt: skip
-    """What the CycloneDX SBOM lacks of what the image holds (§7), one refusal each: the Debian distribution,
+    """What the CycloneDX SBOM lacks of what the image holds, one refusal each: the Debian distribution,
     each package dpkg lists (and no other), the python binary, uv.lock's packages for the target, deltasleuth
     and web/package-lock.json's non-dev packages."""
     components = list(_components(sbom.get("components", [])))
@@ -451,7 +450,7 @@ def lacks(
 
 
 def digests(archive: Path, image: str) -> tuple[str, str]:
-    """The config and manifest digests of a ``docker save`` archive that holds ``image`` alone (§2)."""
+    """The config and manifest digests of a ``docker save`` archive that holds ``image`` alone."""
     with tarfile.open(archive) as tar:
         index, listed = (json.load(tar.extractfile(name)) for name in ("index.json", "manifest.json"))  # type: ignore[arg-type]
         count = max(len(index.get("manifests", [])), len(listed))
@@ -469,7 +468,7 @@ def _staging(folder: Path) -> Path:
 
 
 def _scanning(staging: Path, *, network: bool = False) -> dict[str, Any]:
-    """Where and how a scanner runs (§7): in staging, from an environment built from scratch, with the proxy
+    """Where and how a scanner runs: in staging, from an environment built from scratch, with the proxy
     only for the two network steps."""
     folders = dict.fromkeys(
         str(Path(shutil.which(tool) or tool).resolve().parent) for tool in ("syft", "grype")
@@ -484,12 +483,12 @@ def _scanning(staging: Path, *, network: bool = False) -> dict[str, Any]:
 
 
 def _scan(staging: Path, argv: list[str], *, network: bool = False) -> str:
-    """syft's or grype's output, with ``-c <staging>/empty.yaml``, which replaces every config file (§7)."""
+    """syft's or grype's output, with ``-c <staging>/empty.yaml``, which replaces every config file."""
     return _run([*argv, "-c", str(staging / "empty.yaml")], **_scanning(staging, network=network)).stdout
 
 
 def _sbom(staging: Path, version: str, vendor: str, stem: str) -> None:
-    """syft's CycloneDX 1.6 and SPDX 2.3 SBOMs of staging's image.tar, in staging's bundle/sbom (§7)."""
+    """syft's CycloneDX 1.6 and SPDX 2.3 SBOMs of staging's image.tar, in staging's bundle/sbom."""
     (staging / "bundle" / "sbom").mkdir(parents=True, exist_ok=True)
     _scan(staging, ["syft", "scan", "docker-archive:image.tar", "-q", "--select-catalogers",
                     "+javascript-lock-cataloger", "--source-name", "deltasleuth", "--source-version", version,
@@ -498,7 +497,7 @@ def _sbom(staging: Path, version: str, vendor: str, stem: str) -> None:
 
 
 def _grype(staging: Path, sbom: str, *extra: str) -> dict[str, Any]:
-    """grype's report on an SBOM (§8)."""
+    """grype's report on an SBOM."""
     return json.loads(_scan(staging, ["grype", f"sbom:{sbom}", "-o", "json", *extra]))
 
 
@@ -513,7 +512,7 @@ def _approved(staging: Path) -> dict[str, str]:
 
 
 def _pip_audit(staging: Path, sbom: Mapping[str, Any], output: str) -> dict[str, Any]:
-    """pip-audit of each pkg:pypi component but deltasleuth (§8); a dependency it skipped is a refusal."""
+    """pip-audit of each pkg:pypi component but deltasleuth; a dependency it skipped is a refusal."""
     purls = [_purl(c["purl"]) for c in _components(sbom.get("components", [])) if c.get("purl")]
     pinned = dict(
         sorted((name, found) for kind, name, found in purls if kind == "pypi" and name != "deltasleuth")
@@ -575,7 +574,7 @@ def _pins(dockerfile: str) -> tuple[str, list[str]]:
             if len(words) == 3 and words[1].upper() == "AS":
                 stages.add(words[2].lower())
     if "PYTHON" not in args:
-        fail("deploy/Dockerfile has no ARG PYTHON: a release passes its platform's manifest (RELEASE.md §5)")
+        fail("deploy/Dockerfile has no ARG PYTHON: a release passes its platform's manifest")
     return args["PYTHON"][1], others
 
 
@@ -584,7 +583,7 @@ def _porcelain() -> list[str]:
 
 
 def _static(platform: str, out: Path, register: Path, staging: Path) -> dict[str, Any]:
-    """§9 step 2: every check that needs no image, the tools first."""
+    """Every check that needs no image, the tools first."""
     if missing := [tool for tool in TOOLS if shutil.which(tool) is None]:
         fail(f"missing: {', '.join(missing)} (needs docker, git, grype, npm, syft and uv)")
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
@@ -610,7 +609,7 @@ def _static(platform: str, out: Path, register: Path, staging: Path) -> dict[str
         fail("pyproject.toml [project].authors has an email: it would ship in the image and the SBOM;"
              " name the vendor only")  # fmt: skip
     if not (ROOT / "SECURITY.md").is_file():
-        fail("SECURITY.md is missing: write it first (RELEASE.md §11)")
+        fail("SECURITY.md is missing: write it first")
     if "<SECURITY-CONTACT>" in (security := (ROOT / "SECURITY.md").read_text()):
         fail("SECURITY.md still holds <SECURITY-CONTACT>: name the security contact first")
     if CHECKLIST in security:
@@ -655,7 +654,7 @@ def _inspect(ref: str, template: str) -> str | None:
 
 
 def _local(platform: str, python_index: str, build_bases: list[str]) -> dict[str, str | None]:
-    """§9 step 3: the bases are local, for their platforms; their ids, and the index reference's."""
+    """The bases are local, for their platforms; their ids, and the index reference's."""
     daemon = _run(["docker", "version", "--format", "{{.Server.Os}}/{{.Server.Arch}}"]).stdout.strip()
     wanted = [(f"python@{BASES[platform]}", f"{python_index.partition('@')[0]} for {platform}", platform)]
     wanted += [(base, f"the build base for {daemon}", daemon) for base in build_bases]
@@ -673,13 +672,12 @@ def _local(platform: str, python_index: str, build_bases: list[str]) -> dict[str
 
 
 def _smoke(image: str, platform: str, staging: Path) -> None:
-    """§9 step 5: ``ds init`` and ``ds serve`` under the compose hardening, on an internal network with a
-    trusting PostgreSQL and a developer-mode config, no secret; then a cron's next time in Europe/London,
-    which the image's own time zone data must give (docs/mvp/SCHEDULES.md §4), and the files reader's
-    self-test, which spills in the evidence volume (docs/mvp/FILES.md §3), without its limits where the
-    image's machine is not this host's (macOS names aarch64 ``arm64``): it then runs under emulation, where
-    a data limit would count the emulator and the socket filter judge it (docs/mvp/READER.md §11); then the
-    MCP server's self-test, which reads no store (docs/mvp/MCP.md §3); everything removed afterwards."""
+    """``ds init`` and ``ds serve`` under the compose hardening, on an internal network with a trusting
+    PostgreSQL and a developer-mode config, no secret; then a cron's next time in Europe/London, which the
+    image's own time zone data must give, and the files reader's self-test, which spills in the evidence
+    volume, without its limits where the image's machine is not this host's (macOS names aarch64
+    ``arm64``): it then runs under emulation, where a data limit would count the emulator and the socket
+    filter judge it; then the MCP server's self-test, which reads no store; everything removed afterwards."""
     name = f"ds-release-{secrets.token_hex(4)}"
     config = staging / "smoke"
     config.mkdir(mode=0o755)
@@ -739,7 +737,7 @@ def _poll(argv: list[str], deadline: float) -> bool:
 
 
 def _vex(result: Gate, facts: Mapping[str, Any], platform: str, manifest: str, signed: str) -> dict[str, Any]:
-    """OpenVEX 0.2.0 (§8): one statement per matched [[finding]], for its component and, holding it, the image
+    """OpenVEX 0.2.0: one statement per matched [[finding]], for its component and, holding it, the image
     (the purl spec's digest version)."""
     oci = f"pkg:oci/deltasleuth@sha256%3A{manifest.removeprefix('sha256:')}?tag={facts['version']}"
     matched: dict[tuple[str, str], tuple[list[Finding], dict[str, Any]]] = {}
@@ -764,7 +762,7 @@ def _vex(result: Gate, facts: Mapping[str, Any], platform: str, manifest: str, s
 
 
 def _summary(result: Gate, matches: list[dict[str, Any]], status: Mapping[str, Any], stem: str) -> str:
-    """SUMMARY.txt (§2): the policy, the result, counts by severity and fix state, the decisions, the database
+    """SUMMARY.txt: the policy, the result, counts by severity and fix state, the decisions, the database
     and how to rescan."""
     counts: dict[str, dict[str, int]] = {}
     for vuln in (match["vulnerability"] for match in matches):
@@ -776,7 +774,7 @@ def _summary(result: Gate, matches: list[dict[str, Any]], status: Mapping[str, A
     decision = "{0[status]}{1} until {0[expires]}, decided {0[decided]} by {0[by]}: {0[statement]}"
     lines = [
         f"{stem}: scan summary",
-        "Policy (docs/mvp/RELEASE.md §8): a grype match with a fix that is Critical, High, of unknown",
+        "Policy: a grype match with a fix that is Critical, High, of unknown",
         "severity or known exploited, and a pip-audit finding with a fix, block the release unless",
         "tools/triage.toml decides it, with an expiry; everything else is reported. Each vendored library",
         "has a dated decision.",
@@ -802,7 +800,7 @@ def _summary(result: Gate, matches: list[dict[str, Any]], status: Mapping[str, A
 
 
 def _transition(signer: PackSigner) -> dict[str, bytes]:
-    """tools/transition.txt and its .sig, when they hand this key over (§4): its last bundle ships them."""
+    """tools/transition.txt and its .sig, when they hand this key over: its last bundle ships them."""
     path, sig = ROOT / "tools" / "transition.txt", ROOT / "tools" / "transition.txt.sig"
     if not path.is_file() or f"\nold: {signer.fingerprint}\n" not in path.read_text():
         return {}
@@ -840,8 +838,8 @@ def build(
     platform: Annotated[str, typer.Option(help="linux/amd64 or linux/arm64.")] = "linux/amd64",
     passphrase: dsv.PassOpt = None,
 ) -> None:
-    """Build, catalogue, scan, gate, sign and tag the release of HEAD (docs/mvp/RELEASE.md §9). It stages in a
-    hidden folder in DIR and removes the image of a build it refuses, so a refusal leaves nothing."""
+    """Build, catalogue, scan, gate, sign and tag the release of HEAD. It stages in a hidden folder in DIR
+    and removes the image of a build it refuses, so a refusal leaves nothing."""
     if platform not in BASES:
         fail("--platform must be linux/amd64 or linux/arm64")
     signer = _release_key(key, passphrase, building=True)
@@ -850,11 +848,11 @@ def build(
         fail(f"--notes: {notes} is not a readable file")
     said = OPEN_BUILD.encode() in notes.read_bytes().splitlines()
     if not licence.SHIPPED_KEYS and not said:
-        fail(f'--notes: a release without vendor keys is an open build: {notes} lacks the line "{OPEN_BUILD}"'
-             " (LICENCE.md §19)")  # fmt: skip
+        fail(f"--notes: a release without vendor keys is an open build: {notes} lacks the line"
+             f' "{OPEN_BUILD}"')  # fmt: skip
     if licence.SHIPPED_KEYS and said:
-        fail(f'--notes: a release with vendor keys enforces a licence: {notes} holds the line "{OPEN_BUILD}"'
-             " (LICENCE.md §19)")  # fmt: skip
+        fail(f"--notes: a release with vendor keys enforces a licence: {notes} holds the line"
+             f' "{OPEN_BUILD}"')  # fmt: skip
     if not (register.parent.is_dir() and os.access(register.parent, os.W_OK)):
         fail(f"--register: {register.parent} is not a writable folder")
     if register.exists() and not (register.is_file() and os.access(register, os.R_OK | os.W_OK)):
@@ -876,7 +874,7 @@ def build(
 
 
 def _discard(image: str, built: str, held: str | None) -> None:
-    """Take a refused build's image out of the local store (§9): ``docker image rm`` of its tag, while the tag
+    """Take a refused build's image out of the local store: ``docker image rm`` of its tag, while the tag
     still names the image this run built, never forced and by no other reference, so an image under another
     tag or in use stays. The image the tag named before the build, which this run did not build and never
     removes, then gets its tag back. What could not be done is a ``warning:`` line."""
@@ -901,7 +899,7 @@ def _build(
     entries, today = facts["entries"], facts["today"]
     ids = _local(platform, facts["python_index"], facts["build_bases"])
     bundle, image = staging / "bundle", f"deltasleuth:{version}"
-    # 4. The build, from the source archive, never the working tree.
+    # The build, from the source archive, never the working tree.
     _git("archive", "--format=tar", f"--prefix=deltasleuth-{version}/", "-o", str(staging / "source.tar"),
          revision, "--", *SHIPPED)  # fmt: skip
     with tarfile.open(staging / "source.tar") as tar:
@@ -926,7 +924,7 @@ def _build(
         if _inspect(ref, "{{.Id}}") != before:
             fail(f"the build changed the local image of {_short(ref)}: something pulled, and this tool"
                  " never pulls")  # fmt: skip
-    # 5. The smoke test. 6. The save, its digests, the SBOMs and their completeness, the vendored files.
+    # The smoke test; then the save, its digests, the SBOMs and their completeness, the vendored files.
     _smoke(image, platform, staging)
     _run(["docker", "save", "-o", str(staging / "image.tar"), image])
     config, manifest = digests(staging / "image.tar", image)
@@ -950,7 +948,7 @@ def _build(
         "".join(f"{d} {v}\t{p}\t{e['status']} until {e['expires']}\n" for (d, v, p), e in checked.decided)
     )
     _gzip(staging / "image.tar", bundle / "image" / f"{stem}.tar.gz")
-    # 7. The scans, the gate and the VEX, which grype must apply to both SBOMs.
+    # The scans, the gate and the VEX, which grype must apply to both SBOMs.
     (bundle / "scan").mkdir()
     _scan(staging, ["grype", "db", "update"], network=True)
     status = json.loads(_scan(staging, ["grype", "db", "status", "-o", "json"]))
@@ -977,7 +975,7 @@ def _build(
         for finding, entry in result.triaged:
             if entry["status"] == "not_affected" and (finding.id, finding.purl) in left:
                 fail(f"the VEX did not suppress {finding.id} for {finding.purl}")
-    # 8. The checks, then the tree as it was.
+    # The checks, then the tree as it was.
     for argv in CHECKS:
         required = os.environ | {"DS_REQUIRE_DB": "1", "DS_REQUIRE_TOOLS": "1"}
         done = _run(argv, check=False, cwd=ROOT, env=required)
@@ -988,7 +986,7 @@ def _build(
     if head != revision or changed:
         fail(f"the tree changed during the build (HEAD {head[:12]}…, {len(changed)} path changed):"
              " nothing was released")  # fmt: skip
-    # 9. Assemble, register, sign, self-check, the transport tar, into DIR, tag.
+    # Assemble, register, sign, self-check, the transport tar, into DIR, tag.
     reported = facts["reported"]
     release = {
         "format": FORMAT, "version": version, "revision": revision, "created": facts["created"],
@@ -1049,7 +1047,7 @@ def _build(
 @app.command()
 def rescan(bundles: Annotated[list[Path], typer.Argument(help="Archived bundle folders.")]) -> None:
     """Apply today's grype database, pip-audit's advisories and tools/triage.toml to archived bundles, in the
-    build's environment; exit 2 lists what would block (§8)."""
+    build's environment; exit 2 lists what would block."""
     entries, problems = triage((ROOT / "tools" / "triage.toml").read_text())
     if problems:
         _refuse(problems)

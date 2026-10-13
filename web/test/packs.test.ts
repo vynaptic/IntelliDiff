@@ -1,5 +1,5 @@
 // What the Run screen and a review say about a cycle's census, adjudications and evidence packs, which controls
-// a cycle takes, and what the screens send (docs/mvp/PACK.md §1.2, §5, §7.1, §7.3).
+// a cycle takes, and what the screens send.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
@@ -49,7 +49,7 @@ test('a side on MySQL or Oracle says how it was read where a snapshot stands, wh
 });
 
 test('a file side says what it was read from where a snapshot stands, without a digest, and warns as the certificate does', () => {
-  // docs/mvp/FILES.md §11: fixed files, never a snapshot and never the system they were exported from.
+  // Fixed files, never a snapshot and never the system they were exported from.
   const fixed = { engine: 'files', consistency: 'fixed', files: 12, bytes: 3_650_722_201, mount: 'read-only', rejected: 0, repeated: 0 } as const;
   const from = 'from 12 fixed file(s), 3,650,722,201 bytes (an export, not the system it came from)';
   const scan = { basis: 'scan', target: 'exports', relation: 'customers', rows: 10, skipped: 0, first_at: AT, last_at: AT, ...fixed } as const;
@@ -66,7 +66,7 @@ test('a file side says what it was read from where a snapshot stands, without a 
     'SIDE B: 2 KEY(S) ARE HELD BY MORE THAN ONE ROW: each is inconclusive, never paired',
     'SIDE B WAS READ FROM A DIRECTORY DELTASLEUTH COULD WRITE TO',
   ]);
-  // On side a such lines are no warning: the cycle is no census (C1).
+  // On side a such lines are no warning: the cycle is no census.
   assert.deepEqual(censusWarnings({ cycle: 1, at: AT, a: { ...scan, rejected: 3 }, b: null }), [
     "side a's files hold 3 line(s) that were not rows: this cycle is not a census, and no pack is issued",
   ]);

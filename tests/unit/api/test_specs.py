@@ -55,7 +55,7 @@ def test_a_spec_is_stored_once_per_content_and_read_back(
     created = client.post("/v1/specs", content=spec_yaml, headers={"content-type": "application/yaml"})
     assert created.status_code == 201
     spec_id = created.json()["spec_id"]
-    # What gates its runs under SSO, and its approval (docs/mvp/APPROVALS.md §6.1):
+    # What gates its runs under SSO, and its approval:
     assert {name: created.json()[name] for name in ("needs", "approval_id")} == {
         "needs": ["clear"],
         "approval_id": None,
@@ -134,7 +134,7 @@ def test_masked_inline_composite_keys(client: TestClient, spec_yaml: str) -> Non
 
 
 def test_a_body_the_store_cannot_keep_as_uploaded_is_refused(client: TestClient, spec_yaml: str) -> None:
-    # jsonb holds neither NUL nor -0.0, so the stored body would not re-hash (docs/mvp/APPROVALS.md §6.2).
+    # jsonb holds neither NUL nor -0.0, so the stored body would not re-hash.
     doc = yaml.safe_load(spec_yaml)
     nul = doc | {"metadata": doc["metadata"] | {"owner": "te\x00sts"}}
     tolerance = {"fields": [{"path": "$.price", "compare": {"tolerance": {"abs": -0.0}}}]}
@@ -198,8 +198,8 @@ def test_validate_lists_issues_without_storing(client: TestClient, spec_yaml: st
     broken = client.post("/v1/specs/validate", content="key: [1,").json()
     assert (broken["valid"], broken["issues"][0]["code"]) == (False, "yaml_syntax")
     assert client.get("/v1/specs").json()["items"] == []
-    # Identifier keys that no key.pattern tells: no pack is issued for such a spec's runs, said here
-    # (docs/mvp/PACK.md §2.3). A warning: the spec is valid, and is stored.
+    # Identifier keys that no key.pattern tells: no pack is issued for such a spec's runs, said here. A
+    # warning: the spec is valid, and is stored.
     blind = spec_yaml.replace("^K[0-9]{8}$", "^(K[0-9]{8})?$")
     validated = client.post("/v1/specs/validate", content=blind).json()
     assert (validated["valid"], [(i["pointer"], i["code"]) for i in validated["issues"]]) == (

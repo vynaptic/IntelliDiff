@@ -1,6 +1,6 @@
-# uv for deploy/Dockerfile's build stage (docs/mvp/RELEASE.md §5): pip installs it with --require-hashes,
-# so only these PyPI wheels are accepted. In order: manylinux_2_17 x86_64, manylinux_2_17 aarch64 and
-# manylinux_2_28 aarch64. A new uv version takes each such wheel's hash from PyPI's JSON metadata again.
+# uv for deploy/Dockerfile's build stage: pip installs it with --require-hashes, so only these PyPI wheels
+# are accepted. In order: manylinux_2_17 x86_64, manylinux_2_17 aarch64 and manylinux_2_28 aarch64. A new
+# uv version takes each such wheel's hash from PyPI's JSON metadata again.
 uv==0.11.21 \
     --hash=sha256:b9ecdefa81db7e966d1655988cad6f840316228381dd69131ebc4ae9362bbccd \
     --hash=sha256:00193e4e077c27ee3d66da356744dbf0b3aa59356dfbd9a9efb1dc8469af8ad7 \

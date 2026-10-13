@@ -8,9 +8,9 @@ run: no sample, or a key that cannot be sent, is ``skipped``; a malformed sample
 ``unparseable``. Observing and comparing run off the event loop, so a heavy spec map never stalls
 the API or the other keys. A run is observed with the capabilities its targets declared when it
 was created (``Context.capabilities``). Stored observations are opened with the run's sealer, and
-their headers sealed with it when saved (docs/mvp/RETENTION.md §3). A side that reads fixed files is read
+their headers sealed with it when saved. A side that reads fixed files is read
 once: a recheck keeps its first observation of that side, after one stat check of the files, and reads
-the other side alone (docs/mvp/FILES.md §12).
+the other side alone.
 """
 
 from __future__ import annotations
@@ -48,14 +48,13 @@ from deltasleuth.security.tokenise import mask_finding, mask_key
 from deltasleuth.store import repo
 
 Reads = dict[Side, Observation]
-# What a recheck does not read again (docs/mvp/FILES.md §12): a side of fixed files' first observation, by
+# What a recheck does not read again: a side of fixed files' first observation, by
 # its id, and the state it was observed as.
 Held = dict[Side, tuple[str, SideState]]
 
 
 class EvidenceMissing(Exception):
-    """A stored observation's blob is gone, purged or lost: its reads answer 410
-    (docs/mvp/RETENTION.md §4.4)."""
+    """A stored observation's blob is gone, purged or lost: its reads answer 410."""
 
 
 def body_of(ctx: Context, obs: Observation) -> bytes | None:
@@ -118,23 +117,23 @@ class LiveReader:
     @property
     def batches(self) -> bool:
         """Whether a slot reads a group of keys (``prefetch``): every side is a table, or a table side
-        reads fixed files, each read of which is a pass over them whatever its keys (docs/mvp/FILES.md §12);
+        reads fixed files, each read of which is a pass over them whatever its keys;
         a service side of such a pair then reads the group's keys one by one."""
         tables = [c for c in self._connectors.values() if isinstance(c, TableConnector)]
         return len(tables) == len(self._connectors) or any(c.fixed for c in tables)
 
     @property
     def fixed(self) -> frozenset[Side]:
-        """The sides that read fixed files: what a read of one observed stands (docs/mvp/FILES.md §12)."""
+        """The sides that read fixed files: what a read of one observed stands."""
         return frozenset(
             side for side, c in self._connectors.items() if isinstance(c, TableConnector) and c.fixed
         )
 
     async def standing(self, firsts: Mapping[str, KeyResult]) -> dict[str, Held]:
-        """What a recheck of each key (``firsts``: its stored first result) does not read again
-        (docs/mvp/FILES.md §12): a side of fixed files keeps the key's first observation of it, after one
-        stat check of its files for the group. A first read that failed observed no bytes, and files that
-        do not answer the check keep nothing: those are read."""
+        """What a recheck of each key (``firsts``: its stored first result) does not read again: a side of
+        fixed files keeps the key's first observation of it, after one stat check of its files for the
+        group. A first read that failed observed no bytes, and files that do not answer the check keep
+        nothing: those are read."""
         held: dict[str, Held] = {key: {} for key in firsts}
         for side, connector in self._connectors.items():
             if not (isinstance(connector, TableConnector) and connector.fixed):
@@ -147,12 +146,12 @@ class LiveReader:
 
     @property
     def large(self) -> bool:
-        """Whether a table side's rows may hold large values (ENGINES.md §6): its keys are read few at a
+        """Whether a table side's rows may hold large values: its keys are read few at a
         time."""
         return any(isinstance(c, TableConnector) and c.large for c in self._connectors.values())
 
     async def ahead(self, keys: Sequence[str]) -> None:
-        """Read ``keys`` on each side of fixed files, one pass over them a side (docs/mvp/FILES.md §12), for a
+        """Read ``keys`` on each side of fixed files, one pass over them a side, for a
         group whose other side is then read few keys at a time: ``prefetch`` is told of them."""
         for side in self.fixed:
             connector = self._connectors[side]
@@ -166,10 +165,9 @@ class LiveReader:
         held: Mapping[str, Held] | None = None,
         ahead: Sequence[str] = (),
     ) -> None:
-        """Read each batch of keys on each table side, in its sides' order, in one statement a side
-        (TABLES.md §12), but the sides ``held`` keeps of a key (``standing``) and the sides of fixed files
-        that ``ahead`` read of its keys; what an earlier group left unread of these keys is dropped first,
-        never served."""
+        """Read each batch of keys on each table side, in its sides' order, in one statement a side, but
+        the sides ``held`` keeps of a key (``standing``) and the sides of fixed files that ``ahead`` read
+        of its keys; what an earlier group left unread of these keys is dropped first, never served."""
         tables = {side: c for side, c in self._connectors.items() if isinstance(c, TableConnector)}
         before = {(key, side) for side in (self.fixed if ahead else ()) for key in ahead}
         for keys, _ in batches:  # groups of one run share the connectors, and lease distinct keys
@@ -248,7 +246,7 @@ async def evaluate(
     pass_no: int,
     held: Held | None = None,
 ) -> tuple[KeyResult, Reads]:
-    """Read both sides and compare them: A then B on the first pass, B then A on a recheck (§4.5),
+    """Read both sides and compare them: A then B on the first pass, B then A on a recheck,
     so a B that is catching up gets the most time; a recheck reads no side ``held`` keeps."""
     kept = {key: held} if held else None
     return (await evaluate_many(ctx, spec, caps, reader, [(key, pass_no)], run_id=run_id, held=kept))[0]
@@ -399,8 +397,8 @@ async def save_passes(
     """``save_pass`` for each (pass_no, result, reads), with one statement per table, in the caller's
     transaction. Each key is saved by its masked form (the foreign keys refuse a mismatch) and each
     observation's headers sealed by the run's ``sealer``; a first pass is a fresh read, a sample's retry
-    replacing a stored result (docs/mvp/SAMPLING.md §7). The blob lock, shared, is taken and every blob
-    ensured first, so a drain cannot delete a blob these rows reference (docs/mvp/RETENTION.md §5.4)."""
+    replacing a stored result. The blob lock, shared, is taken and every blob
+    ensured first, so a drain cannot delete a blob these rows reference."""
     keys = [mask_key(result.key, spec, ctx.tokeniser) for _, result, _ in passes]
     observations = [
         (pass_no, masked, obs, _sealed_headers(sealer, cycle, obs))

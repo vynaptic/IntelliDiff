@@ -1,5 +1,5 @@
 """Table pairs with row filters, key maps and type maps, a soak that scans its tables every cycle, and
-batched per-key reads (docs/mvp/TABLES.md §9-12), each run through ``create_run`` and the worker."""
+batched per-key reads, each run through ``create_run`` and the worker."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ def scanned(run: repo.Row) -> tuple[int, ...]:
     )
 
 
-# --- row filters (§9) ---------------------------------------------------------------------------------
+# --- row filters ---------------------------------------------------------------------------------
 
 # On side b, customer 2 closed (it leaves b's population), 3 is missing, 4 is closed on both sides (in
 # neither population), and 5's email changed.
@@ -92,7 +92,7 @@ async def test_a_row_that_leaves_one_side_s_filter_is_filter_membership_never_mi
     assert (coverage["filter_a"], coverage["filter_b"]) == (WHERE, WHERE)  # the predicates as written
 
 
-# --- key maps (§10) -------------------------------------------------------------------------------
+# --- key maps -------------------------------------------------------------------------------
 
 ENTITIES_A = """
     CREATE TABLE entities (code text PRIMARY KEY, name text);
@@ -165,7 +165,7 @@ async def test_a_key_map_pairs_side_values_with_their_canonical_keys(
     assert one.outcome.value == "MATCH"
 
 
-# --- type maps (§10) ------------------------------------------------------------------------------
+# --- type maps ------------------------------------------------------------------------------
 
 # Side a is a legacy table: Y/N flags, naive timestamps and unrounded amounts. Side b: booleans,
 # instants and two decimals. Row 3's flag is neither Y nor N, and row 4's differs.
@@ -204,7 +204,7 @@ async def test_type_maps_make_legacy_values_compare_equal(tables: Callable[..., 
     assert one.outcome.value == "MATCH"  # the per-key read converts as the scan does
 
 
-# --- a soak over a scan (§11) ---------------------------------------------------------------------
+# --- a soak over a scan ---------------------------------------------------------------------
 
 USERS = """
     CREATE TABLE users (userid int PRIMARY KEY, email text);
@@ -263,7 +263,7 @@ async def test_a_soak_over_two_tables_scans_them_anew_every_cycle(
     ]
 
 
-# --- batched per-key reads (§12) ------------------------------------------------------------------
+# --- batched per-key reads ------------------------------------------------------------------
 
 ROWS = 500
 MANY = f"""

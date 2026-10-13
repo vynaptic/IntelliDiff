@@ -1,4 +1,4 @@
-"""The notifier (docs/mvp/ALERTS.md §4, §5, §9): the audit hash chain is the outbox.
+"""The notifier: the audit hash chain is the outbox.
 
 Each fact worth a notification is already an audit row written last in the transaction that makes it true,
 and 009 chains every row under the DSAU lock in commit order. The feed follows the chain from a durable
@@ -53,7 +53,7 @@ CLOSE_S = 10  # close waits this long for a cancelled task
 PRUNE_BATCH = 10_000
 POLICY = RetryPolicy(initial_s=60, multiplier=3, max_s=3600)  # 8 attempts span about two hours
 QUIET = ("notify.dead", "notify.skipped")  # a dead delivery of these is only logged: no loop
-ADDED = ("programmes", "gates", "causes")  # rule keys newer than the routing token (READINESS.md §8)
+ADDED = ("programmes", "gates", "causes")  # rule keys newer than the routing token
 log = logging.getLogger(__name__)
 
 
@@ -100,7 +100,7 @@ async def record_config(ctx: Context) -> None:
 
 
 def _unlabelled(spec: CompiledSpec) -> str | None:
-    """Why the spec's name is never sent (§6.4): its key pattern cannot tell a key, or it is key-shaped."""
+    """Why the spec's name is never sent: its key pattern cannot tell a key, or it is key-shaped."""
     try:
         search = rawvalues.searcher(spec)
     except rawvalues.EmptyPattern:
@@ -169,7 +169,7 @@ class Notifier:
             self._specs[spec_id] = await self.ctx.spec(conn, spec_id)
         return self._specs[spec_id]
 
-    # -- the feed (§4) ----------------------------------------------------------------------------------
+    # -- the feed ----------------------------------------------------------------------------------
 
     async def feed(self) -> None:
         """One pass: the fed rows after the cursor, up to the head read first, turned into deliveries."""
@@ -234,9 +234,9 @@ class Notifier:
 
     async def _seen(self, conn: repo.Conn, row: Mapping[str, Any]) -> Seen:
         """What a row's projector reads: the run it names as of now (a labelling's row names its run in its
-        detail, docs/mvp/ACCURACY.md §10), the cycle it concerns, that cycle's end and draw, whether the run
+        detail), the cycle it concerns, that cycle's end and draw, whether the run
         has a ``cancelling`` row; or the approval it names; or the pair whose readiness changed, and why its
-        name is never sent (its newest version tells: docs/mvp/READINESS.md §8)."""
+        name is never sent (its newest version tells)."""
         obj = row["object"]
         if obj.startswith("V-"):
             obj = row["detail"]["run_id"]
@@ -367,12 +367,12 @@ class Notifier:
         return delivery_id
 
     async def _digest(self, conn: repo.Conn, event: Event) -> dict[str, Any]:
-        """The cycle's digest (§2.2, ``notifications.digest``)."""
+        """The cycle's digest (``notifications.digest``)."""
         run = await repo.get_run(conn, event.run["run_id"])  # type: ignore[index]
         bug = approvals.bug_rules(await self._spec(conn, run["spec_id"]))  # type: ignore[index]
         return await notifications.digest(conn, run, event.facts["cycle"], bug)  # type: ignore[arg-type]
 
-    # -- delivery (§5) ----------------------------------------------------------------------------------
+    # -- delivery ----------------------------------------------------------------------------------
 
     async def scan(self) -> None:
         """Start a send task for each due channel without one."""
@@ -471,7 +471,7 @@ class Notifier:
         }  # fmt: skip
         await audit(WORKER, "notify.dead", f"notify:{name}", detail)
 
-    # -- housekeeping (§5) ------------------------------------------------------------------------------
+    # -- housekeeping ------------------------------------------------------------------------------
 
     async def housekeep(self) -> None:
         """Hourly: ``notify.daily`` once a UTC day from ``daily_hour`` when a rule routes it, and the

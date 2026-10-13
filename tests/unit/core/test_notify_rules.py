@@ -1,7 +1,7 @@
-"""Matching rules (docs/mvp/ALERTS.md §3): a change condition holds each cycle its fact reaches the bound,
+"""Matching rules: a change condition holds each cycle its fact reaches the bound,
 from the first cycle; a level condition fires when it crosses or recovers, never while it stays, and a null
 fact never fires; specs, modes and each kind's filter; a readiness rule's causes, programmes, states and
-gates (docs/mvp/READINESS.md §8)."""
+gates."""
 
 from __future__ import annotations
 
@@ -127,11 +127,11 @@ def test_specs_modes_and_filters() -> None:
     )
     assert notify.fires(rule(events=["licence.state"], states=["ending"]), state)
     assert notify.fires(rule(events=["licence.state"], states=["expired"]), state) is None
-    assert notify.fires(rule(events=["licence.state"], states=["open"]), state) is None  # LICENCE.md §19
+    assert notify.fires(rule(events=["licence.state"], states=["open"]), state) is None
 
 
 def test_a_missed_time_is_matched_by_the_spec_and_mode_of_its_row() -> None:
-    """``schedule.missed`` has no run block (docs/mvp/SCHEDULES.md §8): its row's detail names the spec and
+    """``schedule.missed`` has no run block: its row's detail names the spec and
     the mode rules match; no filter of another kind is for it."""
     event = missed()  # of customer-profile, batch
     assert notify.fires(rule(events=["schedule.missed"]), event) == Fired()
@@ -155,7 +155,7 @@ def test_a_missed_time_is_matched_by_the_spec_and_mode_of_its_row() -> None:
 
 
 def test_a_schema_change_is_matched_as_a_run_s_event_and_its_pause_by_its_reason() -> None:
-    """docs/mvp/PRECHECKS.md §9: ``schema.drift`` is a run's event, matched by spec and mode and taking no
+    """``schema.drift`` is a run's event, matched by spec and mode and taking no
     filter; the guard's pause is a ``run.paused`` whose reason a rule may name."""
     event = drifted()  # of a soak of customer-profile
     assert notify.fires(rule(events=["schema.drift"]), event) == Fired()

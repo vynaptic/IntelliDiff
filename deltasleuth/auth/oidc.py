@@ -1,10 +1,10 @@
-"""OIDC sign-in (docs/mvp/AUTH.md §2): the IdP client, ID token validation, the claims mapping and the
+"""OIDC sign-in: the IdP client, ID token validation, the claims mapping and the
 signed login cookie.
 
 DeltaSleuth is a confidential relying party using the code flow with PKCE S256, ``state`` and
 ``nonce``. The IdP is reached at the issuer's host from settings, and its tokens are dropped once the
 identity is known. A failure before then raises ``SignInError``: its ``code`` is one of the fixed codes
-the browser is sent (§9), and its message, for the server log, never reaches the browser.
+the browser is sent, and its message, for the server log, never reaches the browser.
 """
 
 from __future__ import annotations
@@ -112,7 +112,7 @@ def _mac(key: bytes, payload: str) -> str:
 @dataclass(frozen=True)
 class Login:
     """A sign-in in progress, carried by the signed ``__Host-ds_login`` cookie (``ds_login_<port>`` on a
-    plain-http loopback ``public_url``; §2, and §3's exception E1)."""
+    plain-http loopback ``public_url``)."""
 
     state: str
     nonce: str
@@ -219,7 +219,7 @@ _SPKI = serialization.PublicFormat.SubjectPublicKeyInfo
 
 
 def client_assertion(settings: OidcSettings, credential: Credential, audience: str) -> str:
-    """The private_key_jwt assertion (§2.2): valid for 60 s, for the token endpoint only."""
+    """The private_key_jwt assertion: valid for 60 s, for the token endpoint only."""
     iat = int(time.time())
     claims = {
         "iss": settings.client_id,
@@ -248,7 +248,7 @@ def _origin(url: str) -> tuple[str, str, int] | None:
 
 
 def check_discovery(doc: Mapping[str, Any], settings: OidcSettings) -> dict[str, Any]:
-    """``doc`` when it passes §2.1's checks; else SignInError naming the values."""
+    """``doc`` when it passes the discovery checks; else SignInError naming the values."""
 
     def refuse(reason: str) -> NoReturn:
         raise SignInError("idp_unavailable", f"discovery {reason}")
@@ -283,7 +283,7 @@ def check_discovery(doc: Mapping[str, Any], settings: OidcSettings) -> dict[str,
     return dict(doc)
 
 
-# -- the ID token (§2.3) ---------------------------------------------------------------------------
+# -- the ID token ---------------------------------------------------------------------------
 
 
 def _fits(jwk: Mapping[str, Any], alg: str) -> bool:
@@ -362,7 +362,7 @@ def validate_id_token(
     return claims
 
 
-# -- claims (§2.4) ---------------------------------------------------------------------------------
+# -- claims ---------------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -533,7 +533,7 @@ class Oidc:
             log.warning("identity provider: %s", exc)
 
     async def check(self) -> list[dict[str, Any]]:
-        """For ``ds auth check``: fetch discovery (checked, §2.1) and the JWKS now; the JWKS keys.
+        """For ``ds auth check``: fetch discovery (checked) and the JWKS now; the JWKS keys.
         SignInError names a failed check."""
         async with self._client() as http:
             return await self._keys(http, (await self._metadata(http))["jwks_uri"])

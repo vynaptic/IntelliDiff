@@ -4,10 +4,10 @@ A targets file maps ids to ``base_url``, ``auth`` (``secret_ref: file:...`` only
 network opt-ins and ``capabilities`` (``TargetCapabilities`` fields). Specs name target ids only,
 so the registry is the SSRF allowlist. A target without ``base_url`` serves file samples only; one
 with ``dsn_ref`` (a file holding a PostgreSQL DSN) or ``engine`` (a MySQL or Oracle endpoint, declared
-so the guard sees it: docs/mvp/ENGINES.md §4; or ``files``, a directory of exports mounted read-only:
-docs/mvp/FILES.md §4) is a database, which reports a missing row as 404 (docs/mvp/TABLES.md). Relative
-secret references resolve against the targets file's directory. A service declared in the product
-(``deltasleuth.targets``) is judged as a file holding it alone (``declared``).
+so the guard sees it; or ``files``, a directory of exports mounted read-only) is a database, which
+reports a missing row as 404. Relative secret references resolve against the targets file's directory. A
+service declared in the product (``deltasleuth.targets``) is judged as a file holding it alone
+(``declared``).
 """
 
 from __future__ import annotations
@@ -70,7 +70,7 @@ _HEADER = {
     "maxLength": 128,
     "not": {"pattern": "^(?i:host|content-length|transfer-encoding|connection|content-type)$"},
 }
-# A files target's members (docs/mvp/FILES.md §4), checked by ``_files`` so that T8 words them.
+# A files target's members, checked by ``_files`` so that its one message words them.
 _FILES_ONLY = {
     "root": {"type": "string"},
     "settle_s": {"type": "integer"},
@@ -356,8 +356,8 @@ def _target(target_id: str, entry: dict[str, Any], base_dir: Path, issues: list[
 
 
 def _files(entry: dict[str, Any], at: tuple[str, ...], issues: list[SpecIssue]) -> None:
-    """A files target's members (docs/mvp/FILES.md §4, T8) and its root's form (T9); where it may lie needs
-    the settings, so ``manifest.forbidden`` judges that (T10)."""
+    """A files target's members and its root's form; where it may lie needs
+    the settings, so ``manifest.forbidden`` judges that."""
     settle = entry.get("settle_s", 60)
     if "root" not in entry or set(entry) - _FILES_TAKES or not 0 <= settle <= 86400:
         message = (
@@ -367,7 +367,7 @@ def _files(entry: dict[str, Any], at: tuple[str, ...], issues: list[SpecIssue]) 
         issues.append(SpecIssue(pointer(at), message, "invalid_files_target"))
     root = entry.get("root", "/x")
     # In its normal form: with a trailing or doubled / it is not its own real path, which a plan refuses as
-    # a symbolic link (P14).
+    # a symbolic link.
     normal = root.startswith("/") and not root.startswith("//") and os.path.normpath(root) == root
     if not normal or root == "/" or len(root) > ROOT_MAX:
         message = (
@@ -401,7 +401,7 @@ def _is_subject(dn: str) -> bool:
 def _database(
     entry: dict[str, Any], base_dir: Path, at: tuple[str, ...], issues: list[SpecIssue]
 ) -> DatabaseTarget:
-    """An engine target's endpoint (docs/mvp/ENGINES.md §4); its problems are added to ``issues``."""
+    """An engine target's endpoint; its problems are added to ``issues``."""
     engine, host = entry["engine"], entry["host"]
     own, other = ("database", "service") if engine == "mysql" else ("service", "database")
     dn, name = entry.get("tls_server_dn"), entry.get("tls_verify_name", True)

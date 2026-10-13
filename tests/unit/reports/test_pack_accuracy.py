@@ -1,4 +1,4 @@
-"""Labelled accuracy in an evidence pack (docs/mvp/ACCURACY.md §9): the attested labelling's labels without
+"""Labelled accuracy in an evidence pack: the attested labelling's labels without
 keys and its score, hashed as the sign-off attests and its ``accuracy.label`` row holds; every labelling of
 the cycle, keyless; the manifest; the certificate's section (``lines``, ``LIMITS`` verbatim, the hand check)
 and each warning; a labelling that no longer hashes gets no pack; a sign-off requested before 013 packs as

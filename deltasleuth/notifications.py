@@ -1,4 +1,4 @@
-"""Notifications as people see and steer them (docs/mvp/ALERTS.md §10, §11): the channels' state and the
+"""Notifications as people see and steer them: the channels' state and the
 banners every screen shows, a test send, dead deliveries sent again, mutes, and a cycle's digest, which
 ``ds notify explain`` and the notifier share. The API and the CLI call this module; only the worker imports
 the notifier itself (``runner.notify``).
@@ -30,7 +30,7 @@ from deltasleuth.core.notify import Event
 from deltasleuth.security import rawvalues
 from deltasleuth.store import repo
 
-OFF = "notifications are off: add notify to deltasleuth.yaml and restart (docs/mvp/ALERTS.md §8)"
+OFF = "notifications are off: add notify to deltasleuth.yaml and restart"
 BEHIND = timedelta(minutes=10)  # an unread row or a due head this old: is the worker running?
 RETRY_SINCE = timedelta(hours=72)
 MUTE_HOURS = 168
@@ -39,7 +39,7 @@ _RUN = re.compile(r"R-[0-9A-Z]{26}")
 
 
 class Refused(ValueError):
-    """A notification act refused (docs/mvp/ALERTS.md §10): its HTTP status and binding message."""
+    """A notification act refused: its HTTP status and binding message."""
 
     def __init__(self, status: int, message: str) -> None:
         super().__init__(message)
@@ -64,13 +64,13 @@ def utc(at: datetime) -> str:
 
 
 def routed(notify: NotifySettings) -> list[str]:
-    """The fed audit actions whose kinds a rule routes: the rows a feed pass reads (§4)."""
+    """The fed audit actions whose kinds a rule routes: the rows a feed pass reads."""
     kinds = {kind for rule in notify.rules for kind in rule.events}
     return [action for action, (_, yields) in events.EVENTS.items() if yields & kinds]
 
 
 def rendered(channel: ChannelSettings) -> str:
-    """What a delivery's body is rendered for (§5): the channel's ``kind:labels:links``. A pending or dead
+    """What a delivery's body is rendered for: the channel's ``kind:labels:links``. A pending or dead
     delivery rendered for other settings is never sent."""
     return f"{channel.kind}:{int(bool(channel.labels))}:{int(bool(channel.links))}"
 
@@ -85,7 +85,7 @@ def described(channel: ChannelSettings) -> dict[str, Any]:
     }  # fmt: skip
 
 
-# -- what every screen shows (§10, §11) -----------------------------------------------------------------
+# -- what every screen shows -----------------------------------------------------------------
 
 
 async def status(ctx: Context) -> dict[str, Any]:
@@ -116,7 +116,7 @@ async def status(ctx: Context) -> dict[str, Any]:
 def banners(
     state: Mapping[str, Any], channels: Mapping[str, Mapping[str, Any]], mutes: list[repo.Row]
 ) -> list[str]:
-    """What every screen says (§10): each active mute; a channel whose deliveries died since its last sent
+    """What every screen says: each active mute; a channel whose deliveries died since its last sent
     one, or whose head last failed on a secret; and a notifier behind by over ``BEHIND`` (an unread row a
     rule routes, or a due head)."""
     lines = []
@@ -142,7 +142,7 @@ def banners(
     return lines
 
 
-# -- the acts (§11): each audited -----------------------------------------------------------------------
+# -- the acts: each audited -----------------------------------------------------------------------
 
 
 async def test(ctx: Context, name: str, who: Principal) -> dict[str, Any]:
@@ -208,8 +208,8 @@ async def retry(ctx: Context, name: str, since_text: str | None, who: Principal)
 
 async def mute(ctx: Context, scope: str, target: str, hours: int, reason: str, who: Principal) -> repo.Row:
     """Mute a declared channel, or a run, for 1 to 168 hours, with a reason (a run's is read with its spec's
-    key pattern: audit rows reach the SIEM); audited ``notify.mute``. ``{mute_id, until}``. Refused in §10's
-    order: 409, an unknown run's 404, then each 422."""
+    key pattern: audit rows reach the SIEM); audited ``notify.mute``. ``{mute_id, until}``. Refused in
+    this order: 409, an unknown run's 404, then each 422."""
     notify = on(ctx.settings)
     async with repo.audited(ctx.pool) as (conn, audit):
         of_run = scope == "run" and _RUN.fullmatch(target) is not None
@@ -254,7 +254,7 @@ async def unmute(ctx: Context, mute_id: str, who: Principal) -> None:
         await audit(who, "notify.unmute", mute_id, {})
 
 
-# -- a cycle's digest (§2.2) ----------------------------------------------------------------------------
+# -- a cycle's digest ----------------------------------------------------------------------------
 
 
 def _rate(numerator: int, denominator: int) -> str | None:
@@ -265,7 +265,7 @@ def _rate(numerator: int, denominator: int) -> str | None:
 
 
 async def digest(conn: repo.Conn, run: Mapping[str, Any], c: int, bug_rules: list[str]) -> dict[str, Any]:
-    """Cycle ``c``'s digest (§2.2), each query in a savepoint: a timed-out one, or one of a cycle whose purge
+    """Cycle ``c``'s digest, each query in a savepoint: a timed-out one, or one of a cycle whose purge
     started, leaves its facts null and listed in ``unavailable``."""
     run_id = run["run_id"]
     ended = await repo.get_cycle(conn, run_id, c)

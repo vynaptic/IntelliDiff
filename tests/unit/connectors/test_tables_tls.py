@@ -1,4 +1,4 @@
-"""TLS on a database target is enforced, not preferred (docs/mvp/ENGINES.md §3, §4): a MySQL server that
+"""TLS on a database target is enforced, not preferred: a MySQL server that
 offers none is refused before any authentication packet, a certificate is verified with its name against
 the declared CA, the stock certificate passes the chain-only mode alone, and the session runs on the
 address the guard vetted, whatever name TLS verifies. An Oracle session verifies the chain and, attribute

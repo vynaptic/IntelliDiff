@@ -1,4 +1,4 @@
-"""A table side's row filter (docs/mvp/TABLES.md §9): the predicate language, its canonical text, and
+"""A table side's row filter: the predicate language, its canonical text, and
 the filters it refuses, each naming where it went wrong."""
 
 from __future__ import annotations

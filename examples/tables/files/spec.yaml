@@ -1,5 +1,5 @@
 # The files acceptance kit: accounts_a/accounts.csv against accounts_b/accounts.parquet, the two exports
-# of generate.py. Target: targets.yaml. Expected result: expected.json. Contract: docs/mvp/FILES.md.
+# of generate.py. Target: targets.yaml. Expected result: expected.json.
 #
 # Side a is CSV: every field is text until this spec declares otherwise. Its zero-padded key reads as an
 # integer (csv.keys), its decimal comma and its DD/MM/YYYY dates through the typeMap; side b's Parquet

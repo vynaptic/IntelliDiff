@@ -1,12 +1,12 @@
-"""The column plan (TABLES.md §3, §9, §10): each table side resolved against its catalogue, through
-its target's engine (ENGINES.md §5).
+"""The column plan: each table side resolved against its catalogue, through
+its target's engine.
 
 Names resolve as spelled, else as the engine folds or matches an unquoted name. A plan is stored with
 its run, so the run reads the same columns, filter and maps even after a table changes. A pair with a
 side on MySQL or Oracle also stores each table side's engine and its columns' classes, checked across
-the pair (ENGINES.md §7, §8), and which compared columns the worker hashes: the engine hashes the others
-(§10). Problems raise ``ValueError`` naming sides, tables and columns, never values; ``issues`` lists
-them without raising, for a table pre-check (docs/mvp/PRECHECKS.md §5).
+the pair, and which compared columns the worker hashes: the engine hashes the others. Problems raise
+``ValueError`` naming sides, tables and columns, never values; ``issues`` lists them without raising, for
+a table pre-check.
 """
 
 from __future__ import annotations
@@ -40,24 +40,24 @@ from deltasleuth.core.spec import TargetRegistry, where
 from deltasleuth.core.types import CompiledSpec, SideConfig, Target
 
 _A = {"text": "text", "bytes": "bytes", "json": "JSON", "instant": "a zoned timestamp"}  # else "a <family>"
-# How the approved spec bridges two families (ENGINES.md §9); the first is the side that declares the type.
+# How the approved spec bridges two families; the first is the side that declares the type.
 _BRIDGES = {
     ("timestamp", "date"): "{{{column}: {{as: date}}}} on side {side}, or {{as: timestamp}} on both",
     ("number", "boolean"): "{{{column}: {{as: boolean}}}} on side {side}",
     ("timestamp", "instant"): "{{as: timestamp, naiveTimezone: ...}} on both",
 }
 _CASTS = "compare a view that casts it"
-_FILE_KEY = "cannot be a key in a file: export it as text, a whole number, a decimal or a date"  # FILES.md P6
-# What a CSV column's text pairs with, declared (FILES.md P6, P9): the csv.keys or typeMap type of a family.
+_FILE_KEY = "cannot be a key in a file: export it as text, a whole number, a decimal or a date"
+# What a CSV column's text pairs with, declared: the csv.keys or typeMap type of a family.
 _AS = {"number": "decimal", "instant": "timestamp", "mapped timestamp": "timestamp"} | {
     family: family for family in ("date", "timestamp", "boolean", "json", "bytes")
 }
 
 
 class Unconnected(ValueError):
-    """A connect refused when a run is created (ENGINES.md §12 P1). Its message names the endpoint the
+    """A connect refused when a run is created. Its message names the endpoint the
     target declares, for whoever creates the run; ``brief`` names the side and the target alone, which is
-    all the chat's model is told (§14 point 9); ``cause`` is what refused it."""
+    all the chat's model is told; ``cause`` is what refused it."""
 
     def __init__(self, who: str, target: Target, why: str, cause: BaseException | None = None) -> None:
         super().__init__(f"{who}: cannot connect to target {_endpoint(target)}: {why}")
@@ -68,7 +68,7 @@ class Unconnected(ValueError):
 @dataclass(frozen=True)
 class Planned:
     """A pair's plan (None when no side is a table) and each table side's relation as its catalogue held
-    it when the plan was made; a file side's pins (docs/mvp/FILES.md §6), which its run seals and its plan
+    it when the plan was made; a file side's pins, which its run seals and its plan
     never holds."""
 
     plan: Plan | None
@@ -77,21 +77,21 @@ class Planned:
 
 
 async def plan(targets: TargetRegistry, spec: CompiledSpec) -> Plan | None:
-    """The columns, filter and maps a run reads by, and a hash sample's frame's strata columns (``strata``,
-    docs/mvp/SAMPLING.md §3); None when no side is a table."""
+    """The columns, filter and maps a run reads by, and a hash sample's frame's strata columns
+    (``strata``); None when no side is a table."""
     return (await planning(targets, spec)).plan
 
 
 async def planning(targets: TargetRegistry, spec: CompiledSpec, *, scanning: bool = False) -> Planned:
     """``plan``, with the relations it was made of: each table side is described on a session of its
     own, the pair is planned from the two catalogues alone (``resolved``), then each side is probed. A file
-    side is described by its files, pinned, and its probe counts its rows into its plan (docs/mvp/FILES.md
-    §6); its relation is then the one its plan holds, as its later looks see it, and a pass over it must fit
-    the spec's timeout (P31), and, ``scanning``, the sort of the run's file sides ``files.spill`` (P32)."""
+    side is described by its files, pinned, and its probe counts its rows into its plan; its relation is
+    then the one its plan holds, as its later looks see it, and a pass over it must fit the spec's timeout,
+    and, ``scanning``, the sort of the run's file sides ``files.spill``."""
     tables = _tables(spec)
     relations = {}
     filed = any(targets.live(cfg.target).engine == "files" for cfg in tables.values())
-    # One files.plan_s for the run's file sides, and few creations planning files at once (FILES.md §10).
+    # One files.plan_s for the run's file sides, and few creations planning files at once.
     async with duck.creating() if filed else contextlib.nullcontext():
         for name, cfg in tables.items():
             target, table = targets.live(cfg.target), cfg.table
@@ -157,8 +157,8 @@ async def key_plan(targets: TargetRegistry, cfg: SideConfig) -> Plan:
 
 
 def _budgets(spec: CompiledSpec, found: Plan, pinned: Mapping[str, Plan], scanning: bool) -> None:
-    """FILES.md §6 step 8: a per-key read is one pass over a side's files, so two must fit the spec's total
-    timeout (P31); a scan sorts its file sides' ``sort_bytes``, which ``files.spill`` must hold (P32)."""
+    """A per-key read is one pass over a side's files, so two must fit the spec's total
+    timeout; a scan sorts its file sides' ``sort_bytes``, which ``files.spill`` must hold."""
     total = spec.execution.total_timeout_s
     for name in pinned:
         if 2 * found[name]["pass_s"] > total:
@@ -181,7 +181,7 @@ def _budgets(spec: CompiledSpec, found: Plan, pinned: Mapping[str, Plan], scanni
 
 
 def sealed(sealer: Any, pinned: Mapping[str, Plan]) -> dict[str, dict[str, str]]:
-    """Each file side's pins as its run stores them (``params.pinned``, docs/mvp/FILES.md §6), sealed by the
+    """Each file side's pins as its run stores them (``params.pinned``), sealed by the
     run's sealer as a scan's resume point is: no plan, pack, audit row or answer holds a file's size, times
     or digest, and they go with the run's data key."""
     return {
@@ -351,9 +351,9 @@ def _refuse(refused: list[str], message: str) -> None:
 
 
 async def preflight(target: Target, table: str | None = None) -> tuple[dict[str, Any], Relation | None]:
-    """``ds target check`` (ENGINES.md §13): a session on a database target as a run opens one, what it
+    """``ds target check``: a session on a database target as a run opens one, what it
     says of its server, and the relation ``table`` ([schema.]name) as a plan would resolve it. It reads no
-    row. A refusal is §12's, ``target <id>`` in place of the side."""
+    row. A refusal is a plan's, ``target <id>`` in place of the side."""
     engine, who = of(target), f"target {target.target_id}"
     session = await _connected(engine, target, who)
     try:
@@ -364,7 +364,7 @@ async def preflight(target: Target, table: str | None = None) -> tuple[dict[str,
         return server, await described(engine, session, who, schema or None, name)
     except Refusal as exc:  # a role that may not execute what orders its text keys
         raise ValueError(f"{who}: {exc}") from None
-    except ERRORS as exc:  # the session ended, or the server answered with a code (P14)
+    except ERRORS as exc:  # the session ended, or the server answered with a code
         said = "the session's account of its server could not be read"
         raise ValueError(f"{who}: {said}: {_answered(exc)}") from None
     finally:
@@ -373,7 +373,7 @@ async def preflight(target: Target, table: str | None = None) -> tuple[dict[str,
 
 async def _connected(engine: Engine, target: Target, who: str) -> Session:
     """A session on the target of ``who`` (``side a``); a refused connect is worded for whoever creates the
-    run (ENGINES.md §12 P1 to P4)."""
+    run."""
     try:
         return await engine.connect(target)
     except REFUSED as exc:
@@ -386,9 +386,9 @@ async def described(
     engine: Engine, session: Session, who: str, schema: str | None, name: str, *, side: Any = None
 ) -> Relation:
     """The relation as its catalogue holds it; one that is missing, or that the role may not read, is
-    refused (ENGINES.md §12 P12), as is one the database answers with an error for (P14: an invalid view, a
+    refused, as is one the database answers with an error for (an invalid view, a
     session that ended), by its code alone. ``side`` is what a file side is described by (its
-    ``SideConfig``): its refusals are worded for ``who`` (docs/mvp/FILES.md §15)."""
+    ``SideConfig``): its refusals are worded for ``who``."""
     shown = f"{schema}.{name}" if schema else name
     try:
         found = await engine.describe(session, schema, name, side=side)
@@ -429,7 +429,7 @@ def _answered(exc: BaseException) -> str:
 def _classed(name: str, side: Plan, engine: str, relation: Relation, refused: list[str]) -> None:
     """Add what a pair with a MySQL or Oracle side stores of each table side: its engine, what its session
     said of the server, and the class and declared type of every column it reads. A type no plan reads
-    and a key column without a key text every engine renders alike are refused (P7, P6)."""
+    and a key column without a key text every engine renders alike are refused."""
     by = {column.name: column for column in relation.columns}
     filtered = sorted(where.columns(where.parse(side["where"]))) if side["where"] else []
     read = [*side["keys"], *side["columns"].values(), *filtered, *side.get("strata", {}).values()]
@@ -450,14 +450,14 @@ def _classed(name: str, side: Plan, engine: str, relation: Relation, refused: li
         **({"tls": facts["tls"]} if "tls" in facts else {}),  # a file side has no session to encrypt
         "classes": {column: by[column].cls for column in read},
         "declared": {column: by[column].declared for column in read},
-    } | facts.get("stored", {})  # a file side's: its file member and what its pins say (FILES.md §6)
+    } | facts.get("stored", {})  # a file side's: its file member and what its pins say
     if "pinned" in facts:  # read by its probe, then sealed by its run
         side["pinned"] = facts["pinned"]
 
 
 def _scale(cls: str, declared: str) -> int | None:
     """The scale a number key column declares: an integer's is 0, as is an unconstrained Oracle NUMBER's,
-    whose key text is a whole number's (ENGINES.md §8); None when it declares none."""
+    whose key text is a whole number's; None when it declares none."""
     if cls == "integer" or declared == "NUMBER":
         return 0
     found = re.search(r"\(\s*[0-9*]+\s*(?:,\s*(-?[0-9]+)\s*)?\)", declared)
@@ -465,9 +465,9 @@ def _scale(cls: str, declared: str) -> int | None:
 
 
 def _paired(found: Mapping[str, Plan], engines: Mapping[str, str], refused: list[str]) -> None:
-    """The cross-engine check of two table sides (ENGINES.md §7): a key column's two sides can render one
-    text, a number key at one scale (P6), a column of class ``other`` stays in its engine (P8), and each
-    compared column's two sides are of one family, after their typeMaps (P9)."""
+    """The cross-engine check of two table sides: a key column's two sides can render one
+    text, a number key at one scale, a column of class ``other`` stays in its engine, and each
+    compared column's two sides are of one family, after their typeMaps."""
     a, b = found["a"], found["b"]
     mapped = [any(maps) for maps in zip(key_maps(a), key_maps(b), strict=True)]  # its key text is the map's
     for key_a, key_b, bridged in zip(a["keys"], b["keys"], mapped, strict=True):
@@ -483,7 +483,7 @@ def _paired(found: Mapping[str, Plan], engines: Mapping[str, str], refused: list
             text = (
                 f"side {fielded[0]}: key column {key!r} is text (a CSV field) and side {other}'s {_a(family)}"
             )
-            refused.append(f"{text}: declare {keys}")  # FILES.md P6: a CSV key is its field's text
+            refused.append(f"{text}: declare {keys}")  # a CSV key is its field's text
         # 2024-01-01 is never 2024-01-01 00:00:00
         elif not bridged and "text" not in families and families[0] != families[1]:
             never = f"the key text of {_a(families[0])} is never that of {_a(families[1])}"
@@ -508,7 +508,7 @@ def _paired(found: Mapping[str, Plan], engines: Mapping[str, str], refused: list
                 theirs = f"{_a(read[other][0])} ({read[other][1]})"
                 mapped = f"typeMap {{{read[own][2]}: {{as: {as_}}}}} on side {own}"
                 text = f"side {own}: column {canonical!r} is text (a CSV field) and side {other}'s {theirs}"
-                refused.append(f"{text}: declare {mapped}")  # FILES.md P9
+                refused.append(f"{text}: declare {mapped}")
             elif family_a != family_b:
                 both = f"is {_a(family_a)} ({declared_a}) and side b's {_a(family_b)}"
                 refused.append(f"side a: column {canonical!r} {both}: {_bridge(read)}")
@@ -517,10 +517,10 @@ def _paired(found: Mapping[str, Plan], engines: Mapping[str, str], refused: list
 def _worker_columns(
     found: Mapping[str, Plan], engines: Mapping[str, str], relations: Mapping[str, Relation]
 ) -> list[str]:
-    """The compared columns the worker hashes (ENGINES.md §10): every one across engines, where no
+    """The compared columns the worker hashes: every one across engines, where no
     engine's function gives the same bytes. In one engine (two MySQL sides, two Oracle sides whose
     databases share both character sets, in which the server's hash reads a text, or two file sides, which
-    DuckDB hashes: docs/mvp/FILES.md §9) the engine hashes a column that both sides declare alike, of one
+    DuckDB hashes) the engine hashes a column that both sides declare alike, of one
     class (a ``padded`` CSV field against one that is not is two), that no typeMap names and that holds no
     large value."""
     a, b = found["a"], found["b"]

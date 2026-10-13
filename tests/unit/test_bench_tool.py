@@ -1,4 +1,4 @@
-"""The benchmark harness (docs/mvp/BENCHMARK.md §13), with no database: CliRunner, a stub docker and a stub ds
+"""The benchmark harness, with no database: CliRunner, a stub docker and a stub ds
 on PATH that follow a scenario and log each run's argv and environment, as tests/unit/releases.py's do. The
 runs that need PostgreSQL are tests/e2e/test_bench.py's."""
 
@@ -304,7 +304,8 @@ def test_truth_closed_forms() -> None:
 
 
 def _brute(scenario: str, n: int) -> dict[str, int]:
-    """§4 by brute force: side b row by row from Python transcriptions of the predicates, then the merge."""
+    """The truth by brute force: side b row by row from Python transcriptions of the predicates, then the
+    merge."""
     if scenario == "graph":
         a = {
             (e, t, v) for e in range(1, n // 2 + 1) for t, v in (("phone", f"p{e}"), ("email", f"x{e // 2}"))
@@ -481,7 +482,7 @@ def test_report_refuses_unpublishable(tmp_path: Path) -> None:
     drafted = report(path, "--draft")
     assert drafted.exit_code == 0
     assert drafted.stdout.startswith(f"**DRAFT: `{path.name}` is not publishable ({reasons}).**\n")
-    assert "did not complete: MISMATCH 1, truth 0" in drafted.stdout  # C7: failures stay in
+    assert "did not complete: MISMATCH 1, truth 0" in drafted.stdout  # failures stay in
     incomplete = result({10_000: [repetition("restarted", 1)]})
     incomplete["options"]["rows"].append(20_000)
     incomplete["complete"] = bench._complete(incomplete)
@@ -494,8 +495,8 @@ def test_report_refuses_unpublishable(tmp_path: Path) -> None:
 
 
 def test_unrun_sizes_and_scenarios_name_their_cause(tmp_path: Path) -> None:
-    """C7: every requested size and scenario has a row; one that never ran, or ran fewer repetitions than
-    asked, says why, and no fit takes its numbers."""
+    """Every requested size and scenario has a row; one that never ran, or ran fewer repetitions than asked,
+    says why, and no fit takes its numbers."""
     made = result({100_000: [repetition("restarted", 1), repetition()]}, scenario="sparse")
     made["options"] |= {"rows": [100_000, 1_000_000], "scenarios": ["sparse", "dense", "clustered"]}
     partial = {"scenario": "dense", "truth": bench.truth("dense", 100_000),
@@ -519,8 +520,7 @@ def test_unrun_sizes_and_scenarios_name_their_cause(tmp_path: Path) -> None:
 
 
 def test_rows_are_marked_by_file(tmp_path: Path) -> None:
-    """C1 and C8: two files' rows of one scenario and size stay apart, each naming its file, a draft's
-    marked."""
+    """Two files' rows of one scenario and size stay apart, each naming its file, a draft's marked."""
     published = result({1_000_000: [repetition("restarted", 1), repetition(run=10.0)]})
     draft = result({1_000_000: [repetition("restarted", 1), repetition(run=5.0)]}, dirty=True)
     a, b = saved(tmp_path, "a", published), saved(tmp_path, "b", draft)
@@ -580,9 +580,7 @@ def test_report_warns_changed_code_and_mixed_hosts(tmp_path: Path, monkeypatch: 
 
 
 def test_caveat_block_verbatim(tmp_path: Path) -> None:
-    contract = (release.ROOT / "docs" / "mvp" / "BENCHMARK.md").read_text()
-    quoted = re.search(r"\*\*Caveat block\*\* \(verbatim\): `(.*?)`", contract, re.S)[1]  # type: ignore[index]
-    assert bench.CAVEAT == " ".join(quoted.split())
+    """A report ends with what was not measured, then the caveat block, each word for word."""
     path = saved(tmp_path, "x", result({10_000: [repetition("restarted", 1)]}))
     assert report(path).stdout.endswith(f"\n{bench.NOT_MEASURED}\n\n{bench.CAVEAT}\n")
 
@@ -960,8 +958,8 @@ def test_refusals_by_stage(stubs: Stubs, tmp_path: Path, monkeypatch: pytest.Mon
 def test_a_stopped_run_keeps_its_file_and_names_what_did_not_run(
     stubs: Stubs, monkeypatch: pytest.MonkeyPatch, raised: BaseException, code: int, cause: str
 ) -> None:
-    """C7 after Ctrl-C, a stopped database or a generation error: the file names the cause, and report
-    gives each requested size and scenario that did not run."""
+    """After Ctrl-C, a stopped database or a generation error the file names the cause, and report gives
+    each requested size and scenario that did not run."""
     _setup(monkeypatch)
     sized = fake_size(10**6)  # sparse only
 
@@ -1155,31 +1153,3 @@ def test_clean_removes_marked_work_folders(stubs: Stubs) -> None:
     assert sorted(p.name for p in stubs.work.iterdir()) == ["dsbench-cafebabe", "elsewhere"]
     assert ["rm", "-f", "-v", "c0ffee01", "c0ffee02"] in [r["argv"] for r in stubs.runs()]
     assert ["ps", "-aq", "--filter", "label=deltasleuth.bench"] in [r["argv"] for r in stubs.runs()]
-
-
-def test_committed_results_publishable_and_cited() -> None:
-    """Each file BENCHMARK.md's Results section cites has the cited sha256 and is publishable, or carries
-    report --draft's DRAFT line (C1: a draft measures no size), and every number in its tables is in the
-    cited files' report. Vacuous until the first publish."""
-    contract = (release.ROOT / "docs" / "mvp" / "BENCHMARK.md").read_text()
-    if "\n## Results" not in contract:
-        return
-    section = contract.split("\n## Results", 1)[1].split("\n## ", 1)[0]
-    citation = r"`(bench-\d{8}T\d{6}Z-[0-9a-f]{12}\.json)` \(commit ([0-9a-f]{12}), sha256 ([0-9a-f]{64})\)"
-    cited = re.findall(citation, section)
-    assert cited, "the Results section cites no result file"
-    files = []
-    for name, sha, digest in cited:
-        path = release.ROOT / "docs" / "bench" / name
-        made = json.loads(path.read_text())
-        assert hashlib.sha256(path.read_bytes()).hexdigest() == digest and made["commit"]["sha"].startswith(
-            sha
-        )
-        if reasons := bench._unpublishable(made):
-            assert f"**DRAFT: `{name}` is not publishable ({', '.join(reasons)}).**" in section, name
-        files.append((path, made))
-    rendered = bench.render(files)
-    numbers = {
-        n for line in section.splitlines() if line.startswith("|") for n in re.findall(r"\d[\d,.]*", line)
-    }
-    assert {n for n in numbers if n not in rendered} == set()

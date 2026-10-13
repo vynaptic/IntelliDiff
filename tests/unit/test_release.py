@@ -1,6 +1,6 @@
 """What a release relies on: the declared dependencies, the gate on the DB tests, the vendor keys a release
-trusts and the release keys that sign it, none of whose private keys the repository holds (docs/mvp/LICENCE.md
-§4, docs/mvp/RELEASE.md §4), and the triage its gate reads (RELEASE.md §8)."""
+trusts and the release keys that sign it, none of whose private keys the repository holds, and the triage
+its gate reads."""
 
 from __future__ import annotations
 
@@ -45,15 +45,15 @@ def test_db_tests_skip_without_docker_unless_required(
 
 
 def test_two_vendor_keys(repo_root: Path) -> None:
-    """A release trusts no vendor key, an open build (§19), or an issuing key and a standby, so that losing
-    one reissues nothing (§4): never one alone."""
+    """A release trusts no vendor key, an open build, or an issuing key and a standby, so that losing
+    one reissues nothing: never one alone."""
     version = tomllib.loads((repo_root / "pyproject.toml").read_text())["project"]["version"]
     assert ".dev" in version or len(licence.SHIPPED_KEYS) != 1
 
 
 def test_the_version_is_one_in_pyproject_compose_and_the_ca_override(repo_root: Path) -> None:
     """Compose runs the image of pyproject's version, and the CA override its -ca layer, .dev included, so a
-    release loads the tag the kit runs (docs/mvp/RELEASE.md §10); uv.lock names it too, or ``uv run``
+    release loads the tag the kit runs; uv.lock names it too, or ``uv run``
     rewrites the lock as it starts the release tool, which then refuses the changed tree."""
     version = tomllib.loads((repo_root / "pyproject.toml").read_text())["project"]["version"]
     for name, tag in (("docker-compose.yml", version), ("docker-compose.ca.yml", f"{version}-ca")):
@@ -64,21 +64,21 @@ def test_the_version_is_one_in_pyproject_compose_and_the_ca_override(repo_root: 
 
 
 def test_release_keys_match_security_md(repo_root: Path) -> None:
-    """SECURITY.md's key table mirrors tools/release-keys.txt: fingerprint, status and procedure (§4, §11)."""
+    """SECURITY.md's key table mirrors tools/release-keys.txt: fingerprint, status and procedure."""
     security = repo_root / "SECURITY.md"
     if not security.exists():
-        pytest.skip("SECURITY.md is not written yet (RELEASE.md §11)")
+        pytest.skip("SECURITY.md is not written yet")
     row = re.compile(r"\| `?([0-9a-f]{64})`? \| ([^|]+?) \| `?(?:procedure=)?([0-9a-f]{64})`? \|")
     table = {match[1]: (match[2], match[3]) for match in row.finditer(security.read_text())}
     assert table == release.release_keys()
 
 
 def test_the_maintainer_checklist_is_the_heading_build_refuses(repo_root: Path) -> None:
-    """build refuses while SECURITY.md holds the maintainer's checklist (§10), by its heading: a reworded
+    """build refuses while SECURITY.md holds the maintainer's checklist, by its heading: a reworded
     heading would let the checklist ship."""
     security = repo_root / "SECURITY.md"
     if not security.exists():
-        pytest.skip("SECURITY.md is not written yet (RELEASE.md §11)")
+        pytest.skip("SECURITY.md is not written yet")
     lines = security.read_text().splitlines()
     assert [line for line in lines if line.startswith("#") and "first release" in line] in (
         [],
@@ -87,24 +87,25 @@ def test_the_maintainer_checklist_is_the_heading_build_refuses(repo_root: Path) 
 
 
 def test_only_section_2_holds_the_security_contact_placeholder(repo_root: Path) -> None:
-    """The checklist names the placeholder as §2's, never itself, so filling it in touches §2 alone (§11)."""
+    """The checklist names the placeholder as section 2's, never itself, so filling it in touches that
+    section alone."""
     security = repo_root / "SECURITY.md"
     if not security.exists():
-        pytest.skip("SECURITY.md is not written yet (RELEASE.md §11)")
+        pytest.skip("SECURITY.md is not written yet")
     sections = re.split(r"\n(?=## )", security.read_text())
     holding = [section.partition("\n")[0] for section in sections if "<SECURITY-CONTACT>" in section]
     assert holding in ([], ["## 2. Reporting a vulnerability"])
 
 
 def test_one_signing_release_key(repo_root: Path) -> None:
-    """build signs only with the one signing key; a version without .dev needs it (§4)."""
+    """build signs only with the one signing key; a version without .dev needs it."""
     version = tomllib.loads((repo_root / "pyproject.toml").read_text())["project"]["version"]
     signing_keys = [fp for fp, (status, _) in release.release_keys().items() if status == "signing"]
     assert len(signing_keys) <= 1 and (".dev" in version or len(signing_keys) == 1)
 
 
 def test_the_signing_key_files_this_procedure() -> None:
-    """A changed procedure is a new format, filed at every site like a new key (§4)."""
+    """A changed procedure is a new format, filed at every site like a new key."""
     procedure = hashlib.sha256(release.PROCEDURE.encode()).hexdigest()
     assert [filed for status, filed in release.release_keys().values() if status == "signing"] in (
         [],
@@ -113,7 +114,7 @@ def test_the_signing_key_files_this_procedure() -> None:
 
 
 def test_release_keys_are_not_vendor_keys(repo_root: Path) -> None:
-    """Releases and licences are signed by different keys (§4): none of the list is a vendor key."""
+    """Releases and licences are signed by different keys: none of the list is a vendor key."""
     listed = (repo_root / "tests" / "fixtures" / "vendor-keys.txt").read_text().splitlines()
     vendor = {line.split()[0] for line in listed if line and not line.startswith("#")}
     vendor |= {signing.fingerprint(pem) for pem in licence.SHIPPED_KEYS} | set(licence.REMOVED_KEYS)
@@ -121,7 +122,7 @@ def test_release_keys_are_not_vendor_keys(repo_root: Path) -> None:
 
 
 def test_triage_is_well_formed(repo_root: Path) -> None:
-    """tools/triage.toml parses and every entry has what the gate reads; expiry is build's refusal (§8)."""
+    """tools/triage.toml parses and every entry has what the gate reads; expiry is build's refusal."""
     entries, problems = release.triage((repo_root / "tools" / "triage.toml").read_text())
     assert problems == [] and set(entries) == {"finding", "vendored"}
 

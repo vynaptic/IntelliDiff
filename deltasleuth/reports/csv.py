@@ -7,8 +7,8 @@ A purely numeric cell (``-0.01``) stays a number. Rows end with CRLF (RFC 4180).
 Findings go to ``discrepancies`` (discrepant ones, plus every suppressed one with the spec's
 ``reporting.includeSuppressed``), ``suppressed`` and ``normalization`` (NORMALIZATION_ONLY);
 ``retry`` lists INCONCLUSIVE and DRIFT keys, live discrepant keys still owed a recheck and cancelled
-keys (with the run's stop reason); ``graph`` holds a graph parity run's L2 rows (docs/mvp/GRAPH.md §4).
-An evidence pack's ``root_causes`` and ``graph`` leave out their per-key tokens (docs/mvp/PACK.md §2.3).
+keys (with the run's stop reason); ``graph`` holds a graph parity run's L2 rows.
+An evidence pack's ``root_causes`` and ``graph`` leave out their per-key tokens.
 """
 
 from __future__ import annotations
@@ -85,14 +85,14 @@ COVERAGE_COLUMNS = (
     "filter_a", "filter_b", "engine_a", "engine_b",
     "rows_rejected_a", "rows_rejected_b", "keys_repeated_a", "keys_repeated_b",
 )  # fmt: skip
-# A sampled run's coverage appends these, filled on each sign-off stratum's row (docs/mvp/SAMPLING.md §11.2).
+# A sampled run's coverage appends these, filled on each sign-off stratum's row.
 SAMPLE_COLUMNS = tuple(
     "tier target basis frame_keys drawn contrast unresolved ub95_one_sided ub95_one_sided_all_suppressed "
     "ub95_one_sided_worst_case verdict".split()
 )
 GRAPH_COLUMNS = ("seq", "code", "label", "count_a", "count_b", "only_a", "only_b", "detail")
 KINDS = ("discrepancies", "retry", "coverage", "normalization", "root_causes", "suppressed", "graph")
-# The per-key tokens an evidence pack's root causes and graph rows leave out (docs/mvp/PACK.md §2.3): the
+# The per-key tokens an evidence pack's root causes and graph rows leave out: the
 # columns, and a graph row's masked members in its detail; their counts stay.
 UNKEYED_COLUMNS = ("member_key_tok", "sample_keys", "label")
 _MEMBERS = ("only_a", "only_b", "sample")
@@ -319,7 +319,7 @@ def _counted(c: Mapping[str, Any]) -> Row:
 
 def _strata_rows(data: RunData, star: Sequence[Row]) -> list[Row]:
     """A sampled cycle's sign-off strata (their members) and its contrast keys, from the judgement its end
-    stored (docs/mvp/SAMPLING.md §11.2): none while the cycle is live."""
+    stored: none while the cycle is live."""
     if data.sample is None or not star:
         return []
     identity = {name: star[0][name] for name in _IDENTITY}
@@ -333,7 +333,7 @@ def _strata_rows(data: RunData, star: Sequence[Row]) -> list[Row]:
 def _table_cells(data: RunData) -> Row:
     """A table run's plan and scan counts (column names are schema, not data), and each table side's
     engine (a plan that names none is PostgreSQL's); a file side's lines that were not rows and, once
-    scanned, its keys held by several rows (docs/mvp/FILES.md §16); none for other runs."""
+    scanned, its keys held by several rows; none for other runs."""
     tables, scan = data.run["params"].get("tables"), data.run["scan"] or {}
     if tables is None:
         return {}

@@ -1,4 +1,4 @@
-"""Four-eyes approvals and sign-off (docs/mvp/APPROVALS.md §1-§4): what a version needs, the gate's
+"""Four-eyes approvals and sign-off: what a version needs, the gate's
 refusals, a run's approval state, each reason a cycle is not signed off, what a sign-off attests and a
 revoke's ordered cascade."""
 
@@ -91,7 +91,7 @@ def table(**options: Any) -> dict[str, Any]:
         (table(where="status = 'A'"), ["population_filters"]),
         (table(columns=(("name", "name"),)), ["population_filters"]),
         (table(), []),  # a whole table
-        # docs/mvp/FILES.md §5: csv.skip leaves each file's first lines out of what is compared, as a filter
+        # csv.skip leaves each file's first lines out of what is compared, as a filter
         # does (a headerless export's first rows went unread with no approval at all); a dialect that skips
         # nothing gates nothing.
         (table(file={"path": "a.csv", "format": "csv", "csv": {"skip": 2}}), ["population_filters"]),
@@ -679,9 +679,9 @@ async def test_attests_are_stable_and_list_each_rule_and_root_cause(
         ],
         "claim": "observed",
     }  # fmt: skip
-    # Format 1 (docs/mvp/PACK.md §1.2) names the same rule fields, and adds its census and adjudication;
-    # format 2 (docs/mvp/SAMPLING.md §10) adds a sampled cycle's draw, null for a census cycle; format 3
-    # (docs/mvp/ACCURACY.md §8) the cycle's labellings, counted, and the one it attests, null without one.
+    # Format 1 names the same rule fields, and adds its census and adjudication;
+    # format 2 adds a sampled cycle's draw, null for a census cycle; format 3
+    # the cycle's labellings, counted, and the one it attests, null without one.
     census = {"cycle": 1, "at": None, "a": None, "b": None}  # explicit keys, no table: nothing counted
     format_1 = format_0 | {"format": 1, "census": census, "adjudication": None}
     format_2 = format_1 | {"format": 2, "sample": None}
@@ -693,7 +693,7 @@ async def test_attests_are_stable_and_list_each_rule_and_root_cause(
     assert approvals.attests_sha256(changed) != digest
 
 
-# -- labelled accuracy (docs/mvp/ACCURACY.md §8) ---------------------------------------------------
+# -- labelled accuracy ---------------------------------------------------
 
 
 async def _attested(pool: AsyncConnectionPool, run_id: str) -> dict[str, Any]:
@@ -758,7 +758,7 @@ async def test_a_sign_off_attests_the_newest_labelling_a_person_labelled(
 async def test_a_labeller_who_started_the_run_or_wrote_its_spec_is_attested_as_such(
     pool: AsyncConnectionPool, world: World
 ) -> None:
-    """Independence is attested, never refused (§4): the run's starter and the spec approval's author may
+    """Independence is attested, never refused: the run's starter and the spec approval's author may
     label, and the sign-off says so."""
     by_starter, by_author, by_token = [await _ended(pool, world) for _ in range(3)]
     async with pool.connection() as conn:
@@ -783,8 +783,8 @@ async def test_a_labeller_who_started_the_run_or_wrote_its_spec_is_attested_as_s
 
 @pytest.mark.db
 async def test_scheduled_run_needs_two_approvers(pool: AsyncConnectionPool, world: World) -> None:
-    """A schedule's run is created by ``system:worker`` (docs/mvp/SCHEDULES.md §6): nobody answers for its
-    start, so its authorship is unknown (§3) and its sign-off takes two approvers, of whom who saved the
+    """A schedule's run is created by ``system:worker``: nobody answers for its
+    start, so its authorship is unknown and its sign-off takes two approvers, of whom who saved the
     schedule may be one; a run a person started is judged as before, with one."""
     by_hand = await _ended(pool, world)  # Dave's
     scheduled, again = [
@@ -800,7 +800,7 @@ async def test_scheduled_run_needs_two_approvers(pool: AsyncConnectionPool, worl
             conn, "SELECT ds.attributed('system:worker'), ds.accountable('system:worker')"
         ) == [(False, [])]
         assert await _problems(pool, scheduled) == await _problems(pool, by_hand) == []
-        mine = await labelling(conn, scheduled, erin, world.dave)  # ACCURACY: Dave started no scheduled run
+        mine = await labelling(conn, scheduled, erin, world.dave)  # Dave started no scheduled run
         assert (await repo.get_labelling(conn, mine["labelling_id"]))["started_run"] is False  # type: ignore[index]
         requests = [
             await request_signoff(conn, run_id, 1, world.dave, PROFILE) for run_id in (by_hand, scheduled)
@@ -970,7 +970,7 @@ async def test_only_an_approved_approval_is_revoked(pool: AsyncConnectionPool, w
         await _revoke(pool, world.approval_id)
 
 
-# -- sampled cycles (docs/mvp/SAMPLING.md §9, §10) ----------------------------------------------------
+# -- sampled cycles ----------------------------------------------------
 
 SAMPLED = sampled("customer-profile", "2.0.0")
 NOTE = "fixed the segment mapping (PAY-7)"
@@ -1071,7 +1071,7 @@ async def test_a_sampled_cycle_attests_format_2_stable_across_later_draws_closes
         ],
         "judgement": ended["sample"],
     }  # fmt: skip
-    # the ledger outlives purges and erasures (§15): the draws, their closes and each cycle's judgement
+    # the ledger outlives purges and erasures: the draws, their closes and each cycle's judgement
     assert purged[0] is not None and purged[1]["sample"]["status"] == "failed"  # type: ignore[index]
     assert [d["status"] for d in ledger] == ["failed", "failed", "passed", "failed"]
     async with pool.connection() as conn:  # the earlier failure was closed after D: its sign-off is refused

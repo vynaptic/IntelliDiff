@@ -1,6 +1,6 @@
 /** Typed client of the DeltaSleuth API v1. Every key it sends or receives is a masked key, but for the sample
  *  key a spec author types in the builder, which is sent to try a side and to compare under a saved version.
- *  The browser's credential is the HttpOnly session cookie (docs/mvp/AUTH.md §3): no token is kept here. */
+ *  The browser's credential is the HttpOnly session cookie: no token is kept here. */
 // The one import, with its extension, so that Node runs the tests of this module without a bundler.
 import { NOT_KEPT } from './signin.ts';
 
@@ -32,7 +32,7 @@ export interface Run {
   finished_at: string | null;
   licence: RunLicence | null; // null for a run of an open build, of one before licences (010) or of an older release
 }
-/** The licence a run was made under and what its label says (docs/mvp/LICENCE.md §10). */
+/** The licence a run was made under and what its label says. */
 export interface RunLicence {
   licence_id: string | null; // null in an unlicensed evaluation
   tier: string | null;
@@ -42,9 +42,9 @@ export interface RunLicence {
   label: string;
 }
 
-/** GET /v1/licence (docs/mvp/LICENCE.md §12): the installation's standing, what it allows, the pairs counted
+/** GET /v1/licence: the installation's standing, what it allows, the pairs counted
  *  in its window with their seats, and each licence installed; `state: unknown` when it cannot be read, and
- *  `open` in a build that embeds no vendor key, which needs no licence and refuses nothing (§19). */
+ *  `open` in a build that embeds no vendor key, which needs no licence and refuses nothing. */
 export interface Licence {
   installation_id: string | null;
   state: 'open' | 'evaluation' | 'valid' | 'ending' | 'grace' | 'expired' | 'unknown';
@@ -86,7 +86,7 @@ export interface InstalledLicence {
   problem: string | null;
 }
 
-/** GET /v1/runs/{id} adds its retention (docs/mvp/RETENTION.md §4.4): the class and its days, a hold, the
+/** GET /v1/runs/{id} adds its retention: the class and its days, a hold, the
  *  cycles whose purge started, and the ended cycles still kept, each with the day it expires. */
 export interface Retention {
   class: string;
@@ -96,7 +96,7 @@ export interface Retention {
   last_purged_at: string | null;
   cycles: { cycle: number; ended_at: string; expires_at: string }[];
 }
-/** GET /v1/runs/{id}'s spec approval (docs/mvp/APPROVALS.md §4): the state, the scopes the version needs
+/** GET /v1/runs/{id}'s spec approval: the state, the scopes the version needs
  *  and the auth mode it ran in (null before approvals), who approved it, when, and any revoke. */
 export interface RunApproval {
   state: 'approved' | 'revoked' | 'unapproved' | 'not_needed';
@@ -112,7 +112,7 @@ export interface RunApproval {
 export interface Decider { actor: string; name: string | null; at: string }
 /** GET /v1/runs/{id} also gives the current cycle's census and the table sides it still waits for (the
  *  worker counts them first, with evidence packs configured), and each ended cycle's census, adjudications and
- *  evidence packs (docs/mvp/PACK.md §7.1) and labellings (docs/mvp/ACCURACY.md §10). */
+ *  evidence packs and labellings. */
 export type RunDetail = Run & {
   retention: Retention;
   approval: RunApproval;
@@ -120,12 +120,12 @@ export type RunDetail = Run & {
   census: Census | null;
   census_pending: string[];
   cycles: CycleEvidence[];
-  sample: RunSample | null; // a sampled run's current draw (docs/mvp/SAMPLING.md §14); null for other runs
-  schedule: RunSchedule | null; // the schedule that started it (docs/mvp/SCHEDULES.md §10); null for other runs
-  schema: RunSchema; // what the schema guard holds of its tables, as lines (docs/mvp/PRECHECKS.md §7)
+  sample: RunSample | null; // a sampled run's current draw; null for other runs
+  schedule: RunSchedule | null; // the schedule that started it; null for other runs
+  schema: RunSchema; // what the schema guard holds of its tables, as lines
 };
 
-/** What the schema guard says of a run's tables (docs/mvp/PRECHECKS.md §7, §11): whether it holds their shapes
+/** What the schema guard says of a run's tables: whether it holds their shapes
  *  (a run without a table side has none), the spec's mode, the run of the version it was judged against, its
  *  last look, whether it paused the run, whether a resume would accept the changes that stand, and its lines,
  *  the pause's first. The names and declared types it holds reach a screen in those lines only. */
@@ -146,7 +146,7 @@ export interface RunSample {
   draw_id: string | null;
   drawn_at: string | null;
 }
-/** A sign-off stratum as its cycle's end judged it (docs/mvp/SAMPLING.md §8.1); bounds are decimal strings. */
+/** A sign-off stratum as its cycle's end judged it; bounds are decimal strings. */
 export interface Stratum {
   label: string;
   tier: 'standard' | 'high';
@@ -182,7 +182,7 @@ export interface Judgement {
 export type Progress = Judgement & { done: number; finished_recently: number; eta_seconds: number | null };
 export interface Frame { keys: number; origin: { a: number; b: number; both: number }; unfit: number }
 export type LedgerStatus = 'live' | 'passed' | 'failed' | 'incomplete' | 'unjudged';
-/** A draw as its population's ledger lists it (docs/mvp/SAMPLING.md §9), in commit order. */
+/** A draw as its population's ledger lists it, in commit order. */
 export interface LedgerDraw {
   draw_id: string;
   run_id: string;
@@ -208,7 +208,7 @@ export interface LedgerDraw {
   order?: 'before' | 'this' | 'after' | null; // in a review, against the draw it signs off
 }
 /** GET /v1/samples/{draw_id}: the draw, its ledger, and its progress while live (no nonce) or its precheck;
- *  below rule_approver, no nonce and no stratum's u_max at all (docs/mvp/SAMPLING.md §14). */
+ *  below rule_approver, no nonce and no stratum's u_max at all. */
 export type SampleDetail = LedgerDraw & {
   nonce: string | null;
   frame: Frame;
@@ -220,7 +220,7 @@ export type SampleDetail = LedgerDraw & {
   precheck?: string[];
 };
 
-/** Over which population of a side parity was observed (docs/mvp/PACK.md §1.2): a table read to its end, a
+/** Over which population of a side parity was observed: a table read to its end, a
  *  complete key listing, or the key set checked against a table in one snapshot; or the count that failed. */
 export type CensusSide =
   | ({ basis: 'scan'; target: string; relation: string; rows: number; skipped: number; snapshots?: number | null; first_at: string | null; last_at: string | null } & Engined)
@@ -228,9 +228,9 @@ export type CensusSide =
   | ({ basis: 'frame'; target: string; relation: string; where: string | null; rows: number; skipped: number; keys: number; unfit: number; at: string } & Engined)
   | ({ basis: 'table'; target: string; relation: string; where: string | null; rows: number; skipped: number; missing: number; extra: number; at: string } & Engined)
   | { failed: string };
-/** What the record of a side on MySQL or Oracle adds (docs/mvp/ENGINES.md §11): its engine, and whether its
+/** What the record of a side on MySQL or Oracle adds: its engine, and whether its
  *  rows were read in a snapshot, in a transaction whose snapshot cannot be observed, or in neither. A file
- *  side's (`fixed`, docs/mvp/FILES.md §11) holds no snapshots and no digest, but its files' count and bytes,
+ *  side's (`fixed`) holds no snapshots and no digest, but its files' count and bytes,
  *  whether DeltaSleuth could write to their mount, its lines that were not rows and its keys held by several
  *  rows (null: a frame counts none). */
 export interface Engined {
@@ -245,7 +245,7 @@ export interface Engined {
 export type Consistency = 'snapshot' | 'unverified' | 'none' | 'fixed';
 export interface Census { cycle: number; at: string | null; a: CensusSide | null; b: CensusSide | null }
 
-/** A reviewer sheet drawn from an ended cycle and, once scored, its score (docs/mvp/PACK.md §5). A purge
+/** A reviewer sheet drawn from an ended cycle and, once scored, its score. A purge
  *  keeps its hashes and counts and nulls its keys and disagreements. */
 export interface Adjudication {
   adjudication_id: string;
@@ -267,7 +267,7 @@ export interface Adjudication {
   scored_at: string | null;
   purged_at: string | null;
 }
-/** A signed evidence pack (docs/mvp/PACK.md §6): revoked only with its sign-off; its record outlives the
+/** A signed evidence pack: revoked only with its sign-off; its record outlives the
  *  purge of its cycle, its stored ZIP does not. */
 export interface Pack {
   pack_id: string;
@@ -288,7 +288,7 @@ export interface Pack {
   revoke_reason: string | null;
   purged_at: string | null;
 }
-/** A labelling of an ended cycle as lists show it (docs/mvp/ACCURACY.md §10): its ids, actors, dates, sizes,
+/** A labelling of an ended cycle as lists show it: its ids, actors, dates, sizes,
  *  truth and hashes, without its sheet, selection and score (GET /v1/labellings/{id} holds those). `summary` is
  *  the server's one line and `attested` the requested or approved sign-off attesting it; a purge keeps them. */
 export interface Labelling {
@@ -351,11 +351,11 @@ export interface CycleEvidence {
   sample?: { draw: LedgerDraw & { frame: Frame; strata: Stratum[]; nonce: string | null }; judgement: Judgement | null } | null;
 }
 
-/** A table side of a run's column plan (docs/mvp/TABLES.md §3, §9): columns by canonical name, and its row filter.
+/** A table side of a run's column plan: columns by canonical name, and its row filter.
  *  In a pair with a side on MySQL or Oracle, also its engine, its server's major and minor version, how it is
- *  read, whether its sessions are encrypted and each column's class (docs/mvp/ENGINES.md §7). A file side
- *  (docs/mvp/FILES.md §6) has no schema, and names its files' path and format, their count and bytes, and
- *  its lines that were not rows; never a file's name or a digest. */
+ *  read, whether its sessions are encrypted and each column's class. A file side has no schema, and names
+ *  its files' path and format, their count and bytes, and its lines that were not rows; never a file's name
+ *  or a digest. */
 export interface TablePlan {
   schema: string | null;
   name: string;
@@ -382,11 +382,11 @@ export interface Scan {
   skipped_b: number;
   matched: number; // identical on both sides, counted only
   candidates: number; // keys read and compared one by one
-  repeated_a?: number; // a file side's keys held by more than one row (docs/mvp/FILES.md §9)
+  repeated_a?: number; // a file side's keys held by more than one row
   repeated_b?: number;
   graph?: Graph; // graph parity's counts, once the scan of a graph run ends
 }
-/** Bulk graph parity (docs/mvp/GRAPH.md §4): groups compared by their members, and the components that changed. */
+/** Bulk graph parity: groups compared by their members, and the components that changed. */
 export interface Graph {
   groups_a: number;
   groups_b: number;
@@ -485,7 +485,7 @@ export type SpecDetail = Omit<Spec, 'approval'> & {
   body: { key: { class?: string; source?: { keys?: string[] } } }; // the stored document, its inline keys masked
   form?: SpecForm; // when asked for: that document as the builder's form
 };
-/** A spec as the builder holds it (docs/mvp/CONTRACTS.md §7): the document's text without its service sides'
+/** A spec as the builder holds it: the document's text without its service sides'
  *  `target` and `request`, which `sides` carries. Sent, a side is there only with a target; answered, a and b
  *  each hold what their side has, and a side left out is a table side, which has no form. */
 export interface SpecForm { text: string; sides: Partial<Record<'a' | 'b', { target?: string; request?: unknown }>> }
@@ -527,7 +527,7 @@ export interface Target {
 export type AuthKind = 'none' | 'bearer' | 'header';
 /** GET /v1/targets: the targets, and the role that declares one in the product (`admin`; in a trial `spec_author`). */
 export interface Targets { items: Target[]; declarer: string }
-/** The body of PUT /v1/targets/{id} (docs/mvp/DEPLOY.md §7): `secret` is the credential of the bearer or of
+/** The body of PUT /v1/targets/{id}: `secret` is the credential of the bearer or of
  *  `auth.header`, `more_secrets` those of `auth.more` by header; one left out keeps the stored one. */
 export interface TargetIn {
   base_url: string;
@@ -552,7 +552,7 @@ export interface Draft {
   unmatched: Record<'a' | 'b', string[]>;
   issues: Issue[];
 }
-/** A chat message. A stored assistant message that cites nothing is a refusal (docs/mvp/CONTRACTS.md §6). */
+/** A chat message. A stored assistant message that cites nothing is a refusal. */
 export interface Message { role: string; content: string; citations?: string[]; created_at?: string }
 export type Session = { session_id: string; messages: Message[] };
 
@@ -628,10 +628,10 @@ export interface AuditRow {
   request_id: string | null;
   session_id: string | null;
   client_addr: string | null;
-  chain: { seq: number; hash: string } | null; // its hash chain entry (docs/mvp/PACK.md §4.1)
+  chain: { seq: number; hash: string } | null; // its hash chain entry
 }
 
-/** A four-eyes approval (docs/mvp/APPROVALS.md §6.1): of a spec version's content, or a cycle's sign-off. */
+/** A four-eyes approval: of a spec version's content, or a cycle's sign-off. */
 export type ApprovalStatus = 'requested' | 'approved' | 'rejected' | 'revoked';
 export interface Approval {
   approval_id: string;
@@ -662,7 +662,7 @@ export interface Approval {
   revoked_at: string | null;
   revoke_reason: string | null;
 }
-/** What a sign-off accepts (docs/mvp/APPROVALS.md §1.2); a decision echoes its hash. */
+/** What a sign-off accepts; a decision echoes its hash. */
 export interface Attests {
   run_id: string;
   cycle: number;
@@ -689,11 +689,11 @@ export interface Attests {
   rules: { rule_id: string; when: string; classification: string; reason: string; ticket: string; expires: string | null; keys: number }[];
   root_causes: Pick<RootCause, 'root_cause_id' | 'taxonomy_code' | 'max_severity' | 'change_type' | 'path_pattern' | 'affected_keys'>[];
   claim: string;
-  format?: number; // 1 from evidence packs on (docs/mvp/PACK.md §1.2), 2 from sampling, 3 from labelled accuracy; absent: 008's format 0
+  format?: number; // 1 from evidence packs on, 2 from sampling, 3 from labelled accuracy; absent: 008's format 0
   census?: Census;
   adjudication?: AttestedAdjudication | null; // the newest of the cycle a person scored
-  sample?: AttestedSample | null; // format 2: a sampled cycle's draw (docs/mvp/SAMPLING.md §10)
-  labellings?: { drawn: number; labelled: number }; // format 3: the cycle's labellings, attested or not (docs/mvp/ACCURACY.md §8)
+  sample?: AttestedSample | null; // format 2: a sampled cycle's draw
+  labellings?: { drawn: number; labelled: number }; // format 3: the cycle's labellings, attested or not
   accuracy?: { labelling_id: string } | null; // format 3: the newest labelling a person labelled
 }
 /** What attests format 2 records of a sampled cycle: its draw, the ledger draws before it, its judgement. */
@@ -734,7 +734,7 @@ export interface Review {
   content_hash?: string; // a spec version's, which an approval echoes
   body?: unknown; // masked
   previous?: { spec_id: number; version: string; body: unknown; approval_id: string } | null;
-  ledger?: LedgerDraw[]; // a sampling version's population, or a sampled sign-off's (docs/mvp/SAMPLING.md §10)
+  ledger?: LedgerDraw[]; // a sampling version's population, or a sampled sign-off's
   lines?: string[]; // a format-3 sign-off's: what the labelling it attests says, in the server's words
   labellings?: { labelling_id: string; attested: boolean }[]; // and every labelling of its cycle, newest first
 }
@@ -746,7 +746,7 @@ export type ApprovalDetail = Approval & {
 export interface Decision { decision: 'approve' | 'reject'; note?: string; content_hash?: string; scopes?: string[]; attests_sha256?: string }
 export interface Revoked { approval_id: string; status: string; paused: string[]; stopped: string[]; revoked: string[] }
 
-/** GET /v1/notifications (docs/mvp/ALERTS.md §11): whether notifications are on, the feed's cursor (`behind`:
+/** GET /v1/notifications: whether notifications are on, the feed's cursor (`behind`:
  *  when the oldest unread audit row a rule routes was written), each declared channel with its counts and newest
  *  attempt, the rules as declared, the active mutes and the banners; never a URL, path, address or secret. */
 export interface Notifications {
@@ -822,7 +822,7 @@ export interface Delivery {
 export interface Tested { delivery_id: string; state: 'sent' | 'dead'; status: number | null; error: string | null; latency_ms: number }
 export interface MuteIn { scope: 'channel' | 'run'; target: string; hours: number; reason: string }
 
-/** Cut-over readiness (docs/mvp/READINESS.md §10): named gates, each met or not on observed evidence, and a
+/** Cut-over readiness: named gates, each met or not on observed evidence, and a
  *  pair's place on a fixed ladder; never a probability, a forecast or sign-off evidence. Every text is the API's. */
 export type ReadyState = 'no_evidence' | 'not_ready' | 'unknown' | 'parity_ready' | 'signoff_ready' | 'signed_off' | 'evidenced';
 export type GateStatus = 'met' | 'not_met' | 'unknown' | 'not_applicable' | 'unavailable';
@@ -1011,7 +1011,7 @@ export type Brief = ReadyPair & {
   } | null;
 };
 
-/** Schedules (docs/mvp/SCHEDULES.md §10): a stored spec started at cron times in a time zone. Every firing's text,
+/** Schedules: a stored spec started at cron times in a time zone. Every firing's text,
  *  banner and warning is the API's; a schedule holds no key and no value. */
 export interface DueTime { utc: string; local: string | null } // local: the zone's wall clock; null when it does not load
 export interface RunOptions { mode: 'batch' | 'soak'; soak?: { rolling: boolean } | null }
@@ -1104,7 +1104,7 @@ export interface RunSchedule {
   text: string;
 }
 
-/** Table pre-checks (docs/mvp/PRECHECKS.md §11): each pair's two tables counted and added up, never a comparison
+/** Table pre-checks: each pair's two tables counted and added up, never a comparison
  *  of rows. Every text of a pair, the totals, the banner and each verdict's words are the API's. (`Precheck` is
  *  the sign-off precheck of a readiness pair.) */
 export type PrecheckLevel = 'schema' | 'counts' | 'columns' | 'distinct';
@@ -1204,7 +1204,7 @@ let csrf: string | null = null; // the session's CSRF token, from /me; kept in m
 let used = Date.now();
 
 /** Counts a pointerdown, keydown or wheel on `target` as use. Requests after 60 s without one (the Run
- *  screen's polls) carry X-DS-Background: 1, so a polling tab still idles out (docs/mvp/AUTH.md §3). */
+ *  screen's polls) carry X-DS-Background: 1, so a polling tab still idles out. */
 export function watchUse(target: EventTarget): void {
   for (const type of ['pointerdown', 'keydown', 'wheel'])
     target.addEventListener(type, () => (used = Date.now()), { capture: true, passive: true });
@@ -1290,7 +1290,7 @@ export const api = {
   health: () => get<Health>('/health'),
   me: () => get<Me>('/auth/me').then(keepCsrf),
   /** Tokens mode: a session acting as the token. /me then shows that the browser kept the session cookie,
-   *  and gives the CSRF token; a browser that dropped it is told so (docs/mvp/AUTH.md §9). */
+   *  and gives the CSRF token; a browser that dropped it is told so. */
   tokenLogin: (token: string) =>
     post<Me>('/auth/token-login', { token }).then(() =>
       get<Me>('/auth/me').then(keepCsrf, (e: unknown) => {
@@ -1362,7 +1362,7 @@ export const api = {
     ),
   decide: (id: string, body: Decision) => post<Approval>(`${approval(id)}/decision`, body),
   revoke: (id: string, reason: string) => post<Revoked>(`${approval(id)}/revoke`, { reason }),
-  /** Draw a reviewer sheet of an ended cycle (docs/mvp/PACK.md §5): its id, salt and masked keys. */
+  /** Draw a reviewer sheet of an ended cycle: its id, salt and masked keys. */
   draw: (runId: string, cycle: number, limit?: number) =>
     post<{ adjudication_id: string; salt: string; keys: string[] }>(`${cycleOf(runId, cycle)}/adjudications`, { limit }),
   adjudications: (runId: string, cycle: number) => get<Items<Adjudication>>(`${cycleOf(runId, cycle)}/adjudications`),
@@ -1372,7 +1372,7 @@ export const api = {
     request(`${adjudication(id)}/score`, { method: 'POST', headers: { 'Content-Type': 'text/csv' }, body: sheet }).then(
       (r) => r.json() as Promise<Adjudication>,
     ),
-  /** Draw a labelling of an ended cycle against a named truth source (docs/mvp/ACCURACY.md §3). */
+  /** Draw a labelling of an ended cycle against a named truth source. */
   drawLabelling: (runId: string, cycle: number, body: LabellingDraw) =>
     post<DrawnLabelling>(`${cycleOf(runId, cycle)}/labellings`, body),
   labellings: (runId: string, cycle: number) => get<Items<Labelling>>(`${cycleOf(runId, cycle)}/labellings`),

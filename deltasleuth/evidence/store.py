@@ -1,4 +1,4 @@
-"""Encrypted, content-addressed evidence (docs/mvp/RETENTION.md §2): format 1 blobs at
+"""Encrypted, content-addressed evidence: format 1 blobs at
 ``blobs/hk1/<2 hex>/<64 hex>.dse`` (directories 0700, files 0600). The observation metadata lives in
 the database (``ds.observations``).
 
@@ -64,7 +64,7 @@ class EvidenceIntegrityError(EvidenceError):
 
 
 class EvidenceKeyError(EvidenceError):
-    """A blob or write needs a key the keyring cannot unwrap (docs/mvp/RETENTION.md §6.1)."""
+    """A blob or write needs a key the keyring cannot unwrap."""
 
 
 def observation_id(obs: Observation, content: str | None, id_key: bytes) -> str:
@@ -99,7 +99,7 @@ class EvidenceStore:
         if not migrating and (root / "blobs" / "sha256").exists():
             raise EvidenceError(
                 f"legacy plaintext remains in {root / 'blobs' / 'sha256'}: stop the app and run"
-                " 'ds keys migrate' (docs/mvp/RETENTION.md §7.2)"
+                " 'ds keys migrate'"
             )
         self._blobs = root / "blobs" / "hk1"
         self._id_key = id_key
@@ -155,7 +155,7 @@ class EvidenceStore:
 
     def ensure(self, observations: Iterable[Observation]) -> int:
         """Write again the missing blobs of ``observations``, put earlier with their bodies still in
-        memory (a drain may have deleted one meanwhile, docs/mvp/RETENTION.md §5.4); the number written."""
+        memory (a drain may have deleted one meanwhile); the number written."""
         written = 0
         for obs in observations:
             if obs.body is None or obs.content_hash is None or self._blob_path(obs.content_hash).exists():

@@ -1,6 +1,5 @@
-"""The people, uploads, runs and ended cycles the approval tests share, written as the app writes them
-(docs/mvp/APPROVALS.md §3), sampled cycles among them (docs/mvp/SAMPLING.md §9) and an ended cycle's
-labellings (docs/mvp/ACCURACY.md §8)."""
+"""The people, uploads, runs and ended cycles the approval tests share, written as the app writes them,
+sampled cycles among them and an ended cycle's labellings."""
 
 from __future__ import annotations
 
@@ -199,7 +198,7 @@ async def request_signoff(
     return row["approval_id"]
 
 
-# -- sampled cycles (docs/mvp/SAMPLING.md §9, §10) -------------------------------------------------
+# -- sampled cycles -------------------------------------------------
 
 FRAME = [(f"C{n:03d}", "R" if n <= 3 else "B") for n in range(1, 7)]  # three retail customers, three others
 _SAMPLED = {
@@ -335,7 +334,7 @@ async def drawn(
     return run_id, row["draw_id"]
 
 
-# -- labellings (docs/mvp/ACCURACY.md §8) -----------------------------------------------------------
+# -- labellings -----------------------------------------------------------
 
 TRUTH = {"source": "CBS-PROD.account_master", "as_of": "2026-10-01", "names_side": None}
 ITEMS = [

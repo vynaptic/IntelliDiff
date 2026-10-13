@@ -1,4 +1,4 @@
-"""Local notification receivers for the notifier's tests (docs/mvp/ALERTS.md §14): nothing leaves 127.0.0.1.
+"""Local notification receivers for the notifier's tests: nothing leaves 127.0.0.1.
 
 * ``Receiver``: an aiohttp app. ``POST /webhook`` checks the Standard Webhooks signature against its keys,
   ``/slack`` answers ``ok``, ``/teams`` 202 as a Workflows webhook does; ``GET /__received`` lists what

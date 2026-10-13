@@ -1,10 +1,10 @@
 # The files acceptance kit
 
-DeltaSleuth's file sides are observed with DuckDB 1.5.5 and files of DuckDB's own writer only
-([docs/mvp/FILES.md](../../../docs/mvp/FILES.md)). This kit is what a site runs first, before any real
-export is compared: a CSV as a legacy system writes one against a Parquet file, with seeded differences
-whose result is known. Then run a small export of your own writer (Spark, Hive, Impala, Arrow) the same
-way: those are not observed.
+DeltaSleuth's file sides are observed with DuckDB 1.5.5 and files of DuckDB's own writer only. This kit
+is what a site runs first, before any real export is compared: a CSV as a legacy system writes one
+against a Parquet file, with seeded differences whose result is known. Then run a small export of your
+own writer (Spark, Hive, Impala, Arrow) the same way: those are not observed. File sides are in the user
+guide's [Compare tables and files](../../../docs/user-guide.md#compare-tables-and-files).
 
 | File | What it holds |
 |---|---|
@@ -15,9 +15,9 @@ way: those are not observed.
 
 ## Run it
 
-With a settings file as in the runbook's [Setup](../../../docs/mvp/RUNBOOK.md#setup) whose `targets_file`
-is `examples/tables/files/targets.yaml` and whose `files.roots_under` holds the kit's directory (the
-target's `root` is that directory's real path):
+With a settings file as [docs/deployment.md](../../../docs/deployment.md) describes for a run from
+source, whose `targets_file` is `examples/tables/files/targets.yaml` and whose `files.roots_under` holds
+the kit's directory (the target's `root` is that directory's real path):
 
 ```bash
 uv run python examples/tables/files/generate.py /var/lib/deltasleuth/files/kit
@@ -30,8 +30,8 @@ uv run ds report R-... --out kit --kind discrepancies.csv --kind retry.csv
 The first `ds target check` drafts a starting point for what `spec.yaml` declares: the delimiter `;`, a
 header, `opened` as a date with the format `%d/%m/%Y`, and the note that `account_id` holds only digits
 and starts with 0 (so it stays text until `csv.keys` declares it an integer). It leaves `balance` as
-text: a decimal comma is not sniffed, and the spec's `typeMap` declares it. `ds run` must print these two lines after `completed`, which are `expected.json`'s
-`counters` and `outcomes`:
+text: a decimal comma is not sniffed, and the spec's `typeMap` declares it. `ds run` must print these two
+lines after `completed`, which are `expected.json`'s `counters` and `outcomes`:
 
 ```
   total 1001, compared 1000, match 995, different 5, indeterminate 1, cancelled 0, outstanding 0
@@ -49,13 +49,13 @@ text: a decimal comma is not sniffed, and the spec's `typeMap` declares it. `ds 
   compared column.
 - Key `5` shows the declared key type at work: side a's file holds `000005`, read as the integer 5.
 
-**On the compose stack** ([docs/mvp/DEPLOY.md](../../../docs/mvp/DEPLOY.md), section 7, Files), in the
+**On the compose stack** ([docs/deployment.md](../../../docs/deployment.md)), in the
 installation's folder, where no `uv` runs: the image's Python writes the exports into a host directory, here
 `/srv/exports/kit`, which the container's user (uid 10001) must be able to write for that one command. Then
 mount the directory read-only into the app (the site file's commented `volumes` line), declare `kit-files`
 in `deploy/config/targets.yaml` with `settle_s: 0` and without `allow_writable` (the mount is read-only), and
-run `docker compose up -d`. The spec and the reports pass through the `p0` volume (DEPLOY section 9); while
-the app runs, `ds run` leaves the run to its worker and waits.
+run `docker compose up -d`. The spec and the reports pass through the `p0` volume; while the app runs,
+`ds run` leaves the run to its worker and waits.
 
 ```bash
 docker compose run --rm --no-deps -v "$PWD/examples/tables/files:/kit:ro" \
@@ -71,7 +71,6 @@ docker compose cp app:/var/lib/deltasleuth/p0/kit-files ~/
 ```
 
 The target declares `settle_s: 0` and `allow_writable: true` because you have just written the
-directory yourself; a real export keeps the default 60 seconds and is mounted read-only
-([DEPLOY.md](../../../docs/mvp/DEPLOY.md), section 7, Files). Anything else than the expected result is
-a finding: send the two lines, the two CSV files and the output of the two `ds target check` commands to
-the maintainer. Removing the directory removes the kit.
+directory yourself; a real export keeps the default 60 seconds and is mounted read-only. Anything else
+than the expected result is a finding: send the two lines, the two CSV files and the output of the two
+`ds target check` commands to the maintainer. Removing the directory removes the kit.

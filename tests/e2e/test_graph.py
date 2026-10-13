@@ -1,4 +1,4 @@
-"""Bulk graph parity (docs/mvp/GRAPH.md): two link-fact tables, whose L1 scan finds the missing and
+"""Bulk graph parity: two link-fact tables, whose L1 scan finds the missing and
 extra links and whose L2 names the groups that changed members and the components that split,
 merge or rearrange, a hot group's component reported as oversized.
 """
@@ -79,7 +79,7 @@ async def test_graph_parity_names_the_groups_and_components_that_changed(
         "groups_a": 10, "groups_b": 10, "groups_equal": 4, "groups_different": 6,
         "split": 1, "merge": 1, "rearrange": 1, "oversized": 2,
     }  # fmt: skip
-    scan = run["scan"]  # L2 took its own snapshots, after L1's (docs/mvp/PACK.md §1.2)
+    scan = run["scan"]  # L2 took its own snapshots, after L1's
     assert (scan["snapshots_a"], scan["snapshots_b"]) == (1, 1) and scan["first_at"] <= scan["graph_at"]
     codes = sorted(r["code"] for r in rows)
     assert codes == sorted(
@@ -124,7 +124,7 @@ async def test_a_kill_during_l2_resumes_to_the_same_rows_and_counts(
     clean, killed = runs
     assert (len(calls), killed["status"]) == (3, "completed")
     assert rows[1] == rows[0]
-    when = ("snapshots_a", "snapshots_b", "first_at", "last_at", "graph_at")  # docs/mvp/PACK.md §1.2
+    when = ("snapshots_a", "snapshots_b", "first_at", "last_at", "graph_at")
 
     def counted(scan: dict[str, Any]) -> dict[str, Any]:
         return {name: value for name, value in scan.items() if name not in when}

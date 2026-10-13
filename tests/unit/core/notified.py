@@ -36,7 +36,7 @@ URL = "https://events.bank.example/deltasleuth"
 PACK = "P-" + "0" * 25 + "5"
 PAIR = "customer-profile"
 SCHEDULE = "SC-" + "0" * 25 + "6"
-# A schedule's schedule.missed row as the worker writes one (docs/mvp/SCHEDULES.md §11): a due time whose
+# A schedule's schedule.missed row as the worker writes one: a due time whose
 # window closed while the run the schedule started before was still live.
 MISSED = {
     "reason": "overlap", "code": None, "due": "2026-10-07T01:00Z", "to": None, "count": None,
@@ -44,12 +44,12 @@ MISSED = {
     "revision": 4, "time_zone": "Europe/London", "next": "2026-10-08T01:00Z",
 }  # fmt: skip
 # The worker's schedule.pause row of a schedule whose zone its build did not hold, paused before a time of
-# it came due (docs/mvp/SCHEDULES.md §4 T6, §11): no schedule.missed row is beside it.
+# it came due: no schedule.missed row is beside it.
 PAUSED = {
     "revision": 4, "next_due": None, "reason": "zone", "code": "zone", "tzdata": "2026c", "missed": False,
     "spec_name": PAIR, "mode": "batch",
 }  # fmt: skip
-# A pair's readiness.changed row as the worker writes it (docs/mvp/READINESS.md §8): targets and convergence
+# A pair's readiness.changed row as the worker writes it: targets and convergence
 # met, so the pair is parity-ready in tokens mode.
 CHANGED = {
     "pair": PAIR, "programme": "cutover-q4", "entity": "customer", "from": "not_ready", "to": "parity_ready",
@@ -68,9 +68,8 @@ CHANGED = {
 }  # fmt: skip
 
 
-# A run's schema.drift row as the schema guard writes it when a look at a cycle's start pauses the run
-# (docs/mvp/PRECHECKS.md §9): side b's table lost a compared column and gained two; the paused row written
-# before it is audit row 81233.
+# A run's schema.drift row as the schema guard writes it when a look at a cycle's start pauses the run: side
+# b's table lost a compared column and gained two; the paused row written before it is audit row 81233.
 BASIS = "R-" + "0" * 25 + "7"
 DRIFT = {
     "cycle": 7, "where": "cycle", "mode": "finding", "checked": True, "paused": True, "paused_seq": 81233,

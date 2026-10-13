@@ -1,4 +1,4 @@
-"""Stand-ins for tests of the engine seam (docs/mvp/ENGINES.md §5) that need no database: an engine over
+"""Stand-ins for tests of the engine seam that need no database: an engine over
 relations held in memory, and a connection that records what PostgreSQL's adapter sends on it."""
 
 from __future__ import annotations

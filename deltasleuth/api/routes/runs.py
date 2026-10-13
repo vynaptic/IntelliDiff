@@ -1,12 +1,10 @@
-"""Runs and what they found: create, list, control, results, findings, root causes, keys,
-soak changes, graph parity and report downloads; plus the one-shot compare. Keys are shown masked only.
-A key view and a report download are audited once built, before they are sent. A cycle's routes answer
-410 once its purge has started (docs/mvp/RETENTION.md §4.4). A run shows the licence it was made under
-(none in an open build, §19),
-and an unlicensed evaluation's reports download under names that say so (docs/mvp/LICENCE.md §10); one a
-schedule started shows that schedule and the due time it was started for (docs/mvp/SCHEDULES.md §10). A run
-shows what the schema guard holds of its tables as lines only (``schema``, docs/mvp/PRECHECKS.md §7), and a
-run's creation and a one-shot compare answer with its ``warnings``."""
+"""Runs and what they found: create, list, control, results, findings, root causes, keys, soak changes,
+graph parity and report downloads; plus the one-shot compare. Keys are shown masked only. A key view and a
+report download are audited once built, before they are sent. A cycle's routes answer 410 once its purge has
+started. A run shows the licence it was made under (none in an open build), and an unlicensed evaluation's
+reports download under names that say so; one a schedule started shows that schedule and the due time it was
+started for. A run shows what the schema guard holds of its tables as lines only (``schema``), and a run's
+creation and a one-shot compare answer with its ``warnings``."""
 
 from __future__ import annotations
 
@@ -48,7 +46,7 @@ LIVE = ("queued", "running", "paused")  # a live run's current cycle may still a
 
 
 class RunOptions(Payload):
-    """What a run takes besides its spec and keys: a schedule holds it (docs/mvp/SCHEDULES.md §3)."""
+    """What a run takes besides its spec and keys: a schedule holds it."""
 
     mode: Literal["batch", "soak"]
     soak: dict[Literal["rolling"], StrictBool] | None = None
@@ -121,12 +119,11 @@ async def _labelled(query: Awaitable[repo.Page]) -> repo.Page:
 
 @router.get("/runs/{run_id}")
 async def run(ctx: Ctx, who: Viewer, run_id: str) -> Response:
-    """The run (with its column plan and table scan, if any), its current cycle's progress (key states
-    and outcomes), its retention, its spec approval, its cycles' sign-offs (docs/mvp/APPROVALS.md §4),
-    each ended cycle's census, adjudications and evidence packs (docs/mvp/PACK.md §7.1) and labellings
-    (docs/mvp/ACCURACY.md §10), a sampled run's current draw and each ended cycle's draw and judgement
-    (docs/mvp/SAMPLING.md §14), its licence, the schedule that started it, if one did, and what the schema
-    guard holds of its tables, as lines (``schema``)."""
+    """The run (with its column plan and table scan, if any), its current cycle's progress (key states and
+    outcomes), its retention, its spec approval, its cycles' sign-offs, each ended cycle's census,
+    adjudications and evidence packs and labellings, a sampled run's current draw and each ended cycle's
+    draw and judgement, its licence, the schedule that started it, if one did, and what the schema guard
+    holds of its tables, as lines (``schema``)."""
     async with ctx.pool.connection() as conn:
         found = await run_of(conn, run_id)
         scheduled = await schedules.of_run(conn, found)
@@ -209,7 +206,7 @@ async def _evidence(
 
 def _retention(ctx: Context, run: repo.Row, cycles: list[repo.Row]) -> dict[str, Any]:
     """The run's retention class and its days, its hold, the cycles purged (their purge started) and the
-    ended cycles still kept, with the day each expires (docs/mvp/RETENTION.md §4.4)."""
+    ended cycles still kept, with the day each expires."""
     purged = [c for c in cycles if c["purging_at"] is not None]
     hold = run["hold_reason"] and {"reason": run["hold_reason"], "by": run["hold_by"], "at": run["hold_at"]}
     return {
@@ -307,7 +304,7 @@ async def graph(
     limit: Limit = 100,
     cursor: str | None = None,
 ) -> Response:
-    """Graph parity rows (docs/mvp/GRAPH.md §4), masked when written; none for a run without them."""
+    """Graph parity rows, masked when written; none for a run without them."""
     async with ctx.pool.connection() as conn:
         cycle = await live_cycle(conn, await run_of(conn, run_id), cycle)
         return await page(repo.list_graph_diffs(conn, run_id, cycle, limit=limit, cursor=cursor))

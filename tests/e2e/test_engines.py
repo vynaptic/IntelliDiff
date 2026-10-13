@@ -1,13 +1,13 @@
-"""Table pairs across engines (docs/mvp/ENGINES.md): PostgreSQL, MySQL and Oracle against each other,
+"""Table pairs across engines: PostgreSQL, MySQL and Oracle against each other,
 MySQL and Oracle against themselves and MySQL against a service find exactly the seeded differences, by a
 scan whose rows the worker hashes, or in one engine the engine itself, and by per-key reads of canonical
 rendering 1; a scan resumes, also past a key the other side cannot hold and past an empty key part, and key
 maps, composite keys and soak cycles run as between two PostgreSQL tables. A scan's statements end on their
 servers when its run is cancelled or paused and when its worker is terminated, keys of rows that may hold
 large values are read four at a time, and a cycle records the server version it read. The acceptance kits of
-examples/tables/ give their expected results, and with DS_PERF=1 the scans and batched reads of §15 are
-timed. A three-part key pairs a MySQL table with a service that takes its parts in its path and query, and
-a key table on MySQL or Oracle gives the three-part keys of a run between two services.
+examples/tables/ give their expected results, and with DS_PERF=1 the scans and batched reads are timed. A
+three-part key pairs a MySQL table with a service that takes its parts in its path and query, and a key table
+on MySQL or Oracle gives the three-part keys of a run between two services.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ pytestmark = [pytest.mark.e2e, pytest.mark.mysql]
 oracle = pytest.mark.oracle  # a test, or a pairing of one, that also needs the Oracle server
 
 ROWS = 1000
-# TABLES.md §7's dataset. Side a: every row. Side b, a view over a table without a key: row 5's email
+# The table dataset. Side a: every row. Side b, a view over a table without a key: row 5's email
 # differs in case, row 6's amount only in scale, row 7 is missing, row 8 is there twice, row 1001 is extra,
 # one row has no key.
 USERS = {
@@ -186,7 +186,7 @@ async def test_a_scan_across_engines_finds_exactly_the_seeded_differences(
 async def test_a_scan_across_engines_stores_nothing_of_the_rows_it_found_identical(
     engines: Callable[..., Stack],
 ) -> None:
-    # The worker reads and hashes every compared column of every row (ENGINES.md §14, point 7): of the
+    # The worker reads and hashes every compared column of every row: of the
     # rows both sides hold alike, neither the store nor the evidence keeps a value.
     stack = engines(("postgresql", USERS["postgresql"]), ("mysql", USERS_V["mysql"]))
     async with stack.context() as ctx:
@@ -307,7 +307,7 @@ async def test_values_render_alike_on_oracle_once_its_differences_are_declared(
     seeds = [("postgresql", ORACLE_EDGES["postgresql"]), ("oracle", ORACLE_EDGES["oracle"])]
     date, empty = {"opened": {"as": "date"}}, {"note": {"as": "string", "emptyAsNull": True}}
     async with engines(*seeds).context() as ctx:
-        with pytest.raises(ValueError) as exc:  # P9: an Oracle DATE is a timestamp
+        with pytest.raises(ValueError) as exc:  # an Oracle DATE is a timestamp
             await create_run(ctx, await store_spec(ctx, spec("undeclared")), "batch", who=TESTER)
         run = await finish(
             ctx, await create_run(ctx, await store_spec(ctx, spec("dated", b=date)), "batch", who=TESTER)
@@ -973,7 +973,7 @@ async def test_a_soak_over_two_tables_of_one_engine_scans_them_anew_every_cycle(
     assert run["params"]["tables"]["a"]["digest"] == []  # declared alike: the engine hashed every column
 
 
-# --- a scan's statements end with its run, and with its worker (§6) -----------------------------------
+# --- a scan's statements end with its run, and with its worker -----------------------------------
 
 # A view that takes about half a minute to read: while it does, its statement is the scan's sort.
 SLOW = """
@@ -1068,7 +1068,7 @@ async def test_a_terminated_worker_ends_its_scan_s_statements(
     assert command == "worker" or said.decode().rstrip().endswith("interrupted")
 
 
-# --- keys of rows that may hold large values (§6) -----------------------------------------------------
+# --- keys of rows that may hold large values -----------------------------------------------------
 
 
 async def test_keys_of_rows_that_may_hold_large_values_are_read_four_at_a_time(
@@ -1105,7 +1105,7 @@ async def test_keys_of_rows_that_may_hold_large_values_are_read_four_at_a_time(
     assert peak < 110 * 1024 * 1024
 
 
-# --- the server version a cycle read (§13) ------------------------------------------------------------
+# --- the server version a cycle read ------------------------------------------------------------
 
 
 async def test_a_cycle_records_the_server_version_it_read_whatever_the_plan_s(
@@ -1175,7 +1175,7 @@ async def test_the_acceptance_kit_gives_its_expected_result(
     assert actual == json.loads((kit / "expected.json").read_text())
 
 
-# --- performance (ENGINES.md §15): DS_PERF=1 runs these; TABLES.md §13 publishes what they measured ---
+# --- performance: DS_PERF=1 runs these ---------------------------------------------------------------
 
 perf = pytest.mark.skipif(not os.environ.get("DS_PERF"), reason="DS_PERF=1 runs it")
 PEOPLE = both({"name": "users", "keyColumns": ["userid"]})

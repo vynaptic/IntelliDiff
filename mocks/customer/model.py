@@ -1,4 +1,4 @@
-"""Customer records and the two wire shapes of docs/architecture/examples/generic-customer-services.yaml.
+"""Customer records and the two wire shapes that mocks/customer/spec.yaml compares.
 
 Variant a (v1, legacy monolith)::
 

@@ -1,7 +1,7 @@
-"""Sign-off sampling over the API (docs/mvp/SAMPLING.md §13, §14): a population's ledger, a draw's live
+"""Sign-off sampling over the API: a population's ledger, a draw's live
 progress (its nonce withheld, no key listed) or its precheck once ended (its nonce and strata's u_max shown
-only from rule_approver up), closing draws (C1-C5), a run's current draw and each cycle's judgement, and a
-sampled sign-off whose final step records the later draws it judged (R-c at the request and at the
+only from rule_approver up), closing draws, a run's current draw and each cycle's judgement, and a
+sampled sign-off whose final step records the later draws it judged (at the request and at the
 decision) and whose closers may not approve it. Draws are written as the worker commits them."""
 
 from __future__ import annotations
@@ -80,7 +80,7 @@ def test_closing_draws_needs_a_person_under_sso_and_a_note_free_of_keys(open_cli
         again = close(json={"spec_name": "customer-profile", "note": FIX})
         closes = audited(client, "sample.close")
         amy_actor = client.get("/v1/auth/me", headers=amy).json()["actor"]
-    with open_client(auth={}) as tokens:  # C1 comes first: even a bad note
+    with open_client(auth={}) as tokens:  # the auth mode comes first: even a bad note
         in_tokens = tokens.post("/v1/samples/close", json=body, headers=Callers(tokens).token("operator"))
     with open_client() as developer:
         in_developer = developer.post("/v1/samples/close", json=body)
@@ -142,7 +142,7 @@ def test_the_ledger_a_live_draw_s_progress_and_an_ended_draw_s_precheck(open_cli
         3, 3, 3, 1, 0, "failed",
     )  # fmt: skip
     # Below rule_approver, an ended draw has no nonce and no stratum's u_max either: with keys shown in
-    # clear (business_code), they would tell which keys lie in a stratum compared whole (§19).
+    # clear (business_code), they would tell which keys lie in a stratum compared whole.
     [cycle] = run["cycles"]
     for draw_view in (shown_ended, cycle["sample"]["draw"]):
         assert draw_view["nonce"] is None and all("u_max" not in s for s in draw_view["strata"])
@@ -227,12 +227,12 @@ def test_a_sampled_sign_off_judges_later_draws_at_request_and_decision(open_clie
         granted = client.post(f"/v1/approvals/{request['approval_id']}/decision", json=body, headers=erin)
         grant = audited(client, "approval.grant")[-1][2]
         client.portal.call(_ended, client.app.state.ctx, live_run, PROFILE)
-        # R-c at the request: a draw made after it failed
+        # The later draws at the request: a draw made after it failed
         blocked_run, blocked = draw(client, world, PROFILE)
         spoiler_run, spoiler = draw(client, world, PROFILE, discrepant=["C002"])
         at_request = client.post(f"/v1/runs/{blocked_run}/cycles/1/signoff", headers=dave)
         assert client.post("/v1/samples/close", json=close, headers=amy).status_code == 200
-        # R-c at the decision: a draw made after the request ended without a judgement
+        # The later draws at the decision: a draw made after the request ended without a judgement
         decided_run, decided = draw(client, world, PROFILE)
         asked = client.post(f"/v1/runs/{decided_run}/cycles/1/signoff", headers=dave).json()
         late_run, late = draw(client, world, PROFILE, judged=False)
@@ -283,7 +283,7 @@ async def _uploaded(ctx: Context, version: CompiledSpec) -> int:
 
 @pytest.mark.usefixtures("vendor_keys")
 def test_draws_and_closes_work_in_an_unlicensed_evaluation(open_client: OpenClient) -> None:
-    with open_client(auth={"oidc": OIDC}, tier=None) as client:  # no licence: an evaluation (§15, D10)
+    with open_client(auth={"oidc": OIDC}, tier=None) as client:  # no licence: an evaluation
         world = world_of(client)
         amy = person_of(client, "amy", "operator")
         _, failed = draw(client, world, PROFILE_2, discrepant=["C001"])

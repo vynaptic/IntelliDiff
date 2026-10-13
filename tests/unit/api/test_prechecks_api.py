@@ -1,7 +1,7 @@
-"""Table pre-checks over the API (docs/mvp/PRECHECKS.md §6, §9 to §11): who may make, read and cancel them
+"""Table pre-checks over the API: who may make, read and cancel them
 in each auth mode, every refusal with its status and binding message, what an unapproved version is read
 of and shown as under SSO, the label of an unlicensed evaluation, the reports, what the list reads of the
-store, and what no surface ever tells (§2). The worker's reads are tested in
+store, and what no surface ever tells. The worker's reads are tested in
 tests/unit/runner/test_precheck_run.py; here the app's own worker reads an engine held in memory."""
 
 from __future__ import annotations
@@ -128,7 +128,7 @@ def test_viewers_read_and_operators_make_and_cancel_under_sso(open_client: OpenC
     assert pair["targets"] == ["db-a", "db-b"] and pair["relations"] == ["accounts", "accounts"]
     assert pair["result"] is None and pair["columns"] == [] and pair["not"] == precheck.NOT
     assert cancelled.status_code == 200 and set(cancelled.json()) == {"not", "precheck_id", "cancelled_at"}
-    assert cancelled.json()["not"] == precheck.NOT  # every answer but a download carries it (§2)
+    assert cancelled.json()["not"] == precheck.NOT  # every answer but a download carries it
     [(actor, obj, detail)] = created
     assert actor.startswith("user:U-") and (obj, detail) == (
         precheck_id, {"source": "specs", "level": "counts", "pairs": 1, "skipped": 0, "spec_ids": [spec_id]},
@@ -162,27 +162,27 @@ def test_each_refusal_has_its_status_and_message(
 ) -> None:
     with open_client(targets=DATABASES) as client:
         post = lambda **body: said(client.post("/v1/prechecks", json=body))  # noqa: E731
-        assert post(all_specs=True) == (422, "no stored spec is a pair of tables")  # K4
+        assert post(all_specs=True) == (422, "no stored spec is a pair of tables")
         service = client.post("/v1/specs", content=SPEC_YAML).json()["spec_id"]
         assert post(all_specs=True) == (422, "no stored spec is a pair of tables")
         old, new = stored(client, table_spec()), stored(client, table_spec(version="1.1.0"))
         cards = stored(client, table_spec("cards"))
-        one = "give spec_ids, spec_names or all_specs, and only one of them"  # K1
+        one = "give spec_ids, spec_names or all_specs, and only one of them"
         assert post() == post(spec_ids=[old], all_specs=True) == (422, one)
         assert post(spec_ids=[old], spec_names=["accounts"]) == post(spec_names=["cards"], all_specs=True)
         assert post(spec_names=["cards"], all_specs=True) == (422, one)
-        assert post(spec_ids=[old, 999]) == (404, "spec 999 not found")  # K2
+        assert post(spec_ids=[old, 999]) == (404, "spec 999 not found")
         assert post(spec_names=["accounts", "customer-profile"]) == (404, "no spec is named customer-profile")
         assert post(spec_ids=[old, cards, old]) == (422, f"spec {old} is listed twice")
         assert post(spec_names=["accounts", "accounts"]) == (422, f"spec {new} is listed twice")
-        assert post(spec_ids=[cards, service]) == (  # K3
+        assert post(spec_ids=[cards, service]) == (
             422,
             f"spec {service} (api-demo 1.0.0) is not a pair of tables: a table pre-check reads two table"
             " sides",
         )
-        level = "level must be schema, counts, columns or distinct"  # K5
+        level = "level must be schema, counts, columns or distinct"
         assert post(spec_ids=[old], level="rows") == post(all_specs=True, level="") == (422, level)
-        assert post(spec_ids=[]) == (422, "spec_ids takes 1 to 500 ids and 0 were given")  # K7
+        assert post(spec_ids=[]) == (422, "spec_ids takes 1 to 500 ids and 0 were given")
         assert post(spec_ids=list(range(1, 813))) == (422, "spec_ids takes 1 to 500 ids and 812 were given")
         names = [f"n{i}" for i in range(812)]
         assert post(spec_names=names) == (422, "spec_names takes 1 to 500 names and 812 were given")
@@ -205,11 +205,11 @@ def test_each_refusal_has_its_status_and_message(
         ]
         for _ in range(19):
             assert client.post("/v1/prechecks", json={"spec_names": ["accounts"]}).status_code == 202
-        assert post(spec_ids=[old]) == (  # K10
+        assert post(spec_ids=[old]) == (
             409,
             "this installation holds 20 unfinished table pre-checks, the most it takes: cancel one or wait",
         )
-        gone = f"table pre-check {PC} not found (pre-checks are deleted 90 days after they are made)"  # K11
+        gone = f"table pre-check {PC} not found (pre-checks are deleted 90 days after they are made)"
         reads = (
             f"/v1/prechecks/{PC}",
             f"/v1/prechecks/{PC}/pairs/1",
@@ -252,7 +252,7 @@ CLEAR = table_spec("loans", security={"unlisted": "clear"})
 
 
 def test_unapproved_filter_reads_schema_only(open_client: OpenClient, callers: Any, fake: FakeEngine) -> None:
-    """D15: under SSO no unapproved filter reaches a target, so such a version is read at level schema
+    """Under SSO no unapproved filter reaches a target, so such a version is read at level schema
     with no probe; once approved, or outside SSO, it reads the level asked."""
     with open_client(auth={"oidc": OIDC}, targets=DATABASES, worker=True) as client:
         operator = callers(client).session(*expand(["operator"]), username="olga")
@@ -445,7 +445,7 @@ def _texts(value: Any) -> list[str]:
 
 
 def test_never_told(open_client: OpenClient, fake: FakeEngine) -> None:
-    """N1 to N7 and N10 on every surface of a spec pre-check: the API's answers, both CSVs and the PDF's
+    """What no surface of a spec pre-check tells: the API's answers, both CSVs and the PDF's
     document (the CLI prints these texts: tests/unit/cli; the screens: web/test/prechecks.test.ts)."""
     planted = {"min": "7770001", "max": "8880003", "sum": "9990004"}
     for target in ("db-a", "db-b"):
@@ -468,33 +468,33 @@ def test_never_told(open_client: OpenClient, fake: FakeEngine) -> None:
         printed += [str(cell) for cells in section.rows for cell in cells]
     surfaces = {"api": _texts(answers), "csv": exports, "pdf": printed}
     for surface, texts in surfaces.items():
-        assert not [text for text in texts if N1.search(text)], surface  # N1: nothing reads as agreeing
-        assert not [text for text in texts if N2.search(text)], surface  # N2: no share, no score
+        assert not [text for text in texts if N1.search(text)], surface  # nothing reads as agreeing
+        assert not [text for text in texts if N2.search(text)], surface  # no share, no score
         assert precheck.NOT in "\n".join(texts), surface  # it heads each of them, verbatim
-        # N4: no minimum, maximum or protected sum reaches a surface.
+        # No minimum, maximum or protected sum reaches a surface.
         assert not [text for text in texts if any(value in text for value in (*planted.values(), "7770002"))]
     assert all(answer["not"] == precheck.NOT for answer in answers)
     assert [pair["verdict"] for pair in shown["items"]] == ["refused", "not_read", "rows_differ"]
     assert shown["totals"] == "3 pairs: 1 a run would refuse, 1 not read, 1 with differing row counts"
     by = {pair["verdict"]: pair for pair in pairs}
-    # N7: it quotes the plan when a run would be refused, and never says that one would succeed.
+    # It quotes the plan when a run would be refused, and never says that one would succeed.
     assert by["refused"]["text"].startswith("a run of this spec would be refused: side a: column 'nope'")
     assert not [text for text in surfaces["api"] + printed if re.search(r"would (succeed|run)\b", text)]
-    # N3: a check not made says so with its reason, and is never counted as agreeing.
+    # A check not made says so with its reason, and is never counted as agreeing.
     hint = "raise precheck.statement_timeout_s, or pre-check a filtered view"
     assert by["not_read"]["text"] == f"not checked: side b's figures timed out after 900 s ({hint})"
     unread = {"verdict": "not checked", "reason": f"side b's figures timed out after 900 s ({hint})"}
     assert by["not_read"]["differing"] == 0 and by["not_read"]["result"]["columns"]["email"]["figures"] == (
         dict.fromkeys(("nulls", "empty", "length", "distinct"), unread)
     )
-    # N4: a minimum or a maximum is a verdict, never a value; a withheld sum has none either.
+    # A minimum or a maximum is a verdict, never a value; a withheld sum has none either.
     figures = by["rows_differ"]["result"]["columns"]["balance"]["figures"]
     assert figures["min"] == {"verdict": "differs"} and figures["max"] == {"verdict": "same"}
     assert figures["sum"] == {
         "verdict": "same",
         "reason": "figures withheld: $.balance is protected by the spec's security policy",
     }
-    # N5: the two sides are never said to have been read at one moment.
+    # The two sides are never said to have been read at one moment.
     for pair in pairs:
         assert pair["result"]["lines"][-1].endswith(": not read at one moment")
     assert re.fullmatch(
@@ -502,14 +502,14 @@ def test_never_told(open_client: OpenClient, fake: FakeEngine) -> None:
         r" postgresql 16\.4, public\.\w+, in 1 snapshot, \d+ s (later|earlier): not read at one moment",
         by["rows_differ"]["result"]["lines"][-1],
     )
-    # The best verdict never reads as agreeing; the PDF says whose view the rows are (N10).
+    # The best verdict never reads as agreeing; the PDF says whose view the rows are.
     assert (
         shown["worded"]["no_difference_observed"] == "no difference observed in the checks made (not parity)"
     )
     assert "Rows and values are as the account reads them." in printed
 
 
-# -- two schemas paired by name (§3) ---------------------------------------------------------------------
+# -- two schemas paired by name ---------------------------------------------------------------------
 
 SCHEMAS = {"a": {"target": "db-a", "schema": "app"}, "b": {"target": "db-b"}}
 
@@ -571,7 +571,7 @@ def test_spec_authors_pair_two_schemas_by_name_and_draft_a_spec(
     }  # fmt: skip
     assert (shown["source"], shown["level"]) == ("catalogue", "counts")  # counts unless asked
     assert shown["totals"] == "4 pairs: 3 unpaired, 1 with no difference observed (not parity)"
-    # Paired by lower-cased name (N8): a name of two tables, or of one side alone, is settled as it is made.
+    # Paired by lower-cased name: a name of two tables, or of one side alone, is settled as it is made.
     assert [(pair["label"], pair["verdict"], pair["text"]) for pair in shown["items"][:3]] == [
         ("cards", "unpaired",
          "two tables of side a are named alike ignoring case (CARDS, Cards): compare them in a spec"),
@@ -602,12 +602,12 @@ def test_spec_authors_pair_two_schemas_by_name_and_draft_a_spec(
         (403, "needs the spec_author role"),
     ]
     assert stored_pair == (409, "pair 1 is a stored spec (accounts 1.0.0): it needs no draft")
-    for answer in (shown, read):  # nothing reads as agreeing (N1)
+    for answer in (shown, read):  # nothing reads as agreeing
         assert not [text for text in _texts(answer) if N1.search(text)]
 
 
 def test_two_schemas_with_a_files_target_are_refused(open_client: OpenClient, listed: FakeEngine) -> None:
-    """docs/mvp/FILES.md §12, K1: a files target has no schema to pair; its run counts rows, lines that are
+    """A files target has no schema to pair; its run counts rows, lines that are
     not rows and repeated keys."""
     exports = "  exports:\n    engine: files\n    root: /var/lib/deltasleuth/files/legacy\n"
     with open_client(targets=DATABASES + exports) as client:
@@ -624,20 +624,20 @@ def test_each_refusal_of_two_schemas_has_its_status_and_message(
 ) -> None:
     with open_client(targets=DATABASES) as client:
         post = lambda **body: said(client.post("/v1/prechecks/catalogue", json=SCHEMAS | body))  # noqa: E731
-        assert post(level="rows") == (422, "level must be schema, counts, columns or distinct")  # K5
+        assert post(level="rows") == (422, "level must be schema, counts, columns or distinct")
         assert post(level="distinct") == (
             422,
             "two schemas paired by name take level schema, counts or columns: distinct counts need a stored"
             " spec",
         )
-        assert post(a={"target": "crm-old"}) == (404, "target crm-old is not declared")  # K6
+        assert post(a={"target": "crm-old"}) == (404, "target crm-old is not declared")
         assert post(b={"target": "svc-a"}) == (
             422, "target svc-a is a service: a table pre-check reads database targets",
         )  # fmt: skip
-        globs = "include and exclude take up to 20 patterns of at most 128 characters"  # K8
+        globs = "include and exclude take up to 20 patterns of at most 128 characters"
         assert post(include=["a*"] * 21) == post(exclude=["x" * 129]) == (422, globs)
         listed.fail("connect", "db-a", TargetUnreachable("ORA-12541"))
-        assert post() == (422, "side a: cannot list schema app of target db-a (ORA-12541)")  # K9
+        assert post() == (422, "side a: cannot list schema app of target db-a (ORA-12541)")
         listed.listed["db-b"] = []
         assert post() == (
             422, "side b: the default schema of target db-b holds no table or view the account can read",
@@ -651,11 +651,11 @@ def test_each_refusal_of_two_schemas_has_its_status_and_message(
             )
             narrowed = client.post("/v1/prechecks/catalogue", json=SCHEMAS | {"include": ["l*", "a*"]})
             assert narrowed.status_code == 202  # the globs narrow what is counted
-            # No worker runs here: pair 1, accounts on both sides, is pending (K12).
+            # No worker runs here: pair 1, accounts on both sides, is pending.
             draft = f"/v1/prechecks/{narrowed.json()['precheck_id']}/pairs/1/draft.yaml"
             assert said(client.get(draft)) == (409, "pair 1 was not read: there is nothing to draft yet")
             patch.setattr(prechecks, "PAIRS", 1)
-            assert post(include=["l*", "a*"]) == (  # K7
+            assert post(include=["l*", "a*"]) == (
                 422,
                 "the two schemas give 3 pairs and a table pre-check takes up to 1: narrow them with include"
                 " or exclude",

@@ -1,4 +1,4 @@
-"""A key listing streamed a page at a time (docs/mvp/SAMPLING.md §3): judged as the merged walk judges it,
+"""A key listing streamed a page at a time: judged as the merged walk judges it,
 each page capped on its own, a repeat judged against the previous page only."""
 
 from __future__ import annotations
@@ -103,7 +103,7 @@ async def test_each_page_is_capped_never_the_merged_body(start: Start) -> None:
     ("pages", "unstable"),
     [
         ([[1, 2], [2, 3]], True),  # the previous page repeats
-        ([[1, 2], [3, 4], [1, 5]], False),  # an earlier page's: its caller finds it (W2)
+        ([[1, 2], [3, 4], [1, 5]], False),  # an earlier page's: its caller finds it
     ],
 )
 async def test_a_repeat_is_judged_against_the_previous_page_only(

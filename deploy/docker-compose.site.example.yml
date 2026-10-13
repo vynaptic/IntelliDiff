@@ -1,11 +1,11 @@
-# This installation's changes to docker-compose.yml, which you never edit (DEPLOY section 3). Upgrades
+# This installation's changes to docker-compose.yml, which you never edit (docs/deployment.md). Upgrades
 # never overwrite this file. Compose adds these lists to the base file's. As copied it changes nothing:
 # token sign-in with AI off needs no secret beyond the base file's four.
 services:
   app:
     secrets: []                                # single sign-on: oidc_client_secret; AI chat: llm_key; each with its line under secrets: below
-    # Exported CSV or Parquet files a files target reads (DEPLOY section 7, Files): read-only, readable by
-    # uid 10001, in every service that runs ds; ":ro,z" on an SELinux host.
+    # Exported CSV or Parquet files a files target reads: read-only, readable by uid 10001, in every
+    # service that runs ds; ":ro,z" on an SELinux host.
     # volumes: ["/srv/exports/legacy:/var/lib/deltasleuth/files/legacy:ro"]
     # Another host port than 8000 (auth.public_url then names it): !override, since Compose would add this
     # one to the base file's.

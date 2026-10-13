@@ -1,10 +1,10 @@
 # The Oracle acceptance kit
 
-DeltaSleuth's Oracle sides are observed on Oracle 23.26.3 only; 19c and later are accepted, not observed
-([docs/mvp/ENGINES.md](../../../docs/mvp/ENGINES.md)). This kit is what a site's DBA runs on its own
-server version before any real table is compared: two tables of one schema, one column of each type
-DeltaSleuth reads on 19c, keys a linguistic sort would order otherwise than their code points, and
-seeded differences whose result is known.
+DeltaSleuth's Oracle sides are observed on Oracle 23.26.3 only; 19c and later are accepted, not observed.
+This kit is what a site's DBA runs on its own server version before any real table is compared: two
+tables of one schema, one column of each type DeltaSleuth reads on 19c, keys a linguistic sort would order
+otherwise than their code points, and seeded differences whose result is known. Oracle sides are in the
+user guide's [Compare tables and files](../../../docs/user-guide.md#compare-tables-and-files).
 
 | File | What it holds |
 |---|---|
@@ -15,8 +15,8 @@ seeded differences whose result is known.
 
 ## Run it
 
-With a settings file as in the runbook's [Setup](../../../docs/mvp/RUNBOOK.md#setup) whose `targets_file`
-is `examples/tables/oracle/targets.yaml`:
+With a settings file as [docs/deployment.md](../../../docs/deployment.md) describes for a run from
+source, whose `targets_file` is `examples/tables/oracle/targets.yaml`:
 
 ```bash
 sqlplus KIT_OWNER@//HOST:1521/SERVICE @examples/tables/oracle/seed.sql
@@ -49,14 +49,14 @@ uv run ds report R-... --out kit --kind discrepancies.csv --kind retry.csv
   on your version, and the emoji key cannot be stored as it is: the database is expected to store its
   replacement character on both sides alike, which leaves the result unchanged (not observed).
 
-**On the compose stack** ([docs/mvp/DEPLOY.md](../../../docs/mvp/DEPLOY.md)), in the installation's folder,
+**On the compose stack** ([docs/deployment.md](../../../docs/deployment.md)), in the installation's folder,
 where no `uv` runs: declare `kit-oracle` in `deploy/config/targets.yaml` as `targets.yaml` here does, its two
 references written `file:/run/secrets/kit_oracle_password` and `file:/run/secrets/kit_oracle_ca`; write
-those two files to `deploy/secrets/` and mount them (DEPLOY section 3, Secrets: the five steps, which end
-with `docker compose up -d`). Then run the same commands in the image, the spec and the reports passing
-through the `p0` volume (DEPLOY section 9); `kit-oracle.yaml` is a copy of `spec.yaml`, with `schema:
-KIT_OWNER` added to both tables when the reader is another account. While the app runs, `ds run` leaves the
-run to its worker and waits.
+those two files to `deploy/secrets/` and mount them as that document describes for a further secret, ending
+with `docker compose up -d`. Then run the same commands in the image, the spec and the reports passing
+through the `p0` volume; `kit-oracle.yaml` is a copy of `spec.yaml`, with `schema: KIT_OWNER` added to both
+tables when the reader is another account. While the app runs, `ds run` leaves the run to its worker and
+waits.
 
 ```bash
 alias ds='docker compose run --rm -e DS_OPERATOR="$(id -un)" app ds'

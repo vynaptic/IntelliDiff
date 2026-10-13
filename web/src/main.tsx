@@ -23,7 +23,7 @@ import { Targets } from './Targets';
 import { Err, Named } from './ui';
 import './styles.css';
 
-// The callback's fixed codes (docs/mvp/AUTH.md §2, §9); the page never shows text from the URL.
+// The callback's fixed codes; the page never shows text from the URL.
 const SIGN_IN_ERRORS: Record<string, string> = {
   login_expired: 'The sign-in expired or was started in another tab. Sign in again.',
   login_failed: 'The sign-in could not be completed.',
@@ -40,7 +40,7 @@ function SignIn({ mode, query, onSignedIn }: { mode: Mode; query: URLSearchParam
   const code = query.get('error');
   const shown = code && (Object.hasOwn(SIGN_IN_ERRORS, code) ? SIGN_IN_ERRORS[code] : 'The sign-in failed.');
   const requestId = query.get('request_id') ?? '';
-  const hint = addressHint(error, location); // from the address bar alone (docs/mvp/AUTH.md §9)
+  const hint = addressHint(error, location); // from the address bar alone
 
   function sso() {
     const hash = location.hash;
@@ -122,7 +122,7 @@ function App() {
 
   useEffect(() => {
     if (me) api.licence().then(setLicence, () => setLicence(undefined)); // no banner if it fails
-    if (me) api.notifications().then(setNotify, () => setNotify(undefined)); // likewise (docs/mvp/ALERTS.md §10)
+    if (me) api.notifications().then(setNotify, () => setNotify(undefined)); // likewise
   }, [me]);
 
   function signedIn(who: Me) {
@@ -151,7 +151,7 @@ function App() {
   }
 
   const can = (role: string) => !!me?.roles.includes(role);
-  const admin = can('admin') && me?.kind !== 'token'; // a token never holds admin (docs/mvp/AUTH.md §1)
+  const admin = can('admin') && me?.kind !== 'token'; // a token never holds admin
   const page =
     !health || me === undefined ? null : me === null || screen === 'signin' ? (
       <SignIn mode={health.auth} query={query} onSignedIn={signedIn} />

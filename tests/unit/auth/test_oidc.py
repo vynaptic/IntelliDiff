@@ -1,4 +1,4 @@
-"""OIDC sign-in (docs/mvp/AUTH.md §2): ID token validation, discovery checks, the JWKS cache, the claims
+"""OIDC sign-in: ID token validation, discovery checks, the JWKS cache, the claims
 mapping, the client credential and assertion, PKCE and the signed login cookie. No database: the IdP
 client is driven directly against the fake IdP."""
 
@@ -81,7 +81,7 @@ def _certificate(key: Any) -> bytes:
     return cert.public_bytes(serialization.Encoding.PEM)
 
 
-# -- the ID token (§2.3) ---------------------------------------------------------------------------
+# -- the ID token ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("alg", ["RS256", "ES256"])
@@ -105,7 +105,7 @@ FOREIGN = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
 
 def _defects(now: int) -> dict[str, dict[str, Any]]:
-    """Each §2.3 defect, as ``id_token`` arguments (``keys`` changes the JWKS), at time ``now``."""
+    """Each defect of an ID token, as ``id_token`` arguments (``keys`` changes the JWKS), at time ``now``."""
     return {
         "alg none": {"headers": {"alg": "none"}},
         "HS256 signed with the client secret": {"headers": {"alg": "HS256"}},
@@ -173,7 +173,7 @@ def test_a_subject_of_255_octets_passes_and_the_subject_claim_is_configurable(
         validate_id_token(idp.id_token(), keys, settings, _login())
 
 
-# -- discovery (§2.1) ------------------------------------------------------------------------------
+# -- discovery ------------------------------------------------------------------------------
 
 
 def _discovery(issuer: str = "https://idp.example") -> dict[str, Any]:
@@ -346,7 +346,7 @@ async def test_the_logout_url_follows_end_session(idp: FakeIdp, tmp_path: Path) 
     assert await _client(idp, tmp_path)[0].logout_url() is None
 
 
-# -- claims (§2.4) ---------------------------------------------------------------------------------
+# -- claims ---------------------------------------------------------------------------------
 
 
 def _identity(tmp_path: Path, claims: dict[str, Any], **fields: Any) -> Any:
@@ -425,7 +425,7 @@ def test_the_session_keeps_auth_time_acr_and_amr(tmp_path: Path) -> None:
     assert _identity(tmp_path, {"auth_time": "x", "amr": "pwd"}).amr is None
 
 
-# -- the client credential (§2.2) ------------------------------------------------------------------
+# -- the client credential ------------------------------------------------------------------
 
 
 def _key_settings(tmp_path: Path, key: Any, cert: bytes | None = None) -> OidcSettings:

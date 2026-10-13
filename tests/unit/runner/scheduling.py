@@ -1,4 +1,4 @@
-"""Schedules for the runner's tests (docs/mvp/SCHEDULES.md §15): a schedule declared as a person declares
+"""Schedules for the runner's tests: a schedule declared as a person declares
 one, then anchored by SQL so that a chosen minute is due; the clock is the database's, or an instant a test
 injects into ``fire``."""
 
@@ -89,7 +89,7 @@ async def audited(h: Harness, obj: str, *actions: str) -> list[tuple[str, str, d
             (obj, list(actions), list(actions)),
         )
         rows = await cur.fetchall()
-    for _, _, detail in rows:  # what every row of the CLI's principal carries besides (AUTH §4.2)
+    for _, _, detail in rows:  # what every row of the CLI's principal carries besides
         for name in ("asserted", "os_account"):
             detail.pop(name, None)
     return [tuple(found) for found in rows]  # type: ignore[misc]

@@ -1,5 +1,5 @@
-"""DuckDB's CSV reader on the locked instance (docs/mvp/FILES.md §3's U8, U13, U14 and U16; §7), observed
-on the locked version: what each gate holds, and where 1.5.5 differs from what the contract first said."""
+"""DuckDB's CSV reader on the locked instance, observed
+on the locked version: what each gate holds, and what 1.5.5 does where it was expected to do otherwise."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from tests.unit.connectors.ducked import csv_table, file_spec, locked, planned
 from tests.unit.connectors.ducked import read as ducked_read
 from tests.unit.connectors.ducked import scanned as ducked_scanned
 
-# §7's reader as amended (strict_mode left to DuckDB's default, which is strict: see test_csv_newlines).
+# The CSV reader (strict_mode left to DuckDB's default, which is strict: see test_csv_newlines).
 READER = (
     "read_csv($files, auto_detect=false, columns=$columns, header=$header, delim='|', new_line=$new_line,"
     " quote='\"', escape='\"', encoding=$encoding, compression=$compression, nullstr='',"
@@ -47,7 +47,7 @@ def _file(base: Path, name: str, data: bytes) -> Path:
 
 
 def test_csv_nulls_bom_encodings_and_compression(tmp_path: Path) -> None:
-    """U8: allow_quoted_nulls=false tells "" from an empty field; a UTF-8 BOM is no part of the first field;
+    """allow_quoted_nulls=false tells "" from an empty field; a UTF-8 BOM is no part of the first field;
     utf-16, latin-1, gzip and zstd read."""
     with locked(tmp_path) as made:
         bom = _file(tmp_path, "bom.csv", b'\xef\xbb\xbfid|v\n1|\n2|""\n3|x\n')
@@ -64,15 +64,15 @@ def test_csv_nulls_bom_encodings_and_compression(tmp_path: Path) -> None:
         zs = _file(tmp_path, "z.csv.zst", zstandard.ZstdCompressor().compress(b"id|v\n1|z\n"))
         assert _read(made.con, [gz], compression="gzip") == [("1", "g")]
         assert _read(made.con, [zs], compression="zstd") == [("1", "z")]
-        for spelling in ("latin1", "utf16", "windows-1252"):  # only the three spellings §5 takes
+        for spelling in ("latin1", "utf16", "windows-1252"):  # only the three spellings a spec takes
             with pytest.raises(duckdb.InvalidInputException):
                 _read(made.con, [latin], encoding=spelling)
 
 
 def test_rejects_do_not_depend_on_projection(tmp_path: Path) -> None:
-    """U13 as observed: a wrong field count and an over-long line are skipped whatever a statement projects,
+    """As observed: a wrong field count and an over-long line are skipped whatever a statement projects,
     but invalid encoding is found only in a field that is read. A statement that reads every declared column
-    (§7 as amended: an unread column is named by ``"c" IS NULL OR "c" IS NOT NULL``) skips the counting
+    (an unread column is named by ``"c" IS NULL OR "c" IS NOT NULL``) skips the counting
     pass's lines exactly."""
     with locked(tmp_path) as made:
         three = {"id": "VARCHAR", "v": "VARCHAR", "w": "VARCHAR"}
@@ -104,11 +104,11 @@ def test_rejects_do_not_depend_on_projection(tmp_path: Path) -> None:
 
 
 def test_csv_newlines(tmp_path: Path) -> None:
-    """U14 as observed. ``new_line`` is the escaped text (``\\n``, ``\\r\\n``), honoured with
+    """As observed: ``new_line`` is the escaped text (``\\n``, ``\\r\\n``), honoured with
     auto_detect=false: a ``\\r\\n`` file leaves no ``\\r`` in a field, under DuckDB's default strict mode.
     Explicit ``strict_mode=true`` with ``\\r\\n`` reads no row and records no reject. A file of other or
-    mixed line ends makes §6 step 5's first-record read raise (P29), and the counting pass alone would read
-    it as no rows and no rejects: step 5 runs on every file before it."""
+    mixed line ends makes the plan's first-record read raise, and the counting pass alone would read
+    it as no rows and no rejects: the first-record read runs on every file before it."""
     with locked(tmp_path) as made:
         crlf = _file(tmp_path, "crlf.csv", b"id|v\r\n1|a\r\n2|b\r\n")
         assert _read(made.con, [crlf], new_line="\\r\\n") == [("1", "a"), ("2", "b")]
@@ -129,7 +129,7 @@ def test_csv_newlines(tmp_path: Path) -> None:
 
 
 def test_rejects_belong_to_their_cursor(tmp_path: Path) -> None:
-    """U16: store_rejects works with auto_detect=false on the locked instance and gives each line's file,
+    """store_rejects works with auto_detect=false on the locked instance and gives each line's file,
     line and kind; its two tables are its cursor's and go when it closes."""
     with locked(tmp_path) as made:
         bad = _file(tmp_path, "bad.csv", b'id|v\n1|a\n2|b|c\n3|"x\n4|d\n')
@@ -160,7 +160,7 @@ def test_rejects_belong_to_their_cursor(tmp_path: Path) -> None:
 
 
 def test_an_invalid_encoding_rejected_under_an_aggregate_invalidates_the_database(tmp_path: Path) -> None:
-    """U16 as observed on 1.5.5: with store_rejects, a line of invalid UTF-8 in a column that an aggregate
+    """As observed on 1.5.5: with store_rejects, a line of invalid UTF-8 in a column that an aggregate
     reads (count(v)) raises InternalException and invalidates the database; the same column selected is
     recorded as INVALID ENCODING. The counting pass selects the columns, and a cursor drops an instance an
     internal error invalidated."""
@@ -182,7 +182,7 @@ def test_an_invalid_encoding_rejected_under_an_aggregate_invalidates_the_databas
         aggregated.execute("SELECT 1").fetchall()
 
 
-# --- the CSV reader of a file side (FILES.md §6, §7) -----------------------------------------------------
+# --- the CSV reader of a file side -----------------------------------------------------
 
 DIALECTS = [
     ("plain", b"id|v\n1|a\n2|\n", {}, {"1": "a", "2": None}),  # an unquoted empty field is NULL
@@ -213,7 +213,7 @@ DIALECTS = [
 async def test_a_csv_side_reads_its_declared_dialect(
     tmp_path: Path, name: str, data: bytes, csv: dict[str, Any], values: dict[str, Any]
 ) -> None:
-    """Each dialect member, declared, never sniffed (D5): the per-key rows and the counts of §6's pass."""
+    """Each dialect member, declared, never sniffed: the per-key rows and the counts of the plan's pass."""
     _file(tmp_path, "t.csv", data)
     plan, found = await planned(tmp_path, csv_table("t.csv", ["id", "v"], **csv))
     assert (plan["rows"], plan["selected"], plan["rejected"], plan["kinds"]) == (2, 2, 0, {})
@@ -263,7 +263,7 @@ def _refused(error: pytest.ExceptionInfo[BaseException]) -> str:
 async def test_each_file_s_first_record_is_checked(
     tmp_path: Path, data: bytes, csv: dict[str, Any], message: str | None, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """P21: compared with csv.columns, never kept: no value of it reaches a message or a log."""
+    """Compared with csv.columns, never kept: no value of it reaches a message or a log."""
     _file(tmp_path, "t.csv", data)
     if message is None:
         await planned(tmp_path, csv_table("t.csv", ["id", "v"], **csv))
@@ -274,7 +274,7 @@ async def test_each_file_s_first_record_is_checked(
 
 
 async def test_a_file_of_other_line_ends_is_refused_by_the_reader(tmp_path: Path) -> None:
-    """U14: a \\r\\n file declared \\n raises at its first record (P29), never reads as no rows."""
+    """A \\r\\n file declared \\n raises at its first record, never reads as no rows."""
     _file(tmp_path, "t.csv", b"id|v\r\n1|a\r\n")
     with pytest.raises(ValueError) as error:
         await planned(tmp_path, csv_table("t.csv", ["id", "v"]))
@@ -287,7 +287,7 @@ async def test_a_file_of_other_line_ends_is_refused_by_the_reader(tmp_path: Path
 async def test_lines_that_are_not_rows_are_counted_by_their_kind(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """D6, §6 step 6: each line once, by file and line, of its kind; never dropped silently, never quoted.
+    """Each line once, by file and line, of its kind; never dropped silently, never quoted.
     A file cut inside a row counts one line."""
     _file(
         tmp_path,
@@ -325,7 +325,7 @@ def _spanning(at: int, second: bytes, then: bytes = b"") -> tuple[bytes, int]:
 
 
 def test_the_parallel_reader_takes_a_line_of_a_quoted_field_for_a_row(tmp_path: Path) -> None:
-    """U20, observed on 1.5.5: where a scan of the parallel reader starts inside a quoted field that holds a
+    """Observed on 1.5.5: where a scan of the parallel reader starts inside a quoted field that holds a
     line end, the field's next line is one more row when it has the declared fields, and no reject; the
     reader that is not parallel reads the rows there are, also across its 32 MiB buffer's end."""
     count = f"SELECT count(*) FROM {READER.format(more=', parallel=$parallel')}"  # noqa: S608 (constants)
@@ -349,11 +349,11 @@ def test_the_parallel_reader_takes_a_line_of_a_quoted_field_for_a_row(tmp_path: 
 
 
 async def test_a_quoted_field_s_line_ends_are_read_across_a_scan_s_start(tmp_path: Path) -> None:
-    """§7: the reader is not parallel, so a quoted field holding a line end is one field wherever it lies. The
+    """The reader is not parallel, so a quoted field holding a line end is one field wherever it lies. The
     plan's end check reads each file with the parallel reader too, for a last record cut inside a quoted
     field: where that one's rows or its lines that are not rows are not the reader's (a line of the field
     read as a row; or, a line that is no row following the field, as a line that is not), no file's end is
-    known and the plan is refused (P33)."""
+    known and the plan is refused."""
     data, rows = _spanning(SCAN, b"its second line")  # no row of two fields: every reader agrees
     _file(tmp_path, "t.csv", data + b'short\n2|"cut')
     plan, found = await planned(tmp_path, csv_table("t.csv", ["id", "v"]))
@@ -369,7 +369,7 @@ async def test_a_quoted_field_s_line_ends_are_read_across_a_scan_s_start(tmp_pat
 
 
 def test_the_reader_drops_a_record_cut_inside_a_quoted_field(tmp_path: Path) -> None:
-    """U21, observed on 1.5.5: a file's last record cut inside a quoted field is dropped without a reject by
+    """Observed on 1.5.5: a file's last record cut inside a quoted field is dropped without a reject by
     the reader that is not parallel, and by the parallel one too once it reads many files a statement (12
     with 2 threads: one thread a file); the parallel reader of one file records it, also with one thread,
     and in an encoded or a compressed file."""
@@ -403,7 +403,7 @@ def test_the_reader_drops_a_record_cut_inside_a_quoted_field(tmp_path: Path) -> 
 async def test_a_file_cut_inside_a_quoted_field_counts_one_line_whatever_the_files(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """D6, §6 step 6: the end check finds it in a side of many files, in a first field and beside lines of a
+    """The end check finds it in a side of many files, in a first field and beside lines of a
     quoted field, each line that is not a row counted once; a side that declares no quote has no such end."""
     for n in range(12):
         _file(tmp_path, f"many/{n:02d}.csv", b'id|v\n%d|"two\nlines"\n%d|short|line|s3cret\n' % (n, n))
@@ -421,7 +421,7 @@ async def test_a_file_cut_inside_a_quoted_field_counts_one_line_whatever_the_fil
 
 
 async def test_a_csv_side_reads_its_partitions(tmp_path: Path) -> None:
-    """§5: key=value directories read as text columns, beside a header and a quoted line end."""
+    """``key=value`` directories read as text columns, beside a header and a quoted line end."""
     _file(tmp_path, "dt=2024-01-01/a.csv", b'id|v\n1|"a\nb"\n')
     _file(tmp_path, "dt=2024-01-02/a.csv", b"id|v\n2|c\n")
     table = csv_table("dt=*/a.csv", ["id", "v"])
@@ -433,7 +433,7 @@ async def test_a_csv_side_reads_its_partitions(tmp_path: Path) -> None:
         "1": {"v": "a\nb", "dt": "2024-01-01"},
         "2": {"v": "c", "dt": "2024-01-02"},
     }
-    # P26: a name=value directory above them would be read as a column too, in place of the field of its name.
+    # A name=value directory above them would be read as a column too, in place of the field of its name.
     _file(tmp_path, "v=eu/dt=2024-01-01/a.csv", b"id|v\n1|us\n")
     table = csv_table("v=eu/dt=*/a.csv", ["id", "v"])
     table["file"]["partitions"] = ["dt"]
@@ -444,7 +444,7 @@ async def test_a_csv_side_reads_its_partitions(tmp_path: Path) -> None:
 
 
 async def test_a_partitioned_side_is_counted_by_its_paths(tmp_path: Path) -> None:
-    """§6: a side's counts are kept a process by its digest and its declaration, and a partitioned side's
+    """A side's counts are kept a process by its digest and its declaration, and a partitioned side's
     digest binds its paths, whose directories' names are compared values. The same bytes moved under another
     directory were planned with the first day's counts (none selected of 2), and the scan that then read 2
     rows failed its run (RowsMoved), until the process restarted."""
@@ -466,7 +466,7 @@ async def test_a_partitioned_side_is_counted_by_its_paths(tmp_path: Path) -> Non
     [("v = 5", "a number: quote the literal"), ("v = TRUE", "TRUE or FALSE: quote it")],
 )
 async def test_a_csv_filter_compares_text(tmp_path: Path, where: str, what: str) -> None:
-    """P11 (file): a CSV column is text, compared in binary order; a number or boolean literal is refused."""
+    """A CSV column is text, compared in binary order; a number or boolean literal is refused."""
     _file(tmp_path, "t.csv", b"id|v\n1|5\n2|10\n")
     with pytest.raises(ValueError) as error:
         await planned(tmp_path, csv_table("t.csv", ["id", "v"]) | {"where": where})
@@ -478,7 +478,7 @@ async def test_a_csv_filter_compares_text(tmp_path: Path, where: str, what: str)
 
 
 async def test_over_a_thousand_lines_that_are_not_rows_refuse_the_run(tmp_path: Path) -> None:
-    """P24 (REJECT_MAX)."""
+    """Over ``REJECT_MAX`` such lines: the dialect does not fit."""
     _file(tmp_path, "t.csv", b"id|v\n" + b"".join(b"%d|a|b\n" % i for i in range(1001)) + b"1|a\n")
     with pytest.raises(ValueError) as error:
         await planned(tmp_path, csv_table("t.csv", ["id", "v"]))
@@ -489,7 +489,7 @@ async def test_over_a_thousand_lines_that_are_not_rows_refuse_the_run(tmp_path: 
 
 
 async def test_a_column_most_of_whose_values_do_not_convert_is_refused(tmp_path: Path) -> None:
-    """P25: the first rows of file 1, converted by typeMap and csv.keys."""
+    """The first rows of file 1, converted by typeMap and csv.keys."""
     _file(
         tmp_path,
         "t.csv",
@@ -524,7 +524,7 @@ PACKED = b"id|v\n" + b"1|a\n" * 1000
 async def test_files_the_reader_cannot_read_are_refused_by_its_class(
     tmp_path: Path, data: bytes, csv: dict[str, Any], cls: str
 ) -> None:
-    """P29, naming the class, never DuckDB's text. DuckDB reads a gzip stream cut short or damaged, and a
+    """Refused naming the class, never DuckDB's text. DuckDB reads a gzip stream cut short or damaged, and a
     zstd one cut short, as fewer rows without an error (observed): the plan checks each stream as it hashes
     its file."""
     _file(tmp_path, "t.csv", data)
@@ -554,7 +554,7 @@ def test_duckdb_reads_a_damaged_stream_as_fewer_rows(tmp_path: Path) -> None:
 
 
 async def test_csv_keys_are_read_as_declared(tmp_path: Path) -> None:
-    """§9: an integer key's leading zeros go (00123 is 123), a decimal keeps its scale and is never rounded, a
+    """An integer key's leading zeros go (00123 is 123), a decimal keeps its scale and is never rounded, a
     date is its ISO text; a field of another form has no key text and is skipped."""
     _file(tmp_path, "i.csv", b"id|v\n00123|a\n-0|b\n1.5|c\n" + b"9" * 39 + b"|d\n")
     plan, found = await planned(tmp_path, csv_table("i.csv", ["id", "v"], keys={"id": {"as": "integer"}}))
@@ -583,7 +583,7 @@ async def test_csv_keys_are_read_as_declared(tmp_path: Path) -> None:
 
 
 async def test_no_value_reaches_a_message_or_a_log(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    """§14 point 8, §15: a value that does not convert is named by its column and type, a line that is no row
+    """A value that does not convert is named by its column and type, a line that is no row
     by its position and kind; neither the value, the line's text nor DuckDB's own text is read, logged or
     kept in the plan."""
     _file(tmp_path, "t.csv", b"id|opened\n1|2024-01-01\n2|s3cret-canary\n3|2024-01-03\n4|s3cret|canary\n")

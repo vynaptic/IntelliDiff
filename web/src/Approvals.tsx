@@ -1,9 +1,8 @@
-/** Four-eyes approvals (docs/mvp/APPROVALS.md §6.3), under SSO only: one list with a status filter, and a
- *  review. A review shows the earlier requests of the version or cycle above Approve and Reject, then what is
- *  approved: a spec version's needed items, who may not approve it and its diff against the version approved
- *  before it; or a sign-off's checklist, attested census and adjudication (docs/mvp/PACK.md §7.3), a sampled
- *  cycle's draw, frame, strata and ledger (docs/mvp/SAMPLING.md §10), the labelling it attests
- *  (docs/mvp/ACCURACY.md §8), counters, rules and root causes. The server still decides. */
+/** Four-eyes approvals, under SSO only: one list with a status filter, and a review. A review shows the
+ *  earlier requests of the version or cycle above Approve and Reject, then what is approved: a spec version's
+ *  needed items, who may not approve it and its diff against the version approved before it; or a sign-off's
+ *  checklist, attested census and adjudication, a sampled cycle's draw, frame, strata and ledger, the
+ *  labelling it attests, counters, rules and root causes. The server still decides. */
 import { useState } from 'react';
 import { api, type Approval, type ApprovalDetail, type Attests, type LedgerDraw, type Revoked, type Stratum } from './api';
 import { DocDiff } from './DocDiff';
@@ -325,7 +324,7 @@ function SampleReview({ a, sample }: { a: ApprovalDetail; sample: NonNullable<At
   );
 }
 
-/** A sign-off's labelled accuracy (docs/mvp/ACCURACY.md §8), in the server's words: what the labelling it attests
+/** A sign-off's labelled accuracy, in the server's words: what the labelling it attests
  *  says and may not be read as, then each other labelling of its cycle in one line. */
 function AccuracyReview({ a, attested }: { a: ApprovalDetail; attested?: string }) {
   const found = useLoad(

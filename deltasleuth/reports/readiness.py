@@ -1,4 +1,4 @@
-"""Cut-over readiness reports (docs/mvp/READINESS.md §11): the dashboard as a PDF of at most ``VOLUME`` pairs
+"""Cut-over readiness reports: the dashboard as a PDF of at most ``VOLUME`` pairs
 a volume, worst first, and as a CSV of one row per pair and gate; the trends CSV of one row per pair and
 point, refused over ``TRENDS_ROWS`` rows; of a pair, its brief on one page, the brief's points as a CSV and
 its root-cause groups as one, refused over ``CAUSES_ROWS`` rows; and, of a run, its report's section (its
@@ -66,7 +66,7 @@ COMPARED = {
     "Not found on a": "NOT_FOUND_A", "Not found on b": "NOT_FOUND_B",
 }  # fmt: skip
 MARKS = {"version": "V", "keys": "K"}  # a point's marks as the brief's legend letters them
-NOT = (  # N1 to N8 (§2)
+NOT = (  # what readiness is not
     "It gives no percentage, probability, weighted score or mean of readiness: a pair is k of m named gates,"
     " each met or not.",
     "It forecasts nothing: the only future time is a live soak's scheduled start, each time labelled a"
@@ -209,7 +209,7 @@ def document(chosen: Selection, volume: int = 1) -> Document:
     found, items, total = chosen.found, chosen.items, len(chosen.items)
     first = (volume - 1) * VOLUME
     pairs = items[first : first + VOLUME]
-    held = f"pairs {first + 1:,}–{first + len(pairs):,} of {total:,}"  # noqa: RUF001 - the contract's dash
+    held = f"pairs {first + 1:,}–{first + len(pairs):,} of {total:,}"  # noqa: RUF001 - an en dash, on purpose
     paged = f"volume {volume} of {volumes(total)} ({held})"
     meta = (
         _meta(chosen.installation, found.now, chosen.config, chosen.licence)
@@ -220,7 +220,7 @@ def document(chosen: Selection, volume: int = 1) -> Document:
     head = [
         gates.DEFINITION,
         *readiness.notes(found, chosen.config, chosen.worker),
-        *([f"Deviations from the contract's defaults: {'; '.join(deviations)}."] if deviations else []),
+        *([f"Deviations from the built-in defaults: {'; '.join(deviations)}."] if deviations else []),
     ]
     return Document(
         "Cut-over readiness (observed)",
@@ -253,7 +253,7 @@ def dashboard_csv(chosen: Selection) -> str:
             "config_sha256": item["config_sha256"],
         }  # fmt: skip
         counted = [gate for gate in item["gates"] if gate["gate"] == "targets" and gate["value"] is not None]
-        suppressed = item["trend"][-1]["suppressed"] if counted else None  # beside the discrepant count (N6)
+        suppressed = item["trend"][-1]["suppressed"] if counted else None  # beside the discrepant count
         rows += [
             about | gate | {"suppressed": suppressed if gate in counted else None} for gate in item["gates"]
         ]
@@ -320,7 +320,7 @@ def _trend_rows(name: str, policy: gates.Policy, points: Sequence[repo.Row]) -> 
     ]
 
 
-# -- a pair's brief (§11) -------------------------------------------------------------------------------
+# -- a pair's brief -------------------------------------------------------------------------------
 
 
 def _count(value: int | None, none: str = "not measured") -> str:
@@ -329,7 +329,7 @@ def _count(value: int | None, none: str = "not measured") -> str:
 
 def _cut(text: str) -> str:
     """A gate's text in ``BRIEF_TEXT`` characters at most: cut where a clause of it ends, if one does by
-    then, so that a soak's schedule (Y7) stands with its label or not at all (N2)."""
+    then, so that a soak's schedule stands with its label or not at all."""
     if len(text) <= BRIEF_TEXT:
         return text
     end = text.rfind("; ", 0, BRIEF_TEXT)
@@ -346,10 +346,10 @@ def _day(at: datetime) -> str:
 
 
 def _figures(found: Mapping[str, Any]) -> Section:
-    """The brief's newest complete cycle: its stored figures between its notes, as §11 places them: that
-    the gates judge another cycle above (M8), its stored rate (M9) or how its sample is judged (M4, with
-    its strata) below, and last that its counts are of keys only (M5); without one, why (M2). Its coverage
-    is worded as its rate is (``gates.ratio``)."""
+    """The brief's newest complete cycle: its stored figures between its notes: that the gates judge
+    another cycle above, its stored rate or how its sample is judged (with its strata) below, and last
+    that its counts are of keys only; without one, why. Its coverage is worded as its rate is
+    (``gates.ratio``)."""
     title, cycle, judged = "Newest complete cycle", found["cycle"], found["evidence"]
     if cycle is None:
         return Section(title, found["notes"][-1:])
@@ -398,7 +398,7 @@ def _gated(found: Mapping[str, Any]) -> Section:
 
 def _trended(point: Mapping[str, Any]) -> str:
     """A point of the brief's trend in a line: its known differences and noise-only keys stand beside its
-    different ones (N6), and its stored rate reads as M9's (``gates.ratio``)."""
+    different ones, and its stored rate reads as the reported cycle's does (``gates.ratio``)."""
     by, groups = point["by_outcome"], point["root_causes"]
     rate = gates.ratio(point["mismatch_rate"], point["different"], point["compared"])
     parts = ["its counts are not measured"]
@@ -431,7 +431,7 @@ def brief_document(found: Mapping[str, Any], installation: str, state: str) -> D
     the dashboard's header: its state under the definition and what a brief is, its newest complete cycle's
     stored figures, its gates, its newest points and its first root-cause groups. Each list is cut where a
     line says so, and what does not fit the page is scaled down (``Document.compact``). The note of a brief
-    without a reported cycle (M2) or whose cycle is purged (M3), the last one, stands in its section."""
+    without a reported cycle or whose cycle is purged, the last one, stands in its section."""
     points, causes = found["points"], found["causes"]
     notes = found["notes"][: -1 if causes is None else None]
     shown = points[-BRIEF_POINTS:]
@@ -508,14 +508,14 @@ async def causes_csv(ctx: Context, pair: str, most: int | None = None) -> str:
 
 
 def _excluded(run: Mapping[str, Any]) -> str | None:
-    """Why readiness does not assess the run (D13), as ``repo.end_cycle`` marks its cycles."""
+    """Why readiness does not assess the run, as ``repo.end_cycle`` marks its cycles."""
     if run["mode"] == "one_shot":
         return "one-shot"
     return "captured samples" if run["params"].get("samples_dir") is not None else None
 
 
 async def run_section(ctx: Context, conn: repo.Conn, run: Mapping[str, Any], cycle: int) -> Section:
-    """``report.pdf``'s section on the run's pair (§11): its parity gates as of the reported cycle, judged
+    """``report.pdf``'s section on the run's pair: its parity gates as of the reported cycle, judged
     on the cycles ended by then under the settings its lines name, so that the database gives them again;
     or why there are none."""
     title, pair = "Pair readiness (observed)", run["spec_name"]
@@ -532,7 +532,7 @@ async def run_section(ctx: Context, conn: repo.Conn, run: Mapping[str, Any], cyc
         f"The parity gates of {pair} as of cycle {cycle} of run {run['run_id']} (ended"
         f" {row['ended_at'].astimezone(UTC):%Y-%m-%d %H:%M} UTC), judged on the cycles ended by then under"
         f" readiness settings {item['config_sha256'][:12]}: the database gives them again under the same"
-        " settings (architecture §10).",
+        " settings.",
         *([f"Deviations: {'; '.join(item['deviations'])}."] if item["deviations"] else []),
         f"Today's state: the Readiness screen (#/readiness/{pair}).",
     ]

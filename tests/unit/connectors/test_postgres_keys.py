@@ -1,4 +1,4 @@
-"""A table key's text (docs/mvp/TABLES.md §2, §10): a composite key's parts joined by ``|``, escaped, and
+"""A table key's text: a composite key's parts joined by ``|``, escaped, and
 back, and a side's key maps from the canonical key to the values the side stores."""
 
 from __future__ import annotations

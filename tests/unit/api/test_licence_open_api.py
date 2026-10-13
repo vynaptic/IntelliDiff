@@ -1,4 +1,4 @@
-"""The open build over the API (docs/mvp/LICENCE.md §19): GET /v1/licence says ``open``, allows everything
+"""The open build over the API: GET /v1/licence says ``open``, allows everything
 and warns of nothing; under SSO a run, a compare, the resume of a run an older build paused for the licence,
 a sign-off's request and approval step and a pack's issue answer as under an Enterprise licence, the pack
 naming no licence; a run and its report downloads carry no label, while a run made in an evaluation keeps

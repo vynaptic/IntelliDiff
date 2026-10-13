@@ -2,7 +2,7 @@
 reveals nothing of the raw key; its sweep audits each change of the licence's state, hourly at most, and
 runs the notifier, whose faults never touch a run and which holds two pooled connections at most; and it
 fires the due schedules, two at a time, whose faults never fail a run, end the sweep or loop at the poll
-rate, only while it holds the lock and never as ``ds run``'s worker (docs/mvp/SCHEDULES.md §5)."""
+rate, only while it holds the lock and never as ``ds run``'s worker."""
 
 from __future__ import annotations
 
@@ -130,7 +130,7 @@ async def test_watch_once_per_change(
     assert "licence state not watched" in caplog.messages
 
 
-# -- the notifier (docs/mvp/ALERTS.md §9) -----------------------------------------------------------------
+# -- the notifier -----------------------------------------------------------------
 
 
 def _notify(base: str, ref: str, events: list[str], **options: Any) -> dict[str, Any]:
@@ -390,7 +390,7 @@ async def test_no_raw_key_reaches_a_payload(
     open_harness: OpenHarness, service: ScriptedService, tmp_path: Path
 ) -> None:
     """A run's raw keys (tokenised, class identifier) never reach a delivery, what a receiver gets or an audit
-    row the notifier writes: events concern cycles and runs, never a key (D3)."""
+    row the notifier writes: events concern cycles and runs, never a key."""
     keys = ["K314", "K271"]
     for key in keys:
         service.both(key, doc(key), doc(key, status="NEW"))
@@ -416,7 +416,7 @@ async def test_no_raw_key_reaches_a_payload(
     assert len(stored) >= 2 and not [key for key in keys for text in texts if key in text]
 
 
-# -- schedules (docs/mvp/SCHEDULES.md §5) ----------------------------------------------------------------
+# -- schedules ----------------------------------------------------------------
 
 
 async def test_two_firings_at_most(harness: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -629,7 +629,7 @@ async def test_no_lock_no_firing(harness: Harness, pg_dsn: str, caplog: pytest.L
     assert [r.getMessage() for r in caplog.records if r.name == worker.log.name] == [
         "another worker is processing keys (a ds serve, ds worker or ds run on this database): it does the"
         " work, and this one takes over only if it stops"
-    ]  # docs/mvp/FIRSTRUN.md §8 S5
+    ]
 
 
 async def test_ds_run_worker_fires_nothing(

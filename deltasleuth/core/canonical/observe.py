@@ -1,4 +1,4 @@
-"""Judge one observation against the side's declared contract (§7.1 side states, §8.1 ``observe``).
+"""Judge one observation against the side's declared contract (the side states).
 
 In order: fetch error; not-found (the spec's ``notFound`` and the target's authoritative absence
 must both match for ABSENT); status outside ``success`` (an error body is never compared); JSON
@@ -78,7 +78,7 @@ def _fetch_failure(error_class: str, side: Side, error_detail: str | None) -> Si
         return SideState.incomplete(error_class, "the key selects more than one row")
     if error_class == "unconvertible":  # the detail names the column and its type, never the value
         return SideState.incomplete("unparseable", f"typeMap: {error_detail}")
-    if error_class == "not_rows":  # a file side's lines that were not rows (docs/mvp/FILES.md D6, M1)
+    if error_class == "not_rows":  # a file side's lines that were not rows
         return SideState.incomplete("unparseable", error_detail)
     if error_class == "resource_limit":
         return SideState.incomplete("resource_limit", detail)

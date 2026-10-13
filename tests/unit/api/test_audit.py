@@ -1,4 +1,4 @@
-"""The audit log (docs/mvp/AUTH.md §6): every row names its principal, request, session and client
+"""The audit log: every row names its principal, request, session and client
 address; the runner, the worker, the migrations and the server audit as themselves; each committed row
 leaves a SIEM line, and a rolled-back one none; the log is append-only."""
 
@@ -159,7 +159,7 @@ async def _end(ctx: Any, run_id: str) -> None:
 def test_accuracy_audit_holds_no_key(
     open_client: OpenClient, callers: Any, seed: Any, audit_rows: Any
 ) -> None:
-    """``accuracy.draw`` and ``accuracy.label`` hold ids, hashes and counts (docs/mvp/ACCURACY.md §12):
+    """``accuracy.draw`` and ``accuracy.label`` hold ids, hashes and counts:
     never a drawn key, masked or raw, nor a note."""
     truth = {"source": "CBS-PROD.account_master", "as_of": "2026-10-01"}
     with open_client(auth={}) as client:
@@ -223,7 +223,7 @@ def test_the_worker_audits_each_cycle_and_the_end_of_a_run(
             time.sleep(0.1)
         rows = [r for r in audit_rows(client) if r["object"] == run_id]
         run = client.portal.call(_stored_run, client.app.state.ctx.pool, run_id)
-    plan = rows[0]["detail"].pop("plan_sha256")  # the stored params' hash (docs/mvp/PACK.md §7.4)
+    plan = rows[0]["detail"].pop("plan_sha256")  # the stored params' hash
     assert plan == sha256_hex(approvals.plan(run["params"]))
     assert [(r["actor"], r["action"], r["detail"]) for r in rows] == [
         (
@@ -236,7 +236,7 @@ def test_the_worker_audits_each_cycle_and_the_end_of_a_run(
                 "file_mode": False,
                 "approval_id": None,
                 "approval": {"needs": ["clear"], "mode": "none"},
-                "licence": None,  # an open build records none (docs/mvp/LICENCE.md §19)
+                "licence": None,  # an open build records none
             },
         ),
         ("system:worker", "run.cycle", {"cycle": 2}),
@@ -272,14 +272,14 @@ def test_the_server_start_records_the_role_mapping(
         [created] = _rows(rows, "installation.created")
         mapping = roles_sha256(client.app.state.ctx.settings.auth.oidc)
         kek = client.app.state.ctx.keyring.current
-    # docs/mvp/LICENCE.md §11: a vendor build's evaluation and its two pairs, or an open build's (§19)
+    # A vendor build's evaluation and its two pairs, or an open build's
     state, pairs = ("evaluation", 2) if build == "vendor_keys" else ("open", None)
     started = {"installation_id": created["object"], "state": state, "licence_id": None}
     started |= {"tier": None, "pairs": pairs, "ends": None}
     assert (start["actor"], start["actor_name"], start["object"]) == ("system:server", "server", "server")
     [head] = [row["chain"] for row in rows if row["chain"]["seq"] == start["chain"]["seq"] - 1]
     assert start["detail"] == {
-        # pyproject's, .dev or a release's: a release's checks run this test (docs/mvp/RELEASE.md §10)
+        # pyproject's, .dev or a release's: a release's checks run this test
         "version": tomllib.loads((repo_root / "pyproject.toml").read_text())["project"]["version"],
         "auth": mode,
         "roles_sha256": mapping,
@@ -288,9 +288,9 @@ def test_the_server_start_records_the_role_mapping(
         "current_kek": kek,
         "missing_keks": [],
         "pack_key": None,  # no evidence packs configured
-        "audit_head": head,  # the chain's head as it started (docs/mvp/PACK.md §4.1)
+        "audit_head": head,  # the chain's head as it started
         "licence": started,  # as it started, before an oidc client's licence was installed
-        "mcp": None,  # no mcp block: no MCP server (docs/mvp/MCP.md §4; with one: test_mcp_http.py)
+        "mcp": None,  # no mcp block: no MCP server (with one: test_mcp_http.py)
     }
     assert (mapping is None) == (mode == "tokens") and (
         mapping is None or re.fullmatch(r"[0-9a-f]{64}", mapping)
@@ -402,7 +402,7 @@ async def test_the_audit_log_refuses_updates_and_deletes(pool: AsyncConnectionPo
     for statement in (
         "UPDATE ds.audit_log SET actor = 'api'",
         "DELETE FROM ds.audit_log",
-        "TRUNCATE ds.audit_log CASCADE",  # the chain's rows reference it (docs/mvp/PACK.md §8)
+        "TRUNCATE ds.audit_log CASCADE",  # the chain's rows reference it
     ):
         async with pool.connection() as conn:
             with pytest.raises(psycopg.errors.RaiseException, match="append-only"):
@@ -412,7 +412,7 @@ async def test_the_audit_log_refuses_updates_and_deletes(pool: AsyncConnectionPo
 def test_the_audit_log_reads_page_by_page_and_every_read_is_audited(
     open_client: OpenClient, callers: Any, audit_rows: Any
 ) -> None:
-    with open_client(auth={"oidc": OIDC}, tier=None) as client:  # reads need no licence (LICENCE.md §2)
+    with open_client(auth={"oidc": OIDC}, tier=None) as client:  # reads need no licence
         as_ = callers(client)
         admin = as_.session(*expand(["admin"]), auth_time=datetime.now(UTC))
         viewer = as_.session("viewer", username="bob")

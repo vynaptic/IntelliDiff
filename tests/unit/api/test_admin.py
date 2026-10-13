@@ -1,4 +1,4 @@
-"""Administration over the API (docs/mvp/AUTH.md §3, §5): API tokens (shown once, owned by a person,
+"""Administration over the API: API tokens (shown once, owned by a person,
 created after a fresh sign-in), revocation, disabling and enabling users, and sessions."""
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Cut-over readiness (docs/mvp/READINESS.md): named gates, each met or not on stored evidence, and a
+"""Cut-over readiness: named gates, each met or not on stored evidence, and a
 pair's place on a fixed ladder. Pure: ``runner.readiness`` measures each ended cycle once, the store keeps
 the measures, and every surface judges them here.
 
@@ -35,7 +35,7 @@ DEFINITION = (
     "Readiness is a set of named gates, each met or not on observed evidence, and a place on a fixed ladder."
     " It is not a probability that the two systems are at parity, not a forecast, and not sign-off evidence:"
     " a four-eyes sign-off decides, and its evidence pack certifies what was observed. For a pair observed"
-    " whole, the targets gate is one pooled count over the pair; architecture §15's per-stratum targets are"
+    " whole, the targets gate is one pooled count over the pair; per-stratum targets are"
     " judged only for sampled cycles, and otherwise by the approver."
 )
 BRIEF_CYCLES = 30  # the measured cycles a pair's brief lists, newest last
@@ -60,8 +60,8 @@ STATES = (
 CAUSES = (
     "baseline", "cycle", "version", "signoff", "pack", "adjudication", "accuracy", "ledger", "licence",
     "config", "closed", "time",
-)  # why a pair's ``readiness.changed`` row was written (§8)  # fmt: skip
-# The cause a changed governance or evidence gate names (§8): the stored fact it reads.
+)  # why a pair's ``readiness.changed`` row was written  # fmt: skip
+# The cause a changed governance or evidence gate names: the stored fact it reads.
 _GATE_CAUSES = {
     "spec_approval": "signoff", "adjudication": "adjudication", "sample_ledger": "ledger",
     "accuracy": "accuracy", "signoff": "signoff", "pack": "pack",
@@ -73,22 +73,22 @@ COUNTS = (
 GRAPH_CODES = (
     "CLUSTER_SPLIT", "CLUSTER_MERGE", "CLUSTER_REARRANGE", "GROUP_MEMBERS_DIFFER", "CLUSTER_OVERSIZED",
 )  # ds.graph_diffs' codes; the gate allows none of the first four  # fmt: skip
-CYCLES, MAX_AGE = 3, "7d"  # this contract's defaults: evidence cycles in a row, and the evidence cycle's age
+CYCLES, MAX_AGE = 3, "7d"  # the built-in defaults: evidence cycles in a row, and the evidence cycle's age
 EXIT_MINIMUM = 50  # reports.adjudicate.EXIT_MINIMUM
 MODES = {"tokens": "tokens mode", "none": "developer mode"}  # approvals.MODES
 LICENCE_UNREAD = "the licence standing could not be read (see the server log)"
 COUNTED = 100  # a pair's cycles are counted up to this many (repo's reads): one more reads as over it
 _PENDING = "side a's key census is pending"  # pack.census_problem's words for a census not counted yet
-_COUNTED_WITH = " (side a is counted only with packs or readiness configured, PACK §1.3)"
+_COUNTED_WITH = " (side a is counted only with packs or readiness configured)"
 Row = Mapping[str, Any]  # a cycle as the store gives it: run_id, cycle, ended_at and its readiness measures
 
 
-# -- settings (§7) --------------------------------------------------------------------------------------
+# -- settings --------------------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class Gates:
-    """A pair's gates as judged: the settings' values over this contract's defaults."""
+    """A pair's gates as judged: the settings' values over the built-in defaults."""
 
     tier: str = "standard"
     cycles: int = CYCLES
@@ -213,7 +213,7 @@ def policy(settings: ReadinessSettings | None, name: str) -> Policy:
 
 @dataclass(frozen=True)
 class Installation:
-    """What an evaluation takes of the installation as it stands (D9): its auth ``mode`` (none, tokens or
+    """What an evaluation takes of the installation as it stands: its auth ``mode`` (none, tokens or
     oidc), whether it has ``packs`` configured, what its licence ``allows`` (``Standing.allows()``; None:
     the standing could not be read), and the two judges this module cannot import: ``accuracy``
     (``reports.accuracy.gate``) and ``stops`` (``runner.stop.StopConditions.from_spec``)."""
@@ -225,7 +225,7 @@ class Installation:
     stops: Callable[[Mapping[str, Any]], Any]
 
 
-# -- measures (§4) --------------------------------------------------------------------------------------
+# -- measures --------------------------------------------------------------------------------------
 
 
 def measured_sha256(record: Mapping[str, Any]) -> str:
@@ -244,7 +244,7 @@ def measured(
     cut: bool = False,
 ) -> dict[str, Any]:
     """A cycle's format-1 measures: ``record`` (the counts, ids and codes its tombstone and rows hold) with
-    what they say of it: its ``basis`` (§3), why it is ``incomplete``, whether it is ``complete`` and
+    what they say of it: its ``basis``, why it is ``incomplete``, whether it is ``complete`` and
     ``evidence``, and the per-cycle gates it ``fails``. ``own``: its counters are its own; ``problem``:
     ``pack.census_problem``'s text, None when its census counts side a; ``method``: a hash sample's;
     ``whole``: whether a table scan read its tables to their end, uncut (None: its state is purged);
@@ -280,7 +280,7 @@ def measured(
 
 
 def _read(record: Mapping[str, Any]) -> Mapping[str, Any]:
-    """A cycle's measures as this build reads them (§4): a record of another format is an unknown point and
+    """A cycle's measures as this build reads them: a record of another format is an unknown point and
     no evidence, of which only its format, pair and version are told."""
     if record.get("format") == FORMAT:
         return record
@@ -289,7 +289,7 @@ def _read(record: Mapping[str, Any]) -> Mapping[str, Any]:
 
 
 def _pooled(record: Mapping[str, Any], tier: str) -> dict[str, tuple[int, int]]:
-    """§5's pooled rule over a cycle's counts at ``tier``, as (count, allowance): the discrepant or
+    """The pooled rule over a cycle's counts at ``tier``, as (count, allowance): the discrepant or
     unresolved keys, the keys absent on both sides and those above the API cap. None of them is known for
     counters without the fields."""
     if any(record[name] is None for name in COUNTS):
@@ -305,7 +305,7 @@ def _pooled(record: Mapping[str, Any], tier: str) -> dict[str, tuple[int, int]]:
 
 
 def _certain(record: Mapping[str, Any]) -> bool:
-    """Whether a point's failure of the pooled rule is certain whatever its unread keys show (D3): it lacks
+    """Whether a point's failure of the pooled rule is certain whatever its unread keys show: it lacks
     only keys cancelled or owed a recheck, or compared none of its keys (a partial scan or a cut key set
     never showed its population), and it is no key list whose census does not count side a."""
     lacking = set(record["incomplete"])
@@ -334,7 +334,7 @@ def _fails(record: Mapping[str, Any], tier: str) -> list[str]:
     return [gate for gate, failed in found.items() if failed]
 
 
-# -- series, convergence and trend (§6) -----------------------------------------------------------------
+# -- series, convergence and trend -----------------------------------------------------------------
 
 
 def _when(row: Row) -> tuple[datetime, str, int]:
@@ -413,7 +413,7 @@ def streak(series: Mapping[str, Any], policy: Policy, unmeasured: Mapping[str, A
 
 
 def candidate(found: Streak, governance: Mapping[str, Any]) -> Row | None:
-    """The candidate cycle (§3), as ``repo.readiness_governance`` read it: in the streak, an approved
+    """The candidate cycle, as ``repo.readiness_governance`` read it: in the streak, an approved
     sign-off's cycle, else an open request's, else the newest cycle holding a passed adjudication a person
     scored or a labelling a person labelled; else the evidence cycle. A new cycle so never demotes
     adjudicated work still in the streak, and a cycle that is no evidence point is never the candidate."""
@@ -486,7 +486,7 @@ def trend(points: Sequence[Row], tier: str, bucket: str = "cycle") -> list[dict[
     return found
 
 
-# -- texts (§9) -----------------------------------------------------------------------------------------
+# -- texts -----------------------------------------------------------------------------------------
 
 
 def _at(row: Row) -> str:
@@ -531,7 +531,7 @@ def _ago(seconds: float) -> str:
 
 
 def _unmeasured(row: Row, at: str) -> str | None:
-    """Why a point's measures say nothing of it (Y7), if they do not."""
+    """Why a point's measures say nothing of it, if they do not."""
     record = row.get("readiness")
     if record is None:
         return f"{at}, which is not measured yet"
@@ -549,7 +549,7 @@ def _unmeasured(row: Row, at: str) -> str | None:
 
 
 def _not_evidence(row: Row) -> str:
-    """Y14: why a point is no evidence, in the sign-off's words (docs/mvp/APPROVALS.md §1.2)."""
+    """Why a point is no evidence, in the sign-off's words."""
     record, at = row["readiness"], _at(row)
     if record.get("format") != FORMAT:
         return f"{at} holds measures of format {record.get('format')}, which this version does not read"
@@ -574,19 +574,19 @@ def _not_evidence(row: Row) -> str:
 
 
 def _skipped(record: Mapping[str, Any] | None) -> str:
-    """Why a cycle is no evidence point, in a word (Y3, Y12)."""
+    """Why a cycle is no evidence point, in a word."""
     if record is None or "incomplete" not in _read(record):
         return "not measured"
     return "partial" if record["incomplete"] else "a key list whose census does not count side a"
 
 
 def _suppressed(record: Mapping[str, Any]) -> str:
-    """N6: the suppressed count, beside every discrepant count a text prints."""
+    """The suppressed count, beside every discrepant count a text prints."""
     return f"; {record['suppressed']:,} key(s) suppressed (known differences or noise only)"
 
 
 def _pooled_texts(row: Row, tier: str, *, partial: bool = False) -> list[str]:
-    """Y4: each part of the pooled rule the cycle does not hold at ``tier``; ``partial``: of a point that
+    """Each part of the pooled rule the cycle does not hold at ``tier``; ``partial``: of a point that
     is no evidence and fails for certain, lacking keys or having compared none."""
     record, t = row["readiness"], percent(sampling.TARGETS[tier])
     at, n, found = _at(row), record["total"], []
@@ -640,7 +640,7 @@ def _item(
     }  # fmt: skip
 
 
-# -- the parity gates (§5) ------------------------------------------------------------------------------
+# -- the parity gates ------------------------------------------------------------------------------
 
 
 def _population(row: Row) -> dict[str, Any]:
@@ -694,7 +694,7 @@ def _critical(row: Row, newer: Row | None) -> dict[str, Any]:
 
 
 def _sampled_texts(row: Row, tier: str) -> list[str]:
-    """Y5: why a sampled cycle's stored judgement does not meet the targets gate at ``tier``."""
+    """Why a sampled cycle's stored judgement does not meet the targets gate at ``tier``."""
     record, at = row["readiness"], _at(row)
     if record["sample_status"] != "passed":
         return sampling.unpassed(row.get("sample"), record["draw_id"], at) or [
@@ -744,7 +744,7 @@ def _targets(row: Row, newer: Row | None, tier: str) -> dict[str, Any]:
 def _earliest(
     found: Streak, policy: Policy, soaks: Sequence[Mapping[str, Any]], seen: Installation, now: datetime
 ) -> str:
-    """Y7: the cycle of a live soak of the current version that could complete the streak, and when it is
+    """The cycle of a live soak of the current version that could complete the streak, and when it is
     scheduled to start (a schedule, never a forecast): a run's current cycle too, until it falls due; or
     why no live soak will add the cycles."""
     assert found.evidence is not None
@@ -860,7 +860,7 @@ def _graph(row: Row, required: bool) -> dict[str, Any]:
     return _item("graph", required, "not_met", said, row, value=sum(counts), allowed=0)
 
 
-# -- the governance and evidence gates (§5) -------------------------------------------------------------
+# -- the governance and evidence gates -------------------------------------------------------------
 
 
 def _spec_approval(chosen: Row, at: str) -> dict[str, Any]:
@@ -899,7 +899,7 @@ def _adjudication(chosen: Row, at: str, of: str, mode: str) -> dict[str, Any]:
         return _item("adjudication", True, "unavailable", said, chosen)
     said = (
         f"no adjudication of {at} is scored: draw and score one before requesting sign-off, which freezes"
-        " the cycle's adjudications (docs/mvp/PACK.md §5)"
+        " the cycle's adjudications"
     )
     return _item("adjudication", True, "not_met", said, chosen)
 
@@ -921,7 +921,7 @@ def _sample_ledger(chosen: Row, at: str, ledger: Sequence[str] | None) -> dict[s
     found += [why for why in ledger or () if why not in shown] or list(ledger or ())
     if found:
         return _item("sample_ledger", True, "not_met", "; ".join(found), chosen)
-    said = f"draw {draw} of {at} meets the draw discipline (SAMPLING §9)"
+    said = f"draw {draw} of {at} meets the draw discipline"
     return _item("sample_ledger", True, "met", said, chosen)
 
 
@@ -992,10 +992,7 @@ def _signoff(
     if (signed := by.get("approved")) is not None:
         said = f"sign-off {signed['approval_id']} of {of} approved on {_day(signed['decided_at'])}"
         return _item("signoff", True, "met", said, chosen)
-    lacking = (
-        "sign-off needs an Enterprise licence, which this installation's does not allow"
-        " (docs/mvp/LICENCE.md §6)"
-    )
+    lacking = "sign-off needs an Enterprise licence, which this installation's does not allow"
     if seen.mode != "oidc":
         said = f"sign-off needs SSO (auth.oidc); this deployment runs in {MODES[seen.mode]}"
         return _item("signoff", True, "unavailable", said, chosen)
@@ -1069,7 +1066,7 @@ def _pack(
     return _item("pack", True, "not_met", said, chosen)
 
 
-# -- the evaluation (§5) --------------------------------------------------------------------------------
+# -- the evaluation --------------------------------------------------------------------------------
 
 
 def as_of(policy: Policy, now: datetime) -> datetime:
@@ -1087,7 +1084,7 @@ def counted(n: int, most: int = COUNTED) -> str:
 def _no_evidence(
     pair: str, series: Mapping[str, Any], unmeasured: Mapping[str, Any] | None, stored: bool
 ) -> str:
-    """Y14: why the pair has no evidence cycle."""
+    """Why the pair has no evidence cycle."""
     if not stored:
         return f"no spec named {pair} is stored"
     if (newest := series["newest"]) is not None:
@@ -1218,7 +1215,7 @@ def evaluate(
 
 
 def causes(was: Mapping[str, Any], item: Mapping[str, Any], *, version: bool, config: bool) -> list[str]:
-    """Why a pair's ``readiness.changed`` row is written (§8), in ``CAUSES``' order: told from what differs
+    """Why a pair's ``readiness.changed`` row is written, in ``CAUSES``' order: told from what differs
     between its newest row's detail (``was``) and the pair as evaluated (``item``), never from what entered
     the audit chain meanwhile, so that neither a restart nor a late commit names another pair's cause.
 
@@ -1292,7 +1289,7 @@ def programmes(items: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return found
 
 
-# -- a pair's brief (§9, §10) ---------------------------------------------------------------------------
+# -- a pair's brief ---------------------------------------------------------------------------
 
 
 def marked(points: Sequence[Row], tier: str) -> list[dict[str, Any]]:
@@ -1348,8 +1345,8 @@ def reported(
     """A brief's reported cycle, its newest complete point whatever its basis (``row``: as the store gave
     it): the point with its draw, its claim, its ``strata`` (``runner.sample.lines`` of its stored
     judgement; None when it is not sampled, or ended without one) and its notes: that the gates judge
-    another cycle (M8; ``evidence``: the pair's), how a sampled one is judged (M4), that its counts are of
-    keys only (M5), and its stored mismatch rate (``ratio``) with the counts it is of (M9)."""
+    another cycle (``evidence``: the pair's), how a sampled one is judged, that its counts are of
+    keys only, and its stored mismatch rate (``ratio``) with the counts it is of."""
     record, at, notes = row["readiness"], _at(row), []
     judged = evidence and _at(evidence)
     if judged not in (None, at):
@@ -1374,8 +1371,8 @@ def reported(
 
 
 def unreported(pair: str, rows: Sequence[Row]) -> str:
-    """M2: why a brief reports no cycle of its window (``rows``, newest first): none is measured, or none
-    is complete, with why the newest is not (Y14's reasons)."""
+    """Why a brief reports no cycle of its window (``rows``, newest first): none is measured, or none
+    is complete, with why the newest is not."""
     if not rows:
         return f"No batch or soak cycle of {pair} is measured yet."
     return (
@@ -1385,7 +1382,7 @@ def unreported(pair: str, rows: Sequence[Row]) -> str:
 
 
 def purged(row: Row) -> str:
-    """M3: a reported cycle whose purge started keeps no root-cause group for its brief to list."""
+    """A reported cycle whose purge started keeps no root-cause group for its brief to list."""
     return f"Cycle {row['cycle']} of run {row['run_id']} is purged: its root-cause groups are not kept."
 
 
@@ -1395,7 +1392,7 @@ def burn_down(
     """A brief's root-cause groups over ``held``, the complete points of its window (``points``) whose
     groups are kept, the last of them its reported cycle, as ``repo.brief_causes`` read them (``found``):
     how many that cycle ``opened`` (in it, in no earlier one), how many are ``still_open`` (in both) and
-    ``closed`` (in earlier ones only: not observed in it), over how many ``cycles`` ``from`` when (M6, the
+    ``closed`` (in earlier ones only: not observed in it), over how many ``cycles`` ``from`` when (the
     ``text``; with a closed group it says how many keys that cycle did not compare, which no group holds),
     and the groups listed, each with its ``state``, the ``first`` and ``last`` cycle holding it, how many
     ``seen`` it, what its last row says and ``since``: the marks of the window's points after its last

@@ -1,7 +1,6 @@
-"""The events fed audit rows make (docs/mvp/ALERTS.md §2.1): each catalogue row, the stops, pauses and
-refusals notified once, the error type, the run as the feed finds it, a pair's change of readiness
-(docs/mvp/READINESS.md §8), a schedule's time that started no run (docs/mvp/SCHEDULES.md §8), and
-adversarial details whose planted texts never reach a body."""
+"""The events fed audit rows make: each catalogue row, the stops, pauses and
+refusals notified once, the error type, the run as the feed finds it, a pair's change of readiness, a
+schedule's time that started no run, and adversarial details whose planted texts never reach a body."""
 
 from __future__ import annotations
 
@@ -219,7 +218,7 @@ def test_licence_and_notifier_events() -> None:
 
 
 def test_a_labelling_labelled_is_measured() -> None:
-    """``accuracy.measured`` (docs/mvp/ACCURACY.md §10), from ``accuracy.label``: the labelling's id and
+    """``accuracy.measured``, from ``accuracy.label``: the labelling's id and
     counts, never a hash, a label or a share; the placeholder name for it is gone."""
     labelled = row("accuracy.label", LABELLED, obj=LABELLING)
     assert notify.concerned(labelled) == 2  # the row names its cycle
@@ -255,7 +254,7 @@ def test_a_labelling_labelled_is_measured() -> None:
 
 
 def test_a_pair_s_readiness_changed() -> None:
-    """``readiness.changed`` (docs/mvp/READINESS.md §8): ids, states, counts and slugs; each changed gate's
+    """``readiness.changed``: ids, states, counts and slugs; each changed gate's
     statuses, never its counts; the wording; the link to the pair's screen."""
     assert get_args(notify.Ready) == readiness.STATES and get_args(notify.Gate) == readiness.GATES
     assert get_args(notify.Cause) == readiness.CAUSES and "readiness.changed" in notify.FEED_ACTIONS
@@ -352,7 +351,7 @@ def test_a_readiness_change_s_dedup_key_names_the_required_gates_not_met() -> No
 
 
 def test_a_readiness_change_s_labels_are_withheld() -> None:
-    """Pair, programme and entity are labels (§6.4): none where the channel sends no labels; a pair whose
+    """Pair, programme and entity are labels: none where the channel sends no labels; a pair whose
     name its key pattern matches is never named, and its link names none either."""
     doc, body = rendered(changed(), "slack", labels=None, links=True)
     assert doc["withheld"] == {"pair": "labels_off", "programme": "labels_off", "entity": "labels_off"}
@@ -380,7 +379,7 @@ def test_a_readiness_change_s_labels_are_withheld() -> None:
 
 
 def test_a_schedule_s_time_that_started_no_run() -> None:
-    """``schedule.missed`` (docs/mvp/SCHEDULES.md §8): ids, times, closed codes and an exception's type; the
+    """``schedule.missed``: ids, times, closed codes and an exception's type; the
     spec's name and the mode are the row's own, for rules to match, and no payload carries them."""
     assert notify.EVENTS["schedule.missed"][1] == {"schedule.missed"} and "schedule.missed" in notify.KINDS
     event = missed()
@@ -436,7 +435,7 @@ def test_a_schedule_s_time_that_started_no_run() -> None:
         ("not_started", None, "alert", "the run could not be created (TargetUnreachable); starting one on the"
                                        " Runs screen shows the cause."),
         ("error", None, "alert", "a fault in DeltaSleuth (TargetUnreachable); the server log names it."),
-        # FILES.md §12, F11: the check shows files and whether they are settled; no stamp, age or plan
+        # The check shows files and whether they are settled; no stamp, age or plan
         *(("not_started", code, "alert", "the export a file side reads was not ready before its window closed"
            f" ({code}); ds target check shows its state.")
           for code in ("export_absent", "unsettled")),
@@ -499,7 +498,7 @@ def test_a_missed_range_is_counted() -> None:
     ],
 )  # fmt: skip
 def test_the_worker_s_pause_before_a_time_is_due(code: str, said: str) -> None:
-    """T6 before a time is due (docs/mvp/SCHEDULES.md §4, §8): no time was missed, so the pause's own row is
+    """The worker's pause before a time is due: no time was missed, so the pause's own row is
     sent, as ``schedule.missed`` without a time. A pause that chained its missed row sends nothing of its
     own, and neither does a person's."""
     assert notify.EVENTS["schedule.pause"] == notify.EVENTS["schedule.missed"]
@@ -572,7 +571,7 @@ FOOTER = (
 
 
 def test_the_schema_guard_s_event() -> None:
-    """``schema.drift`` (docs/mvp/PRECHECKS.md §9): counts, closed kinds, an id and hashes; one event a
+    """``schema.drift``: counts, closed kinds, an id and hashes; one event a
     row, alert when the run was paused, else a warning; its texts are closed and name no table."""
     assert notify.EVENTS["schema.drift"][1] == {"schema.drift"} and "schema.drift" in notify.KINDS
     assert get_args(notify.Drift) == (*precheck.BREAKING, *precheck.OTHER)  # the pure module's kinds
@@ -612,7 +611,7 @@ def test_the_schema_guard_s_event() -> None:
         f"{lead}: side b's table changed since run {BASIS} of its version (2 changes); this run reads the"
         f" tables as they are now.{FOOTER}"
     )
-    # After a failed read (V5) that found nothing breaking the plan, the read's failure fails the run.
+    # After a failed read that found nothing breaking the plan, the read's failure fails the run.
     doc, _ = rendered(drifted(paused=False, paused_seq=None, where="read", sides=warned))
     assert doc["text"] == (
         f"{lead}: side b's table changed since the run was planned (2 changes); the run fails on the read"
@@ -710,7 +709,7 @@ def test_error_type() -> None:
     assert notify.error_type("secret/file") == "SecretError"
     assert notify.error_type("Ünicode!") == "Error"
     assert notify.error_type(None) == "Error"
-    # A table side's failure is `<class>: <code>` and the guard's its text (ENGINES §12 F2 to F8): the
+    # A table side's failure is `<class>: <code>` and the guard's its text: the
     # class is sent, where both once read `SecretError`.
     guard = UnsafeTargetError("10.1.2.3 is a private address: set allow_private_network on the target")
     resolved = UnsafeTargetError(
@@ -726,17 +725,17 @@ def test_error_type() -> None:
         tables.EngineChanged("side a: target ledger is mysql now; this run was planned for oracle"),
         tables.FilesChanged("side a: file 3 of 12 is not the file the run was created on (content)"),
         tables.FilesChanged("side a: 13 files match now, 12 when the run was created"),
-        tables.TargetTempSpace("OutOfMemoryException"),  # FILES F3
+        tables.TargetTempSpace("OutOfMemoryException"),
         tables.TargetTempSpace("spill"),
-        tables.RowsMoved("side a: 9,999,998 rows were read where the plan counted 10,000,000"),  # FILES F10
-        tables.TargetDenied("PermissionError"),  # FILES F4
+        tables.RowsMoved("side a: 9,999,998 rows were read where the plan counted 10,000,000"),
+        tables.TargetDenied("PermissionError"),
         tables.TargetRefused("IOException"),
-        tables.ReaderDied(  # READER F12
+        tables.ReaderDied(
             "side a: the file reader's process ended 3 times (SIGBUS) while only this side's files were being"
             " read: they are read no more until DeltaSleuth restarts"
         ),
-        tables.TargetTempSpace("MemoryError"),  # READER F3
-        tables.TargetRefused("Oversize"),  # READER F4
+        tables.TargetTempSpace("MemoryError"),
+        tables.TargetRefused("Oversize"),
         tables.TargetRefused("Unframed"),
         guard,
         resolved,

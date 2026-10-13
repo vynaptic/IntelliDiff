@@ -1,6 +1,5 @@
-"""A signed-off census or sampled cycle written as the app writes it (docs/mvp/PACK.md §1.1,
-docs/mvp/SAMPLING.md §11), one whose sign-off attests a labelling (docs/mvp/ACCURACY.md §8), the pack issued
-from it, and the pack's own VERIFY.txt run step by step with ``sh``."""
+"""A signed-off census or sampled cycle written as the app writes it, one whose sign-off attests a
+labelling, the pack issued from it, and the pack's own VERIFY.txt run step by step with ``sh``."""
 
 from __future__ import annotations
 
@@ -152,10 +151,10 @@ async def signed_cycle(
     unless the store names a licence); in the open build it records none.
     ``mode="soak"``: a running soak whose cycle 1 read every key, its boundary (``finish_cycle``), which
     ends the cycle, and its sign-off (``sign`` False) left to the caller. ``schedule``: the run is a
-    schedule's firing (docs/mvp/SCHEDULES.md §5), its ``params["schedule"]``: created by ``system:worker``
+    schedule's firing, its ``params["schedule"]``: created by ``system:worker``
     and audited as the worker audits one, so its sign-off takes two approvers, carol then erin. ``tables``:
     the scan's stored plan in place of ``public.items`` twice, and ``pinned`` a file side's pins, sealed as
-    ``create_run`` seals them (docs/mvp/FILES.md §6)."""
+    ``create_run`` seals them."""
     spec = spec or listed_spec()
     pairs = pairs or samples()
     record = (await licensed_once(ctx, tier)).record()
@@ -364,7 +363,7 @@ async def sign_off(
     first: Principal | None = None,
 ) -> str:
     """The cycle's sign-off, requested and approved (holding the run) as the routes do; a sampled cycle's
-    grant records the later draws of its population (docs/mvp/SAMPLING.md §9). ``attests``: what builds the
+    grant records the later draws of its population. ``attests``: what builds the
     facts it attests (an earlier format's builder: a request made before a migration). ``first``: who takes
     the first of two steps, where the run's start has no accountable person."""
     async with ctx.pool.connection() as conn:

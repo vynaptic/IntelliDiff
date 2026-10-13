@@ -1,4 +1,4 @@
-"""A scratch checkout for tools/release.py (docs/mvp/RELEASE.md §13): a temporary git repository as
+"""A scratch checkout for tools/release.py: a temporary git repository as
 ``release.ROOT``, a release key from ``release keygen``, and stub docker, syft, grype, uv, npm and pip-audit
 (``python -m pip_audit``) on PATH that follow a scenario, keep the local image store and what runs, and log
 each run's argv, cwd and environment. git and openssl are real."""
@@ -297,7 +297,7 @@ def triage(today: datetime) -> str:
         (today + timedelta(days=80)).date(),
         (today + timedelta(days=20)).date(),
     )
-    return f"""# What the release gate accepts (docs/mvp/RELEASE.md §8), each decision with an expiry.
+    return f"""# What the release gate accepts, each decision with an expiry.
 [[finding]]
 id = "{PYTHON_CVE}"
 component = "{PYTHON_PURL}"
@@ -346,7 +346,7 @@ class Scratch:
             self.tmp / "register.jsonl",
             self.tmp / "notes.txt",
         )
-        # git's default cleanup drops #; an open build's notes say so (docs/mvp/LICENCE.md §19)
+        # git's default cleanup drops #; an open build's notes say so
         self.notes.write_text(f"# DeltaSleuth 0.1.0\n\nThe first release.\n{release.OPEN_BUILD}\n")
 
     def git(self, *args: str) -> str:
@@ -421,8 +421,7 @@ def scratch(
         "web/package-lock.json": json.dumps(LOCK), "deploy/Dockerfile": dockerfile,
         "deploy/docker-compose.yml": compose % ("0.1.0", "0.1.0"),
         "deploy/docker-compose.ca.yml": compose % ("0.1.0-ca", "0.1.0-ca"),
-        "docs/mvp/DEPLOY.md": "# Deploying\n", "docs/guide/01-install-docker.md": "# 1. Install\n",
-        "docs/drafts/notes.md": "not shipped\n",
+        "docs/deployment.md": "# Deployment\n", "docs/user-guide.md": "# User guide\n",
         "mocks/__init__.py": "", "examples/README.md": "# Examples\n", "tests/test_nothing.py": "",
         "tools/release-keys.txt": f"# the scratch release key\n{listed}\n",
         "tools/triage.toml": triage(datetime.now(UTC)),

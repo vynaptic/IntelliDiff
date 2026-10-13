@@ -1,4 +1,4 @@
-"""``dsv``: the vendor's licence tool (docs/mvp/LICENCE.md §14), outside the shipped product.
+"""``dsv``: the vendor's licence tool, outside the shipped product.
 
     uv run python tools/dsv.py keygen --out DIR
     uv run python tools/dsv.py issue --key file:/… --customer T --order T --installation I-… --tier T
@@ -11,9 +11,9 @@ references (absolute paths) to files the maintainer writes, or a passphrase prom
 the environment or a chat. The image copies only ``deltasleuth/``, so no installation runs it.
 
 It serves a vendor build. A checkout whose ``licence.SHIPPED_KEYS`` is empty builds an open build, which
-needs no licence and enforces none (§19): ``issue`` then refuses every key, since no build would trust
-its licence. Pasting a ``keygen`` entry into ``SHIPPED_KEYS`` turns enforcement on in every build made
-from then on, whose installations are unlicensed evaluations until a licence is installed.
+needs no licence and enforces none: ``issue`` then refuses every key, since no build would trust its
+licence. Pasting a ``keygen`` entry into ``SHIPPED_KEYS`` turns enforcement on in every build made from then
+on, whose installations are unlicensed evaluations until a licence is installed.
 """
 
 from __future__ import annotations
@@ -137,8 +137,8 @@ def issue(
     ] = None,
     passphrase: PassOpt = None,
 ) -> None:
-    """Sign a licence, write it to DIR as LI-….txt and append it to the register (docs/mvp/LICENCE.md §3).
-    Refuses a key the checkout's licence.SHIPPED_KEYS lacks: every key, while it embeds none."""
+    """Sign a licence, write it to DIR as LI-….txt and append it to the register. Refuses a key the
+    checkout's licence.SHIPPED_KEYS lacks: every key, while it embeds none."""
     for field, value in (("customer", customer), ("order", order)):
         if value != value.strip():
             fail(f"{field} begins or ends with a blank")

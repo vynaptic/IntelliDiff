@@ -1,4 +1,4 @@
--- Cut-over readiness (docs/mvp/READINESS.md §4): each ended cycle's measures, written once by the worker
+-- Cut-over readiness: each ended cycle's measures, written once by the worker
 -- and kept with the tombstone; one-shot and captured-sample cycles are marked excluded here and by end_cycle.
 ALTER TABLE ds.cycles ADD COLUMN readiness jsonb
     CHECK (jsonb_typeof(readiness) = 'object' AND readiness ? 'format'

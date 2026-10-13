@@ -1,4 +1,4 @@
-"""Migration 013 (docs/mvp/ACCURACY.md §13) over a populated 012 store: ds.labellings is added without
+"""Migration 013 over a populated 012 store: ds.labellings is added without
 rewriting a table; a sign-off requested before it stays format 2, with the exclusion set it had; a
 labelling starts unlabelled, is labelled once and then only purged, never deleted, and nothing is drawn or
 labelled while its cycle has a requested or approved sign-off; ds.approval_authors keeps the scorer and

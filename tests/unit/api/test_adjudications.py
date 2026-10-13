@@ -1,4 +1,4 @@
-"""Adjudications over the API (docs/mvp/PACK.md §5, §7.1, §7.2): an operator draws a reviewer sheet of an
+"""Adjudications over the API: an operator draws a reviewer sheet of an
 ended cycle, a viewer downloads it, another operator scores its reviewed upload once; the sign-off request
 attests it and freezes the cycle; every refusal with its binding message."""
 

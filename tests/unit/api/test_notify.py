@@ -1,4 +1,4 @@
-"""Alerts and notifications over the API (docs/mvp/ALERTS.md §10, §11): the channels' state and banners, the
+"""Alerts and notifications over the API: the channels' state and banners, the
 deliveries, and the audited acts: a test send (one attempt, stored sent or dead, throttled), sending dead
 deliveries again, and mutes (an admin signed in within 15 minutes). Every answer holds ids, counts and closed
 codes, never a URL, path, address or secret; every POST is refused while notifications are off."""

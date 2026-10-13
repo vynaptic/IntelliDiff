@@ -1,7 +1,7 @@
-"""Statements on the locked instance (docs/mvp/FILES.md §3's U5 to U7, U10 and U11; §10): bound reader
+"""Statements on the locked instance: bound reader
 arguments, streamed fetches, the key order, interrupting a sort, one budget for every cursor. What DuckDB
 itself does is observed on a connection in this process (``locked``); the product's cursors are a reader's,
-a process of its own (``started``; docs/mvp/READER.md)."""
+a process of its own (``started``)."""
 
 from __future__ import annotations
 
@@ -62,7 +62,7 @@ BOUND = {
 
 
 def test_reader_arguments_are_bound(tmp_path: Path) -> None:
-    """U5: the file list and every reader option bind as parameters, so no spec text is spliced into a
+    """The file list and every reader option bind as parameters, so no spec text is spliced into a
     statement."""
     import gzip
 
@@ -87,7 +87,7 @@ def test_reader_arguments_are_bound(tmp_path: Path) -> None:
 
 
 def test_scan_memory_is_bounded(tmp_path: Path) -> None:
-    """U6: execute then fetchmany streams: a process that reads 5,000,000 rows of 132 bytes (660 MB) a batch
+    """Execute then fetchmany streams: a process that reads 5,000,000 rows of 132 bytes (660 MB) a batch
     at a time stays far below what holding them would take."""
     script = (
         "import resource, sys\nfrom pathlib import Path\nfrom tests.unit.connectors.ducked import locked\n"  # noqa: S608 (constants)
@@ -115,7 +115,7 @@ def test_scan_memory_is_bounded(tmp_path: Path) -> None:
 @settings(max_examples=50, deadline=None)
 @given(st.lists(st.text(st.characters(exclude_categories=["Cs"]), max_size=6), max_size=40))
 def test_key_order_corpus(keys: list[str]) -> None:
-    """U7: ORDER BY encode(k) is the UTF-8 bytes' order, which is code-point order, whatever a collation
+    """ORDER BY encode(k) is the UTF-8 bytes' order, which is code-point order, whatever a collation
     would say: case, accents, emoji, combining marks, characters beyond the BMP, NUL."""
     con = unrestricted()
     fixed = ["B", "Z", "a", "a ", "e", "é", "é", "😀", "\uff5e", "", "\x00", "\U0010fffd"]
@@ -124,7 +124,7 @@ def test_key_order_corpus(keys: list[str]) -> None:
 
 
 async def test_cancel_ends_a_sort(tmp_path: Path) -> None:
-    """U10: interrupt() ends a sort within 5 s, through the cursor's deadline as through a caller's cancel."""
+    """interrupt() ends a sort within 5 s, through the cursor's deadline as through a caller's cancel."""
     with ducked.started(tmp_path) as made:
         cursor = made.cursor()
         sort = "SELECT md5(CAST(i AS VARCHAR)) AS k FROM range(300000000) t(i) ORDER BY encode(k)"
@@ -145,7 +145,7 @@ async def test_cancel_ends_a_sort(tmp_path: Path) -> None:
 
 
 def test_one_budget(tmp_path: Path) -> None:
-    """U11: the cursors of one instance share its memory, threads and spill limit: each reads the
+    """The cursors of one instance share its memory, threads and spill limit: each reads the
     instance's, and one cursor's sort spills where another sees it."""
     with locked(tmp_path, memory_mib=duck.SELFTEST_MIB, spill_mib=512, threads=2) as made:
         cursors = [made.con.cursor() for _ in range(3)]
@@ -175,7 +175,7 @@ def test_one_budget(tmp_path: Path) -> None:
     assert os.path.isdir(tmp_path / "spill")
 
 
-# --- a file side's per-key reads, sorts and errors (FILES.md §9, §10) ------------------------------------
+# --- a file side's per-key reads, sorts and errors ------------------------------------
 
 
 def _root(base: Path, name: str, data: bytes) -> Path:
@@ -202,7 +202,7 @@ async def _connector(
 async def test_per_key_rows_come_one_statement_a_group(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§9: a row, 404, a key held twice (identity_ambiguous) and a key whose filter selects one of its two
+    """A row, 404, a key held twice (identity_ambiguous) and a key whose filter selects one of its two
     rows, which comes first even though a column is named s; a key not of its class's form and a lone
     surrogate are answered without a statement."""
     statements: list[str] = []
@@ -232,7 +232,7 @@ async def test_per_key_rows_come_one_statement_a_group(
 
 
 async def test_the_reader_is_handed_the_pinned_files_alone(tmp_path: Path) -> None:
-    """D3, P18: an export holding a directory named ``*`` beside its partitions and a hidden one is refused
+    """An export holding a directory named ``*`` beside its partitions and a hidden one is refused
     when its run is planned (pinned, ``*/part.csv`` was a pattern to DuckDB, which then read the hidden
     directory's rows and each partition's twice); and the reader binds pinned files only, none of them a
     pattern, whoever asks."""
@@ -246,7 +246,7 @@ async def test_the_reader_is_handed_the_pinned_files_alone(tmp_path: Path) -> No
         " columns={'id': 'VARCHAR', 'v': 'VARCHAR', 's': 'VARCHAR'}) ORDER BY id",
         {"f": [str(tmp_path / "files" / "root" / "*" / "part.csv")]},
     )
-    assert expanded.fetchall() == [("1",), ("2",), ("777",)]  # U24, observed on 1.5.5: the path is a pattern
+    assert expanded.fetchall() == [("1",), ("2",), ("777",)]  # Observed on 1.5.5: the path is a pattern
     shutil.rmtree(tmp_path / "files" / "root" / "*")
     plan, found = await planned(tmp_path, table)
     root = found.get("exports").root or ""
@@ -261,7 +261,7 @@ async def test_the_reader_is_handed_the_pinned_files_alone(tmp_path: Path) -> No
 
 
 async def test_a_key_missing_from_a_side_with_lines_that_are_not_rows_is_inconclusive(tmp_path: Path) -> None:
-    """D6, M1: no row read holds it, and it may be on such a line: never NOT_FOUND."""
+    """No row read holds it, and it may be on such a line: never NOT_FOUND."""
     table, cfg = await _connector(tmp_path, ROWS + b"9|a\n")
     found = await table.fetch("9", cfg)
     await table.aclose()
@@ -273,7 +273,7 @@ async def test_a_key_missing_from_a_side_with_lines_that_are_not_rows_is_inconcl
 
 
 async def test_timed_out_group_is_not_reread_by_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """§6: each key alone would be a pass over the files (retry_alone is false); a temporary space met by a
+    """Each key alone would be a pass over the files (retry_alone is false); a temporary space met by a
     group's sort is a connect error, read once more on a fresh session, and never fails the run."""
     table, cfg = await _connector(tmp_path)
     calls: list[int] = []
@@ -300,7 +300,7 @@ async def test_timed_out_group_is_not_reread_by_key(tmp_path: Path, monkeypatch:
 async def test_file_work_refused_while_reads_wait_is_an_outage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§10, D14: with STUCK_MAX abandoned reads waiting, a per-key read is an outage (connect_error, its
+    """With STUCK_MAX abandoned reads waiting, a per-key read is an outage (connect_error, its
     detail the class), never an error that fails its run: closing its cursor, which the pool does not take
     either, raises nothing; once the reads return, the side is read again."""
     table, cfg = await _connector(tmp_path)
@@ -322,7 +322,7 @@ async def test_file_work_refused_while_reads_wait_is_an_outage(
 async def test_a_statement_no_thread_takes_is_withdrawn_and_never_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§10: a statement's timeout starts when a thread takes it. One that waited for a thread and then ran
+    """A statement's timeout starts when a thread takes it. One that waited for a thread and then ran
     inside its timeout is answered; one no thread took within STAT_S is withdrawn: Busy, an outage that is
     read again. It is not abandoned, the instance is kept, and it is not run afterwards for nobody (it was
     counted as abandoned at its timeout, the instance discarded, and still executed later)."""
@@ -353,7 +353,7 @@ async def test_a_statement_no_thread_takes_is_withdrawn_and_never_run(
 async def test_a_short_spill_at_run_time_is_temporary_space(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§10: an instance built anew while a run reads (after a discard, a restart) that finds its spill volume
+    """An instance built anew while a run reads (after a discard, a restart) that finds its spill volume
     short of room is temporary space, which a per-key read waits for as it does before a sort: it was
     Unstarted, no table error, and failed the run. A guard that does not hold still does."""
     table, cfg = await _connector(tmp_path)
@@ -375,8 +375,8 @@ async def test_a_short_spill_at_run_time_is_temporary_space(
 
 
 async def test_one_sort_at_a_time(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    """§10: SORT is held by one task, its pair's two file sides at once; another task waits for it, holding
-    no cursor, and says so once (F1)."""
+    """SORT is held by one task, its pair's two file sides at once; another task waits for it, holding
+    no cursor, and says so once."""
     order: list[str] = []
 
     async def sort(name: str, hold: float) -> None:
@@ -394,7 +394,7 @@ async def test_one_sort_at_a_time(tmp_path: Path, caplog: pytest.LogCaptureFixtu
 async def test_null_keys_on_a_mount_that_stops_answering_releases_the_sort(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§10, D14: null_keys is one more pass over the files while its scan (census, frame) holds SORT. It is
+    """``null_keys`` is one more pass over the files while its scan (census, frame) holds SORT. It is
     watched as the sort is: a mount that stops answering under it is an outage within WATCH_S and the stat
     check's STAT_S, and SORT is free for the next sort (it had no timeout and no watch, and kept SORT until
     its run was cancelled)."""
@@ -436,14 +436,13 @@ async def test_null_keys_on_a_mount_that_stops_answering_releases_the_sort(
 async def test_a_scan_in_flight_survives_another_target_s_hung_statement(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§10, D14: a scan of one files target has fetched its first batch when a
+    """A scan of one files target has fetched its first batch when a
     statement of another hangs (its file is now a FIFO nobody writes, as a mount that dies under a read),
     passes its timeout and its grace and is given up with the reader, which is retired. The scan goes on
     with its cursor of the retired reader to its last row, its closing hash and its count of rows without a
     key (its next fetch was Busy('Dropped'): the pass lost, the side sorted again). A new session opens on a
     new reader, and the retired one's process is killed, its spill directory given up and the hung
-    statement's count freed when the scan's cursor closes: no writer need end the read, and no restart
-    (READER.md §8)."""
+    statement's count freed when the scan's cursor closes: no writer need end the read, and no restart."""
     monkeypatch.setattr(duck, "GRACE_S", 0.3)
     monkeypatch.setattr(duck, "BATCH", 2)
     base = tmp_path.resolve()
@@ -484,7 +483,7 @@ async def test_a_scan_in_flight_survives_another_target_s_hung_statement(
 
 
 async def test_a_per_key_reader_leaves_a_discarded_instance(tmp_path: Path) -> None:
-    """§10, D9: a per-key read needs nothing of an earlier statement, so a reader whose session holds a cursor
+    """A per-key read needs nothing of an earlier statement, so a reader whose session holds a cursor
     of a discarded instance closes it and reads on the new one: the discarded instance's budget ends with the
     passes and plans in flight, not with the runs that read by key, and its spill directory is given up with
     its last cursor."""
@@ -503,9 +502,9 @@ async def test_a_per_key_reader_leaves_a_discarded_instance(tmp_path: Path) -> N
 
 
 async def test_a_run_s_file_sides_share_one_plan_s(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """§6: a run's creation has one files.plan_s for all its file sides (each had its own, so a file-to-file
-    pair planned for twice files.plan_s, past the proxy's read timeout DEPLOY prescribes): the side that is
-    planned once it has passed is P30."""
+    """A run's creation has one files.plan_s for all its file sides (each had its own, so a file-to-file
+    pair planned for twice files.plan_s, past the proxy's read timeout): the side that is
+    planned once it has passed is refused for it."""
     for name in ("a", "b"):
         _root(tmp_path, f"{name}/t.csv", ROWS)
     root = (tmp_path / "files" / "root").resolve()
@@ -536,8 +535,8 @@ async def test_a_run_s_file_sides_share_one_plan_s(tmp_path: Path, monkeypatch: 
 
 
 async def test_few_runs_plan_their_files_at_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """§10: at most PLANS creations plan file sides at once in a process, so that plans alone never fill the
-    pool's threads; one that waited its whole files.plan_s for its turn is not ready (P34)."""
+    """At most PLANS creations plan file sides at once in a process, so that plans alone never fill the
+    pool's threads; one that waited its whole files.plan_s for its turn is not ready."""
     _root(tmp_path, "t.csv", ROWS)
     found = registry(tmp_path)
     spec = compile_spec(file_spec(csv_table("t.csv", ["id", "v", "s"])), targets=found)
@@ -577,8 +576,8 @@ async def test_few_runs_plan_their_files_at_once(tmp_path: Path, monkeypatch: py
 
 
 async def test_a_sort_is_refused_without_free_space(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """§10: the spill's free space for the smaller of the side's sort_bytes and files.spill, before a byte is
-    read (F3: TargetTempSpace: spill)."""
+    """The spill's free space for the smaller of the side's sort_bytes and files.spill, before a byte is
+    read (TargetTempSpace: spill)."""
     _root(tmp_path, "t.csv", ROWS)
     plan, found = await planned(tmp_path, csv_table("t.csv", ["id", "v", "s"]))
     monkeypatch.setattr(duck, "_free", lambda path: 0)
@@ -590,7 +589,7 @@ async def test_a_sort_is_refused_without_free_space(tmp_path: Path, monkeypatch:
 async def test_an_error_of_a_changed_file_is_files_changed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§10's table: an IOException from a statement has the files stat-checked at once: changed, FilesChanged;
+    """An IOException from a statement has the files stat-checked at once: changed, FilesChanged;
     not listable, TargetUnreachable; unchanged, the statement's TargetRefused."""
     _root(tmp_path, "t.csv", ROWS)
     plan, found = await planned(tmp_path, csv_table("t.csv", ["id", "v", "s"]))
@@ -613,7 +612,7 @@ async def test_an_error_of_a_changed_file_is_files_changed(
 
 
 async def test_a_file_side_scans_in_code_point_order(tmp_path: Path) -> None:
-    """§9: a scan's order is each key text's UTF-8 bytes (U7), whatever a collation would say, a key several
+    """A scan's order is each key text's UTF-8 bytes, whatever a collation would say, a key several
     rows hold once a row; a row without a key is in no scan, and counted by null_keys."""
     keys = ["B", "Z", "a", "a ", "e", "é", "e\u0301", "😀", "\uff5e", "\U0010fffd", "10", "9", "a", "~"]
     _root(tmp_path, "t.csv", "".join(f"{key}|v|s\n" for key in [*keys, ""]).encode())
@@ -625,7 +624,7 @@ async def test_a_file_side_scans_in_code_point_order(tmp_path: Path) -> None:
 
 
 async def test_a_file_changed_under_a_scan_fails_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """§11: a scan's files are stat-checked after each fetched batch, and hashed again when its rows end."""
+    """A scan's files are stat-checked after each fetched batch, and hashed again when its rows end."""
     monkeypatch.setattr(duck, "BATCH", 2)
     path = _root(tmp_path, "t.csv", ROWS)
     plan, found = await planned(tmp_path, csv_table("t.csv", ["id", "v", "s"]))
@@ -645,8 +644,9 @@ async def test_a_file_changed_under_a_scan_fails_it(tmp_path: Path, monkeypatch:
 
 
 async def test_a_fixed_side_is_described_from_its_plan(tmp_path: Path) -> None:
-    """§12: after its run is created a file side's relation is its plan's, after a stat check (the schema
-    guard's looks see one shape; a changed file is F9); a table pre-check, which names no side, is refused."""
+    """After its run is created a file side's relation is its plan's, after a stat check (the schema
+    guard's looks see one shape; a changed file fails the run); a table pre-check, which names no side, is
+    refused."""
     path = _root(tmp_path, "t.csv", ROWS)
     plan, found = await planned(
         tmp_path, csv_table("t.csv", ["id", "v", "s"], keys={"id": {"as": "integer"}})
@@ -673,7 +673,7 @@ async def test_a_fixed_side_is_described_from_its_plan(tmp_path: Path) -> None:
 
 
 async def test_a_long_statement_is_watched(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """§10: a statement running past WATCH_S has the files stat-checked: a changed file interrupts it, and a
+    """A statement running past WATCH_S has the files stat-checked: a changed file interrupts it, and a
     check past its deadline abandons it with the instance, so a dead mount never keeps SORT."""
     monkeypatch.setattr(duck, "WATCH_S", 0.05)
     with ducked.started(tmp_path, memory_mib=duck.SELFTEST_MIB) as made:
@@ -692,8 +692,8 @@ async def test_a_long_statement_is_watched(tmp_path: Path, monkeypatch: pytest.M
 
 
 async def test_a_cancelled_reader_interrupts_its_statement(tmp_path: Path) -> None:
-    """§10: a caller that is cancelled (a stop, a closed request, a firing's window) interrupts its statement
-    on its way out, so nothing goes on sorting for nobody (U10: an interrupt ends a sort): the reader is
+    """A caller that is cancelled (a stop, a closed request, a firing's window) interrupts its statement
+    on its way out, so nothing goes on sorting for nobody (an interrupt ends a sort): the reader is
     sent the interrupt, and its cursor takes the next statement at once."""
     with ducked.started(tmp_path, memory_mib=256) as made:
         cursor = made.cursor()
@@ -795,7 +795,7 @@ async def test_a_cancelled_reader_interrupts_its_statement(tmp_path: Path) -> No
 async def test_a_plan_s_file_work_is_worded_for_its_side(
     tmp_path: Path, raised: Exception, said: str
 ) -> None:
-    """§15: what steps 5 to 9 of a side's plan meet is a refusal of the run's creation in the contract's
+    """What the reads of a side's plan meet is a refusal of the run's creation in fixed
     words, holding the error's class and never its text; a plan past files.plan_s is not ready (planning)."""
     found = registry(tmp_path)
     with pytest.raises(ValueError) as refused:

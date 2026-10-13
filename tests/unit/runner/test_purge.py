@@ -1,4 +1,4 @@
-"""Retention and purge (docs/mvp/RETENTION.md §4, §5, §10): due cycles by class and days, the worker's
+"""Retention and purge: due cycles by class and days, the worker's
 grace, holds, the dry run, erasures and their refusals, a live soak's last ended cycle, abandoned runs,
 the actors, the blob GC (the 24 h delay, shared blobs, a late writer, the writer-drain race, orphans), a
 crash after a chunk, and the purge lock."""
@@ -801,7 +801,7 @@ async def test_a_pass_that_deletes_only_pre_checks_is_audited(
     harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Table pre-checks go ``retention.standard_days`` after they were made, a batch a transaction, with
-    their pairs; their audit rows stay (docs/mvp/PRECHECKS.md §8)."""
+    their pairs; their audit rows stay."""
     made = {"source": "specs", "level": "schema", "request": {}, "skipped": 0, "evaluation": False}
     pair = {"n": 1, "spec_id": None, "label": "accounts", "target_a": "db-a", "target_b": "db-b"}
     pair |= {"relation_a": "accounts", "relation_b": "accounts"}

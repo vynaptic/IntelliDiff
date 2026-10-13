@@ -1,4 +1,4 @@
-"""The cost formula, checked against the design's worked example."""
+"""The cost formula, checked against a worked example."""
 
 from __future__ import annotations
 

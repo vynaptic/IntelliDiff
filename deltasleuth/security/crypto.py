@@ -1,4 +1,4 @@
-"""Envelope encryption at rest (docs/mvp/RETENTION.md §1, §3).
+"""Envelope encryption at rest.
 
 A keyring of key-encryption keys (KEKs) wraps data keys with AES-KW (RFC 3394); a run's data key seals
 values with AES-256-GCM under an HKDF-SHA256 subkey per (label, cycle, run). Keys are named by ids, keyed

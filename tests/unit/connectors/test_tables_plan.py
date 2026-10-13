@@ -1,7 +1,7 @@
-"""The engine seam (docs/mvp/ENGINES.md §5) without a database: a PostgreSQL pair keeps the plan, the plan
-hash and every statement it had before the seam (D3), a plan without an engine is PostgreSQL's, and the
+"""The engine seam without a database: a PostgreSQL pair keeps the plan, the plan
+hash and every statement it had before the seam, a plan without an engine is PostgreSQL's, and the
 column plan and the per-key connector work through any ``Engine``, showing its errors by code only. A pair
-with a side on another engine stores each side's engine and classes, and is checked across the pair (§7).
+with a side on another engine stores each side's engine and classes, and is checked across the pair.
 """
 
 from __future__ import annotations
@@ -119,7 +119,7 @@ async def test_postgres_pair_plan_unchanged(targets: TargetRegistry, monkeypatch
     assert {name: mapped[name] for name in GOLDEN["sent"]["mapped"]} == GOLDEN["sent"]["mapped"]
     monkeypatch.setitem(ENGINES, "postgresql", FakeEngine(RELATIONS))
     stored = await plan(targets, compiled(USERS, USERS_V))
-    assert stored == GOLDEN["pair"]  # no engine, server, classes or rendering: the stored form of TABLES §3
+    assert stored == GOLDEN["pair"]  # no engine, server, classes or rendering: a PostgreSQL pair's form
     assert await plan(targets, compiled({"name": "users", "keyColumns": ["userid"]})) == GOLDEN["mixed"]
     assert sha256_hex(approvals.plan(GOLDEN["params"] | {"tables": stored})) == GOLDEN["plan_sha256"]
 
@@ -145,7 +145,7 @@ async def test_the_plan_reads_the_catalogue_through_its_target_s_engine(
     ("failing", "message"),
     [
         ({"connect": [TargetUnreachable("ORA-12541")]}, "side a: cannot connect to target db-a: ORA-12541"),
-        # P14: once raised as it came, a traceback from `ds run` and a 500 from run creation (an invalid
+        # Once raised as it came, a traceback from `ds run` and a 500 from run creation (an invalid
         # view answers ORA-04063). A session the server ended, and PostgreSQL's error by its class alone.
         (
             {"describe": [TargetRefused("ORA-04063")]},
@@ -273,7 +273,7 @@ async def test_a_privilege_gone_or_a_full_disk_fails_the_read(
 ) -> None:
     fake.failing["rows"] = [error]
     table = _connector(targets)
-    with pytest.raises(type(error)):  # the run fails, showing the class and the code (§11)
+    with pytest.raises(type(error)):  # the run fails, showing the class and the code
         await table.fetch("K1", USERS_SIDE)
     await table.aclose()
 
@@ -312,7 +312,7 @@ async def test_a_key_the_engine_calls_unfit_is_rejected_alone(
     await table.aclose()
 
 
-# --- a pair with a side on another engine (§7, §8, §12 P1 to P13) -------------------------------------
+# --- a pair with a side on another engine -------------------------------------------------------------
 
 
 def _column(name: str, declared: str, cls: str | None, keyable: bool = True) -> Column:
@@ -662,7 +662,7 @@ async def test_one_engine_hashes_the_columns_both_sides_declare_alike(
     stored = await plan(targets, spec)
     assert stored is not None
     # The worker hashes a column declared in two ways, one a typeMap names and one that may hold a large
-    # value; the engine the others, unless the two Oracle databases differ in a character set (§10).
+    # value; the engine the others, unless the two Oracle databases differ in a character set.
     everything = ["doc", "mapped", "raw", "same", "wider"]
     assert stored["a"]["digest"] == stored["b"]["digest"] == (worker or everything)
     assert [stored[side]["engine"] for side in "ab"] == [engine, engine] and stored["rendering"] == 1
@@ -777,7 +777,7 @@ async def test_a_relation_the_role_may_not_read_names_the_engine_s_grant(
     assert engine.opened == engine.closed
 
 
-# --- the plan from the two catalogues alone, and every refusal of a step (docs/mvp/PRECHECKS.md §5) ----
+# --- the plan from the two catalogues alone, and every refusal of a step ----
 
 
 async def _held(spec: Any, **engines: FakeEngine) -> dict[str, Any]:
@@ -846,12 +846,12 @@ async def test_issues_across_engines_lists_each_class_then_each_family(
     targets, a, b = across
     compared = ["code", "shape", "span", "opened", "flag"]
     spec = _pair({"keyColumns": ["rate"], "columns": compared}, {"columns": compared})
-    assert await _refusals(targets, spec, a=a, b=b) == [  # the classes a side reads: P7, P6
+    assert await _refusals(targets, spec, a=a, b=b) == [  # the classes a side reads
         "side a: column 'Shape' (point) cannot be compared: compare a view that casts it",
         "side a: key column 'Rate' (double) cannot be a key: compare a view that casts it",
     ]
     spec = _pair({"columns": compared[2:]}, {"columns": compared[2:]})
-    assert await _refusals(targets, spec, a=a, b=b) == [  # the pair's families: P8, then each P9
+    assert await _refusals(targets, spec, a=a, b=b) == [  # the pair's families
         "side a: column 'span' (interval) cannot be compared with another engine: compare a view that"
         " casts it",
         "side a: column 'opened' is a timestamp (datetime) and side b's a date: declare typeMap {Opened:"
@@ -879,7 +879,7 @@ async def test_a_pair_the_catalogues_refuse_nothing_of_is_planned_without_a_sess
     assert await planning(targets, service) == Planned(None, {})  # no side is a table
 
 
-# --- a file side's plan (docs/mvp/FILES.md §6) ------------------------------------------------------------
+# --- a file side's plan ------------------------------------------------------------
 
 DECLARED = [
     Column("id", "integer", "integer", True, False),
@@ -906,7 +906,7 @@ def _against(base: Path, monkeypatch: pytest.MonkeyPatch, table: dict[str, Any],
 async def test_a_csv_field_against_a_number_needs_its_declared_type(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """ENGINES §7's check runs with a file side: P6 and P9 worded for a CSV field (FILES.md §15); the
+    """The check across the pair runs with a file side, its refusals worded for a CSV field; the
     PostgreSQL side stores its classes."""
     _ledger(tmp_path)
     table = ducked.csv_table("ledger.csv", ["id", "balance"])
@@ -964,8 +964,8 @@ async def test_a_parquet_key_of_another_class_cannot_be_a_key(
 
 
 async def test_two_file_sides_are_checked_as_two_engines_are(tmp_path: Path) -> None:
-    """ENGINES §7's check runs between two file sides too: a CSV field against a Parquet number (P6, P9),
-    two Parquet columns of two families (ENGINES' P9); declared alike, the pair is planned with both sides'
+    """The check across the pair runs between two file sides too: a CSV field against a Parquet number,
+    two Parquet columns of two families; declared alike, the pair is planned with both sides'
     classes and rendering 1."""
     root = tmp_path / "files" / "root"
     (root / "a").mkdir(parents=True)
@@ -1003,8 +1003,8 @@ async def test_two_file_sides_are_checked_as_two_engines_are(tmp_path: Path) -> 
     assert made.plan["b"]["classes"] == {"id": "integer", "amount": "decimal", "seen": "timestamp"}
     # A CSV field and a Parquet column are declared apart, and a typeMap names both: the worker's columns.
     assert made.plan["a"]["digest"] == made.plan["b"]["digest"] == ["amount", "seen"]
-    # Two Parquet sides that declare a column alike leave it to DuckDB's hash (D7), 32 bytes a row to sort:
-    # beside the key's text three times, 24 bytes for each of the four values carried and 16 a row (step 8).
+    # Two Parquet sides that declare a column alike leave it to DuckDB's hash, 32 bytes a row to sort:
+    # beside the key's text three times, 24 bytes for each of the four values carried and 16 a row.
     alike = dict(b, columns=["amount"])
     doc = ducked.file_spec(alike, side_b | {"table": alike})
     made = await planning(found, compile_spec(doc, targets=found), scanning=True)
@@ -1015,8 +1015,8 @@ async def test_two_file_sides_are_checked_as_two_engines_are(tmp_path: Path) -> 
 async def test_a_pass_must_fit_the_timeout_and_a_scan_s_sort_the_spill(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """P31 (a per-key read is one pass), and P32 when the run scans; the counts of the same bytes under the
-    same declaration are counted once a process."""
+    """The timeout's refusal (a per-key read is one pass), and the spill's when the run scans; the counts of
+    the same bytes under the same declaration are counted once a process."""
     _ledger(tmp_path)
     table = ducked.csv_table("ledger.csv", ["id", "balance"], keys={"id": {"as": "integer"}})
     found, spec = _against(
@@ -1066,11 +1066,11 @@ async def test_a_pass_must_fit_the_timeout_and_a_scan_s_sort_the_spill(
 
 
 async def test_a_scan_planned_just_under_the_spill_limit_completes(tmp_path: Path) -> None:
-    """P32, §6 step 8: sort_bytes projects what DuckDB's sort of the side spills, and the same figure is
+    """``sort_bytes`` projects what DuckDB's sort of the side spills, and the same figure is
     judged against files.spill when the run is created. Two million rows of a 44-character key spilled 288
-    MiB under 128 MiB of memory (observed on 1.5.5); their texts and 16 bytes a row, which P32 judged before,
-    are 175 MiB, so a limit of 200 MiB was accepted and the scan failed with F3 once every row was read. It
-    is refused now, and a side planned just under its limit is scanned to its end."""
+    MiB under 128 MiB of memory (observed on 1.5.5); their texts and 16 bytes a row, which the plan judged
+    before, are 175 MiB, so a limit of 200 MiB was accepted and the scan failed for its spill once every row
+    was read. It is refused now, and a side planned just under its limit is scanned to its end."""
     root, rows = tmp_path / "files" / "root", 2_000_000
     root.mkdir(parents=True)
     key = "to_base64(unhex(sha256(CAST(i AS VARCHAR))))"  # 44 characters DuckDB's spill does not compress
@@ -1101,8 +1101,8 @@ async def test_a_scan_planned_just_under_the_spill_limit_completes(tmp_path: Pat
 
 
 def test_a_file_side_s_pins_are_sealed_and_left_out_of_what_is_shown(tmp_path: Path) -> None:
-    """§6: params.pinned is sealed by the run's sealer; no plan_sha256, pack or answer holds it, and no answer
-    each side's files_sha256."""
+    """``params.pinned`` is sealed by the run's sealer; no plan_sha256, pack or answer holds it, and no
+    answer each side's files_sha256."""
     from deltasleuth.api.deps import shown
     from deltasleuth.security.crypto import Sealer
 

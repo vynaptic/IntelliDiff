@@ -1,4 +1,4 @@
-"""Oracle behind the engine seam (docs/mvp/ENGINES.md §4 to §11): its session, its catalogue query, the
+"""Oracle behind the engine seam: its session, its catalogue query, the
 primitives of ``compose``'s statements and its error codes.
 
 The driver is python-oracledb in thin mode only: no Oracle client library is loaded and no ``tnsnames.ora``,
@@ -58,7 +58,7 @@ _OLDEST = 19
 _ARMS = (1, 2, 4, 8, 16, 32, 50)  # the arm counts a per-key statement is written with: seven texts a plan
 _HASHES = 60  # column hashes joined in one text: 64 hexadecimal digits each
 
-# §11's classes by server code; any other server code is TargetRefused.
+# The error classes by server code; any other server code is TargetRefused.
 _CODES: dict[int, type[TableError]] = {
     **dict.fromkeys((1722, 1426, 1438, *range(1830, 1862), 12899), KeyUnfit),
     **dict.fromkeys(
@@ -87,7 +87,7 @@ _GLOSSES = {
 }
 # How a listener that speaks no TLS ends a handshake's first bytes (a reset, observed).
 _CUT = ("ConnectionResetError", "ConnectionAbortedError", "BrokenPipeError")
-# The class of each declared type (§7), its precision and length left out; NUMBER and FLOAT are classed
+# The class of each declared type, its precision and length left out; NUMBER and FLOAT are classed
 # by their scale. A type not listed (LONG, BFILE, XMLTYPE, an object or a collection) has none.
 _CLASSES = {
     "BINARY_DOUBLE": "float",
@@ -102,14 +102,14 @@ _CLASSES = {
     **dict.fromkeys(("INTERVAL DAY TO SECOND", "INTERVAL YEAR TO MONTH", "ROWID", "UROWID"), "other"),
 }
 _LOBS = ("CLOB", "NCLOB", "BLOB", "JSON")
-_UNKEYED = ("FLOAT", "NCHAR", "NVARCHAR2", *_LOBS)  # of a class with a key text, yet no key (§8)
+_UNKEYED = ("FLOAT", "NCHAR", "NVARCHAR2", *_LOBS)  # of a class with a key text, yet no key
 _HEX = re.compile(r"\\x((?:[0-9a-fA-F]{2})*)")
 _NUMBER = re.compile(r"-?[0-9]+(?:\.[0-9]+)?")
 _MOMENT = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}(?:[ T][0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?)?")
 _SCALED = re.compile(r"NUMBER\((\*|[0-9]+),([0-9]+)\)")
 _LENGTH = re.compile(r"\(([0-9]+)")
 _MOMENTS = 'SYYYY-MM-DD"T"HH24:MI:SS'  # the year signed: YYYY prints 44 BC and AD 44 alike
-# The settings every statement relies on (§6), then what the session says of them and of itself.
+# The settings every statement relies on, then what the session says of them and of itself.
 _SESSION = (
     "ALTER SESSION SET NLS_SORT = BINARY NLS_COMP = BINARY NLS_CALENDAR = 'GREGORIAN' TIME_ZONE = 'UTC'"
     " NLS_NUMERIC_CHARACTERS = '.,'"
@@ -334,7 +334,7 @@ PRIMITIVES = _Primitives()
 
 
 def _error(exc: BaseException) -> TableError:
-    """The neutral error of a driver's or a socket's, classified by its origin first (§5). A server's code
+    """The neutral error of a driver's or a socket's, classified by its origin first. A server's code
     is shown as the server's, also where the driver puts one of its own in its place (ORA-03113 comes as
     DPY-4011)."""
     if not isinstance(exc, oracledb.Error):
@@ -350,8 +350,8 @@ def _error(exc: BaseException) -> TableError:
 
 
 def _settled(target: Target, version: str, read: Sequence[Any], encrypted: bool) -> None:
-    """Refuse a server older than 19 (§12 P3), a session whose settings read back differently (P4), and
-    one that reports no TLS where the target declares it (P1)."""
+    """Refuse a server older than 19, a session whose settings read back differently, and
+    one that reports no TLS where the target declares it."""
     major, minor = [*version.split("."), "0"][:2]
     if not major.isdigit() or int(major) < _OLDEST:
         raise Refusal(f"target {target.target_id} is Oracle {major}.{minor}: 19c or later is supported")
@@ -365,7 +365,7 @@ def _settled(target: Target, version: str, read: Sequence[Any], encrypted: bool)
 
 def _fetch(side: Plan, columns: Sequence[str]) -> int:
     """Rows a fetch: what ``BATCH_BYTES`` holds of rows as wide as the columns read are declared, a LOB
-    column counting as the most a row may hold of them (§6)."""
+    column counting as the most a row may hold of them."""
     width = 0
     for declared in (side["declared"][column] for column in columns):
         length = _LENGTH.search(declared)
@@ -500,7 +500,7 @@ class Oracle:
     fold = staticmethod(str.upper)
     hides = False
     grant = "READ"
-    sum_digits = 38  # a NUMBER's (docs/mvp/PRECHECKS.md §4): a longer sum is rounded silently
+    sum_digits = 38  # a NUMBER's: a longer sum is rounded silently
     empty_null = True
     retry_alone = True
 
@@ -564,7 +564,7 @@ class Oracle:
             await session.close()
 
     async def server(self, session: _Session) -> dict[str, Any]:
-        """Outside AL32UTF8 it also proves that the role may execute what orders text keys there (P5)."""
+        """Outside AL32UTF8 it also proves that the role may execute what orders text keys there."""
         if session.charset != "AL32UTF8":
             await _orders(session)
         return {"version": session.version, "charset": session.charset, "tls": session.encrypted}
@@ -607,7 +607,7 @@ class Oracle:
             "consistency": "snapshot",
             "tls": session.encrypted,
             "charset": session.charset,
-            "national": session.national,  # the server's hash reads a text in its own character set (§10)
+            "national": session.national,  # the server's hash reads a text in its own character set
         }
         return Relation(owner, table, columns, facts)
 
@@ -628,7 +628,7 @@ class Oracle:
 
     async def scan(self, session: _Session, side: Plan, after: Sequence[bytes] | None) -> AsyncIterator[Rows]:
         """Each fetched batch is canonicalised and hashed off the event loop; the columns the server
-        hashed itself come as 32 bytes a row (§10)."""
+        hashed itself come as 32 bytes a row."""
         size = _fetch(side, [*side["keys"], *compose.worker_columns(side)])
         digested = compose.digested(session.dialect, side)
         return session.stream(*compose.scan(session.dialect, side, after), size, digested)
@@ -680,8 +680,8 @@ def _column(
     readable: bool, name: str, kind: str, length: int, precision: int | None, scale: int | None, chars: int,
     used: str | None, collation: str | None, nullable: str = "Y", relation: str = "table",
 ) -> Column:  # fmt: skip
-    """A column as the catalogue declares it: its type written out, its class, whether it can be a key
-    (§8), whether it may hold NULL (a view's is the server's guess: not said) and its size."""
+    """A column as the catalogue declares it: its type written out, its class, whether it can be a key,
+    whether it may hold NULL (a view's is the server's guess: not said) and its size."""
     declared, cls, size = kind, _CLASSES.get(re.sub(r"\([0-9]+\)", "", kind)), None
     if kind == "NUMBER" and scale is not None:
         digits = "*" if precision is None else precision
@@ -709,7 +709,7 @@ def _column(
 
 
 async def _orders(session: _Session) -> None:
-    """§12 P5: outside AL32UTF8 the role must be able to execute the function that orders text keys."""
+    """Outside AL32UTF8 the role must be able to execute the function that orders text keys."""
     try:
         await session.query(_ORDERS)
     except TargetDenied:
@@ -718,7 +718,7 @@ async def _orders(session: _Session) -> None:
 
 
 def _orderable(side: Plan, charset: str) -> None:
-    """§12 P5: outside AL32UTF8 a text key is ordered by its UTF-8 bytes, which the server's function
+    """Outside AL32UTF8 a text key is ordered by its UTF-8 bytes, which the server's function
     returns up to 2000 of: a key column declared over 500 is refused."""
     for column in side["keys"]:
         declared = side["declared"][column]

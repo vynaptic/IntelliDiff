@@ -1,4 +1,4 @@
--- Licence keys and entitlements (docs/mvp/LICENCE.md §5): this control-plane database's installation id,
+-- Licence keys and entitlements: this database's installation id,
 -- made once and kept by a dump and restore, and the licences installed on it, verified again at every
 -- read against the vendor keys the build embeds: a row written with SQL grants nothing. The id comes from
 -- the first audit chain row, the same in a dump from before 010, so 010 applied to that dump again makes
@@ -16,7 +16,7 @@ CREATE TRIGGER installation_append_only BEFORE UPDATE OR DELETE OR TRUNCATE ON d
     FOR EACH STATEMENT EXECUTE FUNCTION ds.append_only();
 CREATE TABLE ds.licences (
     licence_id      text PRIMARY KEY CHECK (licence_id ~ '^LI-[0-9A-Z]{26}$'),
-    text            text NOT NULL CHECK (octet_length(text) <= 4096),  -- the normalised file (§3)
+    text            text NOT NULL CHECK (octet_length(text) <= 4096),  -- the normalised file
     sha256          text NOT NULL UNIQUE CHECK (sha256 ~ '^[0-9a-f]{64}$'),
     installed_by    text NOT NULL,
     installed_at    timestamptz NOT NULL DEFAULT now(),
@@ -40,5 +40,5 @@ CREATE TRIGGER licences_withdraw_only BEFORE UPDATE OR DELETE ON ds.licences
     FOR EACH ROW EXECUTE FUNCTION ds.tg_licences();
 CREATE TRIGGER licences_no_truncate BEFORE TRUNCATE ON ds.licences
     FOR EACH STATEMENT EXECUTE FUNCTION ds.append_only();
--- The runs in a licence window, those not finished before it starts (repo.counted_pairs, §7).
+-- The runs in a licence window, those not finished before it starts (repo.counted_pairs).
 CREATE INDEX runs_window_idx ON ds.runs ((coalesce(finished_at, 'infinity')), spec_id, created_at);

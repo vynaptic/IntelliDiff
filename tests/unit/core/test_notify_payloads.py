@@ -1,4 +1,4 @@
-"""Payloads, channel shapes and wording (docs/mvp/ALERTS.md §6): the Standard Webhooks signature, Slack's
+"""Payloads, channel shapes and wording: the Standard Webhooks signature, Slack's
 escaping, Teams under 28 KB, e-mail headers stored without addresses, the footer and its labels, withheld
 names and links, closed texts that never claim a verdict, and no root-cause id."""
 
@@ -123,7 +123,7 @@ def test_the_footer_says_what_it_is_not() -> None:
 
 
 def test_an_open_build_s_state_asks_for_no_licence() -> None:
-    """docs/mvp/LICENCE.md §19: the one licence.state row of a build without a vendor key."""
+    """The one licence.state row of a build without a vendor key."""
     facts = {"installation_id": INSTALLATION, "from": "evaluation", "to": "open", "licence_id": None}
     doc, _ = rendered(notify.checked(Event("licence.state", facts | {"ends": None})))
     assert (doc["severity"], doc["title"]) == ("info", "no licence is needed")
@@ -323,7 +323,7 @@ def _all(**options: Any) -> list[str]:
 
 def test_banned_words() -> None:
     """No text claims a verdict; ``parity`` is said only in the names of readiness's state and its code
-    (parity ready, docs/mvp/READINESS.md §5), never of what was observed."""
+    (parity ready), never of what was observed."""
     unwrapped = [t.replace("=\r\n", "") for t in _all()]  # an e-mail's soft line breaks
     texts = [re.sub(r"parity[_ ]ready", "", t) for t in unwrapped]
     assert [m.group(0) for t in texts for m in BANNED.finditer(t)] == []
@@ -334,7 +334,7 @@ def test_no_root_cause_id() -> None:
 
 
 def test_delivery_and_mute_ids_are_words_deltasleuth_writes() -> None:
-    """A pack's raw-value gate reads N- and M- ids as generated, as it reads R-, A- and D- ids (§12)."""
+    """A pack's raw-value gate reads N- and M- ids as generated, as it reads R-, A- and D- ids."""
     assert rawvalues._generated(DELIVERY) and rawvalues._generated("M-" + "7" * 26)
     assert rawvalues._generated(f"user:{DELIVERY}") and not rawvalues._generated("X-" + "7" * 26)
     assert rawvalues._generated("SC-" + "7" * 26) and not rawvalues._generated("SC-" + "7" * 25)

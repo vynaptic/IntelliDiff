@@ -1,4 +1,4 @@
-"""Measured cycles and stored governance facts for readiness's pure tests (docs/mvp/READINESS.md): a pair's
+"""Measured cycles and stored governance facts for readiness's pure tests: a pair's
 points, its series as ``repo.readiness_series`` reads them, and what ``repo.readiness_governance`` gives."""
 
 from __future__ import annotations

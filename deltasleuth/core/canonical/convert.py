@@ -1,4 +1,4 @@
-"""A column's declared canonical type (a table side's ``typeMap``, docs/mvp/TABLES.md §10).
+"""A column's declared canonical type (a table side's ``typeMap``).
 
 ``convert`` turns one JSON value, as a database renders it, into the canonical form of its type, or
 raises ``ConversionError``, whose message names the type, never the value. NULL stays null.
@@ -72,7 +72,7 @@ def _text(value: JSON) -> str:
 
 
 def _decimal(value: JSON, spec: Mapping[str, Any]) -> Decimal:
-    """A number, or its text; with ``decimalSeparator`` (docs/mvp/FILES.md §5) a text holding the other
+    """A number, or its text; with ``decimalSeparator`` a text holding the other
     separator does not convert, and no group separator is read: neither a space, an apostrophe or the other
     separator, nor an underscore; nor any digit but 0 to 9."""
     if isinstance(value, bool) or not isinstance(value, Decimal | str):
@@ -119,7 +119,7 @@ def _boolean(value: JSON, spec: Mapping[str, Any]) -> bool:
 
 def _instant(value: JSON, spec: Mapping[str, Any]) -> datetime:
     """An aware datetime: a naive value (or a date, at midnight) is read in ``naiveTimezone``; with
-    ``format`` (docs/mvp/FILES.md §5) the text is parsed whole by it."""
+    ``format`` the text is parsed whole by it."""
     if not isinstance(value, str):
         raise ValueError
     zone = ZoneInfo(spec.get("naiveTimezone", "UTC"))

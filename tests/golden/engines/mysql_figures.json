@@ -1,5 +1,5 @@
 {
- "about": "What MySQL sends for a table pre-check's figures at each level, and for its duplicate keys (docs/mvp/PRECHECKS.md §4): the plain and mapped sides of mysql_pair.json (a composite key, a prefix_pad key map, a filter, a typeMap column, a float, large-object, bytes and moment columns). Regenerate only with a contract change.",
+ "about": "What MySQL sends for a table pre-check's figures at each level, and for its duplicate keys: the plain and mapped sides of mysql_pair.json (a composite key, a prefix_pad key map, a filter, a typeMap column, a float, large-object, bytes and moment columns). Regenerate only with a contract change.",
  "sent": {
   "plain": {
    "counts": [

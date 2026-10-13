@@ -1,5 +1,5 @@
-"""The catalogue and one call (docs/mvp/MCP.md §7, §11, §16): what a caller is offered, each result's names
-as §7 lists them, the chat's tools unchanged, every refusal in §11's order, the caps and the cut, and a
+"""The catalogue and one call: what a caller is offered, each result's names
+as ``FIELDS`` lists them, the chat's tools unchanged, every refusal in its order, the caps and the cut, and a
 server that fails closed without a caller."""
 
 from __future__ import annotations
@@ -70,7 +70,7 @@ _SCHEDULED = (
     " auth_mode revision created_at set_at paused_at next_due{utc local} overdue clock_behind"
     " held{due to count}"
 )
-# §7's fields, in its notation: a member taken whole, or ``name{its members}``.
+# Each result's fields: a member taken whole, or ``name{its members}``.
 FIELDS = {
     "list_runs": f"runs{{{_RUN} created_at finished_at label}} next_cursor",
     "get_run_summary": f"{_RUN} progress root_causes{{{_CAUSE}}} accuracy labels{{licence approval}}",
@@ -100,7 +100,7 @@ LISTS = ("runs", "root_causes", "findings", "observations", "items", "gates", "v
 
 
 def tree(text: str) -> dict[str, Any]:
-    """§7's notation as a tree: None for a member taken whole."""
+    """``FIELDS``' notation as a tree: None for a member taken whole."""
     root: dict[str, Any] = {}
     here, above = root, []
     for word in re.findall(r"[a-z_]+\{?|\}", text):
@@ -143,7 +143,7 @@ def test_offered_by_role_class_and_work() -> None:
     assert names(McpSettings(("aggregates",))) == lists
     assert names(McpSettings(("production_tokenised",), work=("compare_key",))) == list(PER_RUN)
     assert names(EVERY, replace(OPERATOR, roles=frozenset())) == []
-    # Inside MCP no principal acts above operator, whatever it holds elsewhere (D4).
+    # Inside MCP no principal acts above operator, whatever it holds elsewhere.
     assert tools.caller(TESTER, tools.STDIO).roles == tools.MCP_ROLES == {"viewer", "operator"}
     assert tools.caller(TESTER, tools.HTTP).via == "mcp:http" and tools.STDIO == "mcp:stdio"
 
@@ -169,7 +169,7 @@ def test_the_catalogue_is_closed_and_static() -> None:
         kinds = {
             p.get("type", "enum" if "enum" in p else None) for p in spec.input_schema["properties"].values()
         }
-        assert kinds <= {"string", "integer", "enum"}  # the one number a schema takes is an integer (T4)
+        assert kinds <= {"string", "integer", "enum"}  # the one number a schema takes is an integer
         if spec.name not in PER_RUN or spec.name == "get_root_causes":  # a new tool: its strings are short
             texts = [p for p in spec.input_schema["properties"].values() if p.get("type") == "string"]
             assert all(p["maxLength"] == 128 for p in texts)
@@ -223,7 +223,7 @@ def test_source_gate() -> None:
         assert bool(library) == (path.name == "server.py")
     assert server.Server.__module__.startswith("mcp.server.")
     assert "site-packages" in (server.types.__file__ or "")  # the library, not this package
-    # The tools load without the library: a server whose settings have no mcp block never imports it (§5.1).
+    # The tools load without the library: a server whose settings have no mcp block never imports it.
     loaded = (
         "import sys, deltasleuth.mcp.tools;"
         " print(sorted({name.split('.')[0] for name in sys.modules} & {*sys.argv}))"
@@ -238,13 +238,13 @@ def test_source_gate() -> None:
 async def test_the_server_lists_what_its_caller_is_offered_and_holds_no_middleware() -> None:
     for who, settings in ((VIEWER, EVERY), (OPERATOR, EVERY), (OPERATOR, McpSettings(("aggregates",)))):
         built = server.build(None, settings, who=who)  # type: ignore[arg-type]
-        assert built.middleware == [] and built.cache_hints == {}  # no span (§3), no cache hint (D7)
+        assert built.middleware == [] and built.cache_hints == {}  # no span, no cache hint
         for mode in ("auto", "legacy"):
             async with Client(built, mode=mode) as client:
                 listed = (await client.list_tools()).tools
                 assert client.instructions == server.INSTRUCTIONS
                 capabilities = client.server_capabilities.model_dump(exclude_none=True)
-            # Tools only (D7): no resource, prompt, logging or completion capability in either era.
+            # Tools only: no resource, prompt, logging or completion capability in either era.
             assert {k: v for k, v in capabilities.items() if v} == {"tools": {"list_changed": False}}
             assert [tool.name for tool in listed] == [spec.name for spec in tools.offered(settings, who)]
             for tool in listed:
@@ -257,7 +257,7 @@ async def test_the_server_lists_what_its_caller_is_offered_and_holds_no_middlewa
 
 
 def test_the_self_test_lists_the_tools_without_a_store(capsys: pytest.CaptureFixture[str]) -> None:
-    server.selftest()  # the release's smoke step (§3)
+    server.selftest()  # the release's smoke step
     assert capsys.readouterr().out == "mcp: 11 tools listed in both protocol eras; no store was read\n"
 
 
@@ -305,7 +305,7 @@ async def test_each_result_holds_exactly_its_names(build: str, world: World, mod
 
 @pytest.mark.db
 async def test_new_service_key_stays_out(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A member a service's answer gains, at any depth, reaches no result until §7 lists it."""
+    """A member a service's answer gains, at any depth, reaches no result until ``FIELDS`` lists it."""
 
     def filled(names: dict[str, Any], under: str = "") -> Any:
         own = {
@@ -317,7 +317,7 @@ async def test_new_service_key_stays_out(world: World, monkeypatch: pytest.Monke
         answer = filled(tree(FIELDS[name]))
         if name == "get_readiness":  # the service lists each pair's gates in full
             answer["items"][0]["gates"] = [{"gate": "pack", "status": "met", "text": "LEAKED"}]
-        if name == "get_readiness_pair":  # and words each of a pair's, with a relation or a target (§8)
+        if name == "get_readiness_pair":  # and words each of a pair's, with a relation or a target
             answer["gates"][0]["text"] = "LEAKED"
 
         async def service(*_: Any, **__: Any) -> Any:
@@ -364,7 +364,7 @@ async def test_agent_tools_equal_run_tool(world: World) -> None:
 @pytest.mark.db
 @pytest.mark.parametrize("mode", MODES)
 async def test_the_checks_come_in_order(world: World, mode: str) -> None:
-    """T1 to T4: an unknown tool, one not served, one the role lacks, bad arguments; T5 before them all."""
+    """An unknown tool, one not served, one the role lacks, bad arguments; the rate limit before them all."""
     ctx, run = world.ctx, {"run_id": world.run_id}
 
     async def told(who: Any, name: str, args: Any = None, settings: McpSettings = EVERY) -> str:
@@ -372,15 +372,15 @@ async def test_the_checks_come_in_order(world: World, mode: str) -> None:
         assert failed
         return error
 
-    assert await told(VIEWER, "drop_tables") == "unknown tool 'drop_tables'"  # T1
+    assert await told(VIEWER, "drop_tables") == "unknown tool 'drop_tables'"
     assert await told(VIEWER, "get_findings", run, McpSettings(("aggregates",))) == (
         "get_findings is not served by this installation (mcp.data_classes lacks production_tokenised)"
-    )  # T3
+    )
     unworked = replace(EVERY, work=())
     assert await told(VIEWER, "compare_key", {"junk": 1}, unworked) == (
         "compare_key is not served by this installation (mcp.work)"
-    )  # T3 before T2 and T4
-    assert await told(VIEWER, "compare_key", {"junk": 1}) == "compare_key needs the operator role"  # T2
+    )  # not served, before the role and the arguments
+    assert await told(VIEWER, "compare_key", {"junk": 1}) == "compare_key needs the operator role"
     assert await told(VIEWER, "get_findings", {"run_id": 7}) == "invalid arguments: 7 is not of type 'string'"
     assert await told(VIEWER, "get_findings", run | {"limit": 51}) == (
         "invalid arguments: 51 is greater than the maximum of 50"
@@ -405,7 +405,7 @@ async def test_the_checks_come_in_order(world: World, mode: str) -> None:
         f"invalid arguments: '{'s' * 129}' is too long"
     )
     assert await told(VIEWER, "get_schedule") == "invalid arguments: 'schedule' is a required property"
-    if mode == "call":  # T5 comes first: a caller over its rate is told nothing else
+    if mode == "call":  # the rate limit comes first: a caller over its rate is told nothing else
         limits = tools.Limits(replace(EVERY, calls_per_minute=1))
         assert (await ask(ctx, VIEWER, "list_runs", limits=limits))[1] is False
         for name in ("drop_tables", "list_runs"):
@@ -420,11 +420,11 @@ async def test_the_checks_come_in_order(world: World, mode: str) -> None:
 async def test_arguments_the_store_cannot_take(
     world: World, caplog: pytest.LogCaptureFixture, mode: str
 ) -> None:
-    """T4, never a fault: what a closed schema admits and a tool or the store cannot take. An integer
-    written as a float (JSON Schema's ``integer`` admits 5.0) is served as that integer; one beyond
-    PostgreSQL's bigint, and a string that holds a NUL or an unpaired surrogate, are refused before the
-    tool runs, and nothing but each call's line is logged. Another control character is served: a stored
-    key holds one where its spec's pattern admits it."""
+    """Invalid arguments, never a fault: what a closed schema admits and a tool or the store cannot take. An
+    integer written as a float (JSON Schema's ``integer`` admits 5.0) is served as that integer; one beyond
+    PostgreSQL's bigint, and a string that holds a NUL or an unpaired surrogate, are refused before the tool
+    runs, and nothing but each call's line is logged. Another control character is served: a stored key holds
+    one where its spec's pattern admits it."""
     ctx, run = world.ctx, {"run_id": world.run_id}
 
     async def told(name: str, args: dict[str, Any]) -> tuple[Any, bool]:
@@ -468,7 +468,7 @@ async def test_arguments_the_store_cannot_take(
         assert await told("get_observations", asked) == (f"no key {other} in run {world.run_id}", True)
     served = await told("list_schedules", {"spec_name": "Zürich 日本 \U0001f600 konto"})
     assert not served[1]  # text of any script holds none of these
-    if mode == "call":  # refused before T6 counts the call, as the schema's refusals are
+    if mode == "call":  # refused before the tool's own rate counts the call, as the schema's refusals are
         limits = tools.Limits(EVERY)
         nul = [
             await ask(ctx, VIEWER, "get_readiness", {"programme": "a\x00b"}, limits=limits) for _ in range(11)
@@ -481,19 +481,19 @@ async def test_arguments_the_store_cannot_take(
 
 @pytest.mark.db
 async def test_a_run_refuses_as_the_api_does(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
-    """T8 to T12: no such run, no such key, a purged cycle or lost evidence, the runner's refusals, and a
+    """No such run, no such key, a purged cycle or lost evidence, the runner's refusals, and a
     run this installation does not serve."""
     ctx, key = world.ctx, {"key": world.key}
     missing = "R-" + "0" * 26
-    for name in PER_RUN:  # T8
+    for name in PER_RUN:
         args = {"run_id": missing} | (key if "key" in tools.CATALOGUE[name].input_schema["required"] else {})
         assert await ask(ctx, OPERATOR, name, args) == (f"run {missing} not found", True)
-    for name in ("get_observations", "compare_key"):  # T9
+    for name in ("get_observations", "compare_key"):
         asked = {"run_id": world.run_id, "key": "tok:identifier:v1:NOSUCHKEY"}
         assert await ask(ctx, OPERATOR, name, asked) == (
             f"no key tok:identifier:v1:NOSUCHKEY in run {world.run_id}", True,
         )  # fmt: skip
-    # T11: what the runner refuses a compare for, as the chat tells it.
+    # What the runner refuses a compare for, as the chat tells it.
     crm = DatabaseTarget("oracle", "10.1.2.3", 1521, "CRMPDB", "ds_reader", "file:/unused")
     database = Target("db-a", "", database=crm)
     refusals = {
@@ -510,7 +510,7 @@ async def test_a_run_refuses_as_the_api_does(world: World, monkeypatch: pytest.M
         asked = {"run_id": world.run_id} | key
         assert await ask(ctx, OPERATOR, "compare_key", asked) == (brief or str(refusal), True)
     monkeypatch.undo()
-    # T12: with production_tokenised alone, a run whose spec declares clear values or a business-code key.
+    # With production_tokenised alone, a run whose spec declares clear values or a business-code key.
     for name in PER_RUN:
         args = {"run_id": world.clear_run} | ({"key": CLEAR_KEY} if name in PER_RUN[3:] else {})
         assert await ask(ctx, OPERATOR, name, args, settings=MASKED) == (
@@ -518,7 +518,7 @@ async def test_a_run_refuses_as_the_api_does(world: World, monkeypatch: pytest.M
             " business-code key (mcp.data_classes lacks production_clear_declared)", True,
         )  # fmt: skip
         assert (await ask(ctx, OPERATOR, name, args))[1] is False
-    # T10: a key the keyring cannot unwrap, evidence that is gone, a purged cycle.
+    # A key the keyring cannot unwrap, evidence that is gone, a purged cycle.
     seen = {"run_id": world.run_id} | key
     with monkeypatch.context() as patched:
 
@@ -527,7 +527,7 @@ async def test_a_run_refuses_as_the_api_does(world: World, monkeypatch: pytest.M
 
         patched.setattr(Context, "sealer", sealer)
         assert await ask(ctx, VIEWER, "get_observations", seen) == (
-            "evidence unreadable: no KEK K-0123456789abcdef in the keyring (docs/mvp/RETENTION.md §6.1)",
+            "evidence unreadable: no KEK K-0123456789abcdef in the keyring",
             True,
         )  # fmt: skip
     for blob in (ctx.settings.evidence_dir / "blobs").rglob("*.dse"):
@@ -551,10 +551,10 @@ async def test_a_run_refuses_as_the_api_does(world: World, monkeypatch: pytest.M
 async def test_other_refusals_and_faults(
     world: World, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, via: str
 ) -> None:
-    """T13 to T17: a service's own refusal, a page over the cap, a store that is away, and failures whose
+    """A service's own refusal, a page over the cap, a store that is away, and failures whose
     text stays in the server log: all of it under ``ds serve``, its type alone over stdio."""
     ctx, who = world.ctx, token("viewer", 5, via)
-    refused = {  # T13
+    refused = {
         ("get_readiness", "programme"): ("nope", "programme nope is not configured"),
         ("get_readiness", "cursor"): ("x.y", "malformed cursor"),
         ("get_readiness_pair", "name"): (
@@ -574,9 +574,7 @@ async def test_other_refusals_and_faults(
     async def list_runs(conn: Any, *, limit: int, **_: Any) -> Any:
         return [wide] * limit, None
 
-    with (
-        monkeypatch.context() as patched
-    ):  # T14: only text this wide makes a page too long, and fewer rows fit
+    with monkeypatch.context() as patched:  # only text this wide makes a page too long, and fewer rows fit
         patched.setattr(repo, "list_runs", list_runs)
         assert await ask(ctx, who, "list_runs", {"limit": 12}) == (
             "the result is over 65536 bytes: ask for fewer rows (limit)", True,
@@ -593,11 +591,9 @@ async def test_other_refusals_and_faults(
         KeyError("K19181918"): f"internal error: request {who.request_id} names it in the server log",
         UnknownTargetError("target 'crm-db' is not in the registry"): f"internal error: request"
         f" {who.request_id} names it in the server log",
-        LookupError(
-            "spec 7 not found"
-        ): "spec 7 not found",  # T8: an id that is not stored, as the chat tells it
+        LookupError("spec 7 not found"): "spec 7 not found",  # an id that is not stored, as the chat tells it
     }
-    for fault, text in faults.items():  # T15, T16, T17
+    for fault, text in faults.items():
         caplog.clear()
 
         async def overview(*_: Any, fault: Exception = fault, **__: Any) -> Any:
@@ -629,7 +625,7 @@ async def test_other_refusals_and_faults(
 @pytest.mark.db
 @pytest.mark.usefixtures("vendor_keys")
 async def test_compare_key_seats_no_pair(world: World) -> None:
-    """T18: an agent's compare never seats a pair; for a seated name it runs, and writes no licence.pair."""
+    """An agent's compare never seats a pair; for a seated name it runs, and writes no licence.pair."""
     ctx, asked = world.ctx, {"run_id": world.run_id, "key": world.key}
     pairs = len(await audited(ctx, "licence.pair"))
     assert pairs == 2 and (await ask(ctx, OPERATOR, "compare_key", asked))[1] is False  # seated: it compares
@@ -669,7 +665,7 @@ async def test_compare_key_seats_no_pair(world: World) -> None:
 
 @pytest.mark.db
 async def test_compare_key_asks_for_no_seat_in_an_open_build(world: World) -> None:
-    """docs/mvp/LICENCE.md §19: no pair is counted, so T18 refuses no name: the compare runs, and writes
+    """No pair is counted, so no name is refused a seat: the compare runs, and writes
     no licence.pair."""
     ctx, third = world.ctx, DECLARED.replace("mcp-clear", "mcp-third")
     async with ctx.pool.connection() as conn:  # a third name, whose run no person started
@@ -820,8 +816,8 @@ async def test_a_cursor_resumes_without_gap_or_repeat(world: World) -> None:
 
 @pytest.mark.db
 async def test_no_caller_fails_closed(world: World, caplog: pytest.LogCaptureFixture) -> None:
-    """A server built without a caller serves a request that names none as nobody: T17, never a default
-    principal, and nothing is read or audited."""
+    """A server built without a caller serves a request that names none as nobody: an internal error, never a
+    default principal, and nothing is read or audited."""
     rows = len(await audited(world.ctx))
     for mode in ("auto", "legacy"):
         caplog.clear()
@@ -839,7 +835,7 @@ async def test_no_caller_fails_closed(world: World, caplog: pytest.LogCaptureFix
 
 
 def test_a_target_is_never_part_of_a_tool() -> None:
-    """No tool takes a URL, a host, a path, SQL or stored free text (§8)."""
+    """No tool takes a URL, a host, a path, SQL or stored free text."""
     members = {name for spec in tools.CATALOGUE.values() for name in spec.input_schema["properties"]}
     assert members == {
         "run_id", "key", "root_cause_id", "taxonomy_code", "path_pattern", "severity", "limit", "offset",

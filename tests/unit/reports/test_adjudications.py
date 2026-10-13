@@ -1,4 +1,4 @@
-"""Adjudication in the store (docs/mvp/PACK.md §5): a draw with a server salt, one score per draw that keeps
+"""Adjudication in the store: a draw with a server salt, one score per draw that keeps
 no note, the freeze while the cycle has a requested or approved sign-off, the attested adjudication (the
 newest a person scored) and its scorer kept from approving, the trigger's rules, the purge's tombstone and
 the P0 summary reading the attested adjudication."""

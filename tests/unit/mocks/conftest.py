@@ -24,12 +24,12 @@ from mocks.common import JSONBody, ScriptedDataset, Variant
 from mocks.registry import PAIRS, load_pair, pair_dir
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SCHEMA_PATH = REPO_ROOT / "docs" / "architecture" / "spec.schema.json"
+SCHEMA_PATH = REPO_ROOT / "deltasleuth" / "core" / "spec" / "spec.schema.json"
 STRICT_JSONPATH = jsonpath.JSONPathEnvironment(strict=True)
 
 
 class _StrictLoader(yaml.SafeLoader):
-    """SafeLoader that rejects duplicate mapping keys, as the spec loader contract requires."""
+    """SafeLoader that rejects duplicate mapping keys, as the spec loader requires."""
 
 
 def _no_duplicates(loader: _StrictLoader, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:

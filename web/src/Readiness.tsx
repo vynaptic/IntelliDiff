@@ -1,4 +1,4 @@
-/** Cut-over readiness (docs/mvp/READINESS.md §10), open to every role and read-only: per programme the pairs
+/** Cut-over readiness, open to every role and read-only: per programme the pairs
  *  that are ready and how that count moved, per pair its place on the ladder, "k of m" gates with a cell a gate,
  *  its last evidence cycles and what it rests on; and one pair's gates by group, convergence, trend, strata, live
  *  runs and recorded transitions, with the sign-off precheck on demand; and one pair's cut-over brief: its gates
@@ -501,7 +501,7 @@ function Reported({ brief: d }: { brief: Brief }) {
   );
 }
 
-/** A pair's cut-over brief (§10), the content of its brief.pdf: stored measures restated, with a link to each
+/** A pair's cut-over brief, the content of its brief.pdf: stored measures restated, with a link to each
  *  cycle, group, version and sign-off it names. The API judges and words it; this screen adds no figure. */
 export function ReadinessBrief({ name }: { name: string }) {
   const found = useLoad(() => api.readinessBrief(name), [name]);

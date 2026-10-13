@@ -114,7 +114,7 @@
     },
     "ORG-000029": {
       "seed": "drift",
-      "why": "Variant b's first answer for this key carries the entity's previous name; every later answer is current. File mode stores that first (stale) answer, so the key is a MISMATCH on $.name (core VALUE_MISMATCH; the spec sets no severity). Live mode sees the same MISMATCH first; the recheck finds variant a unchanged and variant b changed with the difference gone, so the key becomes DRIFT(b_converged) with no remaining finding (§8.3). first_findings are the findings of that first, provisional comparison.",
+      "why": "Variant b's first answer for this key carries the entity's previous name; every later answer is current. File mode stores that first (stale) answer, so the key is a MISMATCH on $.name (core VALUE_MISMATCH; the spec sets no severity). Live mode sees the same MISMATCH first; the recheck finds variant a unchanged and variant b changed with the difference gone, so the key becomes DRIFT(b_converged) with no remaining finding. first_findings are the findings of that first, provisional comparison.",
       "file": {
         "outcome": "MISMATCH",
         "verdict": "DIFFERENT",

@@ -1,4 +1,4 @@
-"""Schedules end to end (docs/mvp/SCHEDULES.md §15): the real worker starts a schedule's runs. Three due
+"""Schedules end to end: the real worker starts a schedule's runs. Three due
 times of a clean table pair each start one batch run, and the three runs meet the pair's convergence gate
 (a scan is a census; the mock pairs list their keys inline, which no convergence counts); and a ``ds
 worker`` killed after it started a mock pair's run loses and duplicates nothing: one run for the due time,

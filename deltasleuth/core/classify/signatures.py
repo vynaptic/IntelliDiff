@@ -1,4 +1,4 @@
-"""Finding signatures (§8.2): where and how a difference occurs, never which key or values.
+"""Finding signatures: where and how a difference occurs, never which key or values.
 
 Root causes group by signature and runs compare by it. With the spec the pattern is the published
 one, so a member name that is data (a map keyed by email) is never hashed unsalted, where a guess

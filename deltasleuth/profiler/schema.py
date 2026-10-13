@@ -1,4 +1,4 @@
-"""Inferred JSON Schemas of one side's raw samples, annotated for review (§8.6)."""
+"""Inferred JSON Schemas of one side's raw samples, annotated for review."""
 
 from __future__ import annotations
 

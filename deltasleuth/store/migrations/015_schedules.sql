@@ -1,4 +1,4 @@
--- Schedules (docs/mvp/SCHEDULES.md): a standing request to start a run of a stored spec at cron times in
+-- Schedules: a standing request to start a run of a stored spec at cron times in
 -- a time zone. Rows are never deleted: a run names its schedule. The index on ds.runs is built first,
 -- under SHARE (reads go on, run writes wait while it reads every row once); the check is NOT VALID and
 -- last, so its ACCESS EXCLUSIVE lock scans nothing and is held only to the end of the migration.

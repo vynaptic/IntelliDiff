@@ -205,7 +205,7 @@ def test_re_enrich_drops_a_rule_that_no_longer_applies(spec, make_finding) -> No
 
 
 def test_cel_variables_match_the_schema(repo_root: Path) -> None:
-    schema = json.loads((repo_root / "docs/architecture/spec.schema.json").read_text(encoding="utf-8"))
+    schema = json.loads((repo_root / "deltasleuth/core/spec/spec.schema.json").read_text(encoding="utf-8"))
     text = schema["$defs"]["knownDiff"]["properties"]["when"]["description"]
     listed = re.sub(r"\([^()]*\)", "", text.split("Variables:", 1)[1]).rstrip(". ")
     names = [n.strip() for part in listed.split(",") for n in part.split(" and ")]

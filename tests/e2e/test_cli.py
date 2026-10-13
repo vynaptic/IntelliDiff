@@ -64,7 +64,7 @@ def test_the_p0_flow_from_samples_to_a_passed_exit(serve: Any, make_stack: Any, 
     kinds = ("--kind", "summary", "--kind", "report.pdf", "--kind", "discrepancies.csv")
     ds("report", run_id, "--out", p0, *kinds, *config)
     assert "| 50 adjudicated keys agree with reviewers | pass |" in (p0 / "report.md").read_text()
-    # An open build's run carries no label, on a file name or in a report (docs/mvp/LICENCE.md §19).
+    # An open build's run carries no label, on a file name or in a report.
     assert (p0 / f"{run_id}-report.pdf").exists() and (p0 / f"{run_id}-discrepancies.csv").exists()
     assert not [path.name for path in p0.iterdir() if "unlicensed" in path.name]
     assert "nlicensed" not in (p0 / "report.md").read_text() + (p0 / "report.html").read_text()

@@ -1,6 +1,6 @@
-"""The files acceptance kit's two exports (docs/mvp/FILES.md), written under DIR: side a's CSV as a legacy
-system writes one (semicolons, a decimal comma, DD/MM/YYYY, zero-padded keys, a quoted field, a stamp file
-written last) and side b's Parquet, with the differences README.md lists.
+"""The files acceptance kit's two exports, written under DIR: side a's CSV as a legacy system writes one
+(semicolons, a decimal comma, DD/MM/YYYY, zero-padded keys, a quoted field, a stamp file written last) and
+side b's Parquet, with the differences README.md lists.
 
     python generate.py DIR
 """

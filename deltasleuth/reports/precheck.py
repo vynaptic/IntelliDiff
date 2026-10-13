@@ -1,4 +1,4 @@
-"""Table pre-check reports (docs/mvp/PRECHECKS.md §11): ``precheck.csv``, a row a pair;
+"""Table pre-check reports: ``precheck.csv``, a row a pair;
 ``precheck-columns.csv``, a row a pair, compared column and figure; and ``precheck.pdf``, the pairs worst
 first with a section for each of the first ``SECTIONS`` that show a difference.
 
@@ -33,7 +33,7 @@ PAIRS = (
 COLUMNS = (
     "precheck_id", "n", "label", "column", "class_a", "class_b", "figure", "a", "b", "verdict", "reason",
 )  # fmt: skip
-NOT = (  # what the PDF's last section says: §2's N-rules and §16's limits
+NOT = (  # what the PDF's last section says: what a pre-check is not, and its limits
     "Agreeing figures are not parity: offsetting differences cancel in a sum, and swapped values change"
     " nothing that is counted.",
     "Differing figures are not a defect: a spec's bridges and rules are not applied, and the two sides"
@@ -48,7 +48,7 @@ NOT = (  # what the PDF's last section says: §2's N-rules and §16's limits
 
 
 async def loaded(ctx: Context, precheck_id: str) -> tuple[repo.Row, list[repo.Row]]:
-    """The pre-check and its pairs worst first, each with its ``result``; refused (K11) when there is
+    """The pre-check and its pairs worst first, each with its ``result``; refused when there is
     none."""
     async with ctx.pool.connection() as conn:
         row = await prechecks.stored(ctx, conn, precheck_id)

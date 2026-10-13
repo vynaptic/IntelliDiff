@@ -1,4 +1,4 @@
-"""Root causes (§8.2): a run's discrepant findings grouped into probable causes, deterministically.
+"""Root causes: a run's discrepant findings grouped into probable causes, deterministically.
 
 The same member of a keyed/set array missing (or extra) under two or more keys is one cause;
 every other finding groups by signature. Causes are published masked, and their ids
@@ -41,7 +41,7 @@ def _bug_rule(f: Finding) -> str | None:
 
 def groups(results: Iterable[KeyResult], *, spec: CompiledSpec, tokeniser: Tokeniser) -> list[Group]:
     """``root_causes``, each with its findings."""
-    # A bug rule's finding is still discrepant (§7.1): grouped apart, under its rule.
+    # A bug rule's finding is still discrepant: grouped apart, under its rule.
     discrepant = [
         f
         for r in results

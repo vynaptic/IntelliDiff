@@ -1,4 +1,4 @@
-"""Targets declared in the product (docs/mvp/DEPLOY.md §7, "In the product"): an endpoint declared through
+"""Targets declared in the product: an endpoint declared through
 the route is called, with every credential header, without a restart; no credential is in an answer, a
 log line or an audit row; a credential never follows a target to another address; a target unfinished runs
 read is neither removed nor moved, and one moved while a run's keys are listed refuses that run; and each
@@ -619,19 +619,19 @@ def test_messages(client: TestClient, tmp_path: Path, monkeypatch: pytest.Monkey
 
     bearer = {"auth": {"kind": "bearer"}}
     in_file = (409, "target svc-a is declared in the targets file: change it there")
-    assert said(put("svc-a")) == said(client.delete("/v1/targets/svc-a")) == in_file  # M1
-    assert said(client.delete("/v1/targets/own")) == (404, "target own not found")  # M2
+    assert said(put("svc-a")) == said(client.delete("/v1/targets/svc-a")) == in_file
+    assert said(client.delete("/v1/targets/own")) == (404, "target own not found")
     required = "secret is required: none is stored for this auth, or the base URL or the auth changed"
-    assert said(put(**bearer)) == (422, required)  # M3
+    assert said(put(**bearer)) == (422, required)
     unstorable = (
         "secret is refused: it is empty, over 65536 bytes, or holds a BOM, surrounding whitespace, a line"
         " break or a control character"
     )
-    for refused in ("", " padded", "two\nlines", "\ufeffbom", "bell\x07", "del\x7f", "x" * 65537):  # M4
+    for refused in ("", " padded", "two\nlines", "\ufeffbom", "bell\x07", "del\x7f", "x" * 65537):
         assert said(put(**bearer, credential=refused)) == (422, unstorable), repr(refused[:9])
-    none = (422, "auth none takes no secret")  # M5
+    none = (422, "auth none takes no secret")
     assert said(put(credential="s")) == said(put(auth={"kind": "none"}, more_secrets={"X-A": "s"})) == none
-    invalid = "invalid target"  # M7: the targets file's own issues
+    invalid = "invalid target"  # the targets file's own issues
     assert issues(put(auth={"kind": "header", "header": "Host"}, credential="s")) == (
         422,
         invalid,
@@ -672,7 +672,7 @@ def test_messages(client: TestClient, tmp_path: Path, monkeypatch: pytest.Monkey
         invalid,
         [("/targets/own/rate_per_s", "schema.exclusiveMinimum")],
     )
-    (tmp_path / ".dockerenv").touch()  # L1
+    (tmp_path / ".dockerenv").touch()  # in a container, localhost is not the machine
     with monkeypatch.context() as contained:
         contained.setattr(product, "_CONTAINER", (str(tmp_path / ".dockerenv"),))
         here = put(base_url="http://localhost:8080", allow_private_network=True)
@@ -693,7 +693,7 @@ def test_messages(client: TestClient, tmp_path: Path, monkeypatch: pytest.Monkey
     def denied(path: Path, data: bytes) -> None:
         raise OSError(errno.EACCES, os.strerror(errno.EACCES), str(path))
 
-    monkeypatch.setattr(product, "atomic_write", denied)  # M6: the row stays
+    monkeypatch.setattr(product, "atomic_write", denied)  # the row stays
     assert said(put(**bearer, credential="s")) == (
         500,
         f"the target could not be written: {os.strerror(errno.EACCES)}",

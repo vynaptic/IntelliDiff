@@ -203,7 +203,7 @@ def test_file_keys_are_compared_as_written(
     assert _errors(doc) == set()
 
 
-# -- targets (X2, X33) and 2xx not-found ----------------------------------------------------------
+# -- targets and 2xx not-found ------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -480,7 +480,7 @@ def test_deferred_features_are_unsupported(
 
 
 def test_the_inferred_schema_is_ignored_and_pause_needs_a_table_side(minimal_spec: dict[str, Any]) -> None:
-    """docs/mvp/PRECHECKS.md §7: the inferred-schema guard for service sides is not built, and saying so is
+    """The inferred-schema guard for service sides is not built, and saying so is
     all a spec author can act on; ``schemaDrift`` stands without ``inferredSchema``, and between two
     service sides it may not ask for a pause."""
     minimal_spec["schemaDrift"] = {"mode": "finding"}
@@ -563,7 +563,7 @@ def test_accepted_features_not_applied_are_flagged(
 
 @pytest.mark.parametrize("retention", ["standard", "audit"])
 def test_a_retention_class_is_applied_not_ignored(minimal_spec: dict[str, Any], retention: str) -> None:
-    # docs/mvp/RETENTION.md §4.1: the purge applies the class, so the loader no longer flags it.
+    # The purge applies the class, so the loader no longer flags it.
     minimal_spec["retention"] = retention
     assert validate_spec(minimal_spec) == []
     assert compile_spec(minimal_spec).raw["retention"] == retention
@@ -573,7 +573,7 @@ def test_a_retention_class_is_applied_not_ignored(minimal_spec: dict[str, Any], 
 def test_inline_keys_of_a_pii_class_are_flagged_as_stored_in_clear(
     minimal_spec: dict[str, Any], value_class: str
 ) -> None:
-    # docs/mvp/RETENTION.md §4.1: the spec keeps them in clear and is never purged.
+    # The spec keeps them in clear and is never purged.
     minimal_spec["key"]["class"] = value_class
     [issue] = validate_spec(minimal_spec)
     assert (issue.pointer, issue.code, issue.severity) == (
@@ -595,7 +595,7 @@ def test_inline_keys_of_a_pii_class_are_flagged_as_stored_in_clear(
 def test_keys_of_a_value_class_that_their_pattern_does_not_tell_are_warned_of(
     minimal_spec: dict[str, Any], pattern: str
 ) -> None:
-    # docs/mvp/PACK.md §2.3: a pack's gate refuses every run of such a spec, and nothing said so before its
+    # A pack's gate refuses every run of such a spec, and nothing said so before its
     # cycle was signed off. A warning: the spec stays valid, and runs.
     minimal_spec["key"] |= {"class": "identifier", "pattern": pattern}
     told = [issue for issue in validate_spec(minimal_spec) if issue.code == "key_pattern_empty"]
@@ -604,7 +604,7 @@ def test_keys_of_a_value_class_that_their_pattern_does_not_tell_are_warned_of(
             "/key/pattern",
             "warning",
             "key.pattern matches the empty string: a raw key cannot be told from other text, so no evidence"
-            " pack is issued for a run of this spec (docs/mvp/PACK.md §2.3); declare a pattern that fits its"
+            " pack is issued for a run of this spec; declare a pattern that fits its"
             " keys only, or class keys that are not personal business_code",
         )
     ]
@@ -838,7 +838,7 @@ def test_a_lone_backslash_in_a_multi_part_key_is_refused(minimal_spec: dict[str,
         " or are over 1024 bytes or hold NUL (positions 1, 3)"
     )
     assert normalise_keys(given[1:2], spec) == ["EUwest|c1|r2"]
-    with pytest.raises(ValueError, match="positions 1\\)"):  # written as §3.4 says: no backslash fits here
+    with pytest.raises(ValueError, match="positions 1\\)"):  # written doubled: no backslash fits the pattern
         normalise_keys(["EU\\\\west|c1|r2"], spec)
 
 
@@ -876,7 +876,7 @@ def test_flag_paths_schema(minimal_spec: dict[str, Any]) -> None:
 
 
 def test_flags_only_side_meets_x33(minimal_spec: dict[str, Any], things_targets: TargetRegistry) -> None:
-    """Flags alone are a declared truncation (X33), whether or not the side's target declares a count
+    """Flags alone are a declared truncation, whether or not the side's target declares a count
     rule; the side then has no count members of its own, so the target's stay in force."""
     minimal_spec["sides"]["a"]["truncation"] = {"flagPaths": ["$..more"]}  # its target declares none
     minimal_spec["sides"]["b"]["truncation"] = {"flagPaths": ["$.meta.more"]}
@@ -933,7 +933,7 @@ def test_key_table_gates(minimal_spec: dict[str, Any], things_targets: TargetReg
     assert ("/side", "schema.not", f"member 'side' is not allowed here: {mixed}") in issues(
         _key_table() | {"side": "a"}
     )
-    # T1 and T3: key.source itself, and keys only.
+    # It is key.source itself, and gives keys only.
     nested = [
         ("/source/kind", "unsupported", NOT + "a key table inside hash_sample; a frame's table is a side's")
     ]
@@ -941,7 +941,7 @@ def test_key_table_gates(minimal_spec: dict[str, Any], things_targets: TargetReg
     assert issues(_key_table(columns=["tier"])) == [
         ("/table/columns", "unsupported", NOT + "columns in a key table; it gives keys only")
     ]
-    # T4: its table as a side's, under /key/source/table.
+    # Its table is judged as a side's, under /key/source/table.
     lookup = {"kind": "lookup", "target": "keys-db", "template": {"id": "x", "version": 1}}
     columns = ["id", {"name": "branch", "part": "branch", "keyMap": lookup}]
     assert issues(_key_table(keyColumns=columns, where="id ==== 1")) == [
@@ -965,7 +965,7 @@ def test_key_table_gates(minimal_spec: dict[str, Any], things_targets: TargetReg
         ("/table/keyColumns/0/keyMap", "unsupported"),
         ("/table/where", "unsupported"),
     }
-    # T5: its target is in the registry, and a database or a files target that goes with its table.
+    # Its target is in the registry, and a database or a files target that goes with its table.
     ledger = DatabaseTarget("mysql", "ledger.example", 3306, "ledger", "reader", "file:/run/secrets/ledger")
     registry = TargetRegistry(
         {target_id: things_targets.get(target_id) for target_id in things_targets}
@@ -995,7 +995,7 @@ def test_key_table_gates(minimal_spec: dict[str, Any], things_targets: TargetReg
         ),
         ("/table/where", "unsupported", NOT + "ILIKE on a MySQL or Oracle side; use LIKE"),
     ]
-    # Its key columns number a multi-part key's parts; T2: two tables are scanned, never listed.
+    # Its key columns number a multi-part key's parts; two tables are scanned, never listed.
     minimal_spec = _multi_part(minimal_spec)
     assert issues(_key_table()) == [
         ("/table/keyColumns", "key_columns_mismatch", "1 key column(s) for a key of 3 part(s)")

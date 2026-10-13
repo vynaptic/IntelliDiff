@@ -1,4 +1,4 @@
-"""MCP over HTTP (docs/mvp/MCP.md §5.1, §6, §11): ``POST /v1/mcp`` behind the API's own guard and its one
+"""MCP over HTTP: ``POST /v1/mcp`` behind the API's own guard and its one
 authentication path, for an API token and never a browser session; off unless the settings serve it; no
 stream and no session; and, below the route, the MCP library's own client served in both protocol eras, each
 request under its own caller. The tools themselves are tested in tests/unit/mcp_server."""
@@ -31,7 +31,7 @@ from .conftest import OIDC, PUBLIC_URL, Seeded, approved, audited, said
 
 pytestmark = pytest.mark.db
 OpenClient = Callable[..., AbstractContextManager[TestClient]]
-# The conftest's spec declares $.price clear: its run is served only where the settings say so (§4).
+# The conftest's spec declares $.price clear: its run is served only where the settings say so.
 MCP = {
     "data_classes": [tools.AGGREGATES, tools.TOKENISED, tools.CLEAR],
     "work": ["compare_key"],
@@ -40,7 +40,7 @@ MCP = {
 ERAS = ("auto", "legacy")  # the library's client at 2026-07-28, and with the handshake of 2025-11-25
 ACCEPT = {"Accept": "application/json, text/event-stream"}
 LIST = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
-OFF = "MCP over HTTP is off (mcp.http, docs/mvp/MCP.md §4)"
+OFF = "MCP over HTTP is off (mcp.http)"
 MODERN = {"MCP-Protocol-Version": "2026-07-28"}
 META = {
     "io.modelcontextprotocol/protocolVersion": "2026-07-28",
@@ -83,7 +83,7 @@ async def ask(client: Client, name: str, args: dict[str, Any]) -> tuple[Any, boo
 
 
 def test_who_may_call(open_client: OpenClient, callers: Any) -> None:
-    """H1, H2, H4 and H6: a bearer API token only. The dependency every route shares answers first, so a
+    """A bearer API token only. The dependency every route shares answers first, so a
     cookie session without its CSRF token is refused as on any route, and with it as a browser session."""
     with open_client(auth={"oidc": OIDC}, mcp=MCP) as client:
         as_ = callers(client)
@@ -114,7 +114,7 @@ def test_who_may_call(open_client: OpenClient, callers: Any) -> None:
 
 
 def test_developer_mode_calls_behind_its_csrf_header(open_client: OpenClient, seed: Any) -> None:
-    """§6: ``dev:loopback``, whose POST needs ``X-CSRF-Token: dev`` (H6), acts as an operator and no more."""
+    """``dev:loopback``, whose POST needs ``X-CSRF-Token: dev``, acts as an operator and no more."""
     with open_client(mcp=MCP) as client:
         seeded = seed(client)
         refused = post(client, {"X-CSRF-Token": "x"})
@@ -139,7 +139,7 @@ def test_developer_mode_calls_behind_its_csrf_header(open_client: OpenClient, se
 def test_off_unless_the_settings_serve_it(
     open_client: OpenClient, callers: Any, block: dict[str, Any] | None
 ) -> None:
-    """H3, for each operation, once its caller is known: without it the answer is the route's own 401."""
+    """The 404, for each operation, once its caller is known: without it the answer is the route's own 401."""
     with open_client(auth={}, mcp=block) as client:
         viewer = callers(client).token("viewer")
         off = [post(client, viewer), client.get("/v1/mcp", headers=viewer)]
@@ -151,7 +151,7 @@ def test_off_unless_the_settings_serve_it(
 
 
 def test_only_post_is_served(open_client: OpenClient, callers: Any) -> None:
-    """H5: no stream to GET and no session to DELETE; the library, which would open a stream, is not asked."""
+    """No stream to GET and no session to DELETE; the library, which would open a stream, is not asked."""
     with open_client(auth={}, mcp=MCP) as client:
         viewer = callers(client).token("viewer")
         answers = [client.get("/v1/mcp", headers=viewer | ACCEPT), client.delete("/v1/mcp", headers=viewer)]
@@ -162,7 +162,7 @@ def test_only_post_is_served(open_client: OpenClient, callers: Any) -> None:
 
 
 def test_guard_refuses_not_the_library(open_client: OpenClient, callers: Any) -> None:
-    """D11: ``_Guard`` is the one Host and Origin check (AUTH §3), and the library's own is off: it would
+    """``_Guard`` is the one Host and Origin check, and the library's own is off: it would
     answer 421 to a Host it does not know, and it knows none."""
     with open_client(auth={"allowed_hosts": ["API.ds.test"]}, mcp=MCP) as client:
         viewer = callers(client).token("viewer")
@@ -219,7 +219,7 @@ async def _posted(app: Any, headers: dict[str, str], body: bytes) -> tuple[int, 
 
 
 def test_no_body_is_read_before_its_caller_is_known(open_client: OpenClient, callers: Any) -> None:
-    """§5.1: the route declares no body, so a refusal answers without asking for one; the library reads it."""
+    """The route declares no body, so a refusal answers without asking for one; the library reads it."""
     body = json.dumps(LIST).encode() + b" " * 5000
     with open_client(auth={}, mcp=MCP) as client:
         as_ = callers(client)
@@ -239,7 +239,7 @@ def test_a_token_s_agent_is_served_its_own_tools(
     monkeypatch: pytest.MonkeyPatch,
     era: str,
 ) -> None:
-    """Both code paths of §5.1: a role refusal, a read, a key view and a compare, each as the request's
+    """Both code paths of the route: a role refusal, a read, a key view and a compare, each as the request's
     own token; on the modern path the library's inner ``tools/list`` is the caller's as well."""
     offered, lists = tools.offered, []
 
@@ -359,7 +359,7 @@ def test_interleaved_callers_keep_their_roles(
 
 
 def test_revoked_token_stops_at_next_call(open_client: OpenClient, callers: Any) -> None:
-    """§4: a token's revocation applies at the next request; nothing of it is kept between two."""
+    """A token's revocation applies at the next request; nothing of it is kept between two."""
     with open_client(auth={"oidc": OIDC}, mcp=MCP) as client:
         as_ = callers(client)
         token, admin = as_.token("viewer"), as_.session(*expand(["admin"]))
@@ -372,7 +372,7 @@ def test_revoked_token_stops_at_next_call(open_client: OpenClient, callers: Any)
 
 
 def test_a_machine_token_never_bypasses_sso(open_client: OpenClient, callers: Any, seed: Any) -> None:
-    """§6: under SSO an agent's token is one a signed-in admin made, owned by a person. MCP gives it no
+    """Under SSO an agent's token is one a signed-in admin made, owned by a person. MCP gives it no
     session and no role but its own, and its compare still meets the four-eyes gate in the runner."""
     with open_client(auth={"oidc": OIDC}, mcp=MCP) as client:
         seeded: Seeded = seed(client)  # a run of a version that declares a clear path, stored unapproved
@@ -405,10 +405,10 @@ def test_a_machine_token_never_bypasses_sso(open_client: OpenClient, callers: An
 
 
 def test_what_mcp_refuses_a_token_v1_serves_it(open_client: OpenClient, callers: Any, seed: Any) -> None:
-    """N4, §6: an agent's bearer is a general API token. The data classes, ``mcp.work``, the absence of run
+    """An agent's bearer is a general API token. The data classes, ``mcp.work``, the absence of run
     control, the rate limit and ``mcp.read`` are the route's: they hold for calls made through ``/v1/mcp``
     and for no other. On ``/v1`` the same token is served, with its full role, what MCP refuses it. A token
-    that is ever confined to the route changes this test, N4 and the guides that repeat it."""
+    that is ever confined to the route changes this test and the guides that repeat it."""
     block = {"data_classes": [tools.AGGREGATES, tools.TOKENISED], "http": True, "calls_per_minute": 1}
     with open_client(auth={}, mcp=block) as client:
         seeded: Seeded = seed(client)  # a run of a spec that declares $.price clear; no work tool is served
@@ -452,7 +452,7 @@ def test_what_mcp_refuses_a_token_v1_serves_it(open_client: OpenClient, callers:
 
 
 def test_no_pii_reader_ever(open_client: OpenClient, callers: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    """D4: inside MCP a principal acts as a viewer or an operator and never as more, whatever it holds:
+    """Inside MCP a principal acts as a viewer or an operator and never as more, whatever it holds:
     developer mode's, which holds every role, and the highest token there is."""
     call, callers_seen = tools.call, []
 
@@ -478,7 +478,7 @@ def test_no_pii_reader_ever(open_client: OpenClient, callers: Any, monkeypatch: 
 
 
 def test_a_probe_for_oauth_metadata_reads_a_json_404(open_client: OpenClient, tmp_path: Path) -> None:
-    """§5.1: after a 401 a client looks under ``/.well-known/``: the UI's page there would not parse."""
+    """After a 401 a client looks under ``/.well-known/``: the UI's page there would not parse."""
     web = tmp_path / "web"
     web.mkdir()
     (web / "index.html").write_text("<html>ui</html>")
@@ -497,7 +497,7 @@ def test_a_probe_for_oauth_metadata_reads_a_json_404(open_client: OpenClient, tm
 
 
 def test_the_server_start_records_the_block(open_client: OpenClient) -> None:
-    """§4: ``system.start`` names the block as applied; without one its ``mcp`` is null (test_audit.py)."""
+    """``system.start`` names the block as applied; without one its ``mcp`` is null (test_audit.py)."""
     with open_client(auth={}, mcp=MCP | {"calls_per_minute": 30}) as client:
         [(actor, _, started)] = audited(client, "system.start")
     assert actor == "system:server" and started["mcp"] == {
@@ -529,7 +529,7 @@ with TestClient(create_app(load_settings(sys.argv[1]))) as client:
 def test_the_library_is_imported_only_to_serve_http(
     open_client: OpenClient, tmp_path: Path, repo_root: Path, block: dict[str, Any] | None, served: bool
 ) -> None:
-    """§5.1: a server that does not serve MCP over HTTP never imports the MCP library, here in an
+    """A server that does not serve MCP over HTTP never imports the MCP library, here in an
     interpreter of its own that has imported the API and the CLI and started the app."""
     with open_client(mcp=block):  # the settings file, the workspace and the store
         pass
@@ -539,7 +539,7 @@ def test_the_library_is_imported_only_to_serve_http(
 
 
 def test_the_library_answers_below_the_route(open_client: OpenClient, callers: Any) -> None:
-    """§11: below the route the answers are the library's own, some of them plain text: each status is
+    """Below the route the answers are the library's own, some of them plain text: each status is
     pinned, since a client reads them."""
     with open_client(auth={}, mcp=MCP) as client:
         viewer = callers(client).token("viewer")

@@ -1,4 +1,4 @@
-"""Audit and logs (docs/mvp/MCP.md §9): a key view and a compare audited as the API audits them, as their
+"""Audit and logs: a key view and a compare audited as the API audits them, as their
 caller and with ``via``; ``mcp.read`` once an hour per caller, tool and run, and no read answered before
 the row that covers it is committed; a role refusal once a minute, the others logged; nothing for a list;
 and one log line a call, which holds no argument."""
@@ -203,7 +203,7 @@ async def test_a_role_refusal_is_audited_once_a_minute(
         clock.now += 60
         assert await ask(ctx, VIEWER, "compare_key", asked, limits=limits) == refused
         assert await ask(ctx, token("viewer", 7), "compare_key", asked, limits=limits) == refused
-    # The refusals that write no row are WARNING lines on the logger of the routes' own (AUTH §6).
+    # The refusals that write no row are WARNING lines on the logger of the routes' own.
     suppressed = [(r.levelname, r.getMessage()) for r in caplog.records if r.name == "deltasleuth.auth"]
     line = f"authz.denied actor={VIEWER.actor} route=MCP compare_key needed=operator (suppressed)"
     assert suppressed == [("WARNING", line)] * 2
@@ -248,7 +248,7 @@ async def test_lists_write_nothing_and_a_log_line_holds_no_argument(
 
 @pytest.mark.parametrize("mode", ["auto", "legacy"])
 async def test_over_stdio_each_call_has_its_own_request_id(world: World, mode: str) -> None:
-    """§5.2: the stdio caller is the CLI's, asserted; each of its calls is a request of its own."""
+    """The stdio caller is the CLI's, asserted; each of its calls is a request of its own."""
     ctx, asked = world.ctx, {"run_id": world.run_id, "key": world.key}
     local = tools.caller(TESTER, tools.STDIO)
     assert local.roles == {"viewer", "operator"} and local.request_id is None

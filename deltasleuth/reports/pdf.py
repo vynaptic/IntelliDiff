@@ -1,10 +1,8 @@
 """The run report (PDF): after the title block (which states the evidence's retention, the spec approval
 the cycle ran under, its sign-off, the licence the run was made under and, of a run whose tables the schema
-guard recorded a change of, what it recorded through the cycle: docs/mvp/PRECHECKS.md §11), root causes
-first, then a compact grid of the cycle's counters, a sampled cycle's strata and bounds, an ended cycle's
-labelled
-accuracy, the trend against the previous run of the same spec, its pair's readiness gates as of the cycle
-(docs/mvp/READINESS.md §11), soak outcome
+guard recorded a change of, what it recorded through the cycle), root causes first, then a compact grid of
+the cycle's counters, a sampled cycle's strata and bounds, an ended cycle's labelled accuracy, the trend
+against the previous run of the same spec, its pair's readiness gates as of the cycle, soak outcome
 changes, graph parity (for a run whose spec has ``graph``), the top findings (masked) and, last, the
 run's chat answers in an annex labelled as AI output. Model text never appears outside that annex.
 """

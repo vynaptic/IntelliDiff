@@ -1,4 +1,4 @@
-"""Migration 014 (docs/mvp/READINESS.md §13) over a populated 013 store holding cycles ended before 006,
+"""Migration 014 over a populated 013 store holding cycles ended before 006,
 008 and 009, a purged one, a one-shot's and a captured-sample run's: the column and its indexes are added
 without rewriting a table or adding a trigger, the excluded cycles are marked, and the worker's backfill
 then measures every other cycle, ``unknown`` where its fields are missing."""

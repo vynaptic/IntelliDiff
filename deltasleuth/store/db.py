@@ -1,5 +1,5 @@
 """Migrations: numbered SQL files, applied once each and recorded in ``ds.schema_version``; and what the
-first connection of a process says of the database (docs/mvp/FIRSTRUN.md §8): an address or a refusal no
+first connection of a process says of the database: an address or a refusal no
 wait mends, and the pool's lines while it waits, each once."""
 
 from __future__ import annotations
@@ -22,13 +22,13 @@ MIGRATIONS = Path(__file__).with_name("migrations")
 _LOCK_ID = 0x44534D47  # pg advisory lock "DSMG": processes starting together migrate one at a time
 AUDITED = 5  # from 005_identity on, the transaction that applies migrations audits them
 SEALED = 7  # 007_sealed drops the plaintext columns; it refuses while legacy data remains
-APPROVALS = 8  # 008_approvals: stored spec bodies are re-hashed as it applies (APPROVALS.md §7)
-LICENCES = 10  # 010_licences: the installation id it makes is audited as it applies (LICENCE.md §5)
-SAMPLING = 11  # 011_sampling: sample draws, strata on run_keys, each cycle's judgement (SAMPLING.md §12)
-NOTIFY = 12  # 012_notify: the notifier's cursor, deliveries and mutes (docs/mvp/ALERTS.md §13)
-ACCURACY = 13  # 013_accuracy: labelled samples and their labeller's exclusion (docs/mvp/ACCURACY.md §13)
-READINESS = 14  # 014_readiness: each ended cycle's readiness measures (docs/mvp/READINESS.md §13)
-LEGACY = "legacy plaintext remains: stop the app and run 'ds keys migrate' (docs/mvp/RETENTION.md §7.2)"
+APPROVALS = 8  # 008_approvals: stored spec bodies are re-hashed as it applies
+LICENCES = 10  # 010_licences: the installation id it makes is audited as it applies
+SAMPLING = 11  # 011_sampling: sample draws, strata on run_keys, each cycle's judgement
+NOTIFY = 12  # 012_notify: the notifier's cursor, deliveries and mutes
+ACCURACY = 13  # 013_accuracy: labelled samples and their labeller's exclusion
+READINESS = 14  # 014_readiness: each ended cycle's readiness measures
+LEGACY = "legacy plaintext remains: stop the app and run 'ds keys migrate'"
 # 007's guard on a store before 006, where every raw key, header and chat message is in clear: checked
 # first, so a refused start does not rewrite the spine with 006 only to roll it back.
 _PLAINTEXT = b"""SELECT EXISTS (SELECT 1 FROM ds.run_keys) OR EXISTS (SELECT 1 FROM ds.observations)

@@ -1,4 +1,4 @@
-"""Adjudications and evidence packs (docs/mvp/PACK.md §5, §7.1): draw a reviewer sheet of an ended cycle,
+"""Adjudications and evidence packs: draw a reviewer sheet of an ended cycle,
 download it, score its reviewed upload; issue a signed-off cycle's pack, list packs, download one and the
 signed revocation list.
 
@@ -48,7 +48,7 @@ def _not_found() -> Iterator[None]:
         raise HTTPException(404, str(exc)) from None
 
 
-# -- adjudications (§5) ----------------------------------------------------------------------------------
+# -- adjudications ----------------------------------------------------------------------------------
 
 
 @router.post("/runs/{run_id}/cycles/{cycle}/adjudications", status_code=201)
@@ -100,7 +100,7 @@ async def score(ctx: Ctx, who: Operator, adjudication_id: str, request: Request)
     return ok(adjudication_item(row))
 
 
-# -- evidence packs (§6) ---------------------------------------------------------------------------------
+# -- evidence packs ---------------------------------------------------------------------------------
 
 
 @router.post("/runs/{run_id}/cycles/{cycle}/packs", status_code=201)

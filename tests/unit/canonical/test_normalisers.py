@@ -22,7 +22,7 @@ GB, US = {"defaultRegion": "GB"}, {"defaultRegion": "US"}
 
 
 def test_names_match_the_schema_enum_and_object_forms(repo_root: Path) -> None:
-    schema = json.loads((repo_root / "docs/architecture/spec.schema.json").read_text())
+    schema = json.loads((repo_root / "deltasleuth/core/spec/spec.schema.json").read_text())
     forms = schema["$defs"]["normalizer"]["oneOf"]
     assert set(forms[0]["enum"]) | {next(iter(f["required"])) for f in forms[1:]} == NORMALISER_NAMES
 

@@ -1,4 +1,4 @@
-"""A fake OIDC identity provider (docs/mvp/AUTH.md §10): a ThreadingHTTPServer on 127.0.0.1:0, issuer
+"""A fake OIDC identity provider: a ThreadingHTTPServer on 127.0.0.1:0, issuer
 ``http://127.0.0.1:<port>``, with discovery, JWKS, token and logout endpoints and RSA-2048 and EC P-256
 signing keys made per instance.
 

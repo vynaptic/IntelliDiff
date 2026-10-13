@@ -1,4 +1,4 @@
-/** The comparison builder (docs/mvp/CONTRACTS.md §7), a spec author's form of a spec: a sample key; each service
+/** The comparison builder, a spec author's form of a spec: a sample key; each service
  *  side's target and request as rows, with a curl command read into them and Send, which asks that one endpoint
  *  once for the sample key and stores nothing; and everything else as YAML. It validates, saves a new version and
  *  compares the sample key under the version saved. The sample key and the unsaved work stay in memory only, and a

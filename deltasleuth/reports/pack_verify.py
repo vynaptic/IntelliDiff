@@ -1,4 +1,4 @@
-"""Offline verification of an evidence pack (docs/mvp/PACK.md §3.3, §7.3): what ``ds packs verify`` runs,
+"""Offline verification of an evidence pack: what ``ds packs verify`` runs,
 needing no settings and no database.
 
 It reads the ZIP only within limits (at most 64 entries and 200 MiB uncompressed, no entry compressed
@@ -6,8 +6,8 @@ over 100:1, no symlink, absolute path or ``..``, no name twice, one ``P-…/`` f
 ``deltasleuth-pack/1``, a manifest the steps can read), then runs steps 0 to 6 and 8 of the pack's
 procedure as VERIFY.txt's shell commands do, step 0 against this build's own procedure, and lists step
 7's objects, which only the site's SIEM can check. A sampled pack's draw is checked as its certificate's
-hand check says (docs/mvp/SAMPLING.md §11.4), after step 5, and then an attested labelling's files, as its
-hand check says (docs/mvp/ACCURACY.md §9).
+hand check says, after step 5, and then an attested labelling's files, as its
+hand check says.
 """
 
 from __future__ import annotations
@@ -215,7 +215,7 @@ def _subject(files: dict[str, bytes]) -> Step:
         f"spec {spec.get('name')} {spec.get('version')} (content hash {spec.get('content_hash')})",
     ]
     for side, found in sorted(sides.items()):  # a pack issued before engines names none
-        # A file side's (docs/mvp/FILES.md §16), with what its digest is the SHA-256 of: a pack issued before
+        # A file side's, with what its digest is the SHA-256 of: a pack issued before
         # has none.
         held = found.get("files")
         fixed = f"{held.get('count')} file(s) sha256 {held.get('sha256')}" if isinstance(held, dict) else None
@@ -271,7 +271,7 @@ def _decided(files: dict[str, bytes], filled: re.Match[str] | None, rows: list[l
 
 
 def _drawn(files: dict[str, bytes], rows: list[list[str]] | None) -> Step | None:
-    """A sampled pack's hand check, which its certificate prints (docs/mvp/SAMPLING.md §11.4): the audit row
+    """A sampled pack's hand check, which its certificate prints: the audit row
     of its draw (``draw_seq`` in facts/attests.json, which step 5 binds) is that draw's sample.draw row and
     holds its selection's SHA-256 and its salt's, which the salt, ``label:nonce``, hashes to. None for a
     census pack; a sampled one (step 4's basis) whose facts/attests.json cannot be read fails it, as does
@@ -311,7 +311,7 @@ def _drawn(files: dict[str, bytes], rows: list[list[str]] | None) -> Step | None
 
 
 def _labelled(files: dict[str, bytes], rows: list[list[str]] | None) -> Step | None:
-    """An attested labelling's hand check, which its certificate prints (docs/mvp/ACCURACY.md §9):
+    """An attested labelling's hand check, which its certificate prints:
     accuracy/labels.csv and accuracy/score.json hash to ``accuracy.labels_sha256`` and ``score_sha256`` of
     facts/attests.json (which step 5 binds), and the chain row that is the labelling's accuracy.label row
     holds both. None for a pack attesting no labelling; one whose manifest says it attests one fails when

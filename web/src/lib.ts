@@ -4,11 +4,11 @@ import { qs, type Licence, type Me, type Page, type Query } from './api';
 
 export const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** Who is signed in; `can(role)` gates controls, and the server still decides (docs/mvp/AUTH.md §9). */
+/** Who is signed in; `can(role)` gates controls, and the server still decides. */
 export const Who = createContext<{ me?: Me; can: (role: string) => boolean }>({ can: () => false });
 export const useWho = () => useContext(Who);
 
-/** The installation's licence (docs/mvp/LICENCE.md §12), loaded after `me`; undefined until then, or when it
+/** The installation's licence, loaded after `me`; undefined until then, or when it
  *  could not be loaded. Controls it refuses are disabled, and the server still decides. */
 export const Licensed = createContext<Licence | undefined>(undefined);
 export const useLicence = () => useContext(Licensed);

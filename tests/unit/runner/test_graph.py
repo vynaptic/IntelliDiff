@@ -1,4 +1,4 @@
-"""L2's classification (docs/mvp/GRAPH.md §3): the cell components coded by how many components of
+"""L2's classification: the cell components coded by how many components of
 each side they join, oversized components reported and left out, and the union-find under them."""
 
 from __future__ import annotations

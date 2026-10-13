@@ -11,7 +11,7 @@ from typing import Any
 from deltasleuth.core import jsonio
 from deltasleuth.llm.model import LLMError
 
-# The system prompt's paragraphs: the MCP server's instructions say the last three too (docs/mvp/MCP.md §8).
+# The system prompt's paragraphs: the MCP server's instructions say the last three too.
 INTRO = (
     "You answer questions about DeltaSleuth comparison runs. A run reads the same keys from two JSON "
     "services, side A and side B, compares them and records each difference as a finding; findings are "
@@ -34,7 +34,7 @@ CITE = (
 )
 SYSTEM = "\n\n".join((INTRO, UNTRUSTED, MASKED, CITE))
 
-# The fixed questions (docs/mvp/CONTRACTS.md §6). Neither holds a digit: the validator would refuse one
+# The fixed questions. Neither holds a digit: the validator would refuse one
 # the model echoed. EXPLAIN is followed by a blank line and the root cause's facts, framed (``loop.answer``).
 _RULES = (
     "Say what the evidence shows, never why a service behaves so. Write plain sentences: no Markdown, no "

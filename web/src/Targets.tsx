@@ -1,4 +1,4 @@
-/** Targets (docs/mvp/DEPLOY.md §7), open to every role: each endpoint and database a spec may name, and where it
+/** Targets, open to every role: each endpoint and database a spec may name, and where it
  *  is declared. Who declares (the role the API names: an admin, in a trial installation a spec author) adds a
  *  service to the product's list, changes one and removes one: its address, its consents, how it authenticates,
  *  its request budget and its credentials, which are typed here once, written to a file on the server and shown

@@ -1,7 +1,7 @@
-"""Labelled accuracy (docs/mvp/ACCURACY.md): §6.3's worked example and §7's texts, verbatim; what is
+"""Labelled accuracy: a worked example and its texts, verbatim; what is
 never stated; the populations and the draw (uniform, each cause's smallest digests, a census, ``*``); the
-truth source's circularity and date; every §11 message; an upload that is refused changes nothing, and one
-that is stored keeps no note."""
+truth source's circularity and date; every refusal's message; an upload that is refused changes nothing, and
+one that is stored keeps no note."""
 
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ Root cause RC-3f9a0c1d2e4b (rank 1 of 23, 212 items): of 22 labelled, b (new) al
 Agreed keys (outcome MATCH): 100 of 4,210 drawn; did not matter 97, b (new) alone 1, neither 1, undecidable 1; an agreement hid an error on 2 of 99 decided (2.020%, 95% interval 0.2455% to 7.108%; 0.2431% to 8.518% counting the undecidable either way).
 Accepted keys (a rule or mask hid the difference): 50 of 180 drawn; did not matter 45, a (legacy) alone 3, b (new) alone 1, undecidable 1; a rule or mask hid an error on 4 of 49 decided (8.163%, 95% interval 2.269% to 19.61%; 2.222% to 21.82% counting the undecidable either way).
 Rule fx_rounding (110 accepted keys): hid an error on 3 of 31 decided (9.677%, 95% interval 2.041% to 25.76%).
-"""  # noqa: E501 - docs/mvp/ACCURACY.md §7, verbatim
+"""  # noqa: E501 - the lines verbatim
 SUMMARY = (
     "{V} run {R} cycle 2: 120 of 1,204 discrepancies labelled 2026-10-04 by bob against"
     " CBS-PROD.account_master as of 2026-10-01 (attested by {A}): b (new) alone right 84, a (legacy) alone"
@@ -77,7 +77,7 @@ SUMMARY = (
 IDS = {"V": LABELLING, "R": RUN, "A": SIGNOFF}
 
 
-# -- §6.3's worked example, without a store ---------------------------------------------------------------
+# -- the worked example, without a store -----------------------------------------------------------------
 
 
 def _rows(n: int, **cells: str) -> list[dict[str, str]]:
@@ -94,8 +94,8 @@ def _decided(population: str, counts: dict[str, int], **cells: str) -> list[dict
 
 
 def worked() -> tuple[list[dict[str, str]], dict[str, Any]]:
-    """§6.3's labelled sheet without its keys, and its selection: 120 uniform discrepant items (22 of root
-    cause RC-3f9a0c1d2e4b), 100 agreed keys and 50 accepted ones (31 under rule fx_rounding)."""
+    """The worked example's labelled sheet without its keys, and its selection: 120 uniform discrepant items
+    (22 of root cause RC-3f9a0c1d2e4b), 100 agreed keys and 50 accepted ones (31 under rule fx_rounding)."""
     mismatch = {"engine_outcome": "MISMATCH"}
     rows = _decided("discrepant", {"B_RIGHT": 17, "A_RIGHT": 2, "BOTH_WRONG": 1, "BOTH_RIGHT": 2},
                     root_cause_id=CAUSE, **mismatch)  # fmt: skip
@@ -138,7 +138,7 @@ def labelling(score: dict[str, Any] | None, **changes: Any) -> dict[str, Any]:
 
 
 def shown(found: dict[str, Any]) -> str:
-    """A share as §6.3's table shows it."""
+    """A share as the worked example's table shows it."""
     low, high = percent(found["low"]), percent(found["high"])
     text = f"{found['x']}/{found['n']} {percent(found['share'])} {low} to {high}"
     if found["items_low"] is not None:
@@ -324,7 +324,7 @@ def test_lines_of_a_census_without_an_undecidable_item_and_of_many_causes() -> N
 
 
 def test_lines_without_a_decided_item_and_of_a_labeller_that_is_no_person() -> None:
-    """§7's edge texts: no share out of nothing; a labeller that is neither a person, a token nor developer
+    """No share out of nothing; a labeller that is neither a person, a token nor developer
     mode is named with its actor, and no sign-off attests its labelling."""
     undecidable = {"label": "UNDECIDABLE", "reason": "TOKENISED", "engine_outcome": "MISMATCH"}
     rows = _rows(3, population="discrepant", **undecidable)
@@ -389,11 +389,11 @@ GATE = """\
 labelling {V} of cycle 2 does not meet the accuracy gate, which allows 0 decided items where side b was wrong and needs 50 decided (all, for a census of the discrepant items)
 Labelling {V} drawn 2026-10-02, labelled 2026-10-04 by a person against CBS-PROD.account_master as of 2026-10-01, attested by sign-off {A}.
 b (new) wrong (truth favoured a, or neither): 15 of 117 decided (12.82%, 95% interval 7.356% to 20.27%; 7.167% to 22.67% counting the undecidable either way).
-"""  # noqa: E501 - docs/mvp/READINESS.md §9 Y18, over §6.3's worked example
+"""  # noqa: E501 - the accuracy gate's text, over the worked example
 
 
 def test_gate_golden() -> None:
-    """Readiness's accuracy gate over a stored score (docs/mvp/READINESS.md §9 Y18): met when at most
+    """Readiness's accuracy gate over a stored score: met when at most
     ``max_b_wrong`` decided uniform items found side b wrong and ``min_decided`` are decided; a census of
     the discrepant items is judged on its decided ones, however few but never none; a labelling that labels
     none is none."""
@@ -456,7 +456,7 @@ def test_gate_golden() -> None:
 
 
 def test_never_stated() -> None:
-    """What ``lines`` and ``summary`` never say (§7): a verdict of DeltaSleuth's, either system's overall
+    """What ``lines`` and ``summary`` never say: a verdict of DeltaSleuth's, either system's overall
     accuracy, a share without its n and interval, a pooled figure, a stratum, a certification, an AI label,
     or that undecidable items may be ignored; and BOTH_RIGHT never counts a side wrong."""
     rows, selection = worked()
@@ -471,8 +471,7 @@ def test_never_stated() -> None:
         text in said[0] for text in ("bob", "amy", "CBS-PROD.account_master", "2026-10-01", "2026-10-04")
     )
     # Readiness's accuracy gate is the third text builder: its own line names only the gate, and the rest
-    # is the labelling line, without its people's names, and side b's wrong share verbatim
-    # (docs/mvp/READINESS.md §9 Y18).
+    # is the labelling line, without its people's names, and side b's wrong share verbatim.
     gated = accuracy.gate(labelling(score), at="cycle 2", min_decided=50, max_b_wrong=0, signoff=SIGNOFF)[1]
     assert gated[1:] == [said[0].replace(" by amy", "").replace("by bob", "by a person"), said[7]]
     assert not [line for line in gated if "amy" in line or "bob" in line]
@@ -554,7 +553,7 @@ def _digest(salt: str, item: tuple[str, str]) -> bytes:
 
 
 async def _items(ctx: Context, run_id: str) -> dict[str, list[tuple[str, str]]]:
-    """Each population's items (masked key, cause) as the stored results and findings give them (§2.1)."""
+    """Each population's items (masked key, cause) as the stored results and findings give them."""
     async with ctx.pool.connection() as conn:
         results = await repo.pages(repo.list_results, conn, run_id, 1)
         findings = await repo.pages(repo.list_findings, conn, run_id, 1)
@@ -755,8 +754,8 @@ async def test_labels_are_stored_once_without_notes_and_the_score_is_re_derived(
 @pytest.mark.db
 async def test_a_stored_labelling_prints_its_lines_in_the_golden_order(ctx: Context) -> None:
     """jsonb orders an object's keys by length, then bytes: a stored score's reasons and basis codes, and a
-    stored selection's rules, come back in another order than they were counted in. The lines keep §7's,
-    the enumerations', and the score re-derived from the stored selection is the stored one."""
+    stored selection's rules, come back in another order than they were counted in. The lines keep their own
+    order, the enumerations', and the score re-derived from the stored selection is the stored one."""
     run_id, people = await _cycle(ctx)
     rows, selection = worked()
     score = tally(rows, selection, TRUTH)
@@ -782,7 +781,7 @@ async def test_a_stored_labelling_prints_its_lines_in_the_golden_order(ctx: Cont
 
 
 def test_a_key_is_unlocatable_when_no_path_resolves_clear() -> None:
-    """§3 step 3 judges by the compiled policy: a tokenise rule of a PII class voids a clear entry beneath
+    """The draw judges by the compiled policy: a tokenise rule of a PII class voids a clear entry beneath
     it, so a spec that lists a path in clear may show none."""
     key = {"name": "account", "type": "string", "pattern": "^[0-9]{10}$", "class": "identifier",
            "source": {"kind": "list", "keys": ["0712345601"]}}  # fmt: skip
@@ -888,7 +887,7 @@ async def test_what_a_draw_refuses(ctx: Context) -> None:
 async def test_a_sheet_too_large_for_notes_is_refused_and_row_hash_matches_are_warned_of(
     ctx: Context, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§3 step 6: a blank sheet over half the upload limit stores nothing. §3's last warning: a table scan's
+    """A blank sheet over half the upload limit stores nothing. The draw's last warning: a table scan's
     rows matched by row hash have no per-key result, so the agreed keys are those read per key."""
     scan = {"done": True, "after": None, "rows_a": 4_998_918, "rows_b": 4_998_918, "skipped_a": 0,
             "skipped_b": 0, "matched": 4_998_916, "candidates": 2}  # fmt: skip
@@ -930,9 +929,8 @@ async def test_a_tokenised_key_without_a_clear_path_needs_its_acknowledgement(ct
     before = await _state(ctx)
     assert await _refused(AdjudicationError, store_draw(ctx, run_id, 1, who=olga, truth=TRUTH)) == (
         "the key is tokenised (class identifier) and the spec shows no path in clear: labellers cannot find"
-        " records in the truth source until the per-key reveal (AUTH §11) exists; set"
+        " records in the truth source until the per-key reveal exists; set"
         " acknowledge_unlocatable to draw for labels a business rule decides without the record"
-        " (docs/mvp/ACCURACY.md §4)"
     )
     shaped = TRUTH | {"source": "CBS.0712345601"}
     assert await _refused(AdjudicationError, store_draw(ctx, run_id, 1, who=olga, truth=shaped)) == (
@@ -945,8 +943,7 @@ async def test_a_tokenised_key_without_a_clear_path_needs_its_acknowledgement(ct
     assert (selection["unlocatable"], selection["names_side"]) == (True, "a")
     assert selection["warnings"] == [
         "truth.source svc-a.accounts names side a (legacy): labels resting on a compared side are circular"
-        " and measure nothing; name an authoritative system other than both sides (docs/mvp/ACCURACY.md"
-        " §2.3)",
+        " and measure nothing; name an authoritative system other than both sides",
         "the key is tokenised (class identifier) and the spec shows no path in clear: expect UNDECIDABLE"
         " (TOKENISED) rows (acknowledged)",
         "truth.as_of 2026-09-20 is outside the drawn items' observations (2026-09-24 to 2026-09-24): label"
@@ -1042,7 +1039,7 @@ async def test_what_an_upload_refuses_changes_nothing(ctx: Context) -> None:
         f"labelling {missing} not found"
     )
     assert before == await _state(ctx)  # a refused upload changes nothing
-    # The checks run in §11's order: a sheet failing several is refused for the first.
+    # The checks run in a fixed order: a sheet failing several is refused for the first.
     several = sheet((0, {"label": "", "key": "K999"}), (1, {"label": "A", "basis": "x", "reason": "y"}))
     assert (await _refused(AdjudicationError, store_labels(ctx, labelling_id, several, who=olga))).startswith(
         every

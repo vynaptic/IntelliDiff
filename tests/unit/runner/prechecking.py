@@ -1,6 +1,6 @@
-"""Table pre-checks for the tests of the runner, the API, the CLI and the reports (docs/mvp/PRECHECKS.md
-§13): a spec of two table sides, an ``Engine`` over relations held in memory that records each session and
-statement and fails as it is told to, and a worker run until a pre-check has ended."""
+"""Table pre-checks for the tests of the runner, the API, the CLI and the reports: a spec of two table sides,
+an ``Engine`` over relations held in memory that records each session and statement and fails as it is told
+to, and a worker run until a pre-check has ended."""
 
 from __future__ import annotations
 

@@ -1,31 +1,27 @@
 """Runs: create one, pause, resume, stop or cancel it, list its outcome changes, compare one key now.
 
-A batch or soak run is ``running`` from its creation and processed by the workers; a batch over two
-tables without keys takes its keys from a table scan (``runner.scan``). A one-shot run
-(``compare_one``) stays ``queued``, so no worker leases its key: it is read inline, with the
-``recheck.oneShot`` passes while the result is due one, and then its key and the run are done
-(unless it was cancelled meanwhile). A run keeps the capabilities its targets declare at its
-creation (``params["capabilities"]``) and its table sides' column plan (``params["tables"]``), so
-it reads the same once they change. A run's raw keys are sealed under a data key of its own
-(docs/mvp/RETENTION.md §3); a complete key listing is its first cycle's census (docs/mvp/PACK.md §1.2), and
-a key table's read is audited with the run, a key list as any other. Its key set is normalised, masked and
-sealed off the event loop. A run is written while no target of the product's list changes
-(``targets.unmoved``): one whose target was moved or removed since its spec was judged, while its keys were
-listed, is refused.
-Under SSO a spec version that needs a four-eyes approval starts, compares and resumes only under one
-(``approvals.gate``, docs/mvp/APPROVALS.md §4): refused before its keys are resolved, then read FOR
-SHARE in the transaction that writes the run, so a revoke either waits for it or is waited for. The
-licence admits the spec's name as one of its pairs, or refuses the run, likewise (``licence.admit``,
-docs/mvp/LICENCE.md §7): a new pair is counted again under the pair lock, and the run records the
+A batch or soak run is ``running`` from its creation and processed by the workers; a batch over two tables
+without keys takes its keys from a table scan (``runner.scan``). A one-shot run (``compare_one``) stays
+``queued``, so no worker leases its key: it is read inline, with the ``recheck.oneShot`` passes while the
+result is due one, and then its key and the run are done (unless it was cancelled meanwhile). A run keeps
+the capabilities its targets declare at its creation (``params["capabilities"]``) and its table sides'
+column plan (``params["tables"]``), so it reads the same once they change. A run's raw keys are sealed under
+a data key of its own; a complete key listing is its first cycle's census, and a key table's read is audited
+with the run, a key list as any other. Its key set is normalised, masked and sealed off the event loop. A
+run is written while no target of the product's list changes (``targets.unmoved``): one whose target was
+moved or removed since its spec was judged, while its keys were listed, is refused. Under SSO a spec version
+that needs a four-eyes approval starts, compares and resumes only under one (``approvals.gate``): refused
+before its keys are resolved, then read FOR SHARE in the transaction that writes the run, so a revoke either
+waits for it or is waited for. The licence admits the spec's name as one of its pairs, or refuses the run,
+likewise (``licence.admit``): a new pair is counted again under the pair lock, and the run records the
 licence it was made under. A hash sample's run is created with no keys, its first cycle's draw pending, and
-resumes only once the draw before passed or was closed (``runner.sample``, docs/mvp/SAMPLING.md §5). A
-schedule's firing is ``create_run`` with its ``Firing``: the run, the schedule's advance past the due time
-and their audit rows commit together or not at all (docs/mvp/SCHEDULES.md §5). A run with a table side is
-judged by the schema guard at its creation against its version's newest earlier run (``runner.drift``,
-docs/mvp/PRECHECKS.md §7): one that would not compare what that run compared is created paused, before any
-table row is read, or refused when its spec pauses on schema drift; a run the guard paused resumes only while
-no change that breaks its plan stands. Each call takes ``who``, the principal that asks for it, and audits
-as that principal; the API checks the roles.
+resumes only once the draw before passed or was closed (``runner.sample``). A schedule's firing is
+``create_run`` with its ``Firing``: the run, the schedule's advance past the due time and their audit rows
+commit together or not at all. A run with a table side is judged by the schema guard at its creation against
+its version's newest earlier run (``runner.drift``): one that would not compare what that run compared is
+created paused, before any table row is read, or refused when its spec pauses on schema drift; a run the
+guard paused resumes only while no change that breaks its plan stands. Each call takes ``who``, the
+principal that asks for it, and audits as that principal; the API checks the roles.
 """
 
 from __future__ import annotations
@@ -64,7 +60,7 @@ INTERVAL = "a soak run needs the spec's execution.cycleInterval"
 
 @dataclass(frozen=True)
 class Firing:
-    """The due time a schedule's run is created for (docs/mvp/SCHEDULES.md §5): the schedule as the worker
+    """The due time a schedule's run is created for: the schedule as the worker
     read it, who last saved it, the end of the time's window, the due time after it (None: the schedule
     ends) and the standing refusal's range the firing chains first."""
 
@@ -84,12 +80,12 @@ class ScheduleMoved(Exception):
 
 
 class SetterGone(Exception):
-    """Who last saved the schedule no longer answers for it (disabled, or no longer an operator: §6), as
+    """Who last saved the schedule no longer answers for it (disabled, or no longer an operator), as
     read in the run's transaction: the run is rolled back."""
 
 
 def retention(spec: CompiledSpec) -> str:
-    """The spec's retention class (docs/mvp/RETENTION.md §4.1)."""
+    """The spec's retention class."""
     return spec.raw.get("retention", "standard")
 
 
@@ -109,10 +105,10 @@ async def create_run(
     ``samples_dir`` runs a batch in file mode (captured samples, no recheck); ``soak`` is
     ``{"rolling": bool}`` (re-resolve the key source every cycle). Bad input raises ValueError, an
     unknown spec LookupError, a spec version lacking its four-eyes approval ApprovalRequired, a run the
-    licence does not allow LicenceRefused, a hash sample's refusals SampleRefused (R1-R4); its keys are
+    licence does not allow LicenceRefused, a hash sample's refusals SampleRefused; its keys are
     drawn by the worker. ``schedule``: the run is a schedule's firing, recorded in ``params["schedule"]``
     and committed with the schedule's advance, or not at all (ScheduleMoved, SetterGone). The schema guard
-    records its tables' shapes beside ``params`` (V1): a run that would not compare what its version's run
+    records its tables' shapes beside ``params``: a run that would not compare what its version's run
     before it compared is created paused, or refused when its spec pauses on schema drift (``drift.Refused``,
     a ValueError), nothing written. A target the spec names that was moved or removed meanwhile (its keys
     may take long to list) is a ValueError too.
@@ -166,7 +162,7 @@ async def create_run(
     run_id = repo.new_run_id()
     kek, wrapped, sealer = ctx.new_sealer(run_id)
     sealed = await asyncio.to_thread(sealer.seal_keys, taken)
-    if planned.pinned:  # a file side's pins, sealed: no pack or plan_sha256 holds them (FILES.md §6)
+    if planned.pinned:  # a file side's pins, sealed: no pack or plan_sha256 holds them
         params["pinned"] = tables.sealed(sealer, planned.pinned)
     # A listing may take its whole window, and a target's 409 counts runs: no target changes while this one
     # is written, and one changed since the spec was judged refuses it.
@@ -175,7 +171,7 @@ async def create_run(
         approval_id, _ = await approvals.gate(ctx, conn, spec_id, spec, lock=True)
         params["licence"], pair = await licence.admit(ctx, conn, spec, lock=True)
         await sample.overlapping(conn, spec, lock=True)
-        # V1: against the version's newest earlier baseline run; a refusal (E6) writes nothing.
+        # Against the version's newest earlier baseline run; a refusal writes nothing.
         guard, drifted = drift.created(spec, spec_id, planned, await repo.guard_basis(conn, spec_id, run_id))
         stored = await repo.create_run(
             conn, spec_id, mode, sealed, params, scan, run_id=run_id, created_by=who.actor,
@@ -202,7 +198,7 @@ async def create_run(
             if schedule.held is not None:
                 await audit(who, "schedule.missed", schedule.schedule_id, schedule.held)
         await audit(who, "create_run", run_id, detail)
-        if pair is not None:  # a new pair (docs/mvp/LICENCE.md §11)
+        if pair is not None:  # a new pair
             await audit(who, "licence.pair", pair[0], pair[1] | {"run_id": run_id})
         if schedule is not None:
             await audit(who, "schedule.fire", schedule.schedule_id, fired)
@@ -273,9 +269,9 @@ async def resume_run(ctx: Context, run_id: str, *, who: Principal) -> str:
     lacks); a refused credential's, a missing KEK's, a revoked approval's, the licence's or a sample's pause
     reason goes, as it was fixed, and a refused draw is drawn again. A soak paused for the licence resumes
     only once the licence allows its runs and seats its name as of when its cycle falls due, or now if later
-    (LicenceRefused); a sampled one only once the draw before passed or was closed (SampleRefused, R5); one
+    (LicenceRefused); a sampled one only once the draw before passed or was closed (SampleRefused); one
     the schema guard paused only once its tables, looked at again, hold no change that breaks its plan
-    (``drift.Refused``, V4), which accepts the changes that stand, and a cap at its creation is its reason
+    (``drift.Refused``), which accepts the changes that stand, and a cap at its creation is its reason
     again.
     The run's first approval covers its next cycle on: the current one read keys without it, unless a
     soak's boundary or its draw paused that cycle before it read any."""
@@ -291,7 +287,7 @@ async def resume_run(ctx: Context, run_id: str, *, who: Principal) -> str:
     capped = STOP_PREFIX + "maxKeys" if guarded and run["keys_cut"] else None
     async with repo.audited(ctx.pool) as (conn, audit):
         approval_id, _ = await approvals.gate(ctx, conn, run["spec_id"], spec, lock=True)
-        if run["stop_reason"] == licence.LICENCE_PAUSE:  # as the boundary judged it (docs/mvp/LICENCE.md §8)
+        if run["stop_reason"] == licence.LICENCE_PAUSE:  # as the boundary judged it
             prefix, at = f"run {run_id} cannot resume: ", due(spec, run, run["cycle"])
             await licence.need(ctx, conn, "run", name=spec.name, prefix=prefix, at=at)
         await sample.refuse_resume(conn, run)
@@ -386,7 +382,7 @@ async def compare_one(ctx: Context, spec_id: int, key: str, *, who: Principal) -
         detail = {"spec_id": spec_id, "approval_id": approval_id, "approval": approval}
         detail["licence"] = params["licence"]
         await audit(who, "compare_one", run_id, detail)
-        if pair is not None:  # a new pair (docs/mvp/LICENCE.md §11)
+        if pair is not None:  # a new pair
             await audit(who, "licence.pair", pair[0], pair[1] | {"run_id": run_id})
     try:
         result = await _read_now(ctx, spec, ctx.capabilities(run), reader, run_id, key, sealer)
@@ -430,7 +426,7 @@ async def _read_now(
     sealer: Sealer,
 ) -> KeyResult:
     """The first pass, then up to ``oneShot.times`` recheck passes while the result is due one; a recheck
-    reads no side of fixed files again, and a read of them on both sides is final (docs/mvp/FILES.md §12)."""
+    reads no side of fixed files again, and a read of them on both sides is final."""
     policy = RecheckPolicy.from_spec(spec.raw)
     result, reads = await evaluate(ctx, spec, caps, reader, key, run_id=run_id, pass_no=1)
     for pass_no in range(1, policy.one_shot_times + 2):

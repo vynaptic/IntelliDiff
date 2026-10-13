@@ -1,4 +1,4 @@
-"""Evidence packs over the API (docs/mvp/PACK.md §6, §7.1, §7.2): a person issues a signed-off cycle's pack,
+"""Evidence packs over the API: a person issues a signed-off cycle's pack,
 a viewer lists, reads and downloads it (audited first) and the signed revocation list, and the download
 verifies away from the host; each route's 409 outside SSO before its 503, the 403 for a token and the
 refusals joined; the run's cycles carrying their census, adjudications and packs; a purge keeping the
@@ -30,7 +30,7 @@ from .conftest import OIDC, audited, said, session_as, signed
 
 pytestmark = pytest.mark.db
 OpenClient = Callable[..., AbstractContextManager[TestClient]]
-NOT_CONFIGURED = "evidence packs are not configured: set packs.signing_key_ref (docs/mvp/PACK.md §3.1)"
+NOT_CONFIGURED = "evidence packs are not configured: set packs.signing_key_ref"
 
 
 def sso_only(mode: str) -> str:

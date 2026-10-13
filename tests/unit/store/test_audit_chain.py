@@ -1,4 +1,4 @@
-"""The hash-chained audit log (docs/mvp/PACK.md §4.1, §8): every audit row, whoever writes it, gets a
+"""The hash-chained audit log: every audit row, whoever writes it, gets a
 chain row in commit order; concurrent writers stay contiguous, a stale REPEATABLE READ writer fails; the
 stored text is the same in every TimeZone, and ``ds audit verify`` agrees with it in each; 009 chains
 the rows already written."""

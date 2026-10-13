@@ -1,4 +1,4 @@
-"""The benchmark harness for real (docs/mvp/BENCHMARK.md §13): its own throwaway postgres:16-alpine (the local
+"""The benchmark harness for real: its own throwaway postgres:16-alpine (the local
 image, never pulled), or the test server under --server, and the checkout's ds. ``pg_server`` gates Docker:
 these skip without it, and fail under DS_REQUIRE_DB=1. With DS_PERF=1 also the creation of a run whose key
 table holds a million keys."""

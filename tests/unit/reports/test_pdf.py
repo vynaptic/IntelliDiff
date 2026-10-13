@@ -1,5 +1,5 @@
 """The PDF run report: section order, trend, soak changes, masked findings and the AI annex; an ended
-cycle's labelled accuracy, in report.pdf and the P0 summary (docs/mvp/ACCURACY.md §10)."""
+cycle's labelled accuracy, in report.pdf and the P0 summary."""
 
 from __future__ import annotations
 
@@ -107,7 +107,7 @@ async def test_run_report_puts_root_causes_first_and_ai_text_in_its_annex(ctx: C
 
 
 async def test_a_cycle_s_report_says_what_the_schema_guard_recorded_through_it(ctx: Context) -> None:
-    """docs/mvp/PRECHECKS.md §11: one sentence in the title block, added up from the run's ``schema.drift``
+    """One sentence in the title block, added up from the run's ``schema.drift``
     audit rows of that cycle and the earlier ones: a cycle's report reads the same before and after a
     later cycle's change, and a run without such a row says nothing."""
     from deltasleuth.auth.principal import WORKER
@@ -170,7 +170,7 @@ async def test_a_sampled_cycle_s_report_says_whether_its_bounds_are_still_to_be_
     ctx: Context, tmp_path: Path
 ) -> None:
     """Live, its bounds are judged when the cycle ends; ended without a judgement (its judging raised), the
-    report and the P0 summary say so, and that it cannot be signed off (docs/mvp/SAMPLING.md §14)."""
+    report and the P0 summary say so, and that it cannot be signed off."""
     version = sampled()
     async with ctx.pool.connection() as conn:
         bob = await person(conn, "bob")
@@ -195,7 +195,7 @@ async def test_a_sampled_cycle_s_report_says_whether_its_bounds_are_still_to_be_
 async def test_an_ended_cycle_s_reports_state_its_labelled_accuracy_or_that_none_was_labelled(
     pack_ctx: Context, tmp_path: Path
 ) -> None:
-    """docs/mvp/ACCURACY.md §10 and §11's four report texts, in report.pdf and the P0 summary alike: a live
+    """The four report texts of labelled accuracy, in report.pdf and the P0 summary alike: a live
     cycle has no such section; an ended one says that nothing was measured, or prints its labelling whole
     with LIMITS: the newest labelled, a person's before a newer one no person labelled, and once its
     sign-off is requested the one that attests. Where the cycle has other labellings, its second line counts

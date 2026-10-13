@@ -1,4 +1,4 @@
-"""Canonical encodings (§8.1).
+"""Canonical encodings.
 
 ``canonical_json`` hashes normalised documents: sorted names, NFC strings, exact numbers
 (``1 == 1.0``, ``"1" != 1``); not RFC 8785, which forces doubles. ``exact_json`` keeps strings

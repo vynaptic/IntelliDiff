@@ -1,7 +1,7 @@
-"""Licence keys and entitlements (docs/mvp/LICENCE.md): a contractual control, not DRM.
+"""Licence keys and entitlements: a contractual control, not DRM.
 
 A vendor-signed file binds a customer, an order, a tier, a pair count and at most a year to one
-installation, the control-plane database 010 names (``parse``); ``install`` stores it in ds.licences.
+installation, the store's database that 010 names (``parse``); ``install`` stores it in ds.licences.
 Every decision reads the rows again and verifies them against the vendor keys this build embeds
 (``standing``, the pure ``judge``), so an install applies at once in every process, with no setting or
 secret. Without a licence the installation is an unlicensed evaluation: two pairs, and no runs under
@@ -11,7 +11,7 @@ exports, purge and audit never ask, and nothing calls out. The worker audits eac
 (``watch``). ``status`` is what ``GET /v1/licence`` and ``ds licence`` show, ``run_label`` and
 ``file_name`` what a run and its reports say of the licence it was made under.
 
-All of that holds in a build that embeds a vendor key. A build that embeds none is open (§19): its
+All of that holds in a build that embeds a vendor key. A build that embeds none is open: its
 standing is ``open``, which judges no row, counts no pair, refuses and warns of nothing and records
 nothing on a run; a key in ``VENDOR_KEYS`` brings the rest back.
 """
@@ -42,20 +42,19 @@ FIELDS = ("format", "licence", "customer", "order", "installation", "tier", "pai
           "issued", "key", "signature")  # fmt: skip
 TIERS = ("community", "pro", "enterprise")  # lowest first
 MAX_BYTES = 4096
-MAX_DAYS = 365  # ends at most this long after starts: a year of 366 days at most (D6)
-WARN_DAYS = 30  # a running licence is ending from this long before its ends (O3)
-GRACE_DAYS = 30  # after its ends, everything works, with warnings (O3)
+MAX_DAYS = 365  # ends at most this long after starts: a year of 366 days at most
+WARN_DAYS = 30  # a running licence is ending from this long before its ends
+GRACE_DAYS = 30  # after its ends, everything works, with warnings
 EVALUATION_PAIRS = 2
-CLOCK_SLACK = timedelta(minutes=5)  # the newest run ahead of now by more: the clock went back (D7)
-LICENCE_PAUSE = "run_paused_licence"  # a soak's boundary paused it: its resume needs the licence (§8)
-OPEN = "open"  # the standing's state in a build that embeds no vendor key: nothing is enforced (§19)
-DOCS = "docs/mvp/LICENCE.md"
+CLOCK_SLACK = timedelta(minutes=5)  # the newest run ahead of now by more: the clock went back
+LICENCE_PAUSE = "run_paused_licence"  # a soak's boundary paused it: its resume needs the licence
+OPEN = "open"  # the standing's state in a build that embeds no vendor key: nothing is enforced
 # The vendor's public keys (PEM, SPKI, P-256), exactly the trusted ones tests/fixtures/vendor-keys.txt
-# lists: none in an open build, which enforces no licence (§19).
+# lists: none in an open build, which enforces no licence.
 SHIPPED_KEYS: tuple[bytes, ...] = ()
 VENDOR_KEYS = SHIPPED_KEYS  # the only trust root, read at each call: licence tests set their own key
 # The fingerprints of the keys a release stopped trusting after a compromise, each with that day, exactly
-# the removed ones vendor-keys.txt lists (§4): a row one signed grants nothing and is not warned of.
+# the removed ones vendor-keys.txt lists: a row one signed grants nothing and is not warned of.
 REMOVED_KEYS: dict[str, str] = {}
 _LICENCE_ID = re.compile(r"LI-[0-9A-Z]{26}")
 _INSTALLATION = re.compile(r"I-[0-9a-f]{16}")
@@ -71,12 +70,12 @@ _logged: set[str] = set()  # the store's problems already logged by this process
 
 
 class LicenceError(ValueError):
-    """A licence file or row refused by ``parse``, ``install`` or ``withdraw`` (§9 I1-I9, W1): nothing
-    is written, and the CLI exits 2."""
+    """A licence file or row refused by ``parse``, ``install`` or ``withdraw``: nothing is written, and
+    the CLI exits 2."""
 
 
 class LicenceRefused(Exception):  # neither ValueError nor LookupError: never a 422 or 404
-    """New work the licence does not allow (§9 M1-M8): the API answers 409, the CLI exits 2."""
+    """New work the licence does not allow: the API answers 409, the CLI exits 2."""
 
 
 @dataclass(frozen=True)
@@ -136,7 +135,7 @@ def _not(name: str, why: str) -> LicenceError:
 def normalise(data: bytes, name: str = "the file") -> str:
     """The licence text as stored: ``data`` without a leading BOM, each line's trailing CR and blanks,
     and empty lines, so that an e-mailed file verifies (no value ends with a blank, so no signed byte
-    is lost). LicenceError (I2) past 4096 bytes or for text that is not UTF-8."""
+    is lost). LicenceError past 4096 bytes or for text that is not UTF-8."""
     if len(data) > MAX_BYTES:
         raise _not(name, f"over {MAX_BYTES} bytes")
     try:
@@ -173,8 +172,8 @@ def _base64(value: str) -> bytes | None:
 
 
 def _read(text: str, name: str) -> Licence:
-    """The licence a normalised text holds, its signature unchecked: LicenceError I3 for a later
-    format, I2 for anything but exactly §3's twelve lines."""
+    """The licence a normalised text holds, its signature unchecked: LicenceError for a later format,
+    and for anything but exactly the twelve lines of ``FIELDS``."""
     lines = text.split("\n")[:-1]
     found = _FORMAT_LINE.fullmatch(lines[0]) if lines else None
     if found is None:
@@ -225,14 +224,12 @@ def _read(text: str, name: str) -> Licence:
 
 def parse(data: bytes, keys: Sequence[bytes] | None = None, *, name: str = "the file") -> Licence:
     """The licence in ``data`` (a file as received, ``name`` in messages), verified against ``keys``
-    (default ``VENDOR_KEYS``), checking in order (§3): a trusted key exists (I1: an open build has none,
-    §19); the format line (I3, else I2); the grammar (I2); its key is trusted (I4); its signature
-    verifies (I5). LicenceError otherwise, echoing only accepted values."""
+    (default ``VENDOR_KEYS``), checking in order: a trusted key exists (an open build has none); the
+    format line; the grammar; its key is trusted; its signature verifies. LicenceError otherwise, echoing
+    only accepted values."""
     keys = VENDOR_KEYS if keys is None else keys
     if not keys:
-        raise LicenceError(
-            f"this build embeds no vendor key: it needs no licence and can verify none ({DOCS} §19)"
-        )
+        raise LicenceError("this build embeds no vendor key: it needs no licence and can verify none")
     found = _read(normalise(data, name), name)
     trusted = {signing.fingerprint(pem): pem for pem in keys}
     key = f"{found.key[:12]}…"
@@ -270,7 +267,7 @@ def _verdict(text: str, keys: tuple[bytes, ...], installation_id: str | None) ->
 
 
 def _retired(text: str) -> str | None:
-    """Why a stored text grants nothing when a release removed its key after a compromise (§4): its
+    """Why a stored text grants nothing when a release removed its key after a compromise: its
     reissue replaces it, so it is logged, not warned of; None for any other text."""
     try:
         key = _read(text, "its text").key
@@ -303,7 +300,7 @@ def _list(names: Sequence[str], last: str = ", ") -> str:
 
 @dataclass(frozen=True)
 class Standing:
-    """What the installation may do now (§6), as ``judge`` found it, with the pairs counted in its
+    """What the installation may do now, as ``judge`` found it, with the pairs counted in its
     window (``standing``)."""
 
     installation_id: str | None
@@ -312,7 +309,7 @@ class Standing:
     licence: Licence | None  # the licence named; None in evaluation and in an open build
     renewal: Licence | None = None  # the one in force the day after the running licence ends
     pending: tuple[Licence, ...] = ()  # those that apply from a later day, but a renewal warned of or silent
-    sso: bool = False  # the installation runs SSO: this process, or its server's last start (D4)
+    sso: bool = False  # the installation runs SSO: this process, or its server's last start
     oidc: bool = False  # this process is in oidc mode
     packs: bool = False  # evidence packs are configured: here, or at the server's last start
     clock_behind: timedelta | None = None  # how far the newest run is ahead of now, past 5 minutes
@@ -345,7 +342,7 @@ class Standing:
 
     @property
     def seats(self) -> list[str]:
-        """The pairs that run: the first ``limit`` counted (D5)."""
+        """The pairs that run: the first ``limit`` counted."""
         return self.names if self.limit is None else self.names[: self.limit]
 
     @property
@@ -359,8 +356,8 @@ class Standing:
         return self.sso and not self.enterprise
 
     def record(self) -> dict[str, Any] | None:
-        """A new run's ``params["licence"]`` (§10): never the customer; None in an open build, whose runs
-        carry no record and so no label (§19)."""
+        """A new run's ``params["licence"]``: never the customer; None in an open build, whose runs
+        carry no record and so no label."""
         if self.state == OPEN:
             return None
         found = self.licence
@@ -373,7 +370,7 @@ class Standing:
         return record | ({"clock_behind": True} if self.clock_behind else {})
 
     def detail(self) -> dict[str, Any]:
-        """What ``system.start`` records of it (§11): ``pairs`` is the limit, None when unlimited."""
+        """What ``system.start`` records of it: ``pairs`` is the limit, None when unlimited."""
         found = self.licence
         return {
             "installation_id": self.installation_id, "state": self.state,
@@ -382,7 +379,7 @@ class Standing:
         }  # fmt: skip
 
     def allows(self) -> dict[str, bool]:
-        """What ``GET /v1/licence`` says it allows (§12): new runs, runs under SSO, sign-off and packs."""
+        """What ``GET /v1/licence`` says it allows: new runs, runs under SSO, sign-off and packs."""
         return {
             "runs": self.refusal("run") is None,
             "sso": self.enterprise and self.state != "expired",
@@ -396,8 +393,10 @@ class Standing:
         return f"licence {self.licence.licence_id} is {self.licence.tier}"
 
     def refusal(self, feature: str) -> str | None:
-        """Why the licence refuses ``feature`` (§6): ``run`` (a creation, a compare, a soak's next cycle, a
-        resume from a licence pause) M4 or M5, ``signoff`` M6, ``packs`` M4 or M7; None when it allows it."""
+        """Why the licence refuses ``feature``: ``run`` (a creation, a compare, a soak's next cycle, a
+        resume from a licence pause) when it has expired or SSO needs an Enterprise licence, ``signoff``
+        without an Enterprise licence, ``packs`` when it has expired or without one; None when it allows
+        it."""
         found, whose = self.licence, self._whose()
         if feature == "signoff":
             if self.enterprise:
@@ -407,7 +406,7 @@ class Standing:
                     f"four-eyes sign-off is an Enterprise feature and {whose}: install an Enterprise licence"
                     f" for installation {self.installation_id}"
                 )
-            return f"four-eyes sign-off is an Enterprise feature and {whose} ({DOCS} §6)"
+            return f"four-eyes sign-off is an Enterprise feature and {whose}"
         if self.state == "expired":
             assert found is not None
             return (
@@ -415,7 +414,7 @@ class Standing:
                 f" {found.ends + timedelta(days=GRACE_DAYS)}: new runs, compares, soak cycles and evidence"
                 f" packs are refused until a renewed licence is installed {_INSTALL}; reads, reports,"
                 " exports, holds, erasure, purge, audit, pack downloads and sign-offs under an Enterprise"
-                f" licence keep working ({DOCS} §6)"
+                " licence keep working"
             )
         if feature == "run":
             if not self.sso_fenced:
@@ -424,7 +423,7 @@ class Standing:
             text = (
                 f"SSO (auth.oidc) is an Enterprise feature and {whose}: under SSO this installation keeps"
                 " serving sign-in, reads, reports, exports, pack downloads and administration, and new runs,"
-                f" compares and soak cycles need an Enterprise licence {_INSTALL}{tail} ({DOCS} §6)"
+                f" compares and soak cycles need an Enterprise licence {_INSTALL}{tail}"
             )
             return text if self.oidc else f"{text} (this installation's server last started in oidc mode)"
         if feature == "packs":
@@ -439,7 +438,7 @@ class Standing:
         raise ValueError(f"unknown licensed feature {feature!r}")
 
     def unseated(self, name: str) -> str | None:
-        """M3 when the licence counts pairs and ``name`` holds no seat; else None."""
+        """The refusal when the licence counts pairs and ``name`` holds no seat; else None."""
         if self.limit is None or name in self.seats:
             return None
         seats, found = _list(self.seats), self.licence
@@ -447,19 +446,19 @@ class Standing:
             return (
                 f"spec {name} is not one of the {EVALUATION_PAIRS} pairs an unlicensed evaluation runs"
                 f" ({seats}): its cycles under way end, and a new run or cycle needs a licence for"
-                f" installation {self.installation_id} ({DOCS} §7)"
+                f" installation {self.installation_id}"
             )
         return (
             f"spec {name} is not one of the {self.limit} pairs {found.named()} seats since {found.starts}"
             f" ({seats}): its cycles under way end, and a new run or cycle needs a licence with more pairs"
-            f" ({DOCS} §7)"
         )
 
     def paused(self, name: str) -> tuple[str, dict[str, Any]] | None:
-        """Why a soak of ``name`` starts its next cycle paused (§8), M4 or M5, else M3, and what its
-        ``paused`` row records of it: the run's record and the refusal, ``expired`` (M4), ``sso`` (M5) or
-        ``unseated`` (M3, with the pairs counted, the limit and the window's ``since``), as data: never the
-        message, whose numbers and names a pack's raw-value gate would read as keys. None: it goes on."""
+        """Why a soak of ``name`` starts its next cycle paused (the licence expired or SSO needs an
+        Enterprise one, else the name holds no seat), and what its ``paused`` row records of it: the run's
+        record and the refusal, ``expired``, ``sso`` or ``unseated`` (with the pairs counted, the limit and
+        the window's ``since``), as data: never the message, whose numbers and names a pack's raw-value
+        gate would read as keys. None: it goes on."""
         record = self.record() or {}  # an open build pauses none
         if (why := self.refusal("run")) is not None:
             return why, record | {"refusal": "expired" if self.state == "expired" else "sso"}
@@ -470,17 +469,17 @@ class Standing:
         return why, record | {"refusal": "unseated"} | counted
 
     def full(self, name: str) -> str:
-        """M1, or M2 in evaluation: ``name`` would be a new pair past the limit."""
+        """The refusal, a licence's or an evaluation's: ``name`` would be a new pair past the limit."""
         seats, found = _list(self.seats), self.licence
         if found is None:
             return (
                 f"spec {name} would be a third pair: an unlicensed evaluation runs {EVALUATION_PAIRS} pairs"
-                f" ({seats}); install a licence for installation {self.installation_id} ({DOCS} §7)"
+                f" ({seats}); install a licence for installation {self.installation_id}"
             )
         return (
             f"spec {name} would be pair {len(self.counted) + 1} of {self.limit} under {found.named()}: its"
             f" seats since {found.starts} are {seats}, whose runs go ahead; a new pair needs a licence with"
-            f" more pairs ({DOCS} §7)"
+            " more pairs"
         )
 
     @property
@@ -496,7 +495,7 @@ class Standing:
         ]
 
     def warnings(self) -> list[str]:
-        """What every screen and ``ds serve``, ``worker``, ``run`` and ``compare`` warn of (§10): nothing
+        """What every screen and ``ds serve``, ``worker``, ``run`` and ``compare`` warn of: nothing
         in an open build."""
         if self.state == OPEN:
             return []
@@ -525,7 +524,7 @@ class Standing:
                 f" {found.ends + timedelta(days=GRACE_DAYS)}, then new runs and evidence packs stop; install"
                 f" its renewal {_INSTALL}"
             )
-        if (refused := self.refusal("run")) is not None:  # M4, else M5
+        if (refused := self.refusal("run")) is not None:  # expired, else SSO without Enterprise
             lines.append(refused)
         if found is not None and found.pairs is not None and self.state != "expired":
             counted = len(self.counted)
@@ -547,12 +546,12 @@ class Standing:
 
 def judge(facts: Mapping[str, Any], now: datetime, auth_mode: str, *, packs: bool = False) -> Standing:
     """The standing ``facts`` (``repo.licence_facts``) give at ``now`` for a process in ``auth_mode``,
-    ``packs`` when it has evidence packs configured (§5, §6), its pairs not yet counted. A stored row
+    ``packs`` when it has evidence packs configured, its pairs not yet counted. A stored row
     counts when it verifies against ``VENDOR_KEYS``, names this installation and was not withdrawn
     before its starts; one signed by a key in ``REMOVED_KEYS`` is ``retired``, the others ``uncounted``.
     The licence named is the one running (the latest starting, then issued), else the one in its grace
     (the latest ending, then issued), else the one ended latest; else none: an evaluation. Without a
-    vendor key the standing is open and no row is read (§19)."""
+    vendor key the standing is open and no row is read."""
     installation_id, today = facts["installation_id"], now.astimezone(UTC).date()
     if not VENDOR_KEYS:
         return Standing(installation_id, now, OPEN, None, rows=tuple(facts["rows"]))
@@ -607,10 +606,10 @@ def judge(facts: Mapping[str, Any], now: datetime, auth_mode: str, *, packs: boo
 
 
 async def standing(ctx: Context, conn: repo.Conn, *, at: datetime | None = None) -> Standing:
-    """The installation's standing now, as each decision reads it (§5), or as of ``at`` when that is later
-    (a soak's cycle, judged as of when it falls due, §8), with its window's pairs; each stored row that
+    """The installation's standing now, as each decision reads it, or as of ``at`` when that is later
+    (a soak's cycle, judged as of when it falls due), with its window's pairs; each stored row that
     grants nothing, and each install whose row is missing, logged once (a retired row at INFO). An open
-    build's counts no pair (§19)."""
+    build's counts no pair."""
     facts = await repo.licence_facts(conn)
     now = facts["now"] if at is None else max(facts["now"], at)
     judged = judge(facts, now, ctx.settings.auth_mode, packs=ctx.settings.packs is not None)
@@ -658,13 +657,13 @@ def _falls_due(current: Standing, at: datetime | None) -> str:
 async def admit(
     ctx: Context, conn: repo.Conn, spec: CompiledSpec, *, lock: bool = False
 ) -> tuple[dict[str, Any] | None, tuple[str, dict[str, Any]] | None]:
-    """Whether a new run of ``spec`` may start (§7), as ``approvals.gate`` decides its approval: the run's
+    """Whether a new run of ``spec`` may start, as ``approvals.gate`` decides its approval: the run's
     ``params["licence"]`` record and, for a new pair, its ``licence.pair`` audit row, ``(object, {since,
     name, count, limit, targets})``, the caller adding ``run_id`` (None for a seated name, or when the
-    pairs are unlimited). LicenceRefused: M4 or M5; M3 for a counted name without a seat; M1 (M2 in
-    evaluation) for a new name once ``limit`` names are counted. With ``lock`` (in the transaction that
-    inserts the run), a new name recounts under the pair lock, so two new names at the limit give one run
-    and one M1. An open build admits every name with neither a record nor a row (§19)."""
+    pairs are unlimited). LicenceRefused: when ``need`` refuses a run; for a counted name without a seat;
+    for a new name once ``limit`` names are counted. With ``lock`` (in the transaction that inserts the
+    run), a new name recounts under the pair lock, so two new names at the limit give one run and one
+    refusal. An open build admits every name with neither a record nor a row."""
     current = await need(ctx, conn, "run")
     name, limit = spec.name, current.limit
     if limit is None or name in current.seats:
@@ -689,9 +688,9 @@ async def admit(
 async def stopped(
     ctx: Context, run: Mapping[str, Any], spec: CompiledSpec, at: datetime
 ) -> dict[str, Any] | None:
-    """Whether a soak's next cycle, due at ``at``, starts paused at its boundary (§8), judged as of then
+    """Whether a soak's next cycle, due at ``at``, starts paused at its boundary, judged as of then
     (now, if later), as ``StopConditions.at_boundary`` judges ``until``: its ``paused`` row's ``licence``
-    (``Standing.paused``: M4 or M5, else M3 when its name holds no seat), the message logged; None when it
+    (``Standing.paused``: a refused run, else a name that holds no seat), the message logged; None when it
     goes on, never counted. Any failure but an unreachable store's is logged and lets the soak go on: the
     sweep would otherwise fail a live soak."""
     try:
@@ -714,9 +713,9 @@ async def stopped(
 
 
 def pack_problems(current: Standing, run: Mapping[str, Any]) -> list[str]:
-    """Why the licence gives the run's cycles no evidence pack (§6): M4 or M7, and M8 for a run made in
-    evaluation, whose label no certificate may contradict (D8), in an open build too (§19); a run without
-    a record is judged by the licence now."""
+    """Why the licence gives the run's cycles no evidence pack: that it has expired or is not Enterprise,
+    and that the run was made in evaluation, whose label no certificate may contradict (in an open build
+    too); a run without a record is judged by the licence now."""
     found = [why] if (why := current.refusal("packs")) is not None else []
     record = run["params"].get("licence")
     if record is not None and record["state"] == "evaluation":
@@ -729,8 +728,8 @@ def pack_problems(current: Standing, run: Mapping[str, Any]) -> list[str]:
 
 async def watch(ctx: Context) -> None:
     """Audit ``licence.state`` as ``system:worker`` when the installation's state or licence differs from
-    the newest such row's (§11): the SIEM's alert 30 days ahead, at the end, after the grace, and the
-    one row that says a build is open (§19). Never raises: a failure is logged."""
+    the newest such row's: the SIEM's alert 30 days ahead, at the end, after the grace, and the
+    one row that says a build is open. Never raises: a failure is logged."""
     try:
         async with repo.audited(ctx.pool) as (conn, audit):
             current, last = await standing(ctx, conn), await repo.last_audit(conn, "licence.state")
@@ -747,11 +746,11 @@ async def watch(ctx: Context) -> None:
 
 
 async def install(ctx: Context, data: bytes, *, who: Principal, name: str = "the file") -> dict[str, Any]:
-    """Install the licence in ``data`` as ``who`` (§5): ``parse`` (I1-I5); then, in one transaction under
-    the pair lock, for this installation (I6) and not past its grace (I7), a licence withdrawn (I9) or
-    installed with other content (I8) is refused, the same one installed already writes nothing
-    (``installed`` false), else it is stored and ``licence.install`` audited last. Returns ``{licence,
-    installed, applies, before, after}``, the standings before and after."""
+    """Install the licence in ``data`` as ``who``: ``parse``; then, in one transaction under the pair lock,
+    for this installation and not past its grace, a licence withdrawn or installed with other content is
+    refused, the same one installed already writes nothing (``installed`` false), else it is stored and
+    ``licence.install`` audited last. Returns ``{licence, installed, applies, before, after}``, the
+    standings before and after."""
     found = parse(data, name=name)
     async with repo.audited(ctx.pool) as (conn, audit):
         await repo.lock_pairs(conn)  # installs serialise, and take it before the audit lock as runs do
@@ -796,8 +795,8 @@ async def install(ctx: Context, data: bytes, *, who: Principal, name: str = "the
 
 
 async def withdraw(ctx: Context, licence_id: str, reason: str, *, who: Principal) -> dict[str, Any]:
-    """Withdraw an installed licence whose starts has not come (§5, D9) as ``who``, once, as of the
-    database's now(), and audit ``licence.withdraw``; LicenceError otherwise (W1 for a started one). A
+    """Withdraw an installed licence whose starts has not come as ``who``, once, as of the
+    database's now(), and audit ``licence.withdraw``; LicenceError otherwise (a started one is refused). A
     started licence is only replaced, so no withdrawal returns an installation to evaluation."""
     if not (1 <= len(reason) <= 200 and printable(reason)):
         raise LicenceError("--reason must be 1 to 200 characters without control characters")
@@ -814,14 +813,14 @@ async def withdraw(ctx: Context, licence_id: str, reason: str, *, who: Principal
         if row["withdrawn_at"] >= datetime.combine(starts, time(), UTC):  # raising rolls it back
             raise LicenceError(
                 f"licence {licence_id} started on {starts}: a started licence is replaced by a new one, not"
-                f" withdrawn ({DOCS} §5)"
+                " withdrawn"
             )
         await audit(who, "licence.withdraw", licence_id, {"reason": reason})
     return row
 
 
 def run_label(run: Mapping[str, Any]) -> str | None:
-    """What ``ds runs``, the Run screen and report.pdf say of the licence a run was made under (§10), from
+    """What ``ds runs``, the Run screen and report.pdf say of the licence a run was made under, from
     its ``params["licence"]``; None for a run without a record (before 010, or an older build's)."""
     record, run_id = run["params"].get("licence"), run["run_id"]
     if record is None:
@@ -845,7 +844,7 @@ def run_label(run: Mapping[str, Any]) -> str | None:
 
 def file_name(run: Mapping[str, Any], name: str) -> str:
     """The name a run's report ``name`` downloads and is written as: ``R-…-<name>``, or
-    ``R-…-unlicensed-evaluation-<name>`` for a run made in evaluation (§10)."""
+    ``R-…-unlicensed-evaluation-<name>`` for a run made in evaluation."""
     record = run["params"].get("licence")
     evaluation = record is not None and record["state"] == "evaluation"
     return f"{run['run_id']}-unlicensed-evaluation-{name}" if evaluation else f"{run['run_id']}-{name}"
@@ -873,7 +872,8 @@ def _shown(found: Licence | None) -> dict[str, Any] | None:
 
 def _installed(current: Standing, row: repo.Row) -> dict[str, Any]:
     """A stored licence as ``GET /v1/licence`` lists it: its dates and tier when it verifies, who installed
-    or withdrew it, whether it is in force and, if it grants nothing, why (in an open build, I1)."""
+    or withdrew it, whether it is in force and, if it grants nothing, why (in an open build, that it
+    embeds no vendor key)."""
     found = _verdict(row["text"], tuple(VENDOR_KEYS), current.installation_id)
     read = found if isinstance(found, Licence) else None
     named, licence_id = current.licence, row["licence_id"]
@@ -890,7 +890,7 @@ def _installed(current: Standing, row: repo.Row) -> dict[str, Any]:
 
 
 async def status(ctx: Context) -> dict[str, Any]:
-    """``GET /v1/licence``'s body, which ``ds licence`` prints (§12): the installation, its state and
+    """``GET /v1/licence``'s body, which ``ds licence`` prints: the installation, its state and
     warnings, the licence named and its renewal, what it allows, the pairs counted in its window with their
     seats and targets, and each stored licence. Never raises: ``state: unknown`` when the standing cannot
     be read, the failure logged, so that no read depends on the licence."""

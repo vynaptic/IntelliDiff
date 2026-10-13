@@ -1,4 +1,4 @@
-"""``ds mcp`` in a process of its own (docs/mvp/MCP.md §5.2, §12): over a store whose migrations are still
+"""``ds mcp`` in a process of its own: over a store whose migrations are still
 pending, its stdout holds the protocol's frames and nothing else, whatever the process and a child of it
 write, and its stderr another logger's name and level alone; it keeps one store connection while idle; it
 ends, exit 0, at the end of its input and at a SIGTERM; a SIGTERM also ends it once its serving has ended
@@ -154,7 +154,7 @@ async def test_stdout_holds_only_frames(make_stack: Any, repo_root: Path, pg_dsn
 
 
 async def test_a_sigterm_ends_it_as_the_end_of_input_does(make_stack: Any, repo_root: Path) -> None:
-    """§12: exit 0, and promptly, though the client has not closed the stream: the library's reader, a
+    """Exit 0, and promptly, though the client has not closed the stream: the library's reader, a
     thread waiting for a line, is not waited for."""
     process = await started(repo_root, make_stack(TARGETS, mcp=MCP).settings)
     try:
@@ -181,7 +181,7 @@ async def gone(process: asyncio.subprocess.Process, within: float) -> int | None
 async def test_a_sigterm_ends_it_once_its_serving_has_ended(
     make_stack: Any, repo_root: Path, ending: str
 ) -> None:
-    """§5.2: after an interrupt, and at the end of input while the client has not read its answers, the
+    """After an interrupt, and at the end of input while the client has not read its answers, the
     serving has ended but the process still waits to leave the library's transport, where nothing waits for
     a SIGTERM's event any more. The signal is without a handler by then, and ends the process."""
     process = await started(repo_root, make_stack(TARGETS, mcp=MCP).settings, INTERRUPTED)
@@ -206,7 +206,7 @@ async def test_a_sigterm_ends_it_once_its_serving_has_ended(
 
 
 async def test_a_second_sigterm_ends_it_while_its_stderr_is_unread(make_stack: Any, repo_root: Path) -> None:
-    """§5.2: a client is to read stderr or let ``ds mcp`` inherit its own. Behind one that does neither the
+    """A client is to read stderr or let ``ds mcp`` inherit its own. Behind one that does neither the
     pipe fills, the next log line blocks the loop, no call is answered and a SIGTERM's event is never set:
     the first SIGTERM leaves the signal without a handler, so the second ends the process."""
     unread, given = os.pipe()

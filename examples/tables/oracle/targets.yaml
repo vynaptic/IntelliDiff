@@ -1,6 +1,6 @@
-# The schema of seed.sql, on the Oracle server you will compare (docs/mvp/ENGINES.md §4; DEPLOY.md,
-# section 7). Both sides of spec.yaml read it. password_ref and tls_ca_ref are one-line files; a relative
-# reference resolves against this file, and secrets/ is git-ignored.
+# The schema of seed.sql, on the Oracle server you will compare. Both sides of spec.yaml read it.
+# password_ref and tls_ca_ref are one-line files; a relative reference resolves against this file, and
+# secrets/ is git-ignored.
 
 targets:
   kit-oracle:

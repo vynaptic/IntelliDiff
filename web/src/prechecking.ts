@@ -1,4 +1,4 @@
-/** What the Pre-checks screens build besides the API's own texts (docs/mvp/PRECHECKS.md §11): the body each form
+/** What the Pre-checks screens build besides the API's own texts: the body each form
  *  sends, the name a report or a draft is saved as, whether a pair can be drafted, a pre-check's pairs counted by
  *  status, the verdicts its filter offers in the API's words, a schema code's words and the list read over its
  *  pages. Every text of a pair, the totals, the

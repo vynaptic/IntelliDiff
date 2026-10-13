@@ -1,3 +1,3 @@
-# Your private CA on the release (DEPLOY section 11), built FROM deltasleuth:<version> after each load.
+# Your private CA on the release, built FROM deltasleuth:<version> after each load.
 x-ca: &ca {image: "deltasleuth:0.1.0.dev0-ca"}   # always the base file's tag plus -ca
 services: {app: *ca, mocks: *ca}

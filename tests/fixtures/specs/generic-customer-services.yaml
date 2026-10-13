@@ -1,5 +1,5 @@
 # DeltaSleuth ComparisonSpec: Customer Profile Service v1 (a) vs Customer Profile Service v2 (b).
-# Validates against docs/architecture/spec.schema.json.
+# Validates against deltasleuth/core/spec/spec.schema.json.
 #
 # A generic REST-vs-REST parity check with no domain pack: nothing here is specific to entity linking
 # or graphs. It compares nested objects and keyed, composite-keyed, ordered and set

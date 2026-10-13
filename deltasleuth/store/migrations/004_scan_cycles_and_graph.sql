@@ -1,4 +1,4 @@
--- Scans per cycle (docs/mvp/TABLES.md §11): a soak over two tables scans them every cycle, and a report
+-- Scans per cycle: a soak over two tables scans them every cycle, and a report
 -- of an ended cycle counts that cycle's identical keys. state.after holds the raw key the scan resumes
 -- after: like run_keys.key it is for fetching only, never displayed.
 CREATE TABLE ds.scans (
@@ -10,7 +10,7 @@ CREATE TABLE ds.scans (
 INSERT INTO ds.scans (run_id, cycle, state) SELECT run_id, cycle, scan FROM ds.runs WHERE scan IS NOT NULL;
 ALTER TABLE ds.runs DROP COLUMN scan;
 
--- Bulk graph parity (docs/mvp/GRAPH.md §4): the groups whose members differ and the components that
+-- Bulk graph parity: the groups whose members differ and the components that
 -- split or merge, one row each, masked like every other output.
 CREATE TABLE ds.graph_diffs (
     run_id  text NOT NULL REFERENCES ds.runs ON DELETE CASCADE,

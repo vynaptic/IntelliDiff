@@ -1,4 +1,4 @@
-"""Schedules as people declare, see and steer them (docs/mvp/SCHEDULES.md §3, §6, §9, §10): a stored spec,
+"""Schedules as people declare, see and steer them: a stored spec,
 pinned or followed by name, what a run of it takes but keys, a cron expression, a time zone and a start
 window. The API and the CLI call this module; only the worker fires (``runner.schedule``).
 
@@ -32,7 +32,7 @@ LIMIT = 200  # schedules an installation holds, the deleted aside
 START_WITHIN = 60  # minutes after its time a run may still start, unless the schedule says
 OVERDUE_MIN = 10  # minutes past its time a schedule is not settled: is a worker that fires running?
 UPCOMING, FIRINGS, PREVIEW = 5, 20, 10  # the times and firings a schedule's detail lists; a preview's times
-NOT = (  # N1 to N7 (§2)
+NOT = (  # what a schedule is not
     "A firing starts a run and is not a completed run: the run's status says how it ended.",
     "Next due is a schedule, not a forecast.",
     "No person is named as a firing's actor: the worker starts a schedule's runs.",
@@ -57,7 +57,7 @@ _LAST = datetime.max.replace(tzinfo=UTC) - timedelta(days=1)  # an ends_at is be
 
 
 class Refused(ValueError):
-    """A schedule write refused (docs/mvp/SCHEDULES.md §9): its HTTP status and binding message."""
+    """A schedule write refused: its HTTP status and binding message."""
 
     def __init__(self, status: int, message: str) -> None:
         super().__init__(message)
@@ -75,7 +75,7 @@ def missed(
     next: datetime | None = None,
     **facts: Any,
 ) -> dict[str, Any]:
-    """A ``schedule.missed`` row's detail (§11) for the schedule ``row``: the closed reason and code, the
+    """A ``schedule.missed`` row's detail for the schedule ``row``: the closed reason and code, the
     time not started (``due``; a range's first, with its last, ``to``, and how many, ``count``), what rules
     match (the spec's name and the mode), the ids ``facts`` name (``run_id``, ``draw_id``) or an exception's
     type (``error_type``), the time due next, and what its text is built from (``line``): the zone, the
@@ -96,7 +96,7 @@ def missed(
 def settle_due(
     row: Mapping[str, Any], now: datetime, code: str, next: datetime | None = None
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, datetime | None]:
-    """What a person's write settles of the locked schedule ``row`` (§3): the details it chains before its
+    """What a person's write settles of the locked schedule ``row``: the details it chains before its
     own audit row (a pending ``held`` range, then every due time at or before ``now`` as one ``superseded``
     row of ``code``, counted unless the stored cron or zone does not load), what the row's ``last`` becomes
     (None: nothing was due) and the last time so settled, its anchor."""
@@ -115,7 +115,7 @@ def settle_due(
     return [*chained, detail], detail | {"outcome": "missed"}, times[-1] if times else None
 
 
-# -- what every surface shows (§9, §10) -----------------------------------------------------------------
+# -- what every surface shows -----------------------------------------------------------------
 
 
 def _local(at: datetime, time_zone: str) -> str | None:
@@ -139,7 +139,7 @@ def _span(seconds: float) -> str:
 
 
 def line(outcome: str, detail: Mapping[str, Any], *, at: datetime | None = None, held: bool = False) -> str:
-    """A firing's text (§9), the only builder: what the ``detail`` of a ``schedule.fire``, ``.missed`` or
+    """A firing's text, the only builder: what the ``detail`` of a ``schedule.fire``, ``.missed`` or
     ``.rezone`` row says (``outcome``: fire, missed or rezone; ``at``: when the row was written; ``held``: a
     standing refusal's range not yet chained), or what a run says of the schedule that started it
     (``outcome`` run, ``detail`` its ``of_run``). Ids, times, zone names and closed codes only."""
@@ -219,7 +219,7 @@ def line(outcome: str, detail: Mapping[str, Any], *, at: datetime | None = None,
             why = "a live sampled run samples its population"
         case "sample", _:
             why = "the sample's rules refused the run"
-        case "not_started", str():  # FILES.md §12, F11
+        case "not_started", str():
             # ds target check lists the files and says whether they are settled; it reads no stamp file,
             # takes no maxAge and plans nothing, so for those codes a run's creation is what says the cause.
             shown = "starting a run on the Runs screen shows the cause"
@@ -237,7 +237,7 @@ def line(outcome: str, detail: Mapping[str, Any], *, at: datetime | None = None,
 
 
 def item(row: Mapping[str, Any]) -> dict[str, Any]:
-    """A schedule as every surface shows it (§10), from its ``repo.get_schedule`` row alone: what a firing
+    """A schedule as every surface shows it, from its ``repo.get_schedule`` row alone: what a firing
     would run now (``runs``), the stored version past its pin (``newer``), its next due time in UTC and on
     its zone's clock, whether that is over ``OVERDUE_MIN`` minutes ago and not settled (``overdue``),
     whether the database's clock is behind what it settled (``clock_behind``), its newest firing with its
@@ -261,7 +261,7 @@ def item(row: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def banners(items: Sequence[Mapping[str, Any]]) -> list[str]:
-    """What the Schedules screen says over a page's ``items`` (§9): each schedule due and not settled, each
+    """What the Schedules screen says over a page's ``items``: each schedule due and not settled, each
     the worker paused, each pinned behind a stored version, and each the database's clock is behind."""
     lines = []
     for found in items:
@@ -325,7 +325,7 @@ def zones() -> dict[str, Any]:
 
 def _noted(text: str, time_zone: str, now: datetime) -> list[str]:
     """What a save warns of and a preview notes besides the times: a zone whose name holds a digit, which
-    costs the schedule's runs their evidence pack under some key patterns (§7), and each clock change."""
+    costs the schedule's runs their evidence pack under some key patterns, and each clock change."""
     numbered = []
     if any(char.isdigit() for char in time_zone):
         numbered.append(
@@ -337,7 +337,7 @@ def _noted(text: str, time_zone: str, now: datetime) -> list[str]:
 
 def preview(text: str, time_zone: str, now: datetime, count: int = PREVIEW) -> dict[str, Any]:
     """``POST /v1/schedules/preview`` and ``ds schedules next``: the cron's next ``count`` times after
-    ``now`` in the zone and each note (``_noted``); refused with C1 to C9, Z1 or Z2. Writes nothing."""
+    ``now`` in the zone and each note (``_noted``); refused as ``cron.CronError`` words it. Writes nothing."""
     try:
         text = cron.parse(text).text
         cron.zone(time_zone)
@@ -352,7 +352,7 @@ def preview(text: str, time_zone: str, now: datetime, count: int = PREVIEW) -> d
 
 
 async def _found(conn: repo.Conn, ident: str) -> repo.Row:
-    """The schedule of that id or live name, a tombstone too; refused (S11) when there is none."""
+    """The schedule of that id or live name, a tombstone too; refused when there is none."""
     row = await repo.get_schedule(conn, ident)
     if row is None:
         raise Refused(404, f"schedule {ident} not found")
@@ -360,7 +360,7 @@ async def _found(conn: repo.Conn, ident: str) -> repo.Row:
 
 
 async def _gate(ctx: Context, conn: repo.Conn, row: Mapping[str, Any]) -> dict[str, Any] | None:
-    """What the four-eyes gate says now of the version a firing would run (§6), read unlocked: the scopes
+    """What the four-eyes gate says now of the version a firing would run, read unlocked: the scopes
     it needs, the auth mode, its ``state`` (approved, not_needed or unapproved), the approval, and the
     ``refusal`` a firing would meet. None when no version is stored."""
     spec_id = row["runs_spec_id"]
@@ -405,7 +405,7 @@ async def described(ctx: Context, ident: str) -> dict[str, Any]:
         try:
             after = max(row["now"], row["anchor_at"])
             times = cron.upcoming(row["cron"], row["time_zone"], after, UPCOMING)
-        except cron.CronError:  # the worker pauses it (T6)
+        except cron.CronError:  # the worker pauses it
             times = []
     ends = row["ends_at"]
     upcoming = [_when(at, row["time_zone"]) for at in times if ends is None or at <= ends]
@@ -429,7 +429,7 @@ async def firings(
 
 
 async def of_run(conn: repo.Conn, run: Mapping[str, Any]) -> dict[str, Any] | None:
-    """A run's ``schedule`` (§10): the schedule that started it, the due time it was started for, in the
+    """A run's ``schedule``: the schedule that started it, the due time it was started for, in the
     zone in force at the firing, how many seconds after it the run was created, and its text. None for a
     run no schedule started."""
     fired = run["params"].get("schedule")
@@ -444,12 +444,12 @@ async def of_run(conn: repo.Conn, run: Mapping[str, Any]) -> dict[str, Any] | No
     return found | {"text": line("run", found)}
 
 
-# -- the writes (§3): each one audited transaction ------------------------------------------------------
+# -- the writes: each one audited transaction ------------------------------------------------------
 
 
 def _ends(value: Any, now: datetime) -> datetime | None:
-    """S9: an optional instant with an offset, later than ``now``, that the store holds: one whose time
-    in UTC, or in the store's own zone, is past the year 9999 is none."""
+    """``ends_at``: an optional instant with an offset, later than ``now``, that the store holds: one whose
+    time in UTC, or in the store's own zone, is past the year 9999 is none."""
     if value is None:
         return None
     try:
@@ -465,9 +465,9 @@ def _ends(value: Any, now: datetime) -> datetime | None:
 async def _checked(
     ctx: Context, conn: repo.Conn, body: Mapping[str, Any], now: datetime
 ) -> tuple[dict[str, Any], list[str]]:
-    """The schedule ``body`` declares (§3: name, spec_id or spec_name, run, cron, time_zone, start_within,
-    ends_at) as it is stored, and the warnings of saving it (§9): the gate's, read unlocked, and each note
-    (``_noted``). Refused with S1 to S9, C1 to C9, Z1 or Z2."""
+    """The schedule ``body`` declares (name, spec_id or spec_name, run, cron, time_zone, start_within,
+    ends_at) as it is stored, and the warnings of saving it: the gate's, read unlocked, and each note
+    (``_noted``). A refusal is ``Refused``."""
     from deltasleuth.runner import runs, sample  # the runner's modules import this one
     from deltasleuth.runner.stop import StopConditions
 
@@ -543,7 +543,7 @@ async def _checked(
 
 
 def _next(schedule: Mapping[str, Any], anchor: datetime) -> datetime:
-    """The first time of the schedule after ``anchor``; refused (S9) when ``ends_at`` leaves none."""
+    """The first time of the schedule after ``anchor``; refused when ``ends_at`` leaves none."""
     at = cron.after(schedule["cron"], schedule["time_zone"], anchor, until=schedule["ends_at"])
     if at is None:
         raise Refused(422, _ended(schedule))
@@ -555,7 +555,7 @@ def _ended(schedule: Mapping[str, Any]) -> str:
 
 
 def _saved(row: Mapping[str, Any]) -> dict[str, Any]:
-    """What ``schedule.create`` and ``schedule.update`` record of the stored row (§11)."""
+    """What ``schedule.create`` and ``schedule.update`` record of the stored row."""
     ends_at, next_due = row["ends_at"], row["next_due"]
     return {name: row[name] for name in _SAVED} | {
         "ends_at": ends_at and cron.utc(ends_at),
@@ -565,13 +565,13 @@ def _saved(row: Mapping[str, Any]) -> dict[str, Any]:
 
 
 async def _taken(conn: repo.Conn, name: str) -> None:
-    """S2: a schedule not deleted holds ``name``."""
+    """Refuse a ``name`` that a schedule not deleted holds."""
     if (other := await repo.get_schedule(conn, name)) is not None:
         raise Refused(409, f"a schedule named {name} exists already ({other['schedule_id']})")
 
 
 async def _locked(conn: repo.Conn, ident: str) -> repo.Row:
-    """The schedule of that id or live name, its row locked until the transaction ends; refused (S11) when
+    """The schedule of that id or live name, its row locked until the transaction ends; refused when
     there is none, or it is deleted."""
     row = await repo.get_schedule(conn, ident, lock=True)
     if row is None:

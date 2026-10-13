@@ -1,6 +1,6 @@
 """kill -9 of a ``ds worker`` mid-run: another worker completes the run, and no result is lost or
 duplicated (a lost lease rolls its key back; an expired lease is leased again). Killed in the middle of a
-file side's scan, it leaves no file reader behind (docs/mvp/READER.md §15)."""
+file side's scan, it leaves no file reader behind."""
 
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ def _readers(parent: int) -> list[int]:
 async def test_a_worker_killed_mid_scan_leaves_no_reader(
     make_stack: Any, repo_root: Path, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    """READER §5, §10 (U34): kill -9 of a ``ds worker`` in the middle of a scan of two file sides. Its
+    """Kill -9 of a ``ds worker`` in the middle of a scan of two file sides. Its
     reader's input ended with it, so the reader is gone; the kernel freed its spill directory's lock, and
     the next sweep removes it. Another worker resumes the scan after its checkpoint, on a reader of its
     own, and nothing is counted twice."""

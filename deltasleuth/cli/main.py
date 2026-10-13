@@ -42,14 +42,14 @@ printed); 130 interrupted. Messages name files, pointers and counts, never keys,
 credentials.
 
 The CLI acts as ``local:<DS_OPERATOR>@<host>`` with every role, outside the role model: whoever holds
-the DSN file and the tokeniser key can reach the store directly (docs/mvp/AUTH.md §4.2). With the auth
+the DSN file and the tokeniser key can reach the store directly. With the auth
 settings, the commands that write audit rows need ``DS_OPERATOR``; without them it defaults to the OS
 account. It can neither request nor grant a four-eyes approval: under SSO ``ds run`` and ``ds compare``
-run only an approved upload of the spec file's content (docs/mvp/APPROVALS.md §4). ``serve``, ``worker``,
-``run`` and ``compare`` print the licence's warnings (docs/mvp/LICENCE.md §10: a vendor build's; a build
-without a vendor key needs no licence and has none to print, §19); ``serve``, ``worker`` and
-``run`` warn of a notification channel's unreadable secret (docs/mvp/ALERTS.md §10). ``ds mcp`` serves an
-agent as that principal cut to ``--role``, each tool call a request of its own (docs/mvp/MCP.md §6).
+run only an approved upload of the spec file's content. ``serve``, ``worker``,
+``run`` and ``compare`` print the licence's warnings (a vendor build's; a build
+without a vendor key needs no licence and has none to print); ``serve``, ``worker`` and
+``run`` warn of a notification channel's unreadable secret. ``ds mcp`` serves an
+agent as that principal cut to ``--role``, each tool call a request of its own.
 """
 
 from __future__ import annotations
@@ -134,12 +134,12 @@ app = typer.Typer(
     pretty_exceptions_enable=False,
 )
 spec_app = typer.Typer(no_args_is_help=True, help="Comparison specs.")
-token_app = typer.Typer(no_args_is_help=True, help="API tokens (docs/mvp/AUTH.md §5).")
+token_app = typer.Typer(no_args_is_help=True, help="API tokens.")
 session_app = typer.Typer(no_args_is_help=True, help="Sign-in sessions.")
 users_app = typer.Typer(invoke_without_command=True)
 auth_app = typer.Typer(no_args_is_help=True, help="Sign-in settings.")
 purge_app = typer.Typer(invoke_without_command=True)
-keys_app = typer.Typer(no_args_is_help=True, help="Encryption at rest (docs/mvp/RETENTION.md).")
+keys_app = typer.Typer(no_args_is_help=True, help="Encryption at rest.")
 approvals_app = typer.Typer(invoke_without_command=True)
 audit_app = typer.Typer(invoke_without_command=True)
 packs_app = typer.Typer(invoke_without_command=True)
@@ -151,7 +151,7 @@ schedules_app = typer.Typer(invoke_without_command=True)
 precheck_app = typer.Typer(invoke_without_command=True)
 target_app = typer.Typer(
     no_args_is_help=True,
-    help="Database and files targets: the pre-flight check (docs/mvp/ENGINES.md §13, FILES.md §16).",
+    help="Database and files targets: the pre-flight check.",
 )
 mcp_app = typer.Typer(invoke_without_command=True)
 app.add_typer(spec_app, name="spec")
@@ -260,7 +260,7 @@ def _read_keys(path: Path) -> list[str]:
 
 
 def _local(config: Path | None) -> Principal:
-    """The invocation's principal (docs/mvp/AUTH.md §4.2), before any work: with the auth settings
+    """The invocation's principal, before any work: with the auth settings
     ``DS_OPERATOR`` must name the operator."""
     with _errors():
         return local(required=load_settings(config).auth is not None)
@@ -283,7 +283,7 @@ class _Stream(logging.Handler):
 
 
 def _siem(stream: str = "stderr") -> None:
-    """Copy each audit row this process commits to ``stream`` as a JSON line, for the SIEM (§6): the
+    """Copy each audit row this process commits to ``stream`` as a JSON line, for the SIEM: the
     services' stdout, and a command's stderr, so that its stdout stays its output (a token, JSON). The
     first stream chosen stays."""
     audit = logging.getLogger("deltasleuth.audit")
@@ -305,7 +305,7 @@ async def _wrote(ctx: Context, who: Principal, run_id: str, name: str, cycle: in
 
 
 async def _warned(ctx: Context) -> None:
-    """Print each of the licence's warnings on stderr (docs/mvp/LICENCE.md §10): ``serve``, ``worker``,
+    """Print each of the licence's warnings on stderr: ``serve``, ``worker``,
     ``run`` and ``compare`` only, and never failing them."""
     await licence.shown(ctx, lambda line: typer.echo(f"warning: {line}", err=True))
 
@@ -333,9 +333,9 @@ async def _save_spec(
 ) -> tuple[int, CompiledSpec]:
     """Store the spec file (once per content hash), audited; its spec_id and compiled form.
 
-    Under SSO a run needs an approved upload (docs/mvp/APPROVALS.md §4): the file's stored version is
+    Under SSO a run needs an approved upload: the file's stored version is
     found by its content hash and gated before anything is written (unless ``gated`` is false: a table
-    pre-check is not gated, docs/mvp/PRECHECKS.md §6), and it is not saved again. A version that needs an
+    pre-check is not gated), and it is not saved again. A version that needs an
     approval and was never uploaded is refused; one that needs none is stored. A body the store would not
     keep as written is refused, storing nothing, as the upload route does."""
     spec = compile_spec(load_spec_file(path), targets=ctx.targets)
@@ -448,7 +448,7 @@ def serve(
         settings = load_settings(config)
         if settings.auth is None:
             if not _loopback(host):
-                raise SettingsError(f"serving on {host} needs the auth settings (docs/mvp/AUTH.md §1)")
+                raise SettingsError(f"serving on {host} needs the auth settings")
             typer.echo(DEVELOPER_MODE, err=True)
         elif settings.auth.oidc is not None:
             if not _approvers(settings.auth.oidc):
@@ -457,7 +457,7 @@ def serve(
         if settings.packs is not None:
             PackSigner.load(settings.packs.signing_key_ref)  # likewise the evidence packs' signing key
         if settings.mcp is not None and settings.mcp.http:
-            importlib.import_module("deltasleuth.mcp.server")  # likewise the MCP library's import (MCP.md §3)
+            importlib.import_module("deltasleuth.mcp.server")  # likewise the MCP library's import
         _bindable(host, port)  # last: before the store is opened, so no system.start row and no worker
     if not WEB_DIST.is_dir():
         typer.echo(
@@ -467,7 +467,7 @@ def serve(
             err=True,
         )
     _notify_warned(settings)
-    if settings.mcp is not None and settings.mcp.http:  # docs/mvp/MCP.md §4
+    if settings.mcp is not None and settings.mcp.http:
         typer.echo(f"mcp: POST /v1/mcp is served; {_mcp_serves(settings.mcp)}", err=True)
         if "production_clear_declared" in settings.mcp.data_classes:
             typer.echo(MCP_CLEAR, err=True)
@@ -475,7 +475,7 @@ def serve(
     _siem("stdout")
     _in_context(config, _warned)
     logging.getLogger("uvicorn.access").addFilter(AuthQueryFilter())
-    # proxy_headers=False: only auth.trusted_proxies may name the client (docs/mvp/AUTH.md §3).
+    # proxy_headers=False: only auth.trusted_proxies may name the client.
     uvicorn.run(create_app(settings, worker=not no_worker), host=host, port=port, proxy_headers=False)
 
 
@@ -563,11 +563,10 @@ def _shown(text: Any, most: int | None = 64) -> str:
 async def _files_check(
     settings: Any, registry: Any, target: Any, config: Path | None, table: str | None, **asked: Any
 ) -> dict[str, Any]:
-    """A files target's check (docs/mvp/FILES.md §4, §16): where its root lies (T10, judged on the files
-    threads under a deadline as a context's opening judges it: a dead mount hangs no check), the root itself
-    (P14, P15) and the file reader's instance, proved (P27, P28), with the limits its start saw hold
-    (docs/mvp/READER.md §11); with ``table`` (a path of file.path's grammar, and ``asked``: its format and
-    what else to print) the lines ``duck.check`` gives of its files."""
+    """A files target's check: where its root lies (judged on the files threads under a deadline as a
+    context's opening judges it: a dead mount hangs no check), the root itself and the file reader's
+    instance, proved, with the limits its start saw hold; with ``table`` (a path of file.path's grammar,
+    and ``asked``: its format and what else to print) the lines ``duck.check`` gives of its files."""
     from deltasleuth.connectors.tables import duck, manifest
 
     who = f"target {target.target_id}"
@@ -602,7 +601,7 @@ def target_check(
     """A database target's pre-flight, without a store and without reading a row: its address resolved and
     vetted, a session opened as a run opens one (TLS, its settings) and, with --table, the relation and what
     the role may read of it. Exit 2 says why not, as a run's creation would. It alone prints the server's
-    full version. A files target's (docs/mvp/FILES.md §16): its mount and the file reader, and with --table
+    full version. A files target's: its mount and the file reader, and with --table
     PATH --format csv|parquet the files the path names, a CSV's sniffed draft or a Parquet side's columns;
     --count and --manifest read the files. It alone prints file names."""
     from deltasleuth.connectors.tables import OBSERVED, preflight
@@ -622,7 +621,7 @@ def target_check(
         return target.engine, *(await preflight(target, table))
 
     engine, server, relation = _run(work())
-    if engine == "files":  # docs/mvp/FILES.md §16
+    if engine == "files":
         built = " and ".join(server["built"])
         version = f"duckdb {server['version']}, {built} built in"
         process = f"read in a process of its own ({server['held']})"
@@ -674,7 +673,7 @@ def compare(
         result = await compare_one(ctx, spec_id, key, who=who)
         run_id, masked = result.attrs["run_id"], mask_key(result.key, compiled, ctx.tokeniser)
         _unapproved(ctx, spec_id, compiled, run_id)
-        for line in result.attrs["warnings"]:  # the schema guard's (docs/mvp/PRECHECKS.md §7)
+        for line in result.attrs["warnings"]:  # the schema guard's
             typer.echo(f"warning: {line}", err=True)
         async with ctx.pool.connection() as conn:
             detail = await repo.get_key_detail(conn, run_id, masked)
@@ -717,7 +716,7 @@ def run(
 ) -> None:
     """Start a batch (or soak) run; without --no-wait, process it here with an in-process worker. What the
     schema guard says of its tables at its creation is printed as warnings; a run it paused prints its
-    lines and exits 2 (docs/mvp/PRECHECKS.md §11)."""
+    lines and exits 2."""
     from deltasleuth.runner import create_run, run_worker
 
     who = _local(config)
@@ -763,7 +762,7 @@ def run(
         return
     c, why = row["counters"], row["stop_reason"] or row["error"]
     typer.echo(row["status"] + (f" ({why})" if why else ""))
-    if refused := (row.get("draw") or {}).get("error"):  # its frame refused it (docs/mvp/SAMPLING.md §13)
+    if refused := (row.get("draw") or {}).get("error"):  # its frame refused it
         typer.echo(f"  {refused}")
     for line in drift.lines(row) if guarded else ():  # the schema guard paused it
         typer.echo(f"  {line}")
@@ -771,7 +770,7 @@ def run(
         _fail(f"the run is {row['status']}")
     typer.echo("  " + ", ".join(f"{name} {c[name]}" for name in _COUNTERS))
     typer.echo("  " + ", ".join(f"{o} {n}" for o, n in sorted(c["by_outcome"].items()) if n))
-    for line in sample.lines((ended or {}).get("sample") or {"strata": []}):  # docs/mvp/SAMPLING.md §14
+    for line in sample.lines((ended or {}).get("sample") or {"strata": []}):
         typer.echo(f"  {line}")
     if fail_on_diff and (c["different"] or c["outstanding"]):
         raise typer.Exit(EXIT_DIFF)
@@ -782,7 +781,7 @@ def runs(limit: int = 20, config: ConfigOpt = None) -> None:
     """List the latest runs, newest first, each with what its spec approval says.
 
     A run made in a build that enforces a licence also shows the licence it was made under; a build without
-    a vendor key enforces none (docs/mvp/LICENCE.md §19).
+    a vendor key enforces none.
     """
 
     async def work(ctx: Context) -> list[tuple[repo.Row, str, repo.Row | None]]:
@@ -800,7 +799,7 @@ def runs(limit: int = 20, config: ConfigOpt = None) -> None:
         typer.echo(f"{r['run_id']}  {r['spec_name']} {r['spec_version']}  {r['mode']}  {r['status']}"
                    f"  cycle {r['cycle']}{found}")  # fmt: skip
         typer.echo(f"  {said}")
-        if drawn is not None:  # a sampled run's current draw (docs/mvp/SAMPLING.md §14)
+        if drawn is not None:  # a sampled run's current draw
             strata = len(drawn["strata"])
             typer.echo(f"  sample {drawn['draw_id']}: {strata} {'stratum' if strata == 1 else 'strata'},"
                        f" {drawn['keys']:,} keys")  # fmt: skip
@@ -814,7 +813,7 @@ def runs(limit: int = 20, config: ConfigOpt = None) -> None:
         if r["status"] == "paused" and r["stop_reason"] == licence.LICENCE_PAUSE:  # its next cycle waits
             typer.echo(f"  Paused for the licence at the end of cycle {r['cycle'] - 1}")
         if r["status"] == "paused" and r["stop_reason"] == drift.SCHEMA_PAUSE:
-            for line in drift.lines(r)[:1]:  # the pause's (docs/mvp/PRECHECKS.md §10)
+            for line in drift.lines(r)[:1]:  # the pause's
                 typer.echo(f"  {line}")
 
 
@@ -830,8 +829,7 @@ def report(
     summary (report.md and report.html).
 
     A run made in the unlicensed evaluation of a build that enforces a licence is written as
-    <run>-unlicensed-evaluation-<name>; a build without a vendor key enforces none (docs/mvp/LICENCE.md
-    §19).
+    <run>-unlicensed-evaluation-<name>; a build without a vendor key enforces none.
     """
     from deltasleuth.reports import FORMATS
     from deltasleuth.reports.summary import summary_report
@@ -1036,7 +1034,7 @@ def llm_probe(
         typer.echo(str(path))
 
 
-# -- administration: the host administrator's channel (docs/mvp/AUTH.md §4.2) ---------------------
+# -- administration: the host administrator's channel ---------------------
 
 
 @token_app.command("create")
@@ -1310,7 +1308,7 @@ def audit_verify(
     ] = None,
     config: ConfigOpt = None,
 ) -> None:
-    """Check the audit log's hash chain (docs/mvp/PACK.md §4.2): contiguous rows, both links, each hash,
+    """Check the audit log's hash chain: contiguous rows, both links, each hash,
     each row's text against its columns, every row chained; with --siem, the rows its lines span. Prints
     the head, for the daily ticket; a break exits 2 naming the first row that fails."""
     with _errors():
@@ -1330,7 +1328,7 @@ def audit_verify(
     typer.echo(f"head: row {head['seq']} {head['hash']}" if head else "head: none (the audit log is empty)")
 
 
-# -- evidence packs (docs/mvp/PACK.md §3, §7.3) ---------------------------------------------------
+# -- evidence packs ---------------------------------------------------
 
 
 @packs_app.callback()
@@ -1342,7 +1340,7 @@ def packs_list(
 ) -> None:
     """List the evidence packs, newest first; or file the signing key's register entry, sign the
     revocation list, download a pack or verify one offline. Only a signed-in person issues a pack, on the
-    Run screen (docs/mvp/PACK.md)."""
+    Run screen."""
     if command.invoked_subcommand is not None:
         if as_json or run_id is not None or config is not None:
             _fail(f"put the options after '{command.invoked_subcommand}'")
@@ -1392,7 +1390,7 @@ def _write(out: Path, files: dict[str, bytes]) -> list[Path]:
 def packs_key(out: OutOpt, config: ConfigOpt = None) -> None:
     """Write the signing key's entry for the site's key register: fingerprint.txt (the installation and
     the key's fingerprint) and procedure.txt (the verification procedure every pack's VERIFY.txt must
-    match), to be filed, dated, when the key is generated (docs/mvp/PACK.md §3.1)."""
+    match), to be filed, dated, when the key is generated."""
     from deltasleuth.reports import pack
 
     with _errors():
@@ -1469,7 +1467,7 @@ def packs_verify(
         raise typer.Exit(EXIT_DIFF)
 
 
-# -- the licence (docs/mvp/LICENCE.md §12) ---------------------------------------------------------
+# -- the licence ---------------------------------------------------------
 
 
 @licence_app.callback()
@@ -1483,7 +1481,7 @@ def licence_status(
     """Show the installation's licence: its id, the licence in force, its state and warnings, what it
     allows and the pairs counted with their first runs and seats; or print the id, show a licence file
     offline, install one or withdraw one that has not started. Exits 0 in every state. A build without a
-    vendor key needs no licence: it says so, and shows and installs none (docs/mvp/LICENCE.md §19)."""
+    vendor key needs no licence: it says so, and shows and installs none."""
     if command.invoked_subcommand is not None:
         if as_json or config is not None:
             _fail(f"put the options after '{command.invoked_subcommand}'")
@@ -1614,7 +1612,7 @@ def licence_install(
                 f"{', '.join(unseated)} have no seat: no new run, and their soaks pause at their next cycle"
             )
     if found.tier != "enterprise" and after.sso:
-        typer.echo("runs under SSO stay refused (M5)")
+        typer.echo("runs under SSO stay refused")
     if paused:
         typer.echo(
             f"{len(paused)} run(s) paused for the licence: {', '.join(paused)}; resume each on its Run screen"
@@ -1642,7 +1640,7 @@ def licence_withdraw(
     typer.echo(f"withdrew licence {licence_id}: it is not installed again")
 
 
-# -- sign-off sampling (docs/mvp/SAMPLING.md §6, §14) ------------------------------------------------
+# -- sign-off sampling ------------------------------------------------
 
 
 @samples_app.callback()
@@ -1712,7 +1710,7 @@ def samples_size(
     )
 
 
-# -- labelled accuracy (docs/mvp/ACCURACY.md §10) -----------------------------------------------------
+# -- labelled accuracy -----------------------------------------------------
 
 
 @app.command()
@@ -1743,13 +1741,13 @@ def labellings(
         typer.echo(item["summary"])
 
 
-# -- alerts and notifications (docs/mvp/ALERTS.md §10, §11) ------------------------------------------
+# -- alerts and notifications ------------------------------------------
 
 MUTE_REASON = "Why, in 1 to 1000 characters. It is audited and reaches the SIEM: never personal data."
 
 
 def _notify_warned(settings: Settings) -> None:
-    """Warn of each channel with a secret a send cannot read now (docs/mvp/ALERTS.md §10): ``serve``,
+    """Warn of each channel with a secret a send cannot read now: ``serve``,
     ``worker`` and ``run`` only, never failing them, as its deliveries retry until it is readable."""
     from deltasleuth.connectors.notify import unreadable
 
@@ -1961,7 +1959,7 @@ def notify_unmute(mute_id: Annotated[str, _a("The mute id (M-…).")], config: C
     typer.echo(f"ended mute {mute_id}")
 
 
-# -- cut-over readiness (docs/mvp/READINESS.md §10, §12) ------------------------------------------------
+# -- cut-over readiness ------------------------------------------------
 
 
 def _version(item: dict[str, Any]) -> str:
@@ -2163,7 +2161,7 @@ def readiness_report(
 @readiness_app.command("check")
 def readiness_check(config: ConfigOpt = None) -> None:
     """Print each pair's effective gates, each tagged with where it comes from (default, installation,
-    programme or pair), what deviates from the contract's defaults and the settings hash; warn of a listed
+    programme or pair), what deviates from the built-in defaults and the settings hash; warn of a listed
     spec that is not stored. The settings apply at the next restart of the server and the worker."""
     lines, warnings = _in_context(config, readiness.check)
     for line in lines:
@@ -2185,7 +2183,7 @@ def readiness_verify(config: ConfigOpt = None) -> None:
     )
 
 
-# -- schedules (docs/mvp/SCHEDULES.md §10) --------------------------------------------------------------
+# -- schedules --------------------------------------------------------------
 
 ScheduleArg = Annotated[str, _a("The schedule: its name, or its id (SC-…).")]
 CRON = "When its runs start: minute hour day-of-month month day-of-week."
@@ -2418,7 +2416,7 @@ def schedules_delete(schedule: ScheduleArg, config: ConfigOpt = None) -> None:
     typer.echo(f"deleted {row['schedule_id']}")
 
 
-# -- table pre-checks (docs/mvp/PRECHECKS.md §11) -------------------------------------------------------
+# -- table pre-checks -------------------------------------------------------
 
 PrecheckArg = Annotated[str, _a("The table pre-check's id (PC-…).")]
 _FAIL_ON = {"refused": 2, "differs": 7, "incomplete": 8}  # the rank from which, towards the worst, each fails
@@ -2680,12 +2678,12 @@ def precheck_report(precheck_id: PrecheckArg, out: OutOpt, config: ConfigOpt = N
         typer.echo(str(path))
 
 
-# -- your own agent: the MCP server (docs/mvp/MCP.md §12) -------------------------------------------------
+# -- your own agent: the MCP server -------------------------------------------------
 
-MCP_OFF = "MCP is off: the settings have no mcp block (docs/mvp/MCP.md §4)"
+MCP_OFF = "MCP is off: the settings have no mcp block"
 MCP_HOST_CHANNEL = (
     "ds mcp under auth is the host-administrator channel: use /v1/mcp with a named token, or pass"
-    " --host-channel (docs/mvp/MCP.md §5.2)"
+    " --host-channel"
 )
 MCP_ASSERTED = (
     "warning: ds mcp is the host-administrator channel: its caller is asserted (DS_OPERATOR), not signed in,"
@@ -2706,7 +2704,7 @@ class _Bare(logging.Formatter):
 
 
 def _mcp_logs(*, bare: bool) -> None:
-    """Put the MCP server's two loggers on stderr (docs/mvp/MCP.md §9), neither left to Python's last-resort
+    """Put the MCP server's two loggers on stderr, neither left to Python's last-resort
     handler: ``deltasleuth.mcp``, one line a call, and the MCP library's ``mcp`` from WARNING up. Under
     ``ds mcp`` (``bare``) stderr is the launching agent's, so a library line is its name and level alone,
     and so is every other logger's, through the root logger: the last-resort handler would print such a
@@ -2763,7 +2761,7 @@ def mcp_serve(
 ) -> None:
     """Serve the MCP tools to your own agent over stdin and stdout, until it closes the stream; or check
     the mcp settings. The tools read runs by id with the chat's masking, caps and ids, as the settings' mcp
-    block serves them (docs/mvp/MCP.md). This is a workstation's channel, in developer mode: the agent that
+    block serves them. This is a workstation's channel, in developer mode: the agent that
     runs it holds this account's access to the store and the keys, so --role only shapes what is offered.
     Where the settings have auth it serves only with --host-channel; an agent there calls POST /v1/mcp with
     a named API token instead."""
@@ -2824,7 +2822,7 @@ def mcp_check(config: ConfigOpt = None) -> None:
         typer.echo(line)
 
 
-# -- retention (docs/mvp/RETENTION.md §4, §5, §8) --------------------------------------------------
+# -- retention --------------------------------------------------
 
 
 @purge_app.callback()
@@ -3004,7 +3002,7 @@ def keys_migrate(
 ) -> None:
     """Seal the raw keys, headers, chat, scan points and blobs that releases before 006 stored in clear,
     then end plaintext storage (migration 007). Offline: stop the app first. Safe to interrupt and run
-    again (docs/mvp/RETENTION.md §7.2)."""
+    again."""
     from deltasleuth.security import legacy
 
     who = _local(config)
@@ -3021,7 +3019,7 @@ def keys_migrate(
     )
 
 
-# -- four-eyes approvals (docs/mvp/APPROVALS.md §6.3) ----------------------------------------------
+# -- four-eyes approvals ----------------------------------------------
 
 _STATUSES = ("requested", "approved", "rejected", "revoked")
 _KINDS = ("spec", "signoff")
@@ -3042,7 +3040,7 @@ def approvals_list(
     config: ConfigOpt = None,
 ) -> None:
     """List the four-eyes approvals and sign-offs, newest first; or revoke one. The CLI can neither
-    request nor grant one: people do, signed in (docs/mvp/APPROVALS.md)."""
+    request nor grant one: people do, signed in."""
     if command.invoked_subcommand is not None:
         if needed or as_json or any(option is not None for option in (status, kind, limit, config)):
             _fail(f"put the options after '{command.invoked_subcommand}'")

@@ -154,7 +154,7 @@ class RestConnector:
         )
 
     async def walk(self, side_cfg: SideConfig) -> AsyncIterator[list[Any]]:
-        """Each page's items of the key listing ``side_cfg`` pages through (docs/mvp/SAMPLING.md §3), one
+        """Each page's items of the key listing ``side_cfg`` pages through, one
         call at a time under the target's gate and breaker. The pages are judged as ``fetch`` judges them
         (loops, ``maxPages``, declared ``stable_ordering``) but never merged, each capped at the body limit,
         and a repeat is judged against the previous page only. ``ListingIncomplete`` once the walk proves

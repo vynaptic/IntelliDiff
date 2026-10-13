@@ -1,6 +1,6 @@
-"""Sign-off sampling (docs/mvp/SAMPLING.md §4, §6, §8.3): a draw's salt, each frame key's u, strata and
+"""Sign-off sampling: a draw's salt, each frame key's u, strata and
 selection, and the exact one-sided 95% Clopper-Pearson decision with the bound it shows; and the exact
-two-sided 95% interval a labelled sample's shares are shown with (docs/mvp/ACCURACY.md §6.1).
+two-sided 95% interval a labelled sample's shares are shown with.
 
 A key's u is the first 64 bits of SHA-256 of the salt (the spec's label and a nonce the installation
 draws) and the key. Each ``bottom_k`` sign-off bucket takes its keys with the smallest (u, key bytes):
@@ -32,7 +32,7 @@ from deltasleuth.core.types import Sample, StratumBucket, StratumDimension
 TARGETS = {"standard": Fraction(1, 1000), "high": Fraction(1, 10000)}  # copied into every draw
 CONFIDENCE = Fraction(19, 20)  # one-sided
 MARGIN = Fraction(1, 200)  # drawn beyond the clean keys a pass needs, for keys left unresolved
-LIMIT = 1_000_000  # keys a sample holds at most (W7)
+LIMIT = 1_000_000  # keys a sample holds at most
 _ALPHA = 1 - CONFIDENCE
 _TAIL = Fraction(1, 40)  # each end of a two-sided 95% interval
 _ALL = 2**64  # u is below it: rate 1.0, a census
@@ -44,7 +44,7 @@ _MEMO = 4096  # bucket lookups a selector memoises at most
 
 
 class DrawError(ValueError):
-    """A draw failed on its frame (docs/mvp/SAMPLING.md §13 W1-W9): a safe text, never naming a key."""
+    """A draw failed on its frame: a safe text, never naming a key."""
 
 
 class _Unlabelled(Exception):
@@ -55,8 +55,8 @@ class _Unlabelled(Exception):
 
 
 def nonce() -> str:
-    """A draw's nonce: 128 random bits as 32 lowercase hex, redrawn until it holds a letter (D1), so the
-    pack's gate reads it as generated, never as a key (docs/mvp/PACK.md §2.3)."""
+    """A draw's nonce: 128 random bits as 32 lowercase hex, redrawn until it holds a letter, so the
+    pack's gate reads it as generated, never as a key."""
     while (value := secrets.token_hex(16)).isdigit():
         pass
     return value
@@ -163,7 +163,7 @@ def upper(x: int, n: int, alpha: Fraction = _ALPHA) -> float:
 
 
 def interval(x: int, n: int) -> tuple[str, str]:
-    """The exact two-sided 95% Clopper-Pearson interval of x in n (docs/mvp/ACCURACY.md §6.1), as shown:
+    """The exact two-sided 95% Clopper-Pearson interval of x in n, as shown:
     each end a one-sided 97.5% bound rounded outward to 4 significant digits, so the shown interval
     contains the exact one; "0" at x = 0 and "1" at x = n."""
     low = "0" if x == 0 else format(_FLOOR.create_decimal_from_float(1 - upper(n - x, n, _TAIL)), "f")
@@ -206,8 +206,8 @@ def percent(value: Fraction | Decimal | str) -> str:
 
 
 def unpassed(judgement: Mapping[str, Any] | None, draw_id: str, at: str) -> list[str]:
-    """R-b (docs/mvp/SAMPLING.md §10): why the stored ``judgement`` of draw ``draw_id``'s cycle (``at``, as
-    texts name it) is no pass, empty for one that passed: G5-G8 and G11, as the judgement words them, and a
+    """R-b: why the stored ``judgement`` of draw ``draw_id``'s cycle (``at``, as
+    texts name it) is no pass, empty for one that passed: its failures, as the judgement words them, and a
     cycle that ended before every key was final; None is a cycle that ended without a judgement."""
     if judgement is None:  # judging raised when the cycle ended
         return [f"the sample {draw_id} of {at} ended without a judgement: draw again"]
@@ -240,7 +240,7 @@ class Drawn:
 @dataclass(frozen=True)
 class Selection:
     keys: list[Drawn]  # in seq order
-    strata: list[dict[str, Any]]  # each sign-off stratum's {label, tier, target, size, basis, …} (§10)
+    strata: list[dict[str, Any]]  # each sign-off stratum's {label, tier, target, size, basis, …}
     frame_keys: int
 
 
@@ -258,7 +258,7 @@ def selection_sha256(lines: Iterable[tuple[int, str, str | None, str | None, boo
 
 
 class Selector:
-    """A draw's selection over its frame's distinct keys (§4), fed a batch at a time by ``add``.
+    """A draw's selection over its frame's distinct keys, fed a batch at a time by ``add``.
 
     Each key's strata come from its row, key and ``now``, never from fetched documents: a dimension's
     column or CEL value takes the first bucket it matches, and ``signoffStratum`` (or, without it, the
@@ -317,8 +317,8 @@ class Selector:
                 self._choose((value, key, stratum, signoff, own if member else threshold, member))
 
     def result(self) -> Selection:
-        """The sample in seq order and each sign-off stratum's record; DrawError for label errors (W3-W6),
-        a sign-off bucket without keys (W9), over ``LIMIT`` keys (W7) or nothing to draw (W8)."""
+        """The sample in seq order and each sign-off stratum's record; DrawError for label errors,
+        a sign-off bucket without keys, over ``LIMIT`` keys or nothing to draw."""
         if not self.frame_keys:
             raise DrawError("the frame is empty")
         problems = self._problems()
@@ -500,7 +500,7 @@ class Selector:
                 heapq.heapreplace(heap, entry)
 
     def _choose(self, entry: tuple[int, str, str, str, int, bool]) -> None:
-        """A key a rate chose: kept until they are over ``LIMIT``, then only counted (W7)."""
+        """A key a rate chose: kept until they are over ``LIMIT``, then only counted."""
         self._chosen_count += 1
         if self._chosen is not None:
             self._chosen.append(entry)

@@ -1,6 +1,6 @@
 # DeltaSleuth ComparisonSpec: a legacy relational linker service (a) vs a new graph-backed linker service (b).
-# Validates against docs/architecture/spec.schema.json; domainPack.config is validated by the spec loader against
-# the pack-owned docs/architecture/packs/entity-linking.config.schema.json.
+# Validates against deltasleuth/core/spec/spec.schema.json; domainPack.config is validated by the spec loader
+# against the pack-owned deltasleuth/packs/entity_linking/config.schema.json.
 #
 # All hosts, ids, names and values below are fictional. Targets are resolved from ds.targets.
 # Credentials are never written here: each target row carries auth_ref -> ds.secrets_ref.

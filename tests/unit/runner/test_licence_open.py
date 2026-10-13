@@ -1,4 +1,4 @@
-"""The open build in the runner (docs/mvp/LICENCE.md §19): every spec name runs, in oidc mode too, no pair
+"""The open build in the runner: every spec name runs, in oidc mode too, no pair
 is counted, no run records a licence and no soak pauses for one; on a store an evaluation left, its runs
 keep their own records, its licence-paused soak resumes, the range of licence misses a schedule held is
 chained once and the worker audits the change of state; and a vendor key brings the evaluation back."""
@@ -107,8 +107,8 @@ async def test_a_store_an_evaluation_left_goes_on_under_an_open_build(
 async def test_a_range_of_licence_misses_an_evaluation_held_is_chained_once(
     open_harness: OpenHarness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A schedule whose times an older build refused for the licence holds the later ones unchained
-    (SCHEDULES §5 step 7). The open build misses no time for a licence: its worker chains that range once,
+    """A schedule whose times an older build refused for the licence holds the later ones unchained. The
+    open build misses no time for a licence: its worker chains that range once,
     at the schedule's next firing, which runs, and its notifier sends the row as any other."""
     second, nowhere = timedelta(seconds=1), "http://127.0.0.1:9"
     rules = [rule("schedules", ["schedule.missed"], ["ops"])]

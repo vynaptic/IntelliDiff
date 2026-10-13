@@ -1,4 +1,4 @@
-"""The file reader in a process of its own (docs/mvp/READER.md §5 to §9, §15): its frames, what an
+"""The file reader in a process of its own: its frames, what an
 answer outside the protocol costs (one that would have this process build more than it may, or word a
 reader's text, among them), its start with nothing of this process's, a start that fails, a reader
 replaced or killed, that no process but the reader loads DuckDB; what it denies itself, and what its start
@@ -74,7 +74,7 @@ def _typed(value: Any) -> Any:
 def test_frames_carry_rows_as_fetched(
     number: int, rows: list[tuple[Any, ...]], binds: dict[str, Any]
 ) -> None:
-    """§6: a batch crosses as it was fetched, whatever its values: NUL, a character beyond the BMP, the
+    """A batch crosses as it was fetched, whatever its values: NUL, a character beyond the BMP, the
     empty text, NULLs, an integer of 39 digits; and a request's binds under every tag."""
     frame = reader.pack_rows(number, rows, reader.FRAME_MAX)
     kind, body = reader.read(io.BytesIO(frame), {b"R": len(frame)}) or (b"", b"")
@@ -93,7 +93,7 @@ def test_frames_carry_rows_as_fetched(
 
 
 def test_a_frame_carries_no_other_value() -> None:
-    """§6: no pickle, no marshal: a value that is not None, a boolean, an integer, text or bytes is refused
+    """No pickle, no marshal: a value that is not None, a boolean, an integer, text or bytes is refused
     where it would be framed, as is a column of two types, a message past its limit and a frame past its
     kind's; and a frame cut short is its source's end."""
     for rows in ([(1.5,)], [(Decimal(1),)], [([1],)], [(1,), ("1",)], [(True,), (1,)]):
@@ -118,8 +118,9 @@ def test_a_frame_carries_no_other_value() -> None:
 
 
 def test_the_error_names_are_duckdb_s() -> None:
-    """§6: a failure crosses as its class's name and a kind, never its text: the names are the locked
-    DuckDB's exception classes and five more, any other class is ``Error``, and the kinds are §10's."""
+    """A failure crosses as its class's name and a kind, never its text: the names are the locked
+    DuckDB's exception classes and five more, any other class is ``Error``, and the kinds are the closed
+    set."""
     import duckdb
 
     classes = {
@@ -146,7 +147,7 @@ def test_the_error_names_are_duckdb_s() -> None:
     ]  # fmt: skip
 
 
-# --- what an answer outside the protocol costs (§6) ---------------------------------------------------------
+# --- what an answer outside the protocol costs ---------------------------------------------------------
 
 # A process that speaks the reader's frames and nothing of DuckDB: its first answer, then one a request
 # (``n``: how many it has answered).
@@ -242,7 +243,7 @@ FIRST = {  # what the start is answered with
 async def test_a_reply_not_of_the_protocol_ends_the_reader(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, answer: str
 ) -> None:
-    """§6: every answer is checked, by its length, its kind, the request it names and each member's type,
+    """Every answer is checked, by its length, its kind, the request it names and each member's type,
     its rows by their statement's width and its columns' types by a grammar of this process's; one that is
     not of the protocol, and any exception raised while it is decoded, is the reader's end (``reply``): it
     is killed, what waited on it and what is sent to it later is Busy('Died'), and nothing it sent is in a
@@ -270,7 +271,7 @@ async def test_a_reply_not_of_the_protocol_ends_the_reader(
 def test_a_start_not_of_the_protocol_is_p27(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, first: str
 ) -> None:
-    """§5, §6: a first answer that is neither ``ready`` nor ``unstarted`` as the protocol has them (a
+    """A first answer that is neither ``ready`` nor ``unstarted`` as the protocol has them (a
     version is digits and dots, a check's names are this process's own) is no start: the process is killed,
     its spill directory given up, and the log says so without a word of the answer."""
     stand_in(tmp_path, monkeypatch, FAKE.format(first=first, answer="ok(request)"))
@@ -316,11 +317,11 @@ FORGED = {  # the statement, its rows and a column's type, as a reader of the at
 async def test_a_reader_s_text_reaches_no_message(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, forged: tuple[str, ...]
 ) -> None:
-    """§6: what a plan keeps or words of a reader's answers is checked where it crosses, by what its
+    """What a plan keeps or words of a reader's answers is checked where it crosses, by what its
     statement must answer: a column's type by this process's grammar, a count and a rejected line's number
     as integers, a rejected line's file as one of the side's. Text in their place (a reader whose answers
     are a hostile file's) was worded in the plan's refusal, the 422 of a run's creation, and in the log.
-    It is no answer of DuckDB's: the reader is ended (``reply``), the plan is not ready (P34), and nothing
+    It is no answer of DuckDB's: the reader is ended (``reply``), the plan is not ready, and nothing
     of the text is in a message or a log line."""
     form, statement, rows, kind = forged
     base = tmp_path.resolve()
@@ -344,7 +345,7 @@ async def test_a_reader_s_text_reaches_no_message(
 async def test_a_frame_of_too_many_cells_is_refused_unbuilt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§6: what a frame may make this process build is bounded before it is built. A frame of rows is one
+    """What a frame may make this process build is bounded before it is built. A frame of rows is one
     byte a column that is all NULL: 400 rows of 65,535 such columns, in 65 KiB and within the rows its
     fetch allows, would be 26 million cells (408 MiB, as observed; 20 GiB at the 20,000 rows allowed). It
     passes ``reader.CELLS``: no row of it is built, and it is the reader's end (``reply``)."""
@@ -369,7 +370,7 @@ async def test_a_frame_of_too_many_cells_is_refused_unbuilt(
 async def test_a_wide_statement_crosses_in_shorter_batches(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§6: the reader closes a batch at ``reader.CELLS`` cells as it closes one at its rows or its bytes,
+    """The reader closes a batch at ``reader.CELLS`` cells as it closes one at its rows or its bytes,
     so a statement of many columns is never refused for them: it crosses in batches of fewer rows, in
     their order, a step's rows past the cells waiting for the next fetch, and nothing is read ahead."""
     stand_in(tmp_path, monkeypatch, CELLS=40)  # ten rows of four columns
@@ -390,9 +391,9 @@ async def test_a_wide_statement_crosses_in_shorter_batches(
 async def test_a_batch_over_a_frame_crosses_in_several(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§6: a batch is never refused for its size, only a row: one whose frame would pass FRAME_MAX crosses
+    """A batch is never refused for its size, only a row: one whose frame would pass FRAME_MAX crosses
     as its longest prefix of whole rows that fits, and the rest with the cursor's next fetch; a row that
-    alone passes it is Oversize (F4), and the reader lives."""
+    alone passes it is Oversize, and the reader lives."""
     monkeypatch.setattr(reader, "FRAME_MAX", 4096)  # the child's is its first frame's
     with ducked.started(tmp_path) as made:
         cursor = made.cursor()
@@ -423,8 +424,8 @@ async def test_a_batch_over_a_frame_crosses_in_several(
 
 
 async def test_an_answer_over_its_limit_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """§6: an answer that would pass ANSWER_MAX (the columns of a footer whose names are that long) is
-    answered Oversize in its place: the plan is refused with P29, and the reader lives and reads on."""
+    """An answer that would pass ANSWER_MAX (the columns of a footer whose names are that long) is
+    answered Oversize in its place: the plan is refused by that class, and the reader lives and reads on."""
     root = tmp_path / "files" / "root"
     root.mkdir(parents=True)
     wide = ", ".join(f"{n} AS {'c' * 200}{n}" for n in range(3))
@@ -444,7 +445,7 @@ async def test_an_answer_over_its_limit_is_refused(tmp_path: Path, monkeypatch: 
 async def test_every_composed_statement_fetches_framed_values(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§6: no statement DeltaSleuth composes selects a value a frame does not carry. Every statement a
+    """No statement DeltaSleuth composes selects a value a frame does not carry. Every statement a
     plan, a scan across engines and in DuckDB, a census, a frame, the count of rows without a key, a
     per-key read and ds target check send, of a Parquet side holding every type and a CSV side with lines
     that are not rows, is sent again on a connection in this process: each value DuckDB hands over there is
@@ -506,7 +507,7 @@ async def test_every_composed_statement_fetches_framed_values(
     assert len(sent) > 40 and len({statement for _, statement, _, _ in sent}) > 25
 
 
-# --- the reader's process (§5) ------------------------------------------------------------------------------
+# --- the reader's process ------------------------------------------------------------------------------
 
 
 def _state(pid: int) -> str:
@@ -563,7 +564,7 @@ def test_the_parent_never_loads_duckdb(tmp_path: Path) -> None:
 async def test_the_reader_is_started_with_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """§5 (U32): the reader is this interpreter run on ``reader.py`` by its path, with ``-I``, an empty
+    """The reader is this interpreter run on ``reader.py`` by its path, with ``-I``, an empty
     environment, its spill directory to work in and a session of its own; it imports no ``deltasleuth``
     package, inherits no descriptor and leaves no core. One it does inherit is counted, and logged as a
     warning."""
@@ -604,7 +605,7 @@ async def test_the_reader_is_started_with_nothing(
     made._ending.join(5)
     modules, environ, isolated, utf8, cwd, path, core = json.loads(seen.read_text())
     assert made.cause == "exit 0" and "duckdb" in modules and (isolated, utf8, cwd) == (1, 1, spill)
-    assert core == [0, 0]  # §7: it leaves no core, on every platform
+    assert core == [0, 0]  # it leaves no core, on every platform
     assert not [name for name in modules if name.split(".")[0] in ("deltasleuth", "tests", "pytest")]
     assert set(environ) <= {"LC_CTYPE", "__CF_USER_TEXT_ENCODING"}  # the interpreter's own, and macOS's
     assert "" not in path and str(Path(ducked.READER).parent) not in path  # its own directory shadows nothing
@@ -618,8 +619,9 @@ async def test_the_reader_is_started_with_nothing(
 async def test_a_process_that_does_not_start_is_p27(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """§5: a process that cannot be started, ends first, does not answer or misses its start's deadline is
-    killed and is P27's second text, never P14's; the log says which, and nothing is left of it."""
+    """A process that cannot be started, ends first, does not answer or misses its start's deadline is
+    killed and is said as a reader that did not start, never as a missing directory; the log says which, and
+    nothing is left of it."""
     base = tmp_path.resolve()
     found = registry(base)
     made, roots, exports = ducked.settings(base), [str(base / "files" / "root")], found.get("exports")
@@ -669,7 +671,7 @@ async def test_a_process_that_does_not_start_is_p27(
 
 
 async def test_a_failed_start_releases_its_spill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """§5: a failed start gives up the spill directory it made, whatever failed: the guard, the room on the
+    """A failed start gives up the spill directory it made, whatever failed: the guard, the room on the
     spill's volume, the process (it stayed held, and counted, until the process ended)."""
     base, held = tmp_path.resolve(), set(manifest._HELD)
     inside = ducked.settings(base)
@@ -690,7 +692,7 @@ async def test_a_failed_start_releases_its_spill(tmp_path: Path, monkeypatch: py
 
 
 async def test_a_replaced_reader_is_ended(tmp_path: Path) -> None:
-    """§5: a reader that is the process's no more (its roots or its budget changed) is retired: killed at
+    """A reader that is the process's no more (its roots or its budget changed) is retired: killed at
     once when it holds no cursor, else with its last one, the session that holds it finishing on it."""
     base = tmp_path.resolve()
     made, roots = ducked.settings(base), [str(base / "files" / "a"), str(base / "files" / "b")]
@@ -712,7 +714,7 @@ async def test_a_replaced_reader_is_ended(tmp_path: Path) -> None:
 
 
 async def test_a_killed_reader_is_replaced(tmp_path: Path) -> None:
-    """§5: a reader whose process ends, idle or mid-statement, is reaped and its spill directory given up;
+    """A reader whose process ends, idle or mid-statement, is reaped and its spill directory given up;
     what waited on it, and what is sent to it later, is Busy('Died'), and the next use starts another."""
     base = tmp_path.resolve()
     made, roots = ducked.settings(base), [str(base / "files" / "root")]
@@ -742,7 +744,7 @@ async def test_a_killed_reader_is_replaced(tmp_path: Path) -> None:
 
 
 async def test_a_closed_cursor_s_statement_does_not_go_on(tmp_path: Path) -> None:
-    """§8: a cursor's close interrupts its statement, and one the reader has not begun (its process stopped
+    """A cursor's close interrupts its statement, and one the reader has not begun (its process stopped
     meanwhile, as a busy host stops it) is not run: nothing goes on sorting for nobody. No request is sent
     after the close."""
     with ducked.started(tmp_path) as made:
@@ -764,7 +766,7 @@ async def test_a_closed_cursor_s_statement_does_not_go_on(tmp_path: Path) -> Non
 
 
 async def test_an_interrupt_before_a_statement_began_still_stops_it(tmp_path: Path) -> None:
-    """§8: DuckDB forgets an interrupt that reaches it while it still binds and prepares a statement
+    """DuckDB forgets an interrupt that reaches it while it still binds and prepares a statement
     (observed on 1.5.5), so the reader interrupts a request that runs until it has returned, and runs none
     that was interrupted before it began. A cursor closed as its statement is sent (a pass cancelled, here
     a statement as long to prepare as a group of 200 keys), and a deadline that falls before the statement
@@ -797,7 +799,7 @@ async def test_an_interrupt_before_a_statement_began_still_stops_it(tmp_path: Pa
 
 
 async def test_idle_cursors_hold_no_thread(tmp_path: Path) -> None:
-    """§5, R11 (U35): a request runs on a thread started for it, so 200 open cursors, each with a result
+    """A request runs on a thread started for it, so 200 open cursors, each with a result
     half read, add no thread to the reader's process: its count, by the process table, is what it was;
     the self-test's sort completes beside them, on Linux under a data limit of 1 GiB, which 200 threads'
     stacks alone would pass; and a ping is answered while a statement runs."""
@@ -825,7 +827,7 @@ async def test_idle_cursors_hold_no_thread(tmp_path: Path) -> None:
 
 
 def test_a_batch_is_read_ahead(tmp_path: Path) -> None:
-    """§14, R9: the child's own functions on a locked connection of this process. A fetch that asks for it
+    """The child's own functions on a locked connection of this process. A fetch that asks for it
     and is answered a full batch (its rows, or a step's more) has its answer sent, then the next batch
     fetched and packed on its thread;
     the next fetch of the same sizes is answered with that batch under its own id, and reads ahead again;
@@ -892,7 +894,7 @@ def test_a_batch_is_read_ahead(tmp_path: Path) -> None:
 
 
 async def test_a_batch_fetched_in_steps_is_read_ahead_too(tmp_path: Path) -> None:
-    """§14, R9: a statement with a text, bytes or JSON column is fetched ``STEP`` rows a step (every scan
+    """A statement with a text, bytes or JSON column is fetched ``STEP`` rows a step (every scan
     across engines of such a column), so its batches close a step past ``BATCH`` rows: 10,048. Each is a
     full batch, after which the next is read ahead, as after one of ``BATCH`` rows exactly (it was read
     ahead only then, so never for these); the last, short one reads nothing ahead."""
@@ -905,8 +907,8 @@ async def test_a_batch_fetched_in_steps_is_read_ahead_too(tmp_path: Path) -> Non
 
 
 def test_the_reader_s_refusals_are_worded_by_class(tmp_path: Path) -> None:
-    """§12: what F3 and F4 gain with the reader: a failed run's error is the class and the name the reader
-    answered, of ``reader.NAMES``."""
+    """What the failures of a run gain with the reader: a failed run's error is the class and the name the
+    reader answered, of ``reader.NAMES``."""
     said = [
         failure(duck._error(kind, name, tmp_path))
         for kind, name in (("memory", "MemoryError"), ("other", "Oversize"), ("other", "Unframed"))
@@ -915,9 +917,9 @@ def test_the_reader_s_refusals_are_worded_by_class(tmp_path: Path) -> None:
     assert {"MemoryError", "Oversize", "Unframed"} <= reader.NAMES
 
 
-# --- deadlines and cancellation (§8) ------------------------------------------------------------------------
+# --- deadlines and cancellation ------------------------------------------------------------------------
 
-# --- what the reader denies itself (§7) ---------------------------------------------------------------------
+# --- what the reader denies itself ---------------------------------------------------------------------
 
 AARCH64, X86_64, I386, RISCV64 = 0xC00000B7, 0xC000003E, 0x40000003, 0xC00000F3  # AUDIT_ARCH_* of a call
 EPERM, ALLOWED = 0x00050001, 0x7FFF0000  # SECCOMP_RET_ERRNO with EPERM, SECCOMP_RET_ALLOW
@@ -953,7 +955,7 @@ def _decided(architecture: int, number: int) -> int:
 
 
 def test_the_socket_filter_decides_by_architecture() -> None:
-    """§7 (U36), on every platform and with no kernel: the one program of 15 instructions the reader loads
+    """On every platform and with no kernel: the one program of 15 instructions the reader loads
     on aarch64 and on x86_64, interpreted over calls of both and of two other architectures. EPERM for
     socket, socketpair and io_uring_setup by each one's own numbers, for an x32 call, and for any call of
     another architecture; every other call is allowed, the other architecture's numbers among them."""
@@ -1015,7 +1017,7 @@ def _first_frames(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Any, Any]]:
 async def test_os_limits_off_sets_none(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """§4, §7: with ``files.os_limits`` false a reader is asked for no data limit and no socket filter, and
+    """With ``files.os_limits`` false a reader is asked for no data limit and no socket filter, and
     its start line says so (``ds target check`` too: ``test_cli``). With it on, the default, it is asked for
     ``files.memory`` + 2 GiB + 600 MiB a thread (5,296 MiB by default) and the filter, and the line says
     what that start saw hold: on macOS neither, the platform having none. The line is a warning either
@@ -1040,7 +1042,7 @@ async def test_os_limits_off_sets_none(
 async def test_the_reader_s_memory_is_limited(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """§7 (U35): on Linux a reader's start sets its data limit and proves it, on a machine of ``FILTERED``
+    """On Linux a reader's start sets its data limit and proves it, on a machine of ``FILTERED``
     denies it sockets, and the start line says both. A start whose probe is not refused (a kernel that does
     not count such a mapping), or whose filter cannot be loaded, reports what it did not see hold, in the
     start line too: on every platform, the reader taking itself for a Linux one. Nothing is reported that
@@ -1142,7 +1144,7 @@ async def _ended(session: Any, plan: tables.Plan, sent: signal.Signals = faults.
 async def test_a_hung_statement_s_process_is_killed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """§8: a statement that does not end (its file a FIFO nobody writes) is interrupted at its timeout and
+    """A statement that does not end (its file a FIFO nobody writes) is interrupted at its timeout and
     given up GRACE_S later: its caller is answered Deadline, and so is the pool's thread that waited for
     it, which is free; its reader is retired and, the statement having been alone in it, killed at once.
     The read is counted until the process is reaped: nothing is left of it."""
@@ -1165,9 +1167,9 @@ async def test_a_hung_statement_s_process_is_killed(
 async def test_a_statement_killed_after_its_deadline_is_charged(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """§8, §9: a side's statement that does not end within its grace, under a root that answers a stat, has
+    """A side's statement that does not end within its grace, under a root that answers a stat, has
     its reader killed, and the kill is charged to the side's files as any other end: the second and the
-    third time in a reader of the task's own, and then they are read no more, F12 naming the kill."""
+    third time in a reader of the task's own, and then they are read no more, ReaderDied naming the kill."""
     monkeypatch.setattr(duck, "GRACE_S", 0.2)
     base = tmp_path.resolve()
     (slow,), found = await _sides(base, "slow")
@@ -1194,7 +1196,7 @@ async def test_a_statement_killed_after_its_deadline_is_charged(
 async def test_a_dead_mount_s_kill_is_no_charge(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """§9: a kill for a deadline is charged only when a stat of the side's root answers within STAT_S. On a
+    """A kill for a deadline is charged only when a stat of the side's root answers within STAT_S. On a
     mount that does not, the statement that did not end is the outage it was: nothing is charged, the side
     is read in the shared reader again, and the stat is abandoned as any file work is."""
     monkeypatch.setattr(duck, "GRACE_S", 0.2)
@@ -1225,9 +1227,9 @@ async def test_a_dead_mount_s_kill_is_no_charge(
 async def test_an_abandoned_statement_that_answers_frees_its_count(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§8: a statement given up on a retired reader that another session's cursor keeps is counted for its
-    root until it answers: the late answer, which nobody reads, frees its count with the process alive
-    (D14), and the other session finishes on its cursor."""
+    """A statement given up on a retired reader that another session's cursor keeps is counted for its
+    root until it answers: the late answer, which nobody reads, frees its count with the process alive,
+    and the other session finishes on its cursor."""
     monkeypatch.setattr(duck, "GRACE_S", 0.2)
     with ducked.started(tmp_path) as made:
         hung = _fifo(tmp_path)
@@ -1252,7 +1254,7 @@ async def test_an_abandoned_statement_that_answers_frees_its_count(
 async def test_a_child_that_stops_answering_is_killed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """§8: a watched statement's reader is asked for a sign of life at every watch. It answers while its
+    """A watched statement's reader is asked for a sign of life at every watch. It answers while its
     sort runs; one that answers nobody within STAT_S (stopped here, as a frozen process is) is killed at
     once and its statement is Busy('Died'): a scan, which has no timeout, does not keep SORT for it."""
     monkeypatch.setattr(duck, "WATCH_S", 0.1)
@@ -1278,7 +1280,7 @@ async def test_a_child_that_stops_answering_is_killed(
 async def test_a_killed_process_that_does_not_end_stays_counted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """§8: a killed process that is not reaped within REAP_S (uninterruptible I/O on a dead mount: here the
+    """A killed process that is not reaped within REAP_S (uninterruptible I/O on a dead mount: here the
     kill is made a stop) is logged by its number, and the statement given up in it stays counted for its
     root until the process does end."""
     monkeypatch.setattr(duck, "GRACE_S", 0.2)
@@ -1336,12 +1338,12 @@ async def test_a_reader_s_end_is_learnt_from_its_process(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, then: str, cause: str,
     status: int,
 ) -> None:  # fmt: skip
-    """§5, §8: a reader's end is its process's, learnt by reaping it, and not the end of its output, which a
+    """A reader's end is its process's, learnt by reaping it, and not the end of its output, which a
     process it started may hold open. A reader that started two such processes, under a pass's statement
     with no timeout, and then ended by itself or answered nobody and was killed: the statement is Died,
     ``SORT`` is free, the spill directory gone, nothing stays counted and the end is charged, although
-    its output never ended. The process of its group went with it; one that left its group lives on
-    (READER.md §17), and holds no statement of this process's."""
+    its output never ended. The process of its group went with it; one that left its group lives on, and
+    holds no statement of this process's."""
     base, pids = tmp_path.resolve(), tmp_path.resolve() / "pids"
     root, key = str(base / "files" / "root"), str(base)
     monkeypatch.setattr(duck, "WATCH_S", 0.1)
@@ -1381,7 +1383,7 @@ async def test_a_reader_s_end_is_learnt_from_its_process(
 async def test_a_pass_whose_reader_ended_before_its_sort_is_paused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§9: a pass whose reader's process ended between its cursor's opening and its check of the spill's
+    """A pass whose reader's process ended between its cursor's opening and its check of the spill's
     room (the kernel, an operator, another run's file) is Died, an outage the worker pauses on, and not a
     spill without room, which fails the run: the reader's directory went with its process."""
     (one,), found = await _sides(tmp_path.resolve(), "one")
@@ -1404,23 +1406,23 @@ async def test_a_pass_whose_reader_ended_before_its_sort_is_paused(
 
 
 def test_an_end_s_cause_is_its_signal_s_name_or_its_exit(tmp_path: Path) -> None:
-    """§12: how an end is named in F12, P35, the check's text and the log: a signal by its name, one that
-    has none by its number (35, on Linux and on macOS), an exit by its code."""
+    """How an end is named in a failed run, a refused plan, the check's text and the log: a signal by its
+    name, one that has none by its number (35, on Linux and on macOS), an exit by its code."""
     assert [duck._cause(status) for status in (-35, -signal.SIGKILL, -signal.SIGSEGV, 0, 1)] == [
         "signal 35", "SIGKILL", "SIGSEGV", "exit 0", "exit 1",
     ]  # fmt: skip
 
 
-# --- ends and their accounting (§9) -------------------------------------------------------------------------
+# --- ends and their accounting -------------------------------------------------------------------------
 
 
 async def test_a_fault_ends_the_reader_s_process_alone(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """§9 (U33): a fault under a statement (SIGSEGV, sent mid-statement; on macOS without ``DS_FAULTS=1``
+    """A fault under a statement (SIGSEGV, sent mid-statement; on macOS without ``DS_FAULTS=1``
     the signal of ``faults`` that is no crash there) ends the reader's process and no other. The statement
     is Busy('Died') and the end is charged to its side's files, which alone were in flight; they are read
-    apart next, in a reader of the task's own, and the third such end is ReaderDied, F12's text, as is
+    apart next, in a reader of the task's own, and the third such end is ReaderDied, as is
     every later read of them, for which nothing is sent. This process lives, and a new reader reads
     another side's files."""
     (bad, good), found = await _sides(tmp_path.resolve(), "bad", "good")
@@ -1449,9 +1451,9 @@ async def test_a_fault_ends_the_reader_s_process_alone(
 
 @faults.real
 async def test_the_crafted_page_is_contained(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    """§9, FILES §14 point 7 (U33): the kept mutant, one page of which a fuzz changed. Its plan passes: its
+    """The kept mutant, one page of which a fuzz changed. Its plan passes: its
     footer is walked, its rows counted and its key read. A scan reads the changed page, and ends as a read,
-    as a closed refusal or with the reader's process, three times and then as F12: this process lives
+    as a closed refusal or with the reader's process, three times and then as ReaderDied: this process lives
     through each, no text of DuckDB's and no file's name is said, and a new reader reads another file. On
     macOS arm64 with DuckDB 1.5.5 each scan ends the reader with SIGBUS or SIGSEGV, as observed: a crash
     to that system, so the test runs there with ``DS_FAULTS=1`` alone."""
@@ -1483,12 +1485,12 @@ async def test_the_crafted_page_is_contained(tmp_path: Path, caplog: pytest.LogC
     assert duck._instance is not None and duck._instance.cause is None and ducked.strays() == []
 
 
-FUZZ = int(os.environ.get("DS_FUZZ", "100"))  # the mutants of each kind a run of the fuzz reads (§15)
+FUZZ = int(os.environ.get("DS_FUZZ", "100"))  # the mutants of each kind a run of the fuzz reads
 
 
 @pytest.mark.parametrize("pages", [False, True], ids=["footers", "pages"])
 async def test_fuzzed_files_end_no_process_but_a_reader(tmp_path: Path, pages: bool) -> None:
-    """§15, FILES §14 point 7: mutants of the tests' own Parquet files that the footer walk accepts, 100
+    """Mutants of the tests' own Parquet files that the footer walk accepts, 100
     whose footer and 100 whose pages hold one to five changed bytes (``DS_FUZZ=<n>``: n of each), and,
     where real faults are made (``faults.REAL``), the kept mutant, each through ``ds target check`` with
     its count, a plan, a scan, a census and a per-key read in this process. Whatever a step meets is a
@@ -1510,7 +1512,7 @@ async def test_fuzzed_files_end_no_process_but_a_reader(tmp_path: Path, pages: b
 async def test_ends_are_charged_when_one_set_was_in_flight(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """§9: who an end is accounted to. The sets with a request unanswered in the reader then; if none, those
+    """Who an end is accounted to. The sets with a request unanswered in the reader then; if none, those
     of its cursors whose statement was not read to its end; if none, nobody. One set, whatever the number
     of its statements, is charged; several are each suspect, and none is charged. The log names the cause,
     a fault of the reader's own by its class and line, and never a set."""
@@ -1572,7 +1574,7 @@ async def test_ends_are_charged_when_one_set_was_in_flight(
 
 
 async def test_a_batch_read_ahead_is_in_flight(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    """§9, R9: a scan's cursor that was answered a full batch has its next one read ahead, so its file set is
+    """A scan's cursor that was answered a full batch has its next one read ahead, so its file set is
     in flight beside whatever request waits: an end then makes both suspect and charges neither. A reader
     apart reads nothing ahead, so that an end during a request there has one set in flight."""
     (one, two), found = await _sides(tmp_path.resolve(), "one", "two")
@@ -1603,7 +1605,7 @@ async def test_a_batch_read_ahead_is_in_flight(tmp_path: Path, caplog: pytest.Lo
 async def test_suspects_are_read_apart_and_cleared(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """§9: a suspect set's cursor opens in a reader of its task's own, under ALONE, and every cursor the
+    """A suspect set's cursor opens in a reader of its task's own, under ALONE, and every cursor the
     task opens meanwhile opens there too; another task waits for ALONE, STAT_S at most (Busy('Alone')). The
     reader is killed when the task's cursors in it are closed, and with it alive the sets read there are
     suspect no more: they are read in the shared reader again. A charged set is read apart however clean
@@ -1665,11 +1667,11 @@ async def _passed(found: TargetRegistry, a: tables.Plan, b: tables.Plan) -> tupl
 async def test_a_pair_of_suspects_shares_one_reader(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """§9: a scan pass learns of a suspect or charged side when its sides' catalogues are read, before a
+    """A scan pass learns of a suspect or charged side when its sides' catalogues are read, before a
     cursor opens: both its sides are then read in the one reader of its own, under SORT, as are a pair that
     reads the same files and the two sides of a plan, one after the other. Each completes when its reads
     are clean, none waits for itself (Alone), and a pass whose reader ends a third time under one side's
-    statement fails with F12."""
+    statement fails as ReaderDied."""
     base = tmp_path.resolve()
     (one, two), found = await _sides(base, "one", "two")
     two = two | {"pinned": two["pinned"] | {"side": "b"}}
@@ -1694,7 +1696,7 @@ async def test_a_pair_of_suspects_shares_one_reader(
     made = await tables.planning(found, compile_spec(file_spec(table, other), targets=found))
     assert made.plan is not None and duck._set(tables.pins(made.plan, made.pinned)["b"]) == keys[1]
     assert not duck._doubted(keys[0]) and duck._aparts == {} and _logged(caplog) == []
-    # The pass's reader ends under side b's sort, a third time: F12, for side b.
+    # The pass's reader ends under side b's sort, a third time: ReaderDied, for side b.
     monkeypatch.setitem(duck._charged, keys[1], (2, "SIGBUS"))
     ask = duck.Instance.ask
 
@@ -1719,7 +1721,7 @@ async def test_a_pair_of_suspects_shares_one_reader(
 async def test_a_per_key_read_does_not_wait_for_a_pass(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§9: a pass reads apart under SORT, a per-key read under ALONE: neither waits for the other. A per-key
+    """A pass reads apart under SORT, a per-key read under ALONE: neither waits for the other. A per-key
     reader closes the cursor it opened apart after each read, so ALONE is free between its reads."""
     (one, two), found = await _sides(tmp_path.resolve(), "one", "two")
     engine, exports = duck.Files(), found.get("exports")
@@ -1748,7 +1750,7 @@ async def test_a_per_key_read_does_not_wait_for_a_pass(
 
 
 async def test_an_innocent_run_is_not_failed_by_another_s_files(tmp_path: Path) -> None:
-    """§9: a side whose statement was in flight beside another's when the shared reader ended loses that
+    """A side whose statement was in flight beside another's when the shared reader ended loses that
     read and is read apart once: its read there is clean, it is suspect no more and it is never charged,
     while the other side's files end their own reader three times and are read no more."""
     (bad, innocent), found = await _sides(tmp_path.resolve(), "bad", "innocent")
@@ -1779,10 +1781,10 @@ async def test_an_innocent_run_is_not_failed_by_another_s_files(tmp_path: Path) 
 async def test_a_condemned_set_is_refused_with_no_death(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """§9, §12: a set charged three ends is ReaderDied before anything is sent, until this process restarts:
-    a scan and a per-key read are F12, a new plan of the same files is P35, at its first statement or at
-    its probe's (which was "the database refuses the filter or key map"), each with the last end's cause,
-    and no reader is started or ended for them."""
+    """A set charged three ends is ReaderDied before anything is sent, until this process restarts:
+    a scan and a per-key read fail their run, a new plan of the same files is refused, at its first statement
+    or at its probe's (which was "the database refuses the filter or key map"), each with the last end's
+    cause, and no reader is started or ended for them."""
     base = tmp_path.resolve()
     (one,), found = await _sides(base, "one")
     monkeypatch.setitem(duck._charged, duck._set(one), (duck.DEATHS, "SIGBUS"))
@@ -1819,8 +1821,8 @@ async def test_a_condemned_set_is_refused_with_no_death(
 
 
 async def test_a_check_is_told_its_reader_s_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """§12: ``ds target check``, a process of its own, ends at its reader's first end with a text of its own
-    that names the cause; a reader apart it does not get is P34, worded for the target."""
+    """``ds target check``, a process of its own, ends at its reader's first end with a text of its own
+    that names the cause; a reader apart it does not get is not ready, worded for the target."""
     base = tmp_path.resolve()
     _, found = await _sides(base, "one")
     exports, ask = found.get("exports"), duck.Instance.ask
@@ -1890,7 +1892,7 @@ asyncio.run(read())
 
 
 def test_a_process_reaps_its_reader_as_it_exits(tmp_path: Path) -> None:
-    """§5: a ``ds`` process that exits kills and reaps the readers it still has, and their spill
+    """A ``ds`` process that exits kills and reaps the readers it still has, and their spill
     directories go: one left to end by itself at the end of its input would be left to whatever started
     that process, which may wait for none (``docker compose exec``: a zombie entry a command)."""
     ran = subprocess.run(
@@ -1903,7 +1905,7 @@ def test_a_process_reaps_its_reader_as_it_exits(tmp_path: Path) -> None:
 
 
 def test_no_reader_outlives_its_parent(tmp_path: Path) -> None:
-    """§5, §10 (U34): the end of its input is the reader's own, whatever ended its parent and whatever it
+    """The end of its input is the reader's own, whatever ended its parent and whatever it
     was doing: an exit, SIGTERM, SIGKILL while it is idle and in the middle of a sort. Its spill directory,
     whose lock the kernel freed, goes with the next sweep."""
     base = tmp_path.resolve()

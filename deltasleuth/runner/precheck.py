@@ -1,4 +1,4 @@
-"""Table pre-checks as the worker reads them (docs/mvp/PRECHECKS.md §5, §6): one pair of a pre-check at a
+"""Table pre-checks as the worker reads them: one pair of a pre-check at a
 time, each side inside one snapshot of its engine, judged by ``core.precheck`` and settled in one
 transaction.
 
@@ -12,8 +12,8 @@ its own. No row crosses the wire, and a minimum, a maximum or a sum that is not 
 process's memory.
 
 Under SSO a version that declares a filter and that the approval gate does not admit is read at level
-``schema`` and sent no probe: no unapproved filter reaches a target (D15). A ``regex`` key map is no filter
-and needs no approval of its own: its pattern reaches the target as a run's does (§6). A read's failure is
+``schema`` and sent no probe: no unapproved filter reaches a target. A ``regex`` key map is no filter
+and needs no approval of its own: its pattern reaches the target as a run's does. A read's failure is
 recorded by its closed code, never a driver's text, and what was read before it stays. An unreachable target
 is read again once, a lease period later, then every pending pair of the pre-check naming it is settled
 unread; a refused credential is never tried again: every pending pair of every unfinished pre-check

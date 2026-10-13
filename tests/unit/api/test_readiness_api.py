@@ -1,10 +1,10 @@
-"""Cut-over readiness over the API (docs/mvp/READINESS.md §9, §10, §12): the pairs worst first with their
+"""Cut-over readiness over the API: the pairs worst first with their
 programmes' and entity types' roll-ups, the filters and their refusals, what was recorded as of a time, a
 pair's detail with the precheck on demand only, its trend and the transitions, the audited reports with
 their volumes and the trends refusal; a pair climbing the ladder to ``evidenced`` under SSO; no 410 for a
 purged cycle; a pair's brief: its newest complete cycle's stored figures, a sampled one's strata, its
 marked points and its root-cause groups, opened, still open and closed; and what no answer, PDF or CSV
-ever tells (§2), keys among it."""
+ever tells, keys among it."""
 
 from __future__ import annotations
 
@@ -124,7 +124,7 @@ def test_the_pairs_worst_first_with_their_roll_ups_filters_and_pages(client: Tes
     assert [(p["cycle"], p["value"], p["allowed"], p["failed"], p["sampled"]) for p in good["trend"]] == [
         (1, 0, 1, [], False), (2, 0, 1, [], False), (3, 0, 1, [], False),
     ]  # fmt: skip
-    assert [p["suppressed"] for p in good["trend"]] == [0, 0, 1]  # N6: beside each discrepant count
+    assert [p["suppressed"] for p in good["trend"]] == [0, 0, 1]  # beside each discrepant count
     assert good["gates"][2]["text"].endswith(
         "(per-stratum targets are the approver's); 1 key(s) suppressed (known differences or noise only)"
     )
@@ -369,7 +369,7 @@ def test_a_viewer_reads_everything_and_only_a_download_is_audited(
             "",
             "",
         )
-        # N6: the suppressed count beside the one discrepant count a row holds, the targets gate's value.
+        # The suppressed count beside the one discrepant count a row holds, the targets gate's value.
         assert [(row["gate"], row["value"], row["suppressed"]) for row in rows if row["suppressed"]] == [
             ("targets", "0", "1")
         ]
@@ -514,7 +514,7 @@ async def _purging(ctx: Context, run_id: str, cycle: int = 1) -> None:
 def test_the_precheck_lists_what_refuses_every_pack_of_the_spec(
     open_client: OpenClient, pack_key: Path, configured: bool
 ) -> None:
-    """Identifier keys that no key.pattern tells get no pack (docs/mvp/PACK.md §2.3): the precheck said
+    """Identifier keys that no key.pattern tells get no pack: the precheck said
     nothing refused the cycle's sign-off, and the pack was refused once it was signed off. It lists the
     pack's own line where packs are configured; the sign-off itself is not refused for it."""
     packs = {"installation": "test-1", "signing_key_ref": f"file:{pack_key}"} if configured else None
@@ -609,7 +609,7 @@ async def _paged(ctx: Context, pair: str) -> Document:
     return reports.brief_document(await readiness.brief(ctx, pair), "I-" + "0" * 26, "open")
 
 
-# -- a pair's brief (§9, §10) -----------------------------------------------------------------------------
+# -- a pair's brief -----------------------------------------------------------------------------
 
 POINT = {
     "run_id", "cycle", "ended_at", "version", "spec_id", "basis", "complete", "evidence", "total", "compared",
@@ -781,9 +781,10 @@ def test_brief_sampled_has_no_rate(client: TestClient) -> None:
         for label in ("retail", "other")
     ]
     texts = list(_strings(brief))
-    allowed = {*cycle["strata"], *(gate["text"] for gate in brief["gates"])}  # N1: SAMPLING's lines, Y4, Y5
+    # sampling's lines and the gates' texts
+    allowed = {*cycle["strata"], *(gate["text"] for gate in brief["gates"])}
     assert {text for text in texts if "%" in text} <= allowed
-    assert not any("weighted" in text or "ub95" in text for text in texts)  # N7: nothing pooled
+    assert not any("weighted" in text or "ub95" in text for text in texts)  # nothing pooled
     other, unjudged = on(client, _drawn, False)
     brief = _brief(client, "customer-profile")
     cycle = brief["cycle"]
@@ -859,7 +860,7 @@ def test_brief_burn_down(client: TestClient, monkeypatch: pytest.MonkeyPatch) ->
         "closed, version and keys changed since",
     ]  # fmt: skip
     assert gates.reads({"state": "closed", "since": ["version"]}) == "closed, version changed since"
-    told = "".join(_strings(causes))  # N9: no path, and no key of a group
+    told = "".join(_strings(causes))  # no path, and no key of a group
     assert "$.status" not in told and not any(key in _ID.sub("", told) for key in KEYS)
     monkeypatch.setattr(readiness, "BRIEF_CAUSES", 3)
     cut = _brief(client)["causes"]
@@ -883,8 +884,9 @@ def test_brief_closed_groups_under_keys_not_compared(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A cycle whose keys were mostly not read is complete, so it is the reported one, and it holds no
-    root-cause group: a root cause groups keys that were compared. The earlier groups read closed, and M6
-    says how many keys of the newest were not compared, since a closed group's keys may be among them."""
+    root-cause group: a root cause groups keys that were compared. The earlier groups read closed, and the
+    groups' line says how many keys of the newest were not compared, since a closed group's keys may be among
+    them."""
     on(client, _unread)
     brief = _brief(client)
     figures = ("cycle", "complete", "compared", "indeterminate", "mismatch_rate", "root_causes", "marks")
@@ -1020,7 +1022,8 @@ def test_brief_reports(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> N
         200, "application/pdf", 'attachment; filename="readiness-brief.pdf"',
     )  # fmt: skip
     assert pdf.content.startswith(b"%PDF-") and len(re.findall(rb"/Type /Page\b", pdf.content)) == 1
-    # The page: M8 above the figures, the stored rate (M9) under them, then that they are of keys only (M5).
+    # The page: which cycle the figures are of above them, the stored rate under them, then that they are
+    # of keys only.
     paged = on(client, _paged, PAIR)
     new, ended = cycle["spec_id"], cycle["ended_at"][:10]
     assert paged.compact and [section.title for section in paged.sections] == [
@@ -1042,7 +1045,7 @@ def test_brief_reports(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> N
     by = {gate["gate"]: gate["text"] for gate in brief["gates"]}
     assert len(by["convergence"]) > 300 and by["convergence"].endswith(SCHEDULE)
     assert gated[1:] == [
-        # Cut where a clause ends: its soak's schedule is left out whole, never without its label (N2).
+        # Cut where a clause ends: its soak's schedule is left out whole, never without its label.
         f"convergence not met: {by['convergence'].split('; ')[0]}…",
         f"spec approval unavailable: {by['spec_approval']}",
         f"sign-off unavailable: {by['signoff']}",
@@ -1144,10 +1147,10 @@ def test_brief_reports(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_never_told(client: TestClient) -> None:
-    """§2 over every answer (a pair's brief among them), the dashboard's and a brief's PDF and every CSV:
-    no percentage but in the texts of the targets gate (N1); no future time but a labelled schedule (N2);
+    """Over every answer (a pair's brief among them), the dashboard's and a brief's PDF and every CSV:
+    no percentage but in the texts of the targets gate; no future time but a labelled schedule;
     nothing forecast, weighted, averaged or certified beyond the definition and what the report says it is
-    not (N1, N3, N7, N8); and no key (N9), nor a root-cause group's path."""
+    not; and no key, nor a root-cause group's path."""
     runs = on(client, _pairs)
     on(client, _fail, runs["good"])
     for cycle, groups in ((3, {"a": 1}), (4, {"a": 2, "b": 1})):
@@ -1182,9 +1185,9 @@ def test_never_told(client: TestClient) -> None:
         assert client.get(f"/v1/readiness/reports/{name}").content.startswith(b"%PDF-")
     assert gates.DEFINITION in texts and reports.NOT[0] in texts and len(texts) > 500
     targets = [text for text in texts if "pooled 0.1% target" in text]
-    assert len(targets) >= 6  # N1's allowed texts: the targets gate's, on each surface
+    assert len(targets) >= 6  # the allowed texts: the targets gate's, on each surface
     scheduled = [text for text in texts if "scheduled to start" in text]
-    assert scheduled and all(text.endswith(SCHEDULE) for text in scheduled)  # N2
+    assert scheduled and all(text.endswith(SCHEDULE) for text in scheduled)
     said_not = {gates.DEFINITION, *reports.NOT, *targets}
     told = [
         (found.group(0), text)
@@ -1193,16 +1196,16 @@ def test_never_told(client: TestClient) -> None:
         for found in BANNED.finditer(text.replace(SCHEDULE, ""))
     ]
     assert told == []
-    # N6: wherever a discrepant count is told, the suppressed count stands beside it.
+    # Wherever a discrepant count is told, the suppressed count stands beside it.
     counted = [text for text in texts if "discrepant or unresolved key(s)" in text]
     assert len(counted) >= 12 and all(" suppressed" in text for text in counted)
     assert any(text.endswith("1 allowed, 1 suppressed") for text in counted)  # the PDF's cycle 3
     points = [point for item in answers[0]["items"] for point in item["trend"]]
     assert len(points) == 5 and all(point["suppressed"] is not None for point in points)
     assert all("suppressed" in point for answer in answers[5:7] for point in answer["items"])
-    assert not any("weighted_rate" in text for text in texts)  # N7
+    assert not any("weighted_rate" in text for text in texts)
     without_ids = [_ID.sub("", text) for text in texts]
-    assert not any(key in text for text in without_ids for key in KEYS)  # N9: no key, masked or raw
+    assert not any(key in text for text in without_ids for key in KEYS)  # no key, masked or raw
     assert not any(re.search(r"\b(tok|key)_?(masked|enc)\b", text) for text in texts)
     # The brief: what it is, its stored rate and its groups, none with its path, its keys or a token.
     brief = answers[8]

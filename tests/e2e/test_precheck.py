@@ -1,9 +1,9 @@
-"""Table pre-checks end to end (docs/mvp/PRECHECKS.md §13), on the local images: a pair of tables with a
+"""Table pre-checks end to end, on the local images: a pair of tables with a
 repeated key, rows without a key, a filter, an empty text Oracle stores as NULL, CHAR padding, a float and a
 typeMap column, between PostgreSQL, MySQL and Oracle and on each against itself, figures and verdicts exact;
 two schemas of one database read as one target; two schemas paired by name, a name of one side alone and two
 names alike ignoring case, then a draft that validates and runs; and a role's own limits. With DS_PERF=1 the
-reads of §12 are timed.
+reads are timed.
 """
 
 from __future__ import annotations
@@ -87,7 +87,7 @@ SPEC = table_spec(
     },
     security={"unlisted": "tokenize", "clear": ["$.amount", "$.email", "$.code"]},
 )  # fmt: skip
-# Under side a's filter a protected column's counts beside its NULLs are verdicts (PRECHECKS.md §6).
+# Under side a's filter a protected column's counts beside its NULLs are verdicts.
 WITHHELD = "figures withheld: side a declares a filter and $.note is protected by the spec's security policy"
 # What each side is read as, by its engine's kind (Oracle stores '' as NULL: its texts have none).
 TEXTS = {
@@ -306,7 +306,7 @@ async def test_a_role_s_own_limits(
     assert result["columns"]["v"]["figures"]["nulls"] == {"a": 0, "b": 0, "verdict": "same", "reason": None}
 
 
-# --- performance (PRECHECKS.md §12): DS_PERF=1 runs these; §12 publishes what they measured ---------------
+# --- performance: DS_PERF=1 runs these -------------------------------------------------------------------
 
 perf = pytest.mark.skipif(not os.environ.get("DS_PERF"), reason="DS_PERF=1 runs it")
 CLEAR = table_spec(sides=both({"name": "users", "keyColumns": ["userid"]}), security={"unlisted": "clear"})

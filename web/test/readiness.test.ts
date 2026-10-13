@@ -1,4 +1,4 @@
-// What the Readiness screens draw and say besides the API's texts (docs/mvp/READINESS.md §10): the words and
+// What the Readiness screens draw and say besides the API's texts: the words and
 // shapes of states and gates, "k of m", the sparkline's and the step chart's geometry, a brief's figures, notes
 // and trend, no percentage anywhere, and what the screens ask of /v1/readiness.
 import assert from 'node:assert/strict';

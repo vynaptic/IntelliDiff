@@ -1,11 +1,11 @@
-"""Table pre-checks as people start, see and steer them (docs/mvp/PRECHECKS.md §3, §9, §11): the stored
+"""Table pre-checks as people start, see and steer them: the stored
 specs a pre-check pairs, or two schemas' tables paired by name, the list with its banner, one pre-check with
 its totals and its pairs worst first, a pair's result and its draft, and a cancel. The API and the CLI call
 this module; only the worker reads a table (``runner.precheck``), and two schemas are listed here, one
 short session a side, as a run's creation plans.
 
 A pre-check is its own object, never a run: creating one seats no licence pair, is refused by no licence
-and needs no approval (what an unapproved version shows is the worker's to withhold, §6). It is stored
+and needs no approval (what an unapproved version shows is the worker's to withhold). It is stored
 with its pairs pending, audited ``precheck.create``; one made in an unlicensed evaluation is labelled so
 wherever it is shown. A refusal carries its HTTP status and binding message (``Refused``); the CLI prints
 the message. Every answer but a draft is headed by what a pre-check is not (``precheck.NOT``), and every
@@ -30,10 +30,10 @@ from deltasleuth.core import precheck
 from deltasleuth.profiler.tables import table_draft
 from deltasleuth.store import repo
 
-PAIRS = 500  # pairs a pre-check takes (K7)
-LIMIT = 20  # unfinished pre-checks an installation holds (K10)
-GLOBS, GLOB = 20, 128  # include or exclude patterns, and the characters of one (K8)
-RELATIONS = 5000  # tables and views a side of two schemas paired by name holds (K9)
+PAIRS = 500  # pairs a pre-check takes
+LIMIT = 20  # unfinished pre-checks an installation holds
+GLOBS, GLOB = 20, 128  # include or exclude patterns, and the characters of one
+RELATIONS = 5000  # tables and views a side of two schemas paired by name holds
 LIST_S = 30.0  # each statement that lists a schema, as a run's creation plans
 STALLED = timedelta(minutes=10)  # unfinished, and no pair read or settled for this long: does a worker run?
 HELD = 3  # lease periods: a running pair whose claim was not renewed for this long is read by no worker
@@ -45,8 +45,7 @@ _ITEM = (
 
 
 class Refused(ValueError):
-    """A pre-check request refused (docs/mvp/PRECHECKS.md §10 K1 to K13): its HTTP status and binding
-    message."""
+    """A pre-check request refused: its HTTP status and binding message."""
 
     def __init__(self, status: int, message: str) -> None:
         super().__init__(message)
@@ -55,12 +54,12 @@ class Refused(ValueError):
 
 def file_name(row: Mapping[str, Any], name: str) -> str:
     """The name a pre-check's report ``name`` downloads and is written as: ``PC-…-<name>``, or
-    ``PC-…-unlicensed-evaluation-<name>`` for one made in an unlicensed evaluation (§9)."""
+    ``PC-…-unlicensed-evaluation-<name>`` for one made in an unlicensed evaluation."""
     label = "unlicensed-evaluation-" if row["evaluation"] else ""
     return f"{row['precheck_id']}-{label}{name}"
 
 
-# -- what every surface shows (§10, §11) ----------------------------------------------------------------
+# -- what every surface shows ----------------------------------------------------------------
 
 
 def _stalled(row: Mapping[str, Any], lease_s: float) -> str | None:
@@ -108,7 +107,7 @@ async def overview(ctx: Context, *, limit: int = 50, cursor: str | None = None) 
 
 
 async def stored(ctx: Context, conn: repo.Conn, precheck_id: str) -> repo.Row:
-    """The pre-check; refused (K11) when there is none: it was never made, or its retention deleted it."""
+    """The pre-check; refused when there is none: it was never made, or its retention deleted it."""
     row = await repo.get_precheck(conn, precheck_id)
     if row is None:
         days = ctx.settings.retention.standard_days
@@ -165,7 +164,7 @@ async def pair(ctx: Context, precheck_id: str, n: int) -> dict[str, Any]:
     }  # fmt: skip
 
 
-# -- the acts (§9): each audited --------------------------------------------------------------------------
+# -- the acts: each audited --------------------------------------------------------------------------
 
 
 def _relation(table: Mapping[str, Any]) -> str:
@@ -174,7 +173,7 @@ def _relation(table: Mapping[str, Any]) -> str:
 
 
 def refuse(body: Mapping[str, Any]) -> None:
-    """Refuse what no store is needed to refuse (K1, K5, K7): none or several of the three forms, a level
+    """Refuse what no store is needed to refuse: none or several of the three forms, a level
     that is none, and more ids or names than a pre-check takes pairs."""
     ids, names, every = body.get("spec_ids"), body.get("spec_names"), bool(body.get("all_specs"))
     if (ids is not None) + (names is not None) + every != 1:
@@ -187,7 +186,7 @@ def refuse(body: Mapping[str, Any]) -> None:
 
 
 async def _specs(conn: repo.Conn, body: Mapping[str, Any]) -> tuple[list[repo.Row], int, dict[str, Any]]:
-    """The stored versions ``body`` names, each a pair of tables, in the order given (K2 to K4, K7), how
+    """The stored versions ``body`` names, each a pair of tables, in the order given, how
     many names it skipped, and the request as the pre-check stores it."""
     ids, names = body.get("spec_ids"), body.get("spec_names")
     if ids is None and names is None:
@@ -227,7 +226,7 @@ async def create(ctx: Context, body: Mapping[str, Any], who: Principal) -> dict[
     (``spec_ids``, ``spec_names``: each name's newest version, or ``all_specs``: the newest version of
     every name whose sides are both tables) at its ``level``, its pairs pending for the worker, audited
     ``precheck.create``. The licence is read only to label an unlicensed evaluation: nothing is refused
-    for it, and no pair is counted. Refused with K1 to K5, K7 and K10."""
+    for it, and no pair is counted. A refusal is ``Refused``."""
     refuse(body)
     level = body.get("level", "columns")
     evaluation = (await licence.status(ctx))["state"] == "evaluation"  # never raises
@@ -261,7 +260,7 @@ async def create(ctx: Context, body: Mapping[str, Any], who: Principal) -> dict[
 
 
 def refuse_catalogue(body: Mapping[str, Any]) -> None:
-    """Refuse what no target is needed to refuse of two schemas paired by name (K5, K8)."""
+    """Refuse what no target is needed to refuse of two schemas paired by name."""
     level = body.get("level", "counts")
     if level not in precheck.LEVELS:
         raise Refused(422, "level must be schema, counts, columns or distinct")
@@ -274,25 +273,24 @@ def refuse_catalogue(body: Mapping[str, Any]) -> None:
 
 
 def _declared(ctx: Context, target_id: str) -> None:
-    """Refuse a target that is not declared, or that is no database (K6), or a files target (FILES.md
-    §12's K1)."""
+    """Refuse a target that is not declared, or that is no database, or a files target."""
     if target_id not in ctx.targets:
         raise Refused(404, f"target {target_id} is not declared")
     if ctx.targets.get(target_id).engine is None:
         raise Refused(422, f"target {target_id} is a service: a table pre-check reads database targets")
-    if ctx.targets.get(target_id).engine == "files":  # docs/mvp/FILES.md §12, K1
+    if ctx.targets.get(target_id).engine == "files":
         raise Refused(422, precheck.FILE_SIDE)
 
 
 def _schema(asked: Mapping[str, Any]) -> str:
-    """A side's schema as a refusal names it (K9)."""
+    """A side's schema as a refusal names it."""
     schema = f"schema {asked['schema']}" if asked["schema"] else "the default schema"
     return f"{schema} of target {asked['target']}"
 
 
 async def _relations(ctx: Context, side: str, asked: Mapping[str, Any]) -> list[str]:
     """The names of the tables and views of a side's schema the account may read, on a short session of
-    its own (K9): a failure says its code alone."""
+    its own: a failure says its code alone."""
     target, schema, of = ctx.targets.get(asked["target"]), asked["schema"], _schema(asked)
     engine = tables.of(target)
     try:
@@ -353,7 +351,7 @@ async def catalogue(ctx: Context, body: Mapping[str, Any], who: Principal) -> di
     when left out), their tables and views paired by lower-cased name, those ``include`` and ``exclude``
     choose, at ``level`` (counts by default), audited ``precheck.create``. The schemas are listed now, one
     short session a side (in turn on one target), each statement bounded as a run's creation plans; the
-    pairs are read by the worker. Refused with K5 to K10."""
+    pairs are read by the worker. A refusal is ``Refused``."""
     refuse_catalogue(body)
     level = body.get("level", "counts")
     sides = {s: {"target": body[s]["target"], "schema": body[s].get("schema") or None} for s in "ab"}
@@ -403,7 +401,7 @@ async def catalogue(ctx: Context, body: Mapping[str, Any], who: Principal) -> di
 async def draft(ctx: Context, precheck_id: str, n: int) -> tuple[str, list[Any]]:
     """``GET /v1/prechecks/{id}/pairs/{n}/draft.yaml`` and ``ds precheck draft``: a starter spec of a pair
     of two relations paired by name (``profiler.tables.table_draft``) and its ``validate_spec`` issues,
-    which head it as comments. Never stored; uploading it is ``POST /v1/specs``. Refused with K11, K12."""
+    which head it as comments. Never stored; uploading it is ``POST /v1/specs``. A refusal is ``Refused``."""
     async with ctx.pool.connection() as conn:
         await stored(ctx, conn, precheck_id)
         found = await repo.precheck_pair(conn, precheck_id, n)

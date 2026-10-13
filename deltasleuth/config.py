@@ -53,10 +53,7 @@ SecretRef = Annotated[str, Field(pattern=r"^file:.+")]
 Days = Annotated[int, Field(strict=True, ge=7, le=3650)]
 _CLOSED = ConfigDict(extra="forbid")  # a mistyped setting is an error, never ignored
 LOOPBACK = ("localhost", "127.0.0.1", "::1")
-_REPLACED = (
-    "api_token_ref: replaced by named API tokens; remove it and create tokens with 'ds token create'"
-    " (docs/mvp/AUTH.md §5)"
-)
+_REPLACED = "api_token_ref: replaced by named API tokens; remove it and create tokens with 'ds token create'"
 KEY_FILE = "tokeniser.key"  # developer mode's tokeniser key, in the workspace
 _MOVED = f"{KEY_FILE} was moved to encryption.tokeniser_key_ref: delete it from the workspace"
 
@@ -172,7 +169,7 @@ GroupId = Annotated[str, AfterValidator(_group)]
 @with_config(_CLOSED)
 @dataclass(frozen=True)
 class OidcSettings:
-    """The IdP relying party (docs/mvp/AUTH.md §2, §8). ``roles`` maps each role to immutable group
+    """The IdP relying party. ``roles`` maps each role to immutable group
     ids that only IdP administrators assign, matched exactly."""
 
     issuer: Annotated[str, AfterValidator(_issuer)]
@@ -208,7 +205,7 @@ class OidcSettings:
 @with_config(_CLOSED)
 @dataclass(frozen=True)
 class AuthSettings:
-    """Sign-in and sessions (docs/mvp/AUTH.md §8): tokens mode without ``oidc``, else oidc mode."""
+    """Sign-in and sessions: tokens mode without ``oidc``, else oidc mode."""
 
     public_url: Annotated[str, AfterValidator(_public_url)]  # kept without a trailing slash
     allowed_hosts: tuple[str, ...] = ()  # extra Host values for API clients
@@ -231,8 +228,7 @@ class AuthSettings:
 @with_config(_CLOSED)
 @dataclass(frozen=True)
 class EncryptionSettings:
-    """The keyring and the tokeniser key, as ``file:`` secrets outside every volume and backup
-    (docs/mvp/RETENTION.md §1)."""
+    """The keyring and the tokeniser key, as ``file:`` secrets outside every volume and backup."""
 
     kek_ref: SecretRef
     tokeniser_key_ref: SecretRef
@@ -260,9 +256,9 @@ def _installation(value: str) -> str:
 @with_config(_CLOSED)
 @dataclass(frozen=True)
 class PackSettings:
-    """Cut-over evidence packs (docs/mvp/PACK.md §3.1), which need oidc mode: the installation's name
+    """Cut-over evidence packs, which need oidc mode: the installation's name
     and its signing key (PEM PKCS#8, EC P-256, unencrypted), a secret outside every volume. With them,
-    the worker counts each cycle's key census (§1.3)."""
+    the worker counts each cycle's key census."""
 
     installation: Annotated[str, AfterValidator(_installation)]
     signing_key_ref: SecretRef
@@ -279,8 +275,8 @@ class WorkerSettings:
 @with_config(_CLOSED)
 @dataclass(frozen=True)
 class SamplingSettings:
-    """A draw's session (docs/mvp/SAMPLING.md §3): the temporary buffers it dedupes a frame of two sources
-    in (PostgreSQL's ``temp_buffers``); a larger table spills to temporary files (DEPLOY §10)."""
+    """A draw's session: the temporary buffers it dedupes a frame of two sources
+    in (PostgreSQL's ``temp_buffers``); a larger table spills to temporary files."""
 
     temp_buffers: Annotated[str, Field(pattern=r"^[1-9][0-9]*(kB|MB|GB|TB)$")] = "2GB"
 
@@ -288,7 +284,7 @@ class SamplingSettings:
 @with_config(_CLOSED)
 @dataclass(frozen=True)
 class PrecheckSettings:
-    """Table pre-checks (docs/mvp/PRECHECKS.md §5): the sessions the worker holds on a target at once to
+    """Table pre-checks: the sessions the worker holds on a target at once to
     read them, the seconds each of their statements may take, and the rows over which a side's distinct
     values and duplicate keys, which sort or hash, are not counted (0: never counted)."""
 
@@ -314,11 +310,11 @@ FILES_REFUSED = (
 @with_config(_CLOSED)
 @dataclass(frozen=True)
 class FilesSettings:
-    """Files as table sides (docs/mvp/FILES.md §4), budgets of each process that runs ``ds``, applied at
+    """Files as table sides, budgets of each process that runs ``ds``, applied at
     restart: DuckDB's memory and spill, its threads, the directory it spills in (absent:
     ``<evidence_dir>/spill``), the directory every files target's root lies under, a side's files at most,
     the seconds a run's creation may spend planning its file sides, and whether the reader's process sets
-    itself a data limit and denies itself sockets (docs/mvp/READER.md §4, §7; Linux)."""
+    itself a data limit and denies itself sockets (Linux)."""
 
     memory: Size = "2GB"
     spill: Size = "20GB"
@@ -365,7 +361,7 @@ def _literal(host: str) -> str | None:
 
 
 def _event(value: str) -> str:
-    """An event a rule may name (docs/mvp/ALERTS.md §2.1): neither a reserved one nor a test's."""
+    """An event a rule may name: neither a reserved one nor a test's."""
     if value in RESERVED:
         raise PydanticCustomError(
             "reserved", "{event} is reserved for {feature} and not built",
@@ -394,10 +390,10 @@ _ONLY = {  # a channel setting and the kinds it is for
 @with_config(_CLOSED)
 @dataclass(frozen=True)
 class ChannelSettings:
-    """A notification channel (docs/mvp/ALERTS.md §8): a signed HTTPS webhook, Slack, Teams (a Workflows
+    """A notification channel: a signed HTTPS webhook, Slack, Teams (a Workflows
     webhook) or SMTP e-mail. A URL holding a secret is itself a ``file:`` secret bound to a declared host;
-    a literal host is judged by §7's rule here. ``labels`` and ``links`` default to true for webhook and
-    e-mail, false for Slack and Teams (§6.4)."""
+    a literal host is judged here (``_destination``). ``labels`` and ``links`` default to true for webhook and
+    e-mail, false for Slack and Teams."""
 
     kind: NotifyKind
     url: Annotated[str, AfterValidator(_destination)] | None = None
@@ -463,7 +459,7 @@ class ChannelSettings:
 @with_config(_CLOSED)
 @dataclass(frozen=True)
 class WhenSettings:
-    """A ``cycle.ended`` rule's conditions, any of which fires it (docs/mvp/ALERTS.md §3): a change holds
+    """A ``cycle.ended`` rule's conditions, any of which fires it: a change holds
     each cycle its fact reaches the bound, a level fires when it crosses or recovers."""
 
     new_root_causes_at_least: PosInt | None = None
@@ -482,7 +478,7 @@ _FILTERS = {  # a rule's filter and the events it is for
     "when": ("cycle.ended",), "reasons": ("run.paused", "run.stopped", "run.finished"),
     "states": ("licence.state", "readiness.changed"), "statuses": ("sample.judged",),
 }  # fmt: skip
-_READINESS = ("programmes", "gates", "causes")  # a rule's keys for readiness.changed (READINESS.md §8)
+_READINESS = ("programmes", "gates", "causes")  # a rule's keys for readiness.changed
 
 
 def _state(value: Any) -> str:
@@ -494,9 +490,9 @@ def _state(value: Any) -> str:
 @with_config(_CLOSED)
 @dataclass(frozen=True)
 class RuleSettings:
-    """Which events go to which channels (docs/mvp/ALERTS.md §3): ``specs`` globs (absent: every spec),
+    """Which events go to which channels: ``specs`` globs (absent: every spec),
     ``modes`` (one_shot only when named) and each kind's own filter. A rule for ``readiness.changed``
-    names the causes it takes, and may name programmes (globs) and gates (docs/mvp/READINESS.md §8)."""
+    names the causes it takes, and may name programmes (globs) and gates."""
 
     name: Slug
     events: tuple[Annotated[str, AfterValidator(_event)], ...]
@@ -529,7 +525,7 @@ class RuleSettings:
 @with_config(_CLOSED)
 @dataclass(frozen=True)
 class NotifySettings:
-    """Alerts and notifications (docs/mvp/ALERTS.md §8): channels and rules, applied at restart; absent, no
+    """Alerts and notifications: channels and rules, applied at restart; absent, no
     notifier runs. ``proxy`` is for channels with ``proxy: true`` (declared as ``auth.oidc.proxy``)."""
 
     label: Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]{0,31}$")]
@@ -572,9 +568,7 @@ class NotifySettings:
 
 def _tier(value: Any) -> str:
     if value not in ("standard", "high"):
-        raise PydanticCustomError(
-            "tier", "expected standard or high: readiness targets never go below architecture §15's 0.1%"
-        )
+        raise PydanticCustomError("tier", "expected standard or high: readiness targets never go below 0.1%")
     return value
 
 
@@ -642,14 +636,14 @@ class AccuracySettings:
 @with_config(_CLOSED)
 @dataclass(frozen=True)
 class GateSettings:
-    """The readiness gates one level sets (docs/mvp/READINESS.md §7): an unset one is the level above's,
-    at last the contract's default (``core.readiness.policy``)."""
+    """The readiness gates one level sets: an unset one is the level above's,
+    at last the built-in default (``core.readiness.policy``)."""
 
     tier: Annotated[str, PlainValidator(_tier)] | None = None
     convergence: ConvergenceSettings | None = None
     fresh: FreshSettings | None = None
     graph: GraphSettings | None = None
-    accuracy: AccuracySettings | None = None  # labelled accuracy (docs/mvp/ACCURACY.md): unset, not required
+    accuracy: AccuracySettings | None = None  # labelled accuracy: unset, not required
 
 
 @with_config(_CLOSED)
@@ -679,8 +673,8 @@ class ProgrammeSettings:
 @with_config(_CLOSED)
 @dataclass(frozen=True)
 class ReadinessSettings:
-    """Cut-over readiness (docs/mvp/READINESS.md §7): the installation's gates and its programmes of pairs,
-    applied at restart. Present (even ``{}``), the worker counts each cycle's key census (§4)."""
+    """Cut-over readiness: the installation's gates and its programmes of pairs,
+    applied at restart. Present (even ``{}``), the worker counts each cycle's key census."""
 
     gates: GateSettings = field(default_factory=GateSettings)
     programmes: tuple[ProgrammeSettings, ...] = ()
@@ -706,7 +700,7 @@ class ReadinessSettings:
 @with_config(_CLOSED)
 @dataclass(frozen=True)
 class McpSettings:
-    """The MCP server (docs/mvp/MCP.md §4), applied at restart; absent: no MCP at all. ``data_classes`` is
+    """The MCP server, applied at restart; absent: no MCP at all. ``data_classes`` is
     what tool results may carry, written down by the installation: ``production_clear_declared`` (MCP's
     own, no ``DataClass``) also serves the runs whose spec declares clear values or a business-code key."""
 
@@ -750,18 +744,18 @@ class Settings:
     sampling: SamplingSettings = field(default_factory=SamplingSettings)
     precheck: PrecheckSettings = field(default_factory=PrecheckSettings)
     notify: NotifySettings | None = None  # absent: no notifier runs
-    readiness: ReadinessSettings | None = None  # absent: the contract's gates, and no key census for them
+    readiness: ReadinessSettings | None = None  # absent: the default gates, and no key census for them
     files: FilesSettings = field(default_factory=FilesSettings)
-    mcp: McpSettings | None = None  # absent: no MCP server (docs/mvp/MCP.md §4)
+    mcp: McpSettings | None = None  # absent: no MCP server
 
     @property
     def auth_mode(self) -> str:
-        """none (developer mode), tokens or oidc (docs/mvp/AUTH.md §1)."""
+        """none (developer mode), tokens or oidc."""
         return "none" if self.auth is None else "tokens" if self.auth.oidc is None else "oidc"
 
     @property
     def spill_dir(self) -> Path:
-        """Where DuckDB spills (docs/mvp/FILES.md §10): ``files.spill_dir``, else in the evidence volume."""
+        """Where DuckDB spills: ``files.spill_dir``, else in the evidence volume."""
         return self.files.spill_dir or self.evidence_dir / "spill"
 
 
@@ -782,7 +776,7 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
         settings = TypeAdapter(Settings).validate_python(doc)
     except ValidationError as exc:
         if any(e["loc"][:1] == ("files",) and "keyword" not in e["type"] for e in exc.errors()):
-            raise SettingsError(f"invalid settings {path}: {FILES_REFUSED}") from None  # X1, one text
+            raise SettingsError(f"invalid settings {path}: {FILES_REFUSED}") from None  # one text
         problems = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors())
         raise SettingsError(f"invalid settings {path}: {problems}") from None
     base = path.parent

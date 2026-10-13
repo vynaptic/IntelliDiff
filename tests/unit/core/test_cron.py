@@ -1,4 +1,4 @@
-"""Cron times in a time zone (docs/mvp/SCHEDULES.md §4, §9): the binding messages, the zones a schedule
+"""Cron times in a time zone: the binding messages, the zones a schedule
 takes, a skipped time firing once and later, a repeated one at its first occurrence, the 15-minute floor
 across midnight, the notes of each clock change, and the functions' laws over generated expressions. The
 zones are names every tz release holds; the version in a message is a patched one."""
@@ -199,7 +199,7 @@ def test_hourly_through_both_nights() -> None:
         "2027-03-28T03:00Z",
     ]  # fmt: skip
     utc = cron.between("0 * * * *", "UTC", at("2026-10-24T21:30"), at("2026-10-25T04:30"))
-    assert len(utc) == 7 and len(set(utc)) == 7  # T4: neither
+    assert len(utc) == 7 and len(set(utc)) == 7  # neither
 
 
 def test_leap_day() -> None:

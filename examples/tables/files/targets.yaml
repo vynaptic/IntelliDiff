@@ -1,6 +1,5 @@
-# The directory generate.py wrote, declared as a files target (docs/mvp/FILES.md §4; DEPLOY.md, section 7).
-# Both sides of spec.yaml read it. The root is the directory's real path, under the settings'
-# files.roots_under (default /var/lib/deltasleuth/files).
+# The directory generate.py wrote, declared as a files target. Both sides of spec.yaml read it. The root
+# is the directory's real path, under the settings' files.roots_under (default /var/lib/deltasleuth/files).
 
 targets:
   kit-files:

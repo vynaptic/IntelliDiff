@@ -47,7 +47,7 @@ const REPORTS = ['report.pdf', 'discrepancies.csv', 'retry.csv', 'coverage.csv',
   'suppressed.csv', 'graph.csv', 'readiness.csv'];
 const SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'];
 const OUTCOMES = ['MATCH', 'MISMATCH', 'KNOWN_DIFF', 'NOISE_ONLY', 'DRIFT', 'NOT_FOUND_A', 'NOT_FOUND_B', 'INCONCLUSIVE'];
-// What each outcome says of a key (docs/architecture.md §7.1): the legend under a run's outcome badges.
+// What each outcome says of a key: the legend under a run's outcome badges.
 const LEGEND: Record<string, string> = {
   MATCH: 'Both sides answered in full and nothing that matters differs.',
   MISMATCH: 'Both sides answered in full and a difference has no explanation.',
@@ -105,7 +105,7 @@ export function RunScreen({ runId, query }: { runId: string; query: URLSearchPar
 /** Readiness judges the pairs with a batch or soak run (a one-shot compare is no pair's cycle). */
 const assessed = (run: Run) => run.mode !== 'one_shot';
 
-/** Where the run's pair stands today (docs/mvp/READINESS.md §10); nothing for a name readiness does not judge. */
+/** Where the run's pair stands today; nothing for a name readiness does not judge. */
 function PairReadiness({ name, version }: { name: string; version: string }) {
   const pair = useLoad(() => api.readinessPair(name), [name, version]).data;
   if (!pair) return null;
@@ -204,9 +204,8 @@ function Header({ run, cycle, viewed, reload }: HeaderProps) {
 
 const num = (v: number) => v.toLocaleString();
 
-/** A table scan (docs/mvp/TABLES.md §6, §9), while it runs and after: what it read and what it left, and each
- *  table side's engine where the plan names it (docs/mvp/ENGINES.md §13); a file side's files in its place
- *  (docs/mvp/FILES.md §16). */
+/** A table scan, while it runs and after: what it read and what it left, and each table side's engine where
+ *  the plan names it; a file side's files in its place. */
 function scanLine(run: Run, scan: Scan): string {
   const t = run.params.tables;
   const only = ([['A', t?.only_a ?? []], ['B', t?.only_b ?? []]] as const).filter(([, cols]) => cols.length);
@@ -228,7 +227,7 @@ function scanLine(run: Run, scan: Scan): string {
   );
 }
 
-/** Bulk graph parity (docs/mvp/GRAPH.md §4): the groups whose members differ and the components that changed. */
+/** Bulk graph parity: the groups whose members differ and the components that changed. */
 function graphLine(g: Graph): string {
   return (
     `Graph: ${num(g.groups_a)} groups on A, ${num(g.groups_b)} on B; ${num(g.groups_different)} differ; ` +
@@ -274,9 +273,9 @@ type TableProps = { runId: string; f: Filters; version: string; keyLink: KeyLink
 type Subject = string | null; // a root cause's id; null: the run
 type Draft = { subject: Subject; cycle: number; session: Session };
 
-/** The root causes, with `Explain` on each and `Summarise this run`: an AI draft answering a fixed question
- *  (docs/mvp/CONTRACTS.md §6), shown under the table beside the engine's stored facts. One draft is open per
- *  run and cycle, and the browser tab keeps which. */
+/** The root causes, with `Explain` on each and `Summarise this run`: an AI draft answering a fixed question,
+ *  shown under the table beside the engine's stored facts. One draft is open per run and cycle, and the
+ *  browser tab keeps which. */
 function RootCauses({ runId, f, version, keyLink, run, ai }: TableProps & { run: RunDetail; ai?: boolean }) {
   const causes = useLoad(() => api.rootCauses(runId, f.cycle), [runId, f.cycle, version]);
   const scope = `ds.explain:${runId}:${run.cycle}`;
@@ -474,7 +473,7 @@ const STRATUM_COLS: Col<Stratum>[] = [
   ['Verdict', (s) => <Badge v={s.verdict} />],
 ];
 
-/** A sampled run's draw (docs/mvp/SAMPLING.md §14), polled while live: its frame, each stratum's progress, interim
+/** A sampled run's draw, polled while live: its frame, each stratum's progress, interim
  *  bound and certain failures, an ETA; once ended, its sign-off precheck; its population's ledger; and, for an
  *  operator signed in under SSO, the close of the name's draws that did not pass, with a note of the fix. */
 function Sample({ run }: { run: RunDetail }) {
@@ -591,7 +590,7 @@ function Signoffs({ run, reload }: { run: RunDetail; reload: () => void }) {
   );
 }
 
-/** Each ended cycle's census, adjudications and evidence packs (docs/mvp/PACK.md §7.3). Under SSO an operator
+/** Each ended cycle's census, adjudications and evidence packs. Under SSO an operator
  *  draws a reviewer sheet and scores its reviewed upload before the cycle's sign-off is requested, which then
  *  attests it; a signed-in person issues the signed-off cycle's pack, which anyone who reads the run downloads. */
 function Evidence({ run, reload }: { run: RunDetail; reload: () => void }) {
@@ -701,7 +700,7 @@ function Evidence({ run, reload }: { run: RunDetail; reload: () => void }) {
   );
 }
 
-/** Each ended cycle's labelled accuracy (docs/mvp/ACCURACY.md §10), in every auth mode: an operator draws a sample
+/** Each ended cycle's labelled accuracy, in every auth mode: an operator draws a sample
  *  against a named truth source and uploads its filled sheet once, before the cycle's sign-off is requested, which
  *  attests the newest labelling a person labelled. Every figure, warning and limit shown is the server's text. */
 function Accuracy({ run, reload }: { run: RunDetail; reload: () => void }) {

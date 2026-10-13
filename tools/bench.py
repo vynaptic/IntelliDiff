@@ -1,5 +1,4 @@
-"""``bench``: the maintainer's benchmark harness (docs/mvp/BENCHMARK.md), dsv's and release's sibling, outside
-the shipped product.
+"""``bench``: the maintainer's benchmark harness, dsv's and release's sibling, outside the shipped product.
 
     uv run python tools/bench.py run --out DIR [--rows 100k,1M,10M] [--scenarios sparse,dense,clustered,graph]
         [--shape narrow|wide] [--repeat 3] [--server file:/abs/admin-dsn] [--work DIR] [--timeout 240]
@@ -10,13 +9,14 @@ the shipped product.
 ``run`` starts a throwaway postgres:16-alpine (never pulled), or takes a dedicated server, generates
 deterministic tables in it with generate_series, runs the product's own ``ds run`` on a fresh control plane
 per repetition, gates each repetition on exact ground truth and rewrites one deltasleuth-bench/1 result file
-after each; ``report`` renders result files as Markdown under the claim rules (§8); ``clean`` recovers from a
-kill. It removes only the containers it labelled and drops only the databases it marked. Every child gets one
-scrubbed environment, and the database password stays in 0600 files, never in an argv, ``docker inspect`` or
-the environment of the harness or its children; the image's entrypoint exports it, though, so the container's
-postmaster keeps it in its environment while the container runs, readable by root or uid 70 where the
-container runs (Docker Desktop's VM on darwin) and through ``docker exec``. Every number is observed on stated
-hardware, synthetic data.
+in DIR after each (``bench-results/``, which git ignores, is the usual folder); ``report`` renders result
+files as Markdown, a file that is not publishable only with ``--draft``, marked DRAFT; ``clean`` recovers from
+a kill. It removes only the containers it labelled and drops only the databases it marked. Every child gets
+one scrubbed environment, and the database password stays in 0600 files, never in an argv, ``docker inspect``
+or the environment of the harness or its children; the image's entrypoint exports it, though, so the
+container's postmaster keeps it in its environment while the container runs, readable by root or uid 70 where
+the container runs (Docker Desktop's VM on darwin) and through ``docker exec``. Every number is observed on
+stated hardware, synthetic data.
 """
 
 from __future__ import annotations
@@ -62,8 +62,8 @@ from tools.release import POSTGRES, SYNCED, _run
 FORMAT = "deltasleuth-bench/1"
 LABEL, MARKER, MARK = "deltasleuth.bench", ".deltasleuth-bench", "deltasleuth-bench"  # container, folder, db
 DATA = "/var/lib/postgresql/data"
-WORKER = {"concurrency": 4, "lease_seconds": 120, "poll_seconds": 0.05}  # D4
-DIRTY = ("deltasleuth", "tools", "pyproject.toml", "uv.lock")  # what a result's commit must hold (B3)
+WORKER = {"concurrency": 4, "lease_seconds": 120, "poll_seconds": 0.05}  # NOTES["d4"] says why
+DIRTY = ("deltasleuth", "tools", "pyproject.toml", "uv.lock")  # what a result's commit must hold
 LOOPBACK = ("localhost", "127.0.0.1", "::1")
 POLL_S, SETTLE_S, QUIET_S, SLEPT_S, STOP_S = 0.1, 1, 60, 5, 30
 MIN_KEYS = 2000  # rates under this many keys are null
@@ -84,9 +84,9 @@ STOCK = {"shared_buffers": "128MB", "work_mem": "4MB", "maintenance_work_mem": "
 STORE = ("findings", "observations", "results", "run_keys")  # the store tables a cycle end joins
 UNCLEAN = "database system was not properly shut down"
 PAUSED = re.compile(r"scan of run \S+ paused: (\w+)$")
-# §3's estimates, in bytes: a row of each table with its indexes, a row a side of each table's sort temp held
-# at once (a link fact's L1 sorts end before its L2 sorts begin, so the larger phase), and a differing key in
-# the store and in the evidence folder. Each size's re-check takes those the smaller sizes measured.
+# The space estimates, in bytes: a row of each table with its indexes, a row a side of each table's sort temp
+# held at once (a link fact's L1 sorts end before its L2 sorts begin, so the larger phase), and a differing
+# key in the store and in the evidence folder. Each size's re-check takes those the smaller sizes measured.
 ESTIMATES = {"users.narrow": 110, "users.wide": 450, "links": 150, "temp.users": 80, "temp.links": 150,
              "key": 5000, "evidence": 12000}  # fmt: skip
 CAVEAT = (
@@ -98,7 +98,7 @@ CAVEAT = (
     " at T = N·(1+m·t)/r, not benchmarked; vendor-measured, not independently verified."
 )
 NOT_MEASURED = (
-    "Not measured: the service crawl and mixed pairs, rate-bound at T = N·(1+m·t)/r (architecture §12.1);"
+    "Not measured: the service crawl and mixed pairs, rate-bound at T = N·(1+m·t)/r;"
     " remote sources beyond rtt_ms; a cold cache; soak re-diffs; concurrent runs; other engines; scale-out"
     "; the release image; the accuracy draw and the readiness measurement."
 )
@@ -112,7 +112,7 @@ NOTES = {
     "cache": "sources fit in the page cache: reads are memory reads",
     "restarted": "restarted: the server restarted before each scenario's first repetition at a size, shared"
     " buffers empty, OS page cache warm (the Docker VM's or the host's); not a cold cache",
-    "d5": "the table scenarios differ from the DS_PERF table test (TABLES §7): key class identifier, not"
+    "d5": "the table scenarios differ from the DS_PERF table test: key class identifier, not"
     " business_code; execution.concurrency 8, not the spec default; lease 120 s, not 30 s; side b generated,"
     " not UPDATEd and DELETEd, so no dead tuples; frozen tables",
 }
@@ -127,13 +127,13 @@ def _names(cls: type) -> set[str]:
     return {cls.__name__}.union(*(_names(sub) for sub in cls.__subclasses__()))
 
 
-OPERATIONAL = _names(psycopg.OperationalError)  # what the worker retries without end (§6 step 4)
+OPERATIONAL = _names(psycopg.OperationalError)  # what the worker retries without end
 
 
 @dataclass(frozen=True)
 class Scenario:
-    """A pattern of §4: its table, side b's selected keys and what it does with each (SQL over the key g, or
-    a link fact's entity e), and its truth in closed form."""
+    """A pattern of differences: its table, side b's selected keys and what it does with each (SQL over the
+    key g, or a link fact's entity e), and its truth in closed form."""
 
     table: str
     selected: str
@@ -179,7 +179,7 @@ SIZES = {  # count, table and index bytes, and the mean row of the first 10,000 
 
 
 def truth(scenario: str, n: int) -> dict[str, int]:
-    """What a correct run of ``scenario`` at ``n`` rows a side counts (§4)."""
+    """What a correct run of ``scenario`` at ``n`` rows a side counts."""
     return SCENARIOS[scenario].truth(n)
 
 
@@ -242,7 +242,7 @@ class Options:
 
 
 def sizes(text: str, option: str = "--rows") -> list[int]:
-    """The sizes of ``text`` (``100k,1M,10M``), smallest first (B6)."""
+    """The sizes of ``text`` (``100k,1M,10M``), smallest first."""
     found: list[int] = []
     for item in text.split(","):
         value = 0
@@ -267,7 +267,7 @@ def _memory() -> int:
 
 
 def _work_parent(parent: Path) -> None:
-    """B4: the work folder's parent is a local folder outside every git working tree."""
+    """The work folder's parent is a local folder outside every git working tree."""
     if not parent.is_dir():
         fail(f"--work {parent} is not a folder")
     path = parent.resolve()
@@ -290,9 +290,9 @@ def _remote(params: dict[str, Any]) -> bool:
 
 
 def _admin(ref: str) -> str:
-    """The server's admin DSN (B8), self-contained, since libpq fills what it omits from the caller's PG*
+    """The server's admin DSN, self-contained, since libpq fills what it omits from the caller's PG*
     environment for the harness's own connections: a host or hostaddr, no service, and no hostaddr left to
-    PGHOSTADDR or PGSERVICE; refused where it would cross a network unverified (B14)."""
+    PGHOSTADDR or PGSERVICE; refused where it would cross a network unverified."""
     try:
         dsn = read_secret(file_ref(ref, "--server"))
     except SecretError as exc:
@@ -344,7 +344,7 @@ def _refuse_arguments(
 
 
 def _env(endpoint: str | None = None) -> dict[str, str]:
-    """The one environment every child gets (§3): the caller's without PG*, DS_*, DOCKER_HOST and
+    """The one environment every child gets: the caller's without PG*, DS_*, DOCKER_HOST and
     DOCKER_CONTEXT, and the resolved Docker endpoint as DOCKER_HOST."""
     dropped = ("DOCKER_HOST", "DOCKER_CONTEXT")
     env = {k: v for k, v in os.environ.items() if not k.startswith(("PG", "DS_")) and k not in dropped}
@@ -352,7 +352,7 @@ def _env(endpoint: str | None = None) -> dict[str, str]:
 
 
 def _endpoint() -> str:
-    """The Docker endpoint, resolved once with the caller's DOCKER_HOST and DOCKER_CONTEXT (B1)."""
+    """The Docker endpoint, resolved once with the caller's DOCKER_HOST and DOCKER_CONTEXT."""
     caller = _env() | {k: os.environ[k] for k in ("DOCKER_HOST", "DOCKER_CONTEXT") if k in os.environ}
     absent = "docker is not available: install Docker, or give --server file:<absolute path>"
     if shutil.which("docker", path=caller.get("PATH")) is None:
@@ -396,7 +396,7 @@ DATABASES = "SELECT datname, shobj_description(oid, 'pg_database') FROM pg_datab
 
 
 def _server_guard(ref: str, admin: str) -> None:
-    """B10, B9 and B11: a superuser, on a server holding only the templates and marked databases."""
+    """The server's account is a superuser, on a server holding only the templates and marked databases."""
     try:
         with _connect(admin, attempts=1) as conn:
             superuser = conn.execute("SELECT rolsuper FROM pg_roles WHERE rolname = current_user").fetchone()
@@ -449,7 +449,7 @@ def _free_port() -> int:
 
 class Container:
     """The throwaway postgres:16-alpine: labelled, published on a loopback port fixed across restarts, its
-    superuser's random password in a 0600 file that the entrypoint reads as root (D8)."""
+    superuser's random password in a 0600 file that the entrypoint reads as root."""
 
     topology = "container"
 
@@ -612,7 +612,7 @@ def _create(conn: psycopg.Connection[Any], bench: Bench, part: str, template: st
 
 
 def _specs() -> dict[str, dict[str, Any]]:
-    """bench-tables (table_spec's shape) and bench-graph (graph_spec), as tests/e2e writes them (§5)."""
+    """bench-tables (table_spec's shape) and bench-graph (graph_spec), as tests/e2e writes them."""
     recheck = {"delay": "0s", "times": 1, "outcomes": ["MISMATCH", "NOT_FOUND_A", "NOT_FOUND_B"]}
     base = {"apiVersion": "deltasleuth/v1", "kind": "ComparisonSpec", "normalizerVersion": "1.1.0",
             "compare": {}, "recheck": recheck}  # fmt: skip
@@ -638,7 +638,7 @@ def _specs() -> dict[str, dict[str, Any]]:
 
 
 def _files(work: str) -> dict[str, dict[str, Any]]:
-    """What ds reads (§5), with ``work`` the work folder ("<work>" in the result's profile)."""
+    """What ds reads, with ``work`` the work folder ("<work>" in the result's profile)."""
     settings = {"database_dsn_ref": f"file:{work}/dsn_run", "evidence_dir": f"{work}/evidence",
                 "workspace_dir": f"{work}/workspace", "targets_file": f"{work}/targets.json",
                 "worker": WORKER}  # fmt: skip
@@ -769,7 +769,7 @@ class Watched:
 
 
 def _read(w: Watched, err: Path, mask: Callable[[str], str], repeated: Counter[str]) -> str | None:
-    """ds's new stderr lines, masked, into ``w.lines``; the abort a worker line calls for (§6 step 4)."""
+    """ds's new stderr lines, masked, into ``w.lines``; the abort a worker line calls for."""
     text = err.read_text(errors="replace")
     lines = [mask(line) for line in text.splitlines()[: text.count("\n")]]  # whole lines only
     new, w.lines = lines[len(w.lines) :], lines
@@ -794,7 +794,7 @@ def _watch(
     env: dict[str, str],
     mask: Callable[[str], str] = str,
 ) -> Watched:
-    """Watch ``ds run`` until it exits or aborts (§6 steps 3 and 4): ``poll`` every 0.1 s and os.wait4; each
+    """Watch ``ds run`` until it exits or aborts: ``poll`` every 0.1 s and os.wait4; each
     second a count of the open keys, ps and ds's new stderr. t_progress, t_done, t_drained and t_end are
     ``clock``'s times of the polls that first saw them; an aborted child gets SIGINT, then SIGKILL."""
     w, repeated = Watched({"start": clock()}), Counter[str]()
@@ -868,7 +868,7 @@ OBSERVED = (
     "SELECT count(*), extract(epoch FROM max(observed_at) - min(observed_at))::float8 FROM ds.observations"
     " WHERE side = 'a' AND pass_no = 1"
 )
-ANALYSED = (  # each store table's last analyses against finished_at, the cycle end's start (§2)
+ANALYSED = (  # each store table's last analyses against finished_at, the cycle end's start
     "SELECT extract(epoch FROM r.finished_at - r.created_at)::float8, t.relname,"
     " extract(epoch FROM t.last_analyze - r.finished_at)::float8,"
     " extract(epoch FROM t.last_autoanalyze - r.finished_at)::float8"
@@ -912,7 +912,7 @@ def _epoch(stamp: str | None) -> float | None:
 
 
 def _judge(rep: dict[str, Any], expected: dict[str, int], counters: dict[str, Any]) -> list[str]:
-    """Why a repetition is not correct (§6 step 6), an abort kept apart: a status, a counter against the
+    """Why a repetition is not correct, an abort kept apart: a status, a counter against the
     truth, a snapshot, an identity, a sleep."""
     seen, slept = rep["observed"], rep["noise"]["slept_s"]
     wrong = [] if rep["status"] == "completed" else [f"status {rep['status']}, truth completed"]
@@ -926,7 +926,7 @@ def _judge(rep: dict[str, Any], expected: dict[str, int], counters: dict[str, An
 def repetition(
     bench: Bench, rows: int, scenario: str, n: int, cache: str, clean: bool | None
 ) -> tuple[dict[str, Any], list[str]]:
-    """One repetition (§6): quiet, a fresh store from the template, ``ds run`` watched, its measures read,
+    """One repetition: quiet, a fresh store from the template, ``ds run`` watched, its measures read,
     the store dropped, judged against the truth; with ds's last 5 stderr lines, masked, to print."""
     wall, mono, run_db, store = time.time(), time.monotonic(), bench.database("run"), bench.database("store")
     rep: dict[str, Any] = {"n": n, "cache": cache, "restart_clean": clean, "correct": False, "problems": [],
@@ -1002,7 +1002,7 @@ def repetition(
 
 
 def generate(bench: Bench, side: str, scenario: str, rows: int) -> dict[str, Any]:
-    """Side's table of ``scenario`` in its database (§4): logged, filled in a session with synchronous_commit
+    """Side's table of ``scenario`` in its database: logged, filled in a session with synchronous_commit
     off and 1GB of maintenance_work_mem, keyed, frozen and analysed, then a checkpoint, so no measured read
     writes hint bits; its count must be the truth's. Its sizes."""
     table, started = SCENARIOS[scenario].table, time.monotonic()
@@ -1086,8 +1086,8 @@ def _size(bench: Bench, rows: int, entry: dict[str, Any]) -> None:
 
 def _need(bench: Bench, rows: int, c: dict[str, float]) -> tuple[float, float]:
     """Bytes ``rows`` needs on the database volume, 1.5 × (the tables held at once + both sides' sort temp
-    held at once + the store per differing key), and in the work folder, 1.5 × the evidence per differing key
-    (§3)."""  # noqa: RUF002
+    held at once + the store per differing key), and in the work folder, 1.5 × the evidence per differing
+    key."""  # noqa: RUF002
     tables = {SCENARIOS[s].table for s in bench.opts.scenarios}  # one pair at a time
     held = max(2 * c["links" if t == "links" else f"users.{bench.opts.shape}"] * rows for t in tables)
     temp = max(2 * c[f"temp.{t}"] * rows for t in tables)
@@ -1106,7 +1106,7 @@ def _same_disk(a: Path, b: Path) -> bool:
 
 
 def _space(bench: Bench, rows: int, c: dict[str, float]) -> tuple[str, str] | None:
-    """(B12's refusal, the re-check's abort) when ``rows`` does not fit, else None. On darwin Docker
+    """(The preflight's refusal, the re-check's abort) when ``rows`` does not fit, else None. On darwin Docker
     Desktop's disk image grows on the disk holding its data folder, which needs the database's bytes too:
     with the work folder's when they share that disk, or when there is no such folder."""
     db_need, work_need = _need(bench, rows, c)
@@ -1223,7 +1223,7 @@ def _complete(result: dict[str, Any]) -> bool:
 
 
 def _unpublishable(result: dict[str, Any]) -> list[str]:
-    """Why a result is not publishable (§7), or nothing."""
+    """Why a result is not publishable, or nothing."""
     reps = _repetitions(result)
     reasons = {
         "incomplete": not result["complete"],
@@ -1317,7 +1317,7 @@ def _preflight(bench: Bench) -> None:
 
 @app.command()
 def run(
-    out: Annotated[Path, typer.Option(help="The result file's folder (docs/bench).")],
+    out: Annotated[Path, typer.Option(help="The result file's folder (bench-results).")],
     rows: Annotated[
         str, typer.Option(help="Rows a side: multiples of 10,000, k and M allowed.")
     ] = "100k,1M,10M",
@@ -1338,7 +1338,7 @@ def run(
     ] = False,
 ) -> None:
     """Measure: a throwaway postgres:16-alpine, or --server's, deterministic tables, ``ds run`` gated on the
-    truth per repetition, one result file rewritten after each (docs/mvp/BENCHMARK.md §6)."""
+    truth per repetition, one result file rewritten after each."""
     limits = Limits(timeout, stall, max_rss or int(0.6 * _memory()))
     opts = _refuse_arguments(out, rows, scenarios, shape, server, work, repeat=repeat, limits=limits,
                              allow_dirty=allow_dirty)  # fmt: skip
@@ -1424,7 +1424,7 @@ def _analysed(rep: dict[str, Any]) -> str | None:
 
 
 def summary(repetitions: list[dict[str, Any]]) -> dict[str, Any]:
-    """Per cache state, over the correct repetitions (D6): n, the store's statistics over the cycle end, each
+    """Per cache state, over the correct repetitions: n, the store's statistics over the cycle end, each
     metric's median, min and max, and whether run_s spreads over 10% of its median (n ≥ 2). A restart's
     effect is its own state, never noise; so are other statistics, never pooled: "<cache>, <statistics>"."""
     groups: dict[tuple[str, str | None], list[dict[str, float | None]]] = {}
@@ -1542,7 +1542,7 @@ def _flags(result: dict[str, Any], record: dict[str, Any], name: str, stats: dic
 
 
 def _failure(result: dict[str, Any], rows: int, scenario: str) -> str | None:
-    """Why ``scenario`` has no numbers at ``rows`` (C7: failures stay in), or None: the size's re-check, a
+    """Why ``scenario`` has no numbers at ``rows`` (failures stay in), or None: the size's re-check, a
     repetition not correct, a failure at a smaller size, else what stopped the run."""
     sizes = {size["rows"]: size for size in result["sizes"]}
     if (size := sizes.get(rows)) and size["did_not_run"]:
@@ -1640,7 +1640,7 @@ def _model(scenario: str, n: int, fits: dict[str, Any], rate: float | None) -> f
 def _extrapolated(files: list[tuple[Path, dict[str, Any]]], rows: int) -> list[str]:
     """The planning model, labelled: each term from its fit, the tail rate from the largest size; its error
     at each measured size, a noisy one marked; at ``rows`` its time beside the extrapolated peak RSS, never
-    past the memory or 10 times the scenario's largest correct size (D7), marked when a fit uses a noisy
+    past the memory or 10 times the scenario's largest correct size, marked when a fit uses a noisy
     size."""
     out = ["", "**Extrapolated, not measured**", "",
            f"{MODEL}: each term from its fit, D the differing keys, the tail rate from the largest"
@@ -1674,8 +1674,8 @@ def _extrapolated(files: list[tuple[Path, dict[str, Any]]], rows: int) -> list[s
 
 
 def render(files: list[tuple[Path, dict[str, Any]]], extrapolate: int | None = None) -> str:
-    """§8's Markdown: each file's conditions, per shape the headline medians, per file and scenario the fits,
-    the extrapolation only under its heading, and the caveat block."""
+    """The report's Markdown: each file's conditions, per shape the headline medians, per file and scenario
+    the fits, the extrapolation only under its heading, and the caveat block."""
     out = []
     for path, result in files:
         if reasons := _unpublishable(result):
@@ -1709,7 +1709,7 @@ def report(
         str | None, typer.Option(help="Rows a side to extrapolate to (at most 10x).")
     ] = None,
 ) -> None:
-    """Print the files' numbers as Markdown under the claim rules (docs/mvp/BENCHMARK.md §8)."""
+    """Print the files' numbers as Markdown; an unpublishable file only with --draft, marked DRAFT."""
     loaded = [(path, _load(path)) for path in files]
     for path, result in loaded:
         if (reasons := _unpublishable(result)) and not draft:

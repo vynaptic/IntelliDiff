@@ -1,5 +1,5 @@
 // Which controls the Run screen's "Labelled accuracy" block offers, which labelling it prints, what the screens send,
-// and that every result text is the API's (docs/mvp/ACCURACY.md §7, §10).
+// and that every result text is the API's.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
@@ -36,8 +36,8 @@ test('the block prints the attested labelling, else the newest a person labelled
 test('the draw dialog offers the acknowledgement only when the server asks for it, and hints at the size', () => {
   const asked =
     'the key is tokenised (class account_number) and the spec shows no path in clear: labellers cannot find records in the ' +
-    'truth source until the per-key reveal (AUTH §11) exists; set acknowledge_unlocatable to draw for labels a business ' +
-    'rule decides without the record (docs/mvp/ACCURACY.md §4)';
+    'truth source until the per-key reveal exists; set acknowledge_unlocatable to draw for labels a business ' +
+    'rule decides without the record';
   assert.ok(needsAcknowledgement(new ApiError(422, { detail: asked }, asked)));
   const other = 'truth.as_of must be a date (YYYY-MM-DD) no later than today';
   assert.ok(!needsAcknowledgement(new ApiError(422, { detail: other }, other)));
@@ -81,7 +81,7 @@ test('the screens draw, list, read, download and label the file as it is, with t
 });
 
 test('no screen builds a result text: shares, intervals, warnings and limits are the API\'s lines, summary and limits', () => {
-  // Words only accuracy.lines, summary and LIMITS state (docs/mvp/ACCURACY.md §7's "never stated").
+  // Words only accuracy.lines, summary and LIMITS state: no screen may state them itself.
   const statedOnly = /favoured|alone right|wrong on|hid an error|undecidable|decided \(|circular|certified|overall accuracy/i;
   for (const name of ['accuracy.ts', 'Run.tsx', 'Approvals.tsx']) {
     const source = readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8');

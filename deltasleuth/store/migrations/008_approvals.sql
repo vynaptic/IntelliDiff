@@ -1,4 +1,4 @@
--- Four-eyes approvals (docs/mvp/APPROVALS.md §3).
+-- Four-eyes approvals.
 CREATE FUNCTION ds.accountable(actor text) RETURNS text[] LANGUAGE sql STABLE AS $$
     SELECT CASE
         WHEN actor ~ '^user:U-[0-9a-f]{16}$' THEN ARRAY[actor]
@@ -30,7 +30,7 @@ CREATE TABLE ds.approvals (
     requested_by   text NOT NULL CHECK (requested_by ~ '^(user:U|token:T)-[0-9a-f]{16}$'),
     requested_at   timestamptz NOT NULL DEFAULT now(),
     request_note   ds.note,
-    authors        text[],     -- set by the trigger (§3)
+    authors        text[],     -- set by the trigger
     unattributed   boolean,
     first_by       text CHECK (first_by ~ '^user:U-[0-9a-f]{16}$'),
     first_at       timestamptz,
@@ -139,7 +139,7 @@ BEGIN
     v_by := CASE WHEN OLD.status = 'requested' AND NEW.status <> 'requested' THEN NEW.decided_by
                  WHEN v_step THEN NEW.first_by END;
     IF v_step THEN
-        IF NEW.kind = 'signoff' THEN  -- a revoke waits (§2)
+        IF NEW.kind = 'signoff' THEN  -- a revoke waits
             PERFORM 1 FROM ds.approvals p WHERE p.approval_id = NEW.attests->>'spec_approval_id'
                 AND p.kind = 'spec' AND p.spec_id = NEW.spec_id AND p.status = 'approved' FOR SHARE;
             IF NOT FOUND THEN

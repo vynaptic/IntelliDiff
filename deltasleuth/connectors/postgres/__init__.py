@@ -1,5 +1,5 @@
-"""PostgreSQL table sides (docs/mvp/TABLES.md): read-only sessions and the SQL of per-key reads, scans and
-graph parity. ``engine`` adapts them to the engine seam (``connectors.tables``, docs/mvp/ENGINES.md §5),
+"""PostgreSQL table sides: read-only sessions and the SQL of per-key reads, scans and
+graph parity. ``engine`` adapts them to the engine seam (``connectors.tables``),
 whose registry imports it: this package never does.
 """
 

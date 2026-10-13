@@ -1,4 +1,4 @@
-"""Array modes and identity keys (§8.6).
+"""Array modes and identity keys.
 
 An object array's key is the best-scoring minimal member combination that passes the hard
 filters on side a (coverage >= 0.99, unique within every array) and that side b also returns;

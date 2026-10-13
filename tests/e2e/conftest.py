@@ -160,8 +160,8 @@ class Stack:
 def make_stack(tmp_path: Path, pg_dsn: str) -> Callable[..., Stack]:
     """``make_stack(targets_yaml, llm_url=None, auth=None, notify=None, files=None, mcp=None, **worker)``:
     settings on the test database, initialised; with ``auth`` (the settings block), its encryption secrets
-    too; ``notify``: the notification settings; ``files``: the file reader's (docs/mvp/FILES.md §4);
-    ``mcp``: the MCP server's (docs/mvp/MCP.md §4)."""
+    too; ``notify``: the notification settings; ``files``: the file reader's;
+    ``mcp``: the MCP server's."""
 
     def make(
         targets: str,
@@ -271,7 +271,7 @@ def pdf_text(pdf: bytes) -> str:
     return " ".join(re.findall(r"\(((?:[^()\\]|\\.)*)\) Tj", pages))
 
 
-# --- two PostgreSQL databases for table pairs (docs/mvp/TABLES.md) ---------------------------------
+# --- two PostgreSQL databases for table pairs ---------------------------------
 
 
 @pytest.fixture
@@ -347,7 +347,7 @@ def tables(
     return make
 
 
-# --- a database of each engine for table pairs (docs/mvp/ENGINES.md) ---------------------------------
+# --- a database of each engine for table pairs ---------------------------------
 
 Seeded = tuple[str, ...]  # an engine, the seed of a fresh database on it, and its creation options
 

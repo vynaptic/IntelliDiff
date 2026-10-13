@@ -1,4 +1,4 @@
-"""Canonical rendering 1 (docs/mvp/ENGINES.md §9, §10): each class's canonical value from an engine's
+"""Canonical rendering 1: each class's canonical value from an engine's
 rendered text, the row digest, and the golden corpus under tests/golden/engines/, which pins what
 PostgreSQL, MySQL and Oracle render one column of every supported type as, and that portable values render
 and digest alike on all three.
@@ -238,7 +238,7 @@ def test_a_postgresql_float_takes_the_canonical_form_in_a_pair_across_engines() 
         there |= {name: parsed[name] for name in there if there[name] is None}  # MySQL holds no such float
         assert jsonio.dumps(there) == jsonio.dumps(parsed)
         assert render.digest(side, render.EMPTY, there) == render.digest(side, render.EMPTY, parsed)
-    # A PostgreSQL pair keeps its rows as to_jsonb wrote them (D3).
+    # A PostgreSQL pair keeps its rows as to_jsonb wrote them.
     plain = jsonio.dumps(render.parsed(side | {"classes": None}, text))
     assert plain.startswith('{"f": 46056592, "d": 52990648348713776, "g": 0.0000000000000000000000000703853')
 
@@ -346,7 +346,7 @@ async def test_golden_renderings(corpus: TargetRegistry) -> None:
         assert {key: document for key, (document, _) in found[engine].items()} == expected[engine], engine
 
 
-# The corpus columns that may hold a large value: the worker hashes them, the engine every other (§10).
+# The corpus columns that may hold a large value: the worker hashes them, the engine every other.
 LARGE = {"mysql": ["c_blob", "c_json", "c_text"], "oracle": ["c_blob", "c_clob", "c_json", "c_nclob"]}
 
 
@@ -356,7 +356,7 @@ LARGE = {"mysql": ["c_blob", "c_json", "c_text"], "oracle": ["c_blob", "c_clob",
 @pytest.mark.parametrize("engine", ["mysql", "oracle"])
 async def test_an_engine_hashes_every_type_but_the_large_ones(corpus: TargetRegistry, engine: str) -> None:
     # In a pair of one engine the engine hashes the columns both sides declare alike but those that may
-    # hold a large value (§10): its hash takes every other type of the corpus, edge values and NULLs too.
+    # hold a large value: its hash takes every other type of the corpus, edge values and NULLs too.
     adapter, target, large = ENGINES[engine], corpus.get(engine), LARGE[engine]
     side, _ = await _side(adapter, target, "corpus")
     session = await adapter.connect(target)
@@ -463,7 +463,7 @@ async def test_portable_values_digest_alike(corpus: TargetRegistry) -> None:
         midnight = documents[0]["c_date"] and documents[0]["c_date"] + "T00:00:00"  # before its typeMap
         assert documents[0] == documents[1] == documents[2] | {"c_date": documents[0]["c_date"]}, key
         assert documents[2]["c_date"] == midnight and len({shared[e][key][1] for e in shared}) == 1, key
-    # The empty string, the empty CHAR and no bytes are NULL there: a reported difference (D7) ...
+    # The empty string, the empty CHAR and no bytes are NULL there: a reported difference ...
     edges, there = shared["postgresql"]["edges"], shared["oracle"]["edges"]
     absent = {"c_text": None, "c_char": None, "c_bytes": None, "c_date": "1000-01-01T00:00:00"}
     assert there[0] == edges[0] | absent and there[1] != edges[1] == shared["mysql"]["edges"][1]

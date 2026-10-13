@@ -132,7 +132,7 @@ async def test_the_seeded_discrepancies_and_nothing_else(
     assert len(pii) > 50 and [v[:3] for v in pii if any(v in text for text in published)] == []
 
 
-# --- a key of three parts, a flagged cut and a key file (docs/mvp/CONTRACTS.md §4) -----------------------
+# --- a key of three parts, a flagged cut and a key file -----------------------
 
 # An item's code, and the region and shelf it stands on: side a is asked by the last two, side b by the first.
 SHELVES = {("c1", "eu", "s1"): [1, 2], ("c2", "eu", "s/2"): [3], ("c3", "us", "s3"): [4, 5]}

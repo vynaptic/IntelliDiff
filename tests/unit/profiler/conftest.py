@@ -490,5 +490,5 @@ def linker_draft(linker_pairs: list[tuple[str, Any, Any]]) -> DraftSpec:
 
 @pytest.fixture(scope="session")
 def spec_validator(repo_root: Path) -> Draft202012Validator:
-    schema = json.loads((repo_root / "docs" / "architecture" / "spec.schema.json").read_text())
+    schema = json.loads((repo_root / "deltasleuth" / "core" / "spec" / "spec.schema.json").read_text())
     return Draft202012Validator(schema, format_checker=Draft202012Validator.FORMAT_CHECKER)

@@ -1,9 +1,9 @@
-"""Sign-off sampling's statistics and selection (docs/mvp/SAMPLING.md §4, §6, §8): the exact one-sided 95%
-Clopper-Pearson decision and the bound it shows, pinned to §8.3's table and checked against scipy and an
+"""Sign-off sampling's statistics and selection: the exact one-sided 95%
+Clopper-Pearson decision and the bound it shows, pinned to ``TABLE`` and checked against scipy and an
 independent Fraction sum; the sizes; u; bottom-k, membership, contrast, census and the pace of seq; and
-the draw's label errors, never naming a key. And the exact two-sided 95% interval of a labelled sample
-(docs/mvp/ACCURACY.md §6): pinned to §6.3, checked against scipy and exact integer sums, shown rounded
-outward, and its coverage of a sample drawn without replacement."""
+the draw's label errors, never naming a key. And the exact two-sided 95% interval of a labelled sample:
+pinned to ``PINNED``, checked against scipy and exact integer sums, shown rounded outward, and its coverage
+of a sample drawn without replacement."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ STANDARD, HIGH = sampling.TARGETS["standard"], sampling.TARGETS["high"]
 NOW = datetime(2026, 10, 1, 9, 12, tzinfo=UTC)
 SALT = sampling.salt("cutover-q4", "3f9a0c1e5b7d2468ace0135792468bdf")
 
-# §8.3: x, n, beta.ppf(0.95, x+1, n-x), shown, passes 0.1%, passes 0.01%
+# x, n, beta.ppf(0.95, x+1, n-x), shown, passes 0.1%, passes 0.01%
 TABLE = [
     (0, 2995, 0.000999744421, "0.09998%", True, False),
     (0, 2994, 0.001000078170, "0.1001%", False, False),
@@ -149,7 +149,7 @@ def test_false_pass_at_most_5pct(target: Fraction, sizes: range) -> None:
 @pytest.mark.parametrize(("target", "n1", "n2"), [(STANDARD, 2995, 4742), (HIGH, 29956, 47437)])
 def test_dropped_two_stage_is_0_076(target: Fraction, n1: int, n2: int) -> None:
     """Passing at n1 on x = 0, else extending to n2 and passing on x ≤ 1 (what x_max allows
-    there), passes 7.6% of samples at the target rate: why no sample is extended (D2)."""
+    there), passes 7.6% of samples at the target rate: why no sample is extended."""
     p = float(target)
     assert (x_max(n1, target), x_max(n2, target)) == (0, 1)
     twice = (1 - p) ** n1 + n1 * p * (1 - p) ** (n1 - 1) * (1 - p) ** (n2 - n1)
@@ -169,13 +169,13 @@ def test_hypergeometric_is_at_most_binomial(population: int, rate: float, requir
     )
     n = zero_failure_n(Fraction(rate).limit_denominator(10_000))
     assert hypergeom.pmf(0, population, bad, min(n, population)) <= (1 - rate) ** n
-    assert round(hypergeom.pmf(0, 5000, 5, 2995), 4) == 0.0103  # §8.4
+    assert round(hypergeom.pmf(0, 5000, 5, 2995), 4) == 0.0103
 
 
-# -- the two-sided interval (docs/mvp/ACCURACY.md §6) ------------------------------------------------------
+# -- the two-sided interval ------------------------------------------------------
 
 TAIL = Fraction(1, 40)  # each end of a two-sided 95% interval
-# §6.3: x, n, the exact interval, shown
+# x, n, the exact interval, shown
 PINNED = [
     (84, 120, 0.609603890578, 0.780243500759, "60.96% to 78.03%"),
     (12, 120, 0.052747786390, 0.168165212703, "5.274% to 16.82%"),
@@ -213,7 +213,8 @@ def test_interval_pinned(x: int, n: int, low: float, high: float, display: str) 
 
 
 def test_interval_sizing() -> None:
-    """RUNBOOK's sizing: the interval at p = 1/2, and the upper end at x = 0 (a 97.5% one-sided bound)."""
+    """A labelled sample's sizing: the interval at p = 1/2, and the upper end at x = 0 (a 97.5% one-sided
+    bound)."""
     assert {n: (_said(n // 2, n), percent(interval(0, n)[1])) for n in SIZING} == SIZING
 
 
@@ -267,7 +268,7 @@ def test_shown_contains_exact(n: int, data: st.DataObject) -> None:
 
 
 def test_upper_default_unchanged() -> None:
-    """``upper`` gained ``alpha``; its default is the one-sided 95% bound §8.3 pins."""
+    """``upper`` gained ``alpha``; its default is the one-sided 95% bound ``TABLE`` pins."""
     for x, n, ppf, _, _, _ in TABLE:
         assert upper(x, n) == upper(x, n, Fraction(1, 20)) and abs(upper(x, n) - ppf) <= 1e-12
     assert upper(0, 100, TAIL) == -math.expm1(math.log(1 / 40) / 100) > upper(0, 100)
@@ -287,7 +288,7 @@ def _coverage(population: int, n: int) -> tuple[float, int]:
 
 
 def test_conservative_without_replacement() -> None:
-    """§6.3: exhaustively for N ≤ 40, the binomial interval covers a share of a population sampled without
+    """Exhaustively for N ≤ 40, the binomial interval covers a share of a population sampled without
     replacement at least 97.134% of the time (N 39, n 7, D 16)."""
     lowest = min((*_coverage(size, n), size, n) for size in range(1, 41) for n in range(1, size + 1))
     assert (round(lowest[0], 5), lowest[2], lowest[3], lowest[1]) == (0.97134, 39, 7, 16)
@@ -297,7 +298,7 @@ def test_conservative_without_replacement() -> None:
 def test_without_replacement_spot_checks(population: int, n: int) -> None:
     lowest, _ = _coverage(population, n)
     assert lowest >= 0.95
-    assert (population, n) != (5000, 50) or round(lowest, 4) == 0.9519  # the lowest of §6.3's grid
+    assert (population, n) != (5000, 50) or round(lowest, 4) == 0.9519  # the lowest of the grid
 
 
 # -- u --------------------------------------------------------------------------------------------------
@@ -507,13 +508,13 @@ def test_label_errors_fail_the_draw_together_never_naming_a_key() -> None:
     signoff = "row.pick == 'x' ? 1 : row.pick"
     keys = [
         ("C1", {"kind": "P", "size": Decimal(1), "pick": "kind=PERSON"}),
-        ("C2", {"kind": "O", "size": Decimal(1), "pick": "kind=ORG"}),  # W3: no targetSize
-        ("C3", {"kind": "H", "size": Decimal(1), "pick": "size=small"}),  # W4: high-risk, a standard label
-        ("C4", {"kind": "P", "size": Decimal(1), "pick": "kind=HIGH"}),  # W5: not its bucket
-        ("C5", {"kind": "P", "size": Decimal(500), "pick": "kind=PERSON"}),  # W6: no size bucket
-        ("C6", {"kind": "P", "size": None, "pick": "kind=PERSON"}),  # W6: null only to a catch-all
-        ("C7", {"kind": "P", "size": Decimal(1), "pick": "x"}),  # W6: not a string
-        ("C8", {"kind": "P", "size": Decimal(1), "pick": "anything-C8"}),  # W5, never shown
+        ("C2", {"kind": "O", "size": Decimal(1), "pick": "kind=ORG"}),  # no targetSize
+        ("C3", {"kind": "H", "size": Decimal(1), "pick": "size=small"}),  # high-risk, a standard label
+        ("C4", {"kind": "P", "size": Decimal(1), "pick": "kind=HIGH"}),  # not its bucket
+        ("C5", {"kind": "P", "size": Decimal(500), "pick": "kind=PERSON"}),  # no size bucket
+        ("C6", {"kind": "P", "size": None, "pick": "kind=PERSON"}),  # null only to a catch-all
+        ("C7", {"kind": "P", "size": Decimal(1), "pick": "x"}),  # not a string
+        ("C8", {"kind": "P", "size": Decimal(1), "pick": "anything-C8"}),  # not its bucket, never shown
     ]
     selector = Selector(sample(kind, size, signoff=signoff), SALT, NOW)
     selector.add(keys[:4], source=0)
@@ -537,7 +538,8 @@ def test_label_errors_fail_the_draw_together_never_naming_a_key() -> None:
 @pytest.mark.parametrize("order", ["as read", "high-risk first"])
 def test_a_high_risk_key_left_to_a_standard_bucket_fails_the_draw_whatever_the_order(order: str) -> None:
     """Without signoffStratum, a high-risk key whose high-risk bucket has no targetSize falls to a standard
-    sign-off bucket: W4, whichever key the frame gives first, never the first key's tier for the stratum."""
+    sign-off bucket: a label error, whichever key the frame gives first, never the first key's tier for the
+    stratum."""
     chosen = sample(
         dimension("degree", bucket("d0", target_size=3011)),
         dimension("flagged", bucket("Y", values=("Y",), risk_tier="high"), bucket("N")),

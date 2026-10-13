@@ -43,4 +43,4 @@ On the captured samples, `tests/e2e/test_public_pairs.py` checks every key:
 - **Offline:** `pytest tests/e2e/test_public_pairs.py`.
 - **Against the live APIs:** `pytest -m live_public tests/e2e/test_public_pairs.py`.
 - **In a deployment:** append the entries of `targets.yaml` under `targets:` in the deployment's
-  targets file, upload `spec.yaml`, then run the keys from `keys.txt` (see `docs/mvp/DEPLOY.md`).
+  targets file, upload `spec.yaml`, then run the keys from `keys.txt` (see `docs/user-guide.md`).

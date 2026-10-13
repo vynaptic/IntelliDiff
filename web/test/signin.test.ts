@@ -1,4 +1,4 @@
-// What the sign-in page says beyond the server's answers (docs/mvp/FIRSTRUN.md §6, docs/mvp/AUTH.md §9).
+// What the sign-in page says beyond the server's answers.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';

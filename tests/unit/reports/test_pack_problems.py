@@ -1,4 +1,4 @@
-"""What refuses a pack (docs/mvp/PACK.md §1.1, §2.3, §7.2): every census basis and refusal, the sign-off's
+"""What refuses a pack: every census basis and refusal, the sign-off's
 format and freshness, the adjudication from 50 per-key results, raw key-shaped values in the spec, the
 sign-off or an audit row (and reasons refused when written), read with the spec's own key check and
 never in DeltaSleuth's own shapes, a broken audit trail (also behind a replaced ``ds.audit_text``), the
@@ -256,7 +256,7 @@ async def test_a_numeric_key_pattern_gets_a_pack_unless_a_text_holds_such_a_numb
 
 @pytest.mark.parametrize("pattern", ["^[0-9]{4,30}$", "^[0-9]{1,10}$"])
 async def test_scheduled_run_pack_passes_gate(pack_ctx: Context, pattern: str) -> None:
-    """A schedule's run (docs/mvp/SCHEDULES.md §7): its plan and its ``create_run`` row name the schedule,
+    """A schedule's run: its plan and its ``create_run`` row name the schedule,
     whose id is one DeltaSleuth writes, the due time and the zone; no row of the schedule itself is in its
     pack's segment."""
     schedule_id = "SC-" + "0123456789" * 2 + "012345"  # all digits: its parts would match either pattern
@@ -277,7 +277,8 @@ async def test_scheduled_run_pack_passes_gate(pack_ctx: Context, pattern: str) -
     (created,) = [row for row in rows if row["action"] == "create_run"]
     assert (created["actor"], created["detail"]["schedule"]) == ("system:worker", plan["schedule"])
     assert created["detail"]["plan_sha256"] == hashlib.sha256(files["facts/plan.json"]).hexdigest()
-    # No row of the schedule: PACK §4.3 is unchanged, and its rows stay in the installation's chain.
+    # No row of the schedule: a pack's audit segment is unchanged, and its rows stay in the installation's
+    # chain.
     assert schedule_id not in {row["object"] for row in rows} and "schedule.fire" not in {
         row["action"] for row in rows
     }
@@ -443,7 +444,7 @@ def test_what_deltasleuth_writes_itself_is_never_a_key() -> None:
                 "D-" + "7" * 26],
         "digests": ["0712345678" + "a" * 54, "sha256:" + "1" * 63 + "f", "2" * 31 + "c", "3685c5094a6b6347"],
         "version": "10.2.3",
-        # A sampled pack's (docs/mvp/SAMPLING.md §11.5): the nonce, its sampled claim, u_max, bounds, labels.
+        # A sampled pack's: the nonce, its sampled claim, u_max, bounds, labels.
         "sample": {"nonce": "6d23080bff0fd27a555cfdbc3cbc0a48", "draw_id": "D-" + "8" * 26,
                    "strata": [{"label": "kind=ORG|flagged=Y", "u_max": "18446744073709551615",
                                "target": "0.0001", "ub95_one_sided": "0.00009999"}]},

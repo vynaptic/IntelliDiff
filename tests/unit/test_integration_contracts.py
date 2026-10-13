@@ -1,12 +1,12 @@
 """Cross-module contracts that only integration can check.
 
-* The e164 normaliser formats every *possible* number: the design's own examples use the reserved
+* The e164 normaliser formats every *possible* number: the mocks' own examples use the reserved
   drama range (07700 900xxx), which libphonenumber rates possible but not valid. A validity gate
   left those numbers unnormalised on one side and turned format-only differences into mismatches.
 * A finding's pattern is the text its rule path normalises to, so rule paths and finding patterns
   compare by string equality.
-* Black-box rule (PLAN rule 2): nothing in the package (the packaged schema copies included), the
-  end-to-end tests or the runbooks names how a target is built.
+* Black-box rule: nothing in the package (the packaged schemas included), the end-to-end tests or
+  the documents names how a target is built.
 """
 
 from __future__ import annotations
@@ -63,16 +63,16 @@ TARGET_BACKENDS = re.compile(r"janus|cassandra|gremlin|tinkerpop|neo4j|mongodb|d
 
 def test_no_target_backend_is_named_anywhere_in_the_package(repo_root: Path) -> None:
     """A target is an endpoint plus declared behaviour: deltasleuth/ (code, templates and the
-    packaged schemas), the end-to-end tests and the runbooks never name how one is built."""
+    packaged schemas), the end-to-end tests and the documents never name how one is built."""
     roots = [repo_root / "deltasleuth", repo_root / "tests" / "e2e"]
     suffixes = (".py", ".j2", ".json", ".yaml", ".md")
     files = [p for root in roots for p in root.rglob("*") if p.is_file() and p.suffix in suffixes]
-    files += [repo_root / "docs" / "mvp" / "RUNBOOK.md", repo_root / "README.md"]
+    files += [repo_root / "README.md", repo_root / "SECURITY.md", *(repo_root / "docs").glob("*.md")]
     offenders = [str(p.relative_to(repo_root)) for p in files if TARGET_BACKENDS.search(p.read_text())]
     assert offenders == []
 
 
-# What each outcome says of a key, as the Run screen's legend restates docs/architecture.md §7.1.
+# What each outcome says of a key, as the Run screen's legend words it.
 LEGEND = {
     "MATCH": "Both sides answered in full and nothing that matters differs.",
     "MISMATCH": "Both sides answered in full and a difference has no explanation.",
@@ -108,31 +108,7 @@ def test_the_ui_reads_a_citation_as_the_validator_does(repo_root: Path) -> None:
     assert f"export const CITATION = /{validate.CITATION.pattern}/g;" in source
 
 
-# What a MySQL or Oracle table side needs, in the contract's own words (docs/mvp/ENGINES.md §17).
-PREREQUISITES = (
-    "observed on MySQL 8.4.11 and Oracle 23.26.3 only (8.0 and 19c are supported, not observed: run the"
-    " acceptance kit); Oracle over plain TCP or TCPS, not Native Network Encryption; in an Oracle database"
-    " that is not AL32UTF8, a run takes text keys of up to 500 bytes, by a conversion observed on"
-    " `NVARCHAR2` only; MariaDB and SQL Server are not supported; `ds target check` reports each of these"
-    " before a run is attempted."
-)
-
-
-def test_the_engine_prerequisites_are_stated_word_for_word(repo_root: Path) -> None:
-    """The deployment guide and the README say the prerequisites of MySQL and Oracle sides as the
-    contract words them, line breaks aside."""
-    said = {
-        name: " ".join((repo_root / name).read_text().split()).count(PREREQUISITES)
-        for name in ("docs/mvp/ENGINES.md", "docs/mvp/DEPLOY.md", "README.md")
-    }
-    assert said == {
-        "docs/mvp/ENGINES.md": 1,
-        "docs/mvp/DEPLOY.md": 1,
-        "README.md": 1,
-    }
-
-
-# The detail keys each fed audit action's projector reads (docs/mvp/ALERTS.md §2.4): every writer of the
+# The detail keys each fed audit action's projector reads: every writer of the
 # action must still write them, or its notifications would fail their models and never be sent.
 FEED_READS = {
     "run.cycle": {"cycle"},

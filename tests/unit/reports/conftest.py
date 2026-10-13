@@ -220,7 +220,7 @@ async def seed_run(
 
 
 async def seed_graph_run(ctx: Context, rows: list[dict[str, Any]]) -> str:
-    """A finished graph parity run (docs/mvp/GRAPH.md §4): its scan's ``GRAPH`` counts and L2 ``rows``."""
+    """A finished graph parity run: its scan's ``GRAPH`` counts and L2 ``rows``."""
     scan = {"done": True, "after": ["e9|phone|p9"], "rows_a": 6, "rows_b": 6, "skipped_a": 0, "skipped_b": 0,
             "matched": 4, "candidates": 2, "graph": GRAPH}  # fmt: skip
     spec = compile_spec(yaml.safe_load(GRAPH_SPEC), targets=TARGETS)

@@ -1,4 +1,4 @@
--- Sign-off sampling (docs/mvp/SAMPLING.md): a drawn key's strata, whether its own bucket chose it and its
+-- Sign-off sampling: a drawn key's strata, whether its own bucket chose it and its
 -- fresh reads; a run's pending draw; each ended cycle's judgement; every draw, append-only but for its one
 -- close. The run_keys checks are NOT VALID: every earlier row holds NULL or the default, which satisfies
 -- them, so nothing scans run_keys under ACCESS EXCLUSIVE; new rows are checked.
@@ -15,7 +15,7 @@ ALTER TABLE ds.run_keys
     ADD CONSTRAINT run_keys_signoff_member_needs_stratum
         CHECK (NOT signoff_member OR signoff_stratum IS NOT NULL) NOT VALID;
 ALTER TABLE ds.runs ADD COLUMN draw jsonb CHECK (jsonb_typeof(draw) = 'object');  -- {due[, error, at]}
-ALTER TABLE ds.cycles ADD COLUMN sample jsonb CHECK (jsonb_typeof(sample) = 'object');  -- §8.1
+ALTER TABLE ds.cycles ADD COLUMN sample jsonb CHECK (jsonb_typeof(sample) = 'object');  -- its judgement
 CREATE TABLE ds.sample_draws (
     draw_id          text PRIMARY KEY CHECK (draw_id ~ '^D-[0-9A-Z]{26}$'),
     run_id           text NOT NULL,
@@ -66,7 +66,7 @@ CREATE TRIGGER sample_draws_no_truncate BEFORE TRUNCATE ON ds.sample_draws
 ALTER TABLE ds.approvals DROP CONSTRAINT approvals_scopes_check, ADD CONSTRAINT approvals_scopes_check
     CHECK (scopes <@ '{clear,unlisted_clear,known_diffs,population_filters,sampling,raw_clear}');
 
--- A sign-off's exclusion set also holds whoever closed a draw of the ledger it attests (§10), the scorer
+-- A sign-off's exclusion set also holds whoever closed a draw of the ledger it attests, the scorer
 -- of its adjudication kept.
 CREATE OR REPLACE FUNCTION ds.approval_authors(a ds.approvals, OUT persons text[], OUT unattributed boolean)
 LANGUAGE plpgsql STABLE AS $$

@@ -1,4 +1,4 @@
-/** Administration (docs/mvp/AUTH.md §3, §5, §6): API tokens, users, sessions and the audit log, one tab
+/** Administration: API tokens, users, sessions and the audit log, one tab
  *  each, so only the Audit tab reads the log (a read that is itself audited). Admins only, never a token; the
  *  server still decides. */
 import { useState, type FormEvent } from 'react';

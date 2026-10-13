@@ -1,4 +1,4 @@
-/** Schedules (docs/mvp/SCHEDULES.md §10), open to every role: what a schedule never tells, the banners, and each
+/** Schedules, open to every role: what a schedule never tells, the banners, and each
  *  schedule with what it runs, its cron and zone, its next due time and its newest firing; and one schedule with
  *  its definition, who saved it, what the four-eyes gate says, its next times and its firings. Operators add one,
  *  preview a cron's times, edit, pause, resume and delete one, and move a pinned one to the newer version. Only a

@@ -1,66 +1,59 @@
 """The worker (``ds worker``, also inside ``ds serve``): processes the due keys of running runs.
 
-One worker per database processes keys (it holds a Postgres advisory lock); another waits until it
-stops, so a target's rate budget holds across processes. Each of ``worker.concurrency`` slots
-leases a group of keys of one run, under a lease owner of its own so the group can be handed back
-alone: ``READ_BATCH`` keys of a run whose sides are all tables, read with one statement a side
-(TABLES.md §12), or one of whose sides reads fixed files, a pass over them a group, its service side read
-key by key in the same slot (docs/mvp/FILES.md §12), else one key; ``LOB_BATCH`` keys where a table side's
-rows may be large, but beside fixed files, whose group stays whole: one pass over the files, then the other
-side read, judged and saved ``LOB_BATCH`` keys at a time. It renews the leases while the keys wait
-and are read: A then B, or B then A on a recheck pass, which ``confirm`` judges against the stored first
-read; a recheck reads no side of fixed files again, whose first observation stands. The group's
-observations, results, masked findings and next states (done, or a recheck due after
-``recheck.delay`` + jitter) are saved in one transaction; a lost lease rolls it back, so a kill -9
-costs at most the keys in flight and never duplicates a result.
+One worker per database processes keys (it holds a Postgres advisory lock); another waits until it stops, so
+a target's rate budget holds across processes. Each of ``worker.concurrency`` slots leases a group of keys
+of one run, under a lease owner of its own so the group can be handed back alone: ``READ_BATCH`` keys of a
+run whose sides are all tables, read with one statement a side, or one of whose sides reads fixed files, a
+pass over them a group, its service side read key by key in the same slot, else one key; ``LOB_BATCH`` keys
+where a table side's rows may be large, but beside fixed files, whose group stays whole: one pass over the
+files, then the other side read, judged and saved ``LOB_BATCH`` keys at a time. It renews the leases while
+the keys wait and are read: A then B, or B then A on a recheck pass, which ``confirm`` judges against the
+stored first read; a recheck reads no side of fixed files again, whose first observation stands. The group's
+observations, results, masked findings and next states (done, or a recheck due after ``recheck.delay`` +
+jitter) are saved in one transaction; a lost lease rolls it back, so a kill -9 costs at most the keys in
+flight and never duplicates a result.
 
-Politeness: one gate per target for the process (``ctx.gates``: rate budget, in-flight cap, and a
-breaker for each ``execution.circuitBreaker`` its specs declare, so a run is governed by its own spec's),
-at most ``execution.concurrency`` groups of a live run in flight, each pausing
-``execution.delay`` plus jitter (from a hash of a key) before its next group; no slot leases keys
-of a run with none of those free, and keys are read only if their run still runs. A live 401/403
-pauses the run and hands the group back unjudged, to be read again once resumed, with the
-credentials read again; so does a key the keyring lacks (the run's data key, or an evidence key:
-docs/mvp/RETENTION.md §6.1); a stop condition stops the run. A sweeper ends cycles, drives
-cancellations, closes the readers of finished runs and runs each due table scan (``runner.scan``,
-a soak's next one once its cycle starts) as a task of its own, cancelled once its run no longer runs:
-an unreachable database pauses a scan for a lease period, a refused login pauses its run (as it does a
-rolling soak whose key table's target refuses it at a roll, until a resume reads it again), a server's code
-a resume may not meet again resumes it, a lease period later when the pass saved no checkpoint, until
-three passes in a row saved none (docs/mvp/ENGINES.md §11; a read error of fixed files that did not change
-counts with or without a checkpoint: docs/mvp/FILES.md §10), any other failure fails its run. With packs
-or readiness configured, a key-list
-run with a table side has its cycle's key census counted first (``runner.census``, docs/mvp/PACK.md §1.3),
-also as a task: no slot leases its keys until the census is recorded. A sampled run's pending draw is drawn
-as a task of its own too (``runner.sample``, docs/mvp/SAMPLING.md §5): a frame's refusal pauses the run, an
-unreachable database draws again after a lease period, any other failure fails the run; and a sign-off
-member no read compared is read again from its first pass, at most ``resolve.times``, instead of being
-done (§7). It also starts a purge pass at most hourly
-(``runner.purge``, weekly with the orphan sweep, after a sweep of the files reader's stale spill
-directories: docs/mvp/FILES.md §10), none within 7 days of migration 006, so that holds
-can follow an upgrade (docs/mvp/RETENTION.md §5.1), and audits a change of the licence's state at most
-hourly (``licence.watch``, docs/mvp/LICENCE.md §11). After ending cycles, the sweep starts the notifier
-(``runner.notify``, docs/mvp/ALERTS.md §9) as a task of its own when none runs, awaiting nothing: it feeds
-the audit chain into deliveries and sends them on threads of its own with at most two pooled connections,
-so no notification fault keeps a cycle from ending; with ``notify`` absent it only records that. It then
-starts a readiness pass (``runner.readiness``, docs/mvp/READINESS.md §4, §8) as a task of its own when none
-runs, which measures the cycles that ended, chains each pair's change of readiness and never fails a run.
-The worker of ``ds worker`` or ``ds serve`` also fires schedules (``runner.schedule``,
-docs/mvp/SCHEDULES.md §5): its first sweep recomputes each active schedule's next due time, and every sweep
+Politeness: one gate per target for the process (``ctx.gates``: rate budget, in-flight cap, and a breaker
+for each ``execution.circuitBreaker`` its specs declare, so a run is governed by its own spec's), at most
+``execution.concurrency`` groups of a live run in flight, each pausing ``execution.delay`` plus jitter (from
+a hash of a key) before its next group; no slot leases keys of a run with none of those free, and keys are
+read only if their run still runs. A live 401/403 pauses the run and hands the group back unjudged, to be
+read again once resumed, with the credentials read again; so does a key the keyring lacks (the run's data
+key, or an evidence key); a stop condition stops the run. A sweeper ends cycles, drives cancellations,
+closes the readers of finished runs and runs each due table scan (``runner.scan``, a soak's next one once
+its cycle starts) as a task of its own, cancelled once its run no longer runs: an unreachable database
+pauses a scan for a lease period, a refused login pauses its run (as it does a rolling soak whose key
+table's target refuses it at a roll, until a resume reads it again), a server's code a resume may not meet
+again resumes it, a lease period later when the pass saved no checkpoint, until three passes in a row saved
+none (a read error of fixed files that did not change counts with or without a checkpoint), any other
+failure fails its run. With packs or readiness configured, a key-list run with a table side has its cycle's
+key census counted first (``runner.census``), also as a task: no slot leases its keys until the census is
+recorded. A sampled run's pending draw is drawn as a task of its own too (``runner.sample``): a frame's
+refusal pauses the run, an unreachable database draws again after a lease period, any other failure fails
+the run; and a sign-off member no read compared is read again from its first pass, at most
+``resolve.times``, instead of being done. It also starts a purge pass at most hourly (``runner.purge``,
+weekly with the orphan sweep, after a sweep of the files reader's stale spill directories), none within 7
+days of migration 006, so that holds can follow an upgrade, and audits a change of the licence's state at
+most hourly (``licence.watch``). After ending cycles, the sweep starts the notifier (``runner.notify``) as a
+task of its own when none runs, awaiting nothing: it feeds the audit chain into deliveries and sends them on
+threads of its own with at most two pooled connections, so no notification fault keeps a cycle from ending;
+with ``notify`` absent it only records that. It then starts a readiness pass (``runner.readiness``) as a
+task of its own when none runs, which measures the cycles that ended, chains each pair's change of readiness
+and never fails a run. The worker of ``ds worker`` or ``ds serve`` also fires schedules
+(``runner.schedule``): its first sweep recomputes each active schedule's next due time, and every sweep
 starts a task for each due schedule, at most ``FIRING`` at once and never two for one schedule; a firing
 that waits, or meets a fault, is not tried again before its time, and never fails a run or ends the sweep.
 ``ds run``'s in-process worker fires none (``run_worker(schedules=False)``). Each sweep also starts a task
-for each pending pair of a table pre-check (``runner.precheck``, docs/mvp/PRECHECKS.md §5) whose targets
-each have a pre-check session free, at most ``precheck.sessions_per_target`` a target, sets back to pending
-the pairs a worker that is gone was reading, and cancels the tasks of a cancelled pre-check, whose
-statements end on their servers. A task renews its pair's claim while it reads it, and a worker that stops
-sets the pairs it was reading back to pending. A pre-check is no run: a fault of one fails no run and never
-ends the sweep.
-The schema guard (``runner.drift``, docs/mvp/PRECHECKS.md §7) looks at the tables of a running key-list run
-once its cycle fell due, as a task of its own (V3): the cycle's census and draw wait for it, two tries at
-most, and go on unchecked after them. A scan pass the guard paused ends without failing its run (V2); and a
-scan, a read or a draw's frame that failed on a column or a table has the guard look before the run is
-failed (V5): a change that breaks the run's plan pauses it instead, its keys handed back.
+for each pending pair of a table pre-check (``runner.precheck``) whose targets each have a pre-check session
+free, at most ``precheck.sessions_per_target`` a target, sets back to pending the pairs a worker that is
+gone was reading, and cancels the tasks of a cancelled pre-check, whose statements end on their servers. A
+task renews its pair's claim while it reads it, and a worker that stops sets the pairs it was reading back
+to pending. A pre-check is no run: a fault of one fails no run and never ends the sweep. The schema guard
+(``runner.drift``) looks at the tables of a running key-list run once its cycle fell due, as a task of its
+own: the cycle's census and draw wait for it, two tries at most, and go on unchecked after them. A scan pass
+the guard paused ends without failing its run; and a scan, a read or a draw's frame that failed on a column
+or a table has the guard look before the run is failed: a change that breaks the run's plan pauses it
+instead, its keys handed back.
 """
 
 from __future__ import annotations
@@ -117,11 +110,11 @@ from deltasleuth.store import repo
 
 LOCK_ID = 0x44535752  # pg advisory lock "DSWR": the one worker of a database, or ds keys migrate
 READ_BATCH = 200  # keys a slot reads at once from a run that reads in groups (``LiveReader.batches``)
-LOB_BATCH = 4  # of a run whose rows may hold large values: 16 MiB of them a row (ENGINES.md §6)
+LOB_BATCH = 4  # of a run whose rows may hold large values: 16 MiB of them a row
 KEY_MISSING = (KeyringError, EvidenceKeyError)  # a KEK the keyring lacks: the run waits for it
 STALLS = (SnapshotLost, TargetRefused, KeyUnfit)  # a scan resumes after them, unless it saved no checkpoint
 STALLED = 3  # scan passes in a row that saved none: the run fails
-FIRING = 2  # schedules fired at once (docs/mvp/SCHEDULES.md §5)
+FIRING = 2  # schedules fired at once
 PURGE_EVERY_S = 3600  # a purge pass at most hourly
 WATCH_EVERY_S = 3600  # and a look at the licence's state
 ORPHANS_EVERY_S = 7 * 86400  # with the orphan sweep weekly
@@ -161,7 +154,7 @@ class _Worker:
         self.stalled: dict[str, int] = {}  # by run: its scan's stalled passes in a row
         self.censuses: dict[str, asyncio.Task[None]] = {}
         self.draws: dict[str, asyncio.Task[None]] = {}
-        # key censuses gate the leases (PACK.md §1.3; READINESS.md §4)
+        # key censuses gate the leases
         self.counting = ctx.settings.packs is not None or ctx.settings.readiness is not None
         self.purging: asyncio.Task[None] | None = None
         self.purged_at = self.swept_at = -float("inf")  # monotonic: the last pass and orphan sweep
@@ -170,7 +163,7 @@ class _Worker:
         self.notifying: asyncio.Task[None] | None = None
         self.readiness = readiness.State()
         self.measuring: asyncio.Task[None] | None = None
-        self.schedules = schedules  # it fires schedules: never ds run's worker (docs/mvp/SCHEDULES.md §5)
+        self.schedules = schedules  # it fires schedules: never ds run's worker
         self.rezoned = False  # each active schedule's next due time was recomputed since the lock was taken
         self.firing: dict[str, asyncio.Task[None]] = {}
         self.waiting: dict[str, float] = {}  # by schedule: monotonic, no firing before it
@@ -248,7 +241,7 @@ class _Worker:
         running = {run["run_id"] for run in active if run["status"] == "running"}
         for run_id, scanning in self.scans.items():
             if run_id not in running:  # paused, cancelled or stopped: its statements end now, not when
-                scanning.cancel()  # its next checkpoint would have told it (ENGINES.md §6)
+                scanning.cancel()  # its next checkpoint would have told it
         now = datetime.now(UTC)
         for run in active:
             scan = run["scan"] if run["status"] == "running" else None
@@ -302,7 +295,7 @@ class _Worker:
             return None
 
     async def _unguarded(self, conn: repo.Conn, active: list[repo.Row]) -> dict[str, bool]:
-        """The running key-list runs whose cycle start the schema guard has not looked at (V3), each with
+        """The running key-list runs whose cycle start the schema guard has not looked at, each with
         whether that cycle has fallen due: a soak's next cycle is opened when the one before ends. A due
         time that cannot be told counts as fallen: the look records why it was not made."""
         found, now = {}, datetime.now(UTC)
@@ -382,7 +375,7 @@ class _Worker:
 
     async def _hold(self, key: tuple[str, int]) -> None:
         """Renew the pair's claim while it is read, as ``_keep`` renews a lease: a running pair whose claim
-        is older than ``prechecks.HELD`` lease periods is read by no worker (PRECHECKS.md §10's banner)."""
+        is older than ``prechecks.HELD`` lease periods is read by no worker."""
         while True:
             await asyncio.sleep(self.settings.lease_seconds / 3)
             with contextlib.suppress(psycopg.Error):
@@ -419,7 +412,7 @@ class _Worker:
             self.notifying = asyncio.create_task(self.notifier.run())
 
     async def _guard(self, run_id: str) -> None:
-        """The schema guard's look at the start of the run's cycle (V3), which records what it meets: a
+        """The schema guard's look at the start of the run's cycle, which records what it meets: a
         refused login pauses the run, and only a store that cannot record the look leaves the cycle's
         start unlooked at, to be looked at again after a lease period."""
         try:
@@ -451,7 +444,7 @@ class _Worker:
             # may not meet again, until three passes in a row saved no checkpoint; such a pass waits a
             # lease period too, so the three span minutes. Data past a server limit would fail every
             # resume, so it fails the run, as a bug, an unreadable DSN, a privilege or a scan error do:
-            # unless the schema guard finds that a column or a table the plan reads is gone (V5).
+            # unless the schema guard finds that a column or a table the plan reads is gone.
             limit = isinstance(exc, psycopg.errors.ProgramLimitExceeded)
             if isinstance(exc, UNREACHABLE) and not limit:
                 log.warning("scan of run %s paused: %s", run_id, code(exc))
@@ -470,9 +463,9 @@ class _Worker:
 
     async def _stalled(self, run_id: str, checkpoint: int, fixed: bool = False) -> bool:
         """Whether the scan's pass from ``checkpoint`` was the third in a row to save none: a code every
-        resume would meet again cannot loop for ever (docs/mvp/ENGINES.md §11). A read error of ``fixed``
+        resume would meet again cannot loop for ever. A read error of ``fixed``
         files that did not change counts whether or not its pass saved one: the same bytes fail the next
-        pass the same way (docs/mvp/FILES.md §10)."""
+        pass the same way."""
         async with self.ctx.pool.connection() as conn:
             run = await repo.get_run(conn, run_id)
         saved = run is not None and run["scan"] is not None and run["scan"]["checkpoint"] > checkpoint
@@ -481,7 +474,7 @@ class _Worker:
 
     async def _draw(self, run_id: str) -> None:
         """Draw the run's sample; a frame's refusal is recorded by the draw, which pauses the run, as the
-        schema guard does when the frame met a column or a table the plan reads that is gone (V5)."""
+        schema guard does when the frame met a column or a table the plan reads that is gone."""
         try:
             await sample.draw(self.ctx, run_id)
         except KEY_MISSING as exc:
@@ -499,7 +492,7 @@ class _Worker:
     async def _census(self, run_id: str) -> None:
         """Count the run's cycle; a failed count is recorded, so only a store that cannot record it leaves
         the cycle uncounted, to be counted again after a lease period. A file side whose rows are not the
-        ones its plan counted fails the run (docs/mvp/FILES.md §7, F10)."""
+        ones its plan counted fails the run."""
         try:
             await census.record(self.ctx, run_id)
         except RowsMoved as exc:
@@ -513,7 +506,7 @@ class _Worker:
 
     async def _purge(self) -> None:
         """A purge pass as ``system:worker``, after the grace; skipped while another purger runs. The spill
-        directories of processes that ended are swept first, grace or not (docs/mvp/FILES.md §10)."""
+        directories of processes that ended are swept first, grace or not."""
         try:
             await manifest.call(manifest.sweep, self.ctx.settings.spill_dir)
         except Exception as exc:  # the next hour tries again
@@ -551,10 +544,10 @@ class _Worker:
         renewing = asyncio.create_task(self._keep(owner))
         try:
             run = await self._run(rows[0])
-            if isinstance(run.reader, LiveReader) and run.reader.batches:  # a group (TABLES.md §12)
+            if isinstance(run.reader, LiveReader) and run.reader.batches:  # a group
                 async with self.ctx.pool.connection() as conn:
                     # Few keys where a row may be large; beside fixed files the whole group, whose every read
-                    # of them is a pass (docs/mvp/FILES.md §12): ``_process`` reads the large side in slices.
+                    # of them is a pass: ``_process`` reads the large side in slices.
                     few = run.reader.large and not run.reader.fixed
                     more = (LOB_BATCH if few else READ_BATCH) - len(rows)
                     rows += await repo.lease_due(
@@ -582,7 +575,7 @@ class _Worker:
             log.warning("keys of run %s not saved: %s", run_id, type(exc).__name__)
         except Exception as exc:  # a bug, or data the store refuses: never read again in a loop
             finished = await self._release(owner)  # first, so the failed run cancels this key too
-            # V5: a column or a table the plan reads is gone, which pauses the run, its keys handed back.
+            # A column or a table the plan reads is gone, which pauses the run, its keys handed back.
             if isinstance(exc, drift.DENIED) and await drift.failed(self.ctx, run_id):
                 if run_id in self.runs:
                     self.runs[run_id].halted = True  # it reads on a fresh session once resumed
@@ -614,7 +607,7 @@ class _Worker:
     async def _process(self, run: _Run, rows: list[repo.Row], owner: str) -> bool:
         """Open the group's leased rows, then read, judge and save one pass of each key, saved together;
         False: a side refused the credential, and the keys go back. Where a side reads fixed files and the
-        other's rows may be large (docs/mvp/FILES.md §12), the files are read for the group's first passes
+        other's rows may be large, the files are read for the group's first passes
         in one pass over them, then the group is read, judged and saved ``LOB_BATCH`` keys at a time, so no
         more large rows are held than a group of such a side alone holds; False also when the run stopped
         before its last keys, which go back."""
@@ -650,7 +643,7 @@ class _Worker:
             firsts = dict(zip(masked, derived, strict=True))
         held = {}
         if isinstance(run.reader, LiveReader) and run.reader.batches:  # a recheck reads B first, as evaluate
-            # but a side of fixed files, whose first observation stands (docs/mvp/FILES.md §12)
+            # but a side of fixed files, whose first observation stands
             held = await run.reader.standing({row["key"]: firsts[row["key_masked"]] for row in rechecks})
             first = [row["key"] for row in rows if row["pass_no"] == 1]
             again = [row["key"] for row in rechecks]
@@ -717,7 +710,7 @@ class _Worker:
                 spec = await self.ctx.spec(conn, row["spec_id"], live=not samples)  # live: calls targets
                 critical = await repo.unexplained_critical(conn, run_id)  # saved by an earlier worker too
                 tables = stored["params"].get("tables")
-                if stored["params"].get("pinned"):  # a file side's pins (docs/mvp/FILES.md §6)
+                if stored["params"].get("pinned"):  # a file side's pins
                     tables = unsealed(await self.ctx.sealer(conn, run_id), stored["params"])
             reader = FileReader(samples, spec) if samples else LiveReader(self.ctx, spec, tables)
             monitor = StopMonitor(StopConditions.from_spec(spec.raw), stored["started_at"], critical)
@@ -748,10 +741,10 @@ def _pair(row: repo.Row) -> tuple[str, int]:
 
 def _confirmed(run: _Run, pass_no: int, read: KeyResult, first: KeyResult | None) -> KeyResult:
     """A pass's result: a recheck is judged against the first read. A scanned key's usable first read
-    is confirmed already: the scan read it once before (TABLES.md §12); a read of fixed files on both sides
+    is confirmed already: the scan read it once before; a read of fixed files on both sides
     is final, since reading them again is a no-op."""
     result = read if first is None else confirm(first, read, spec=run.spec, last=pass_no > run.policy.times)
-    result = freeze(result, run.reader.fixed)  # docs/mvp/FILES.md §12
+    result = freeze(result, run.reader.fixed)
     if run.scanned and result.outcome is not Outcome.INCONCLUSIVE and run.policy.due(result):
         result.confirmation = Confirmation.RECHECKED
     return result

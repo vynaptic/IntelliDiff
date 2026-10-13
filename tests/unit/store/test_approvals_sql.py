@@ -1,4 +1,4 @@
-"""The four-eyes rule in SQL (docs/mvp/APPROVALS.md §3, §7): who is accountable for what, the lineage
+"""The four-eyes rule in SQL: who is accountable for what, the lineage
 of a spec's versions, and every refusal of ds.tg_approvals, which checks every writer."""
 
 from __future__ import annotations

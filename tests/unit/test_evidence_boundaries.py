@@ -1,4 +1,4 @@
-"""What is observed never becomes evidence (docs/mvp/PRECHECKS.md §9): no module of readiness, approvals,
+"""What is observed never becomes evidence: no module of readiness, approvals,
 the licence's pairs or the evidence packs reads a table pre-check or what the schema guard records of a
 run's tables, and a pre-check seats no pair, measures no cycle and changes no run."""
 

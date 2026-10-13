@@ -1,8 +1,8 @@
-"""Four-eyes approvals and sign-off over the API (docs/mvp/APPROVALS.md §5, §6), with people signed in
+"""Four-eyes approvals and sign-off over the API, with people signed in
 through the fake IdP: requests, reviews, decisions and their refusals (the trigger's among them), two
 approvers for CLI and token uploads, the step-up, revokes and what they pause, stop, cascade to and
 release, a signed cycle against the purge, and the scorer of the attested adjudication kept from
-approving (docs/mvp/PACK.md §5)."""
+approving."""
 
 from __future__ import annotations
 
@@ -265,7 +265,7 @@ def test_a_review_lists_what_each_scope_covers(sso: TestClient, idp: FakeIdp) ->
 
 
 def test_a_review_lists_the_lines_a_file_side_skips() -> None:
-    """docs/mvp/FILES.md §5: csv.skip above 0 is gated as a filter is, so an approver is shown it."""
+    """``csv.skip`` above 0 is gated as a filter is, so an approver is shown it."""
     from deltasleuth.api.routes.approvals import _needed
 
     csv = {"columns": ["id"], "delimiter": "|", "header": False}

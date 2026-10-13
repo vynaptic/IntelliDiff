@@ -1,6 +1,6 @@
 """Service facts: health (open, for probes), targets and LLM profiles, never their secrets, and the
-licence's standing (docs/mvp/LICENCE.md §12); and the targets declared in the product (docs/mvp/DEPLOY.md
-§7), which who declares (``deps.Declarer``) adds, changes and removes, each audited."""
+licence's standing; and the targets declared in the product, which who declares (``deps.Declarer``) adds,
+changes and removes, each audited."""
 
 from __future__ import annotations
 

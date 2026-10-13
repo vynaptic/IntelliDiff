@@ -1,18 +1,18 @@
 # DeltaSleuth on one host: PostgreSQL plus the app (API, UI and worker in one process).
 # Never edit this file, which an upgrade replaces: this installation's changes go in
-# docker-compose.site.yml, which .env names after it. From the installation's folder (docs/mvp/DEPLOY.md
+# docker-compose.site.yml, which .env names after it. From the installation's folder (docs/deployment.md
 # walks through every step):
 #   docker compose up -d
 #   docker compose --profile mocks up -d        # plus both mock pairs
 # Settings: deploy/config/*.yaml (from the *.example.yaml files). Secrets: deploy/secrets/, one file each.
-# An office reaches the app through a TLS reverse proxy on the host (DEPLOY section 5), never this port
-# directly; a one-machine trial opens http://localhost:8000 (deploy/up.sh, docs/guide/01-install-docker.md).
+# An office reaches the app through a TLS reverse proxy on the host, never this port directly; a
+# one-machine trial opens http://localhost:8000 (deploy/up.sh).
 # A checkout has no release image to load: its .env names the source override too (deploy/env.source.example).
 # After changing the site file, `docker compose up -d` applies it (`restart` does not).
 
 name: deltasleuth
 
-x-release: &release                    # the signed release: `docker load` puts it here (DEPLOY section 2)
+x-release: &release                    # the signed release: `docker load` puts it here
   image: deltasleuth:0.1.0.dev0        # always pyproject's version; source builds: docker-compose.source.yml
   pull_policy: never
   read_only: true                      # the app writes only to its volumes and /tmp
@@ -23,7 +23,7 @@ x-release: &release                    # the signed release: `docker load` puts 
 services:
   db:
     image: postgres:16-alpine
-    command: [postgres, -c, log_error_verbosity=terse]   # errors log no row values (DEPLOY section 10)
+    command: [postgres, -c, log_error_verbosity=terse]   # errors log no row values
     logging: {driver: json-file, options: {max-size: 10m, max-file: "3"}}
     environment:
       POSTGRES_USER: deltasleuth
@@ -44,7 +44,7 @@ services:
     depends_on:
       db: {condition: service_healthy}
     ports: ["127.0.0.1:8000:8000"]             # loopback only: an office puts its TLS reverse proxy in front
-    extra_hosts: ["host.docker.internal:host-gateway"]   # an app on this machine (DEPLOY section 7): Linux needs the line
+    extra_hosts: ["host.docker.internal:host-gateway"]   # an app on this machine: Linux needs the line
     volumes:
       - ./config:/etc/deltasleuth:ro
       - evidence:/var/lib/deltasleuth/evidence
@@ -72,7 +72,7 @@ services:
 networks:
   default:
     ipam:
-      config: [{subnet: 172.30.0.0/24, gateway: 172.30.0.1}]   # pinned: auth.trusted_proxies names the gateway (DEPLOY section 5)
+      config: [{subnet: 172.30.0.0/24, gateway: 172.30.0.1}]   # pinned: auth.trusted_proxies names the gateway
 
 volumes:
   pgdata:
@@ -84,4 +84,4 @@ secrets:
   db_password: {file: ./secrets/db_password}
   db_dsn: {file: ./secrets/db_dsn}
   kek: {file: ./secrets/kek}                   # the keyring and tokeniser key: never in a volume or backup
-  tokeniser: {file: ./secrets/tokeniser}       # (docs/mvp/RETENTION.md §1)
+  tokeniser: {file: ./secrets/tokeniser}

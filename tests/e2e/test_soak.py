@@ -1,7 +1,7 @@
 """A soak run over a mock pair for two cycles: the key that drifted in the first cycle matches in the
 second, the change is listed (API data and the PDF), and each cycle keeps its own counters. And the table
 demo as a soak whose seeded differences are fixed between its cycles 2 and 3: its pair moves from not ready
-to parity ready, and the API, the CLI and the reports agree (docs/mvp/READINESS.md §17); its brief shows the
+to parity ready, and the API, the CLI and the reports agree; its brief shows the
 stored rate fall at cycle 3 and the root-cause groups of the first two cycles closed."""
 
 from __future__ import annotations

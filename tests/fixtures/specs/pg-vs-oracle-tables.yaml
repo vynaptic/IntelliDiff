@@ -1,5 +1,5 @@
 # DeltaSleuth ComparisonSpec: PostgreSQL crm.customer_account (a) vs Oracle COREBANK.CUSTOMER_ACCOUNT (b).
-# Validates against docs/architecture/spec.schema.json. Run with runs.mode = table_diff (ds-bulkdiff).
+# Validates against deltasleuth/core/spec/spec.schema.json. Run with runs.mode = table_diff (ds-bulkdiff).
 #
 # All hosts, ids, names and values below are fictional. Targets are resolved from ds.targets and
 # credentials come from targets.auth_ref -> ds.secrets_ref (never inline):

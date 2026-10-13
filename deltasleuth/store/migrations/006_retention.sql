@@ -1,4 +1,4 @@
--- Evidence retention and encryption at rest (docs/mvp/RETENTION.md §7.1). Raw keys, headers, scan points
+-- Evidence retention and encryption at rest. Raw keys, headers, scan points
 -- and chat are sealed under their run's data key; the data keys are wrapped by the keyring's KEKs, held
 -- outside the database. observations, results and findings join run_keys on key_masked, already unique
 -- per cycle. The plaintext columns run_keys.key, observations.headers and chat_messages.content and
@@ -30,7 +30,7 @@ ALTER TABLE ds.observations DROP CONSTRAINT observations_run_id_cycle_key_fkey;
 ALTER TABLE ds.run_keys DROP CONSTRAINT run_keys_pkey, DROP CONSTRAINT run_keys_run_id_cycle_key_masked_key,
     ADD PRIMARY KEY (run_id, cycle, key_masked),
     ALTER COLUMN key DROP NOT NULL,
-    -- b"\x01" || nonce(12) || AES-256-GCM(key) || tag(16), the key 1 to 1024 bytes (§3.1)
+    -- b"\x01" || nonce(12) || AES-256-GCM(key) || tag(16), the key 1 to 1024 bytes
     ADD COLUMN key_enc bytea CHECK (octet_length(key_enc) BETWEEN 30 AND 1053);
 
 ALTER TABLE ds.observations ALTER COLUMN key_masked SET NOT NULL, DROP COLUMN key,
@@ -78,7 +78,7 @@ ALTER TABLE ds.runs
 UPDATE ds.runs r SET retention = 'audit' FROM ds.specs s
 WHERE s.spec_id = r.spec_id AND s.body->>'retention' = 'audit';
 
--- Blobs whose last reference was purged, deleted 24 h after they were queued (§5.4).
+-- Blobs whose last reference was purged, deleted 24 h after they were queued.
 CREATE TABLE ds.blob_gc (
     content_hash text PRIMARY KEY CHECK (content_hash ~ '^hk1:[0-9a-f]{64}$'),
     queued_at    timestamptz NOT NULL DEFAULT now()

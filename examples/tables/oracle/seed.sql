@@ -1,4 +1,4 @@
--- The Oracle acceptance kit (docs/mvp/ENGINES.md §17): two tables of one schema, compared by spec.yaml
+-- The Oracle acceptance kit: two tables of one schema, compared by spec.yaml
 -- to the result of expected.json. Run it on the server version you will compare, in SQL*Plus or SQLcl, as
 -- the account whose schema will hold them (it needs CREATE TABLE and quota):
 --   sqlplus KIT_OWNER@//HOST:1521/SERVICE @examples/tables/oracle/seed.sql

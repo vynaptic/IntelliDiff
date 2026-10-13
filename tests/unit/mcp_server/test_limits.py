@@ -1,4 +1,4 @@
-"""Limits and concurrency (docs/mvp/MCP.md §10): each caller's calls a minute and its compares and readiness
+"""Limits and concurrency: each caller's calls a minute and its compares and readiness
 judgements, the process's slots and a caller's share of them, each with its message, on a clock the test
 moves; a compare that its caller's cancel does not leave queued; and a cancelled read whose statement does
 not run on in the store."""
@@ -42,7 +42,7 @@ def test_a_rate_slides_and_forgets_the_callers_longest_idle() -> None:
 
 
 async def test_a_callers_calls_a_minute(monkeypatch: pytest.MonkeyPatch) -> None:
-    """T5: every call counts, a refused one too; and T6: ten compares and ten readiness judgements."""
+    """Every call counts, a refused one too; and ten compares and ten readiness judgements."""
     clock = Clock()
     limits = tools.Limits(replace(EVERY, calls_per_minute=3), clock=clock)
     over = ("rate limited: at most 3 MCP tool calls a minute per caller", True)
@@ -66,14 +66,14 @@ async def test_a_callers_calls_a_minute(monkeypatch: pytest.MonkeyPatch) -> None
         said = (f"rate limited: at most 10 {name} calls a minute per caller", True)
         assert await ask(None, OPERATOR, name, {"junk": 1}, limits=limits) != said  # type: ignore[arg-type]
         answers = [await ask(None, OPERATOR, name, args, limits=limits) for _ in range(11)]  # type: ignore[arg-type]
-        assert answers == [({}, False)] * 10 + [said]  # bad arguments (T4) were not counted
+        assert answers == [({}, False)] * 10 + [said]  # bad arguments were not counted
         assert await ask(None, token("operator", 9), name, args, limits=limits) == ({}, False)  # type: ignore[arg-type]
     clock.now += 60
     assert await ask(None, OPERATOR, "compare_key", asked["compare_key"], limits=limits) == ({}, False)  # type: ignore[arg-type]
 
 
 async def test_slots_and_a_callers_share_of_them(monkeypatch: pytest.MonkeyPatch) -> None:
-    """T7: ``mcp.concurrency`` calls at once, one caller holding all but one of them at most."""
+    """``mcp.concurrency`` calls at once, one caller holding all but one of them at most."""
     held, entered = asyncio.Event(), 0
 
     async def run(ctx: Any, asked: Any, **args: Any) -> Any:

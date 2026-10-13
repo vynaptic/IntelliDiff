@@ -1,4 +1,4 @@
-"""The evidence packs' signing key (docs/mvp/PACK.md §3): one EC P-256 key per installation, a ``file:``
+"""The evidence packs' signing key: one EC P-256 key per installation, a ``file:``
 secret in PEM (PKCS#8, unencrypted), that signs a pack's ``SHA256SUMS`` and the revocation list with
 deterministic ECDSA over SHA-256 (RFC 6979), DER-encoded, as ``openssl dgst -sha256 -verify`` checks it.
 
@@ -19,7 +19,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 
 from deltasleuth.core.secrets import read_secret_bytes
 
-EXPECTED = "packs.signing_key_ref: expected an unencrypted PEM EC P-256 private key (docs/mvp/PACK.md §3.1)"
+EXPECTED = "packs.signing_key_ref: expected an unencrypted PEM EC P-256 private key"
 NOT_PUBLIC = "not a PEM EC P-256 public key"
 _ECDSA = ec.ECDSA(hashes.SHA256(), deterministic_signing=True)
 _PEM = re.compile(rb"\s*-----BEGIN PUBLIC KEY-----([A-Za-z0-9+/=\s]*)-----END PUBLIC KEY-----\s*")

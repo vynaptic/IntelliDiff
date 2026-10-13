@@ -1,4 +1,4 @@
-"""Table pre-checks as the worker reads them (docs/mvp/PRECHECKS.md §5, §6): the sessions it holds on a
+"""Table pre-checks as the worker reads them: the sessions it holds on a
 target, each side in one snapshot, what a failed read keeps and settles, the checks a limit skips, a
 cancel, a worker that is gone, a fault that touches no run, what a pre-check writes, and that no value it
 reads reaches a row, an export or a log."""
@@ -202,7 +202,7 @@ async def test_distinct_counts_over_the_row_limit_are_skipped(tables: Tables, fa
         [pair] = await pairs(h.ctx, precheck_id)
     assert fake.count("duplicates") == fake.count("distinct") == 0  # they sort or hash
     assert pair["verdict"] == "incomplete" and pair["result"]["skipped"] == ["distinct_rows"] * 2
-    assert pair["line"] == (  # a duplicate key not counted is never read as none (N3)
+    assert pair["line"] == (  # a duplicate key not counted is never read as none
         "duplicate keys and distinct values not counted: 3 rows on side a is over precheck.distinct_max_rows"
         " (2)"
     )
@@ -251,9 +251,9 @@ async def test_a_refusal_ends_the_read_and_quotes_the_plan(tables: Tables, fake:
 async def test_precheck_with_a_file_side_refused(
     open_harness: OpenHarness, fake: FakeEngine, tmp_path: Path, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    """docs/mvp/FILES.md §12, K1: a stored spec that names a file side is refused at its look, and nothing of
+    """A stored spec that names a file side is refused at its look, and nothing of
     its files is read: its run counts rows, lines that are not rows and repeated keys."""
-    exports = tmp_path_factory.mktemp("exports").resolve()  # outside the harness's own directories (T10)
+    exports = tmp_path_factory.mktemp("exports").resolve()  # outside the harness's own directories
     (exports / "accounts.csv").write_bytes(b"id|email\n1|a\n")
     (tmp_path / "dsn_tables").write_text("postgresql://unused")
     targets = {
@@ -622,7 +622,7 @@ async def test_two_relations_paired_by_name_are_read_by_their_implied_plan(
         made_ = await prechecks.catalogue(h.ctx, body, TESTER)
         [row] = await ended(h.ctx, made_["precheck_id"])
         found = {pair["label"]: pair for pair in await pairs(h.ctx, made_["precheck_id"])}
-        with pytest.raises(prechecks.Refused) as undrafted:  # a refused pair has nothing to draft (K12)
+        with pytest.raises(prechecks.Refused) as undrafted:  # a refused pair has nothing to draft
             await prechecks.draft(h.ctx, made_["precheck_id"], found["gone"]["n"])
     assert (undrafted.value.status, str(undrafted.value)) == (
         409, f"pair {found['gone']['n']} was not read: there is nothing to draft yet",

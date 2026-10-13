@@ -1,4 +1,4 @@
-"""The feed (docs/mvp/ALERTS.md §4): the chain is the outbox. Each fed row is turned into deliveries exactly
+"""The feed: the chain is the outbox. Each fed row is turned into deliveries exactly
 once beside concurrent writers and across a crash; the cursor starts at the head; a poison row is skipped
 with its seq while later rows notify; a lost connection moves nothing; a stale backlog is skipped in one
 step; suppression, several rules and the cycle's digest over key-list, rolling, table-scan and sampled
@@ -253,12 +253,12 @@ async def test_pause_resume_pause_gives_two_deliveries(open_harness: OpenHarness
         assert [d["seq"] for d in await deliveries(h)] == [first, second]
 
 
-# docs/mvp/ALERTS.md §8's example rule, as installations wrote it before the schema guard existed.
+# A run-health rule, as installations wrote it before the schema guard existed.
 RUN_HEALTH = rule("run-health", ["run.paused", "run.stopped", "run.failed", "notify.dead"], ["ops-hook"])
 
 
 async def test_guard_pause_reaches_a_run_paused_rule(open_harness: OpenHarness, tmp_path: Path) -> None:
-    """docs/mvp/PRECHECKS.md §9: a rule that routes ``run.paused`` carries the schema guard's pause
+    """A rule that routes ``run.paused`` carries the schema guard's pause
     unchanged, and its ``schema.drift`` row sends nothing to a rule that does not name the event."""
     async with (
         receiving(tmp_path) as (_, base, ref),
@@ -320,7 +320,7 @@ async def test_a_guard_pause_resume_pause_of_one_state_gives_two_deliveries(
     databases: Callable[[str], str],  # noqa: F811
     tmp_path: Path,
 ) -> None:
-    """Each pause is its own event (docs/mvp/ALERTS.md §2.1): the schema guard pauses a soak for a dropped
+    """Each pause is its own event: the schema guard pauses a soak for a dropped
     column, a person restores it and resumes the run, and the same drop pauses it again. Only the pause and
     the ``schema.drift`` of one trip share a key, so the second pause is told within ``dedup_hours`` too."""
     seed = "CREATE TABLE customers (id int PRIMARY KEY, amount numeric(12,2));"
@@ -346,9 +346,9 @@ async def test_a_guard_pause_resume_pause_of_one_state_gives_two_deliveries(
                         conn.execute(f"ALTER TABLE customers {statement}")  # type: ignore[arg-type]
                     if statement.startswith("DROP"):
                         with pytest.raises(drift.Tripped):
-                            await scanning.scan(h.ctx, run_id)  # V2 pauses the run
+                            await scanning.scan(h.ctx, run_id)  # the scan pass pauses the run
                     else:
-                        assert await resume_run(h.ctx, run_id, who=TESTER) == "running"  # V4
+                        assert await resume_run(h.ctx, run_id, who=TESTER) == "running"
                 await notifier.feed()
                 found = [(d["event"], d["seq"], d["state"], d["why"]) for d in await deliveries(h)]
             finally:
@@ -363,7 +363,7 @@ async def test_a_guard_pause_resume_pause_of_one_state_gives_two_deliveries(
 async def test_a_labelling_labelled_is_notified_as_its_run_s_event(
     open_harness: OpenHarness, tmp_path: Path
 ) -> None:
-    """``accuracy.label`` names its labelling, and its run in its detail (docs/mvp/ACCURACY.md §10): the
+    """``accuracy.label`` names its labelling, and its run in its detail: the
     feed reads the run from there, and sends ids and counts only."""
     labelling_id, other = "V-" + "0" * 25 + "7", "V-" + "0" * 25 + "8"
     rules = [rule("labelled", ["accuracy.measured"], ["ops-hook"], specs=["unit-*"])]
@@ -545,7 +545,7 @@ async def test_a_renewed_fall_is_sent_once_its_recovery_was(
     ]
 
 
-# -- the cycle's digest (§2.2) ------------------------------------------------------------------------------
+# -- the cycle's digest ------------------------------------------------------------------------------
 
 
 async def _results(h: Any, run_id: str, cycle: int, outcomes: dict[str, str], causes: list[str] = ()) -> None:
@@ -595,7 +595,7 @@ RC = ["RC-" + c * 12 for c in "abcd"]
             [{"K1": "MISMATCH", "K2": "MATCH", "K3": "MISMATCH"}, {"K1": "MATCH", "K2": "NOT_FOUND_B"}],
             (1, 1),
         ),
-        # rolling: keys entering (K4) or leaving (K3) the listing are not counted
+        # rolling: keys entering or leaving the listing are not counted
         ("list", [{"K2": "MATCH", "K3": "MISMATCH"}, {"K2": "MATCH", "K4": "MISMATCH"}], (0, 0)),
         # a table scan read every key: one without a result was read identical
         ("table_scan", [{"K1": "MISMATCH"}, {"K2": "MISMATCH"}], (1, 1)),

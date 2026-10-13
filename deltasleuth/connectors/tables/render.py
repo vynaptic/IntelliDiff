@@ -1,8 +1,8 @@
-"""Canonical rendering 1 (docs/mvp/ENGINES.md §7, §9): the classes a declared type falls in, and for each
+"""Canonical rendering 1: the classes a declared type falls in, and for each
 the JSON value PostgreSQL's ``to_jsonb`` gives, built from the text or bytes another engine renders.
 
 An engine renders, its driver carries ``str`` and ``bytes`` only, and this module canonicalises: a row's
-``document`` is what the per-key engine compares and what a scan's ``digest`` hashes (§10), so equal
+``document`` is what the per-key engine compares and what a scan's ``digest`` hashes, so equal
 digests mean equal documents. A rendered text that is not of its class's form does not convert
 (``ConversionError``, naming the column and the class, never the value).
 """
@@ -24,16 +24,16 @@ from deltasleuth.core.types import JSON
 RENDERING = 1  # stored in a plan that holds a class: another rendering is another plan
 EMPTY = hashlib.sha256(b"{}").digest()  # the row hash of a side whose engine hashes no column
 UNCONVERTIBLE = b"unconvertible:"  # a digest no row has: the scan adds its side, so it never matches
-RESOURCE_LIMIT = b"resource_limit:"  # a row whose large values stay in its database (§6)
+RESOURCE_LIMIT = b"resource_limit:"  # a row whose large values stay in its database
 
-# Every class, by family: only values of one family compare (§7). A class not listed is its own.
+# Every class, by family: only values of one family compare. A class not listed is its own.
 _FAMILIES = dict.fromkeys(("text", "char"), "text") | dict.fromkeys(
     ("integer", "decimal", "float", "float32"), "number"
 )
-KEYS = ("integer", "decimal", "text", "char", "date", "timestamp", "bytes")  # classes with a key text (§8)
+KEYS = ("integer", "decimal", "text", "char", "date", "timestamp", "bytes")  # classes with a key text
 # A typeMap entry's family: its converted value's. A mapped timestamp (its Z form) equals only another.
 _MAPPED = {"string": "text", "integer": "number", "decimal": "number", "timestamp": "mapped timestamp"}
-# What a filter's literal must be for a column of the class (§12 P11); any text for the classes not listed.
+# What a filter's literal must be for a column of the class; any text for the classes not listed.
 LITERALS = dict.fromkeys(("integer", "decimal", "float", "float32"), "a number") | {
     "date": "a date",
     "timestamp": "a timestamp",
@@ -232,7 +232,7 @@ def parsed(side: Plan, text: str) -> dict[str, JSON]:
 
 
 def digest(side: Plan, plain: bytes, row: dict[str, JSON]) -> bytes:
-    """A scanned row's digest (§10): the engine's hash of the columns it hashed (``EMPTY`` when it hashed
+    """A scanned row's digest: the engine's hash of the columns it hashed (``EMPTY`` when it hashed
     none), extended with the worker's columns of ``row`` converted to their typeMap types, as canonical
     JSON. Raises ``ValueError`` for a value that does not convert."""
     converted = jsonio.dumps(convert_row(row, side["types"]), sort_keys=True)

@@ -85,7 +85,7 @@ def recorder() -> Recorder:
 
 @pytest.fixture(scope="module", autouse=True)
 def no_stray_reader() -> Iterator[None]:
-    """docs/mvp/READER.md §15: after a module's tests this process has one reader child at most, the current
+    """After a module's tests this process has one reader child at most, the current
     one. A reader that was replaced, retired or killed is gone: what the tests leave open ends with it."""
     yield
     from tests.unit.connectors import ducked

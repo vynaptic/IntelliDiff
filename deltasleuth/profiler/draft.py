@@ -1,4 +1,4 @@
-"""Spec bootstrap (§8.6): paired samples in, a draft comparison spec and its evidence out.
+"""Spec bootstrap: paired samples in, a draft comparison spec and its evidence out.
 
 Black-box by construction: the profiler sees two sets of JSON documents and nothing else. Side a
 is the baseline, so canonical names are side a's: side a gets a ``select`` only, side b a
@@ -448,7 +448,7 @@ def _header(
         {side.value: schema for side, schema in schemas.items()}, sort_keys=True, separators=(",", ":")
     )
     return [
-        "DeltaSleuth ComparisonSpec DRAFT, drafted by ds-profiler (docs/architecture.md section 8.6).",
+        "DeltaSleuth ComparisonSpec DRAFT, drafted by ds-profiler.",
         "A suggestion, not an approved spec: review the evidence table, edit, then approve.",
         f"Samples: {samples} pairs; side a {len(runs[Side.A].docs)} documents, side b "
         f"{len(runs[Side.B].docs)}, both {common}.",
