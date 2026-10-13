@@ -1,0 +1,26 @@
+description: >
+  Pointer grammar: RFC 6901 escapes (~0, ~1), a literal leading @ doubled, unicode kept, in
+  field names and in keyed member keys; patterns quote non-identifier names.
+compare:
+  arrays:
+    - {path: $.m, mode: keyed, key: [k]}
+a:
+  body: |
+    {"a/b": 1, "c~d": 1, "@type": "x", "é": 1,
+     "m": [{"k": "x/y~z", "v": 1}, {"k": "@home", "v": 1}]}
+b:
+  body: |
+    {"a/b": 2, "c~d": 2, "@type": "y", "é": 2,
+     "m": [{"k": "x/y~z", "v": 2}, {"k": "@home", "v": 2}]}
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/a~1b, "$['a/b']", value_changed, null]
+    - [/c~0d, "$['c~d']", value_changed, null]
+    - [/@@type, "$['@type']", value_changed, null]
+    - ["/é", "$['é']", value_changed, null]
+    - finding: [/m/x~1y~0z/v, "$.m[*].v", value_changed, null]
+      member_key: x/y~z
+    - finding: [/m/@@home/v, "$.m[*].v", value_changed, null]
+      member_key: "@home"

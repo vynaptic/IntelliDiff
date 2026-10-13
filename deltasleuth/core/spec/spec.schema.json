@@ -1,0 +1,2992 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.deltasleuth.example/comparison-spec/v1/spec.schema.json",
+  "title": "DeltaSleuth ComparisonSpec (apiVersion deltasleuth/v1)",
+  "description": "Declarative spec for one DeltaSleuth comparison: which keys to compare, how to fetch each side (a = legacy/baseline, b = new/candidate), how to project, normalize and diff the canonical documents, which differences are known or noise, how to pace and stop execution, how to sample, what to tokenize and what to report. MISSING_* means present in a and absent in b; EXTRA_* means present in b and absent in a. Specs are stored immutably in ds.specs (versioned, content_hash); compare_key and POST /compare accept only a stored spec (name+version or spec_id), never an inline spec document. Secrets are never inline: every side names a target id from the registry (ds.targets), and credentials are resolved server-side via targets.auth_ref -> ds.secrets_ref. All JSONPath strings are RFC 9535 and address the canonical (post-select/post-map) document unless stated otherwise. Path patterns (findings.path_pattern, the CEL variable path, noise-mask and rule paths) use the RFC 9535 normalised form with every array index or member key replaced by [*], for example $.links[*].hop or $.status; findings.json_pointer is the exact RFC 6901 pointer, with member keys of keyed or set arrays replaced by their token when the member's class is tokenised (for example /phones/tok:phone:v1:ABCD...), never a raw value. All CEL strings are Common Expression Language predicates that must return bool, except stratumDimension.cel and keySourceHashSample.signoffStratum, which return a value or label. Canonical mode (canonical.mode): tree (the default) diffs the mapped JSON documents; graph projects each side's mapped document through the built-in canonical schema graph/v1 into typed, keyed node and edge arrays and reuses the same keyed-array differ, so it is not a second engine. The time policy (time.mode frozen | shared_watermark | live) decides the claim level a run can reach: certified needs frozen or shared_watermark, and live runs are labelled observed. No free SQL: every SQL text a spec needs (SQL key sources, table-side queries, key-map lookups, identity crosswalks) is a reference to an approved, parameterised SELECT template in ds.sql_templates (id, version, params); the loader resolves it and covers the template's sha256 in content_hash, and a table-side where is a restricted predicate, not SQL text.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "metadata", "normalizerVersion", "key", "sides", "compare", "recheck"],
+  "properties": {
+    "apiVersion": {
+      "description": "Spec format version. Must be exactly deltasleuth/v1.",
+      "const": "deltasleuth/v1"
+    },
+    "kind": {
+      "description": "Document kind. Must be exactly ComparisonSpec.",
+      "const": "ComparisonSpec"
+    },
+    "metadata": {
+      "description": "Identity and ownership of the spec.",
+      "$ref": "#/$defs/metadata"
+    },
+    "normalizerVersion": {
+      "description": "Version (semver) of the normalizer library the spec was written and approved against. Stored as ds.specs.normalizer_version and covered by content_hash, so a re-diff pins normalization bit for bit (N2). Required. It also versions the canonical encoding used for hashing: sorted member names, Decimal values as type-tagged normalised strings (so the string \"1\" and the number 1 stay different) and NFC strings; RFC 8785 JCS is not used because it forces IEEE-754 doubles. Responses are parsed with duplicate-member detection: a duplicate JSON member name makes the key INCONCLUSIVE with inconclusive_reason duplicate_member_name, never last-one-wins. Such a body is never read by notFound.when or an absence shape: a 2xx stays INCONCLUSIVE duplicate_member_name and a shape-based not-found is INCONCLUSIVE absence_unconfirmed; an absence decided by status alone does not read the body. A run or compare refuses (unsupported) a spec whose normalizerVersion is not the build's; a stored spec still loads for its runs' history.",
+      "$ref": "#/$defs/semver"
+    },
+    "domainPack": {
+      "description": "Optional domain pack that contributes domain taxonomy codes (including aliases of core codes, for example MISSING_ENTITY for MISSING_DOCUMENT), normalizers, enrichments and an explainer adapter. The core schema knows no pack's configuration: the spec loader validates domainPack.config against the config schema registered by the installed pack for name@version.",
+      "$ref": "#/$defs/domainPack"
+    },
+    "key": {
+      "description": "The canonical comparison key: its name, type, normalization and where the keys come from.",
+      "$ref": "#/$defs/key"
+    },
+    "sides": {
+      "description": "The two sides to compare. Side a is the baseline (legacy/old); side b is the candidate (new). Each side is a service side or a table side, and mixed pairs are allowed: service<->service, table<->table or service<->table. In a mixed pair the table side is fetched per key through the SQL adapter's fetch_batch, using its keyColumns/keyMap to translate the canonical key. compare.strategy applies only when both sides are tables.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["a", "b"],
+      "properties": {
+        "a": {
+          "description": "Side a: the baseline (legacy/old) system. Findings with direction a_only / change_type missing_in_b are present here and absent in b.",
+          "$ref": "#/$defs/side"
+        },
+        "b": {
+          "description": "Side b: the candidate (new) system. Findings with direction b_only / change_type extra_in_b are present here and absent in a.",
+          "$ref": "#/$defs/side"
+        }
+      }
+    },
+    "time": {
+      "description": "Time policy: how the two sides' reads of one key are aligned in time, which decides the claim level a run can reach (certified needs frozen or shared_watermark). Default {mode: live}, which never overclaims.",
+      "$ref": "#/$defs/time",
+      "default": { "mode": "live" }
+    },
+    "canonical": {
+      "description": "Canonical mode: tree (default) compares the mapped JSON documents as trees; graph projects them through the built-in canonical schema graph/v1 into keyed node and edge arrays. Default {mode: tree}.",
+      "$ref": "#/$defs/canonical",
+      "default": { "mode": "tree" }
+    },
+    "identity": {
+      "description": "Canonical identity: the components of a graph node key and an optional reviewed crosswalk that maps side-specific source ids to business keys.",
+      "$ref": "#/$defs/identity"
+    },
+    "inferredSchema": {
+      "description": "Approved annotated inferred schema the spec was bootstrapped from, and that the schema-drift guard validates observations against. Its digest is part of content_hash.",
+      "$ref": "#/$defs/inferredSchema"
+    },
+    "schemaDrift": {
+      "description": "Schema guard (built for table sides: docs/mvp/PRECHECKS.md §7): what happens to a run when a table it reads is no longer the one it was planned on, or the one its version's run before it read. It needs no inferredSchema; a spec without a table side may not ask for pause.",
+      "$ref": "#/$defs/schemaDrift"
+    },
+    "compare": {
+      "description": "How the canonical documents (service) or rows (table) are diffed.",
+      "$ref": "#/$defs/compare"
+    },
+    "knownDiffs": {
+      "description": "Known, reviewed differences. A finding matching a rule's when predicate is marked suppressed with rule_id set; a key whose findings are all suppressed gets outcome KNOWN_DIFF. Rules are mirrored into ds.known_diffs (spec_name = metadata.name) where approval (approved_by, approved_at) is recorded.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/knownDiff" }
+    },
+    "noise": {
+      "description": "Noise calibration and approved noise masks. A key whose only differences fall on masked paths gets outcome NOISE_ONLY.",
+      "$ref": "#/$defs/noise"
+    },
+    "recheck": {
+      "description": "Recheck policy for discrepant or inconclusive keys: re-fetch both sides after a delay before a result is final. Required: every MISMATCH and one-sided not-found is confirmed by a delayed recheck (principle 5). A one-sided authoritative not-found is confirmed as NOT_FOUND_A/NOT_FOUND_B only when a recheck returns the same side states, after the connector's existence_check where the target declares one. Only under a frozen cut or a bulk exhaustive extract, where re-reading is a no-op, does results.confirmation frozen_cut / bulk_exhaustive stand in for the recheck. Rechecks are scheduled work units (work_units.kind = recheck), never inline sleeps.",
+      "$ref": "#/$defs/recheck"
+    },
+    "execution": {
+      "description": "Pacing, timeouts, retries, circuit breaking and stop conditions for fetching. The per-target rate budget in ds.targets (default 20 req/s) is always enforced on top of these settings.",
+      "$ref": "#/$defs/execution"
+    },
+    "sampling": {
+      "description": "Per-cycle sampling of run keys (ds.run_keys). mode all compares every run key each cycle; mode hash compares a deterministic hash sample. This is distinct from key.source.kind hash_sample, which selects which keys enter the run at all.",
+      "$ref": "#/$defs/sampling"
+    },
+    "graph": {
+      "description": "Bulk graph parity over a pair of fact tables (docs/mvp/GRAPH.md): each key is a link fact, whose parts name a member (an entity) and a group (an identifier). After the fact scan (L1), L2 compares each group's member set and classifies the connected components the differing groups touch as split, merge or rearrange.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["members", "groups"],
+      "properties": {
+        "members": {
+          "description": "Key parts naming a member (an entity).",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/canonicalField" }
+        },
+        "groups": {
+          "description": "Key parts naming a group (an identifier).",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/canonicalField" }
+        },
+        "maxComponent": {
+          "description": "Members a component is expanded to; a larger one is reported as CLUSTER_OVERSIZED, never classified.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000,
+          "default": 10000
+        }
+      }
+    },
+    "security": {
+      "description": "Tokenization policy for values written to findings (value_a_tok, value_b_tok), root causes (root_key_tok), reports, the UI and anything sent to the agent/LLM.",
+      "$ref": "#/$defs/security"
+    },
+    "retention": {
+      "description": "Retention class of the evidence and findings of runs of this spec: standard (raw evidence 90 d, findings 90 d) or audit (raw evidence 1 y, findings 1 y). Raw evidence is always kept at least as long as findings, so every finding stays revealable while it exists. Expired evidence is marked expired in findings, exports and citations, and AI answers that need it are blocked. Default standard.",
+      "type": "string",
+      "enum": ["standard", "audit"],
+      "default": "standard"
+    },
+    "reporting": {
+      "description": "Report outputs produced by ds-reporter for runs of this spec.",
+      "$ref": "#/$defs/reporting"
+    }
+  },
+  "allOf": [
+    {
+      "description": "Any spec with at least one service side (service<->service or service<->table) needs an explicit key source and a key pattern, and must not set a table diff strategy.",
+      "if": {
+        "required": ["sides"],
+        "properties": {
+          "sides": {
+            "description": "Condition: at least one side is a service side (has request).",
+            "anyOf": [
+              {
+                "required": ["a"],
+                "properties": {
+                  "a": {
+                    "description": "Condition: side a has a request (service side).",
+                    "required": ["request"]
+                  }
+                }
+              },
+              {
+                "required": ["b"],
+                "properties": {
+                  "b": {
+                    "description": "Condition: side b has a request (service side).",
+                    "required": ["request"]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "key": {
+            "description": "Specs with a service side must declare key.source, and key.pattern (it bounds what can be templated into a request path).",
+            "required": ["source", "pattern"]
+          },
+          "compare": {
+            "description": "compare.strategy applies only when both sides are tables.",
+            "not": { "required": ["strategy"] }
+          }
+        }
+      }
+    },
+    {
+      "description": "In canonical graph mode the typed arrays $.nodes.<type> and $.edges.<type> are keyed by canonical (node and edge keys), so compare.arrays must not redeclare them (or $.nodes / $.edges themselves). Arrays inside node or edge attributes still use compare.arrays.",
+      "if": {
+        "required": ["canonical"],
+        "properties": {
+          "canonical": {
+            "description": "Condition: canonical graph mode.",
+            "required": ["mode"],
+            "properties": {
+              "mode": {
+                "description": "Condition: mode is graph.",
+                "const": "graph"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "compare": {
+            "description": "Graph mode: no array rule on the typed node or edge arrays.",
+            "properties": {
+              "arrays": {
+                "description": "Graph mode: array rules may target only arrays inside node or edge attributes.",
+                "items": {
+                  "properties": {
+                    "path": {
+                      "description": "Not $.nodes, $.edges or a typed array $.nodes.<type> / $.edges.<type>.",
+                      "not": { "pattern": "^\\$\\.(?:nodes|edges)(?:\\.[A-Za-z_][A-Za-z0-9_]*)?(?:\\[\\*\\])?$" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "slug": {
+      "description": "Lower-case kebab-case identifier.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+      "maxLength": 63
+    },
+    "targetRef": {
+      "description": "Id of a registered target in ds.targets. The target holds the base URL or DSN and targets.auth_ref, a pointer into ds.secrets_ref; ds-fetcher resolves credentials at call time. No secret value ever appears in a spec.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+      "maxLength": 63
+    },
+    "secretLikeName": {
+      "description": "Credential-like member or parameter name (password, passwd, passphrase, secret, client_secret, api_key, access_token, refresh_token, auth_token, id_token, session_token, token, private_key, authorization, credential(s)); case-insensitive, with an optional _ or - between words, so clientSecret and api-key also match. Used to reject secrets written inline in a spec.",
+      "type": "string",
+      "pattern": "^(?:[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Pp][Aa][Ss][Ss][Pp][Hh][Rr][Aa][Ss][Ee]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Cc][Ll][Ii][Ee][Nn][Tt][_-]?[Ss][Ee][Cc][Rr][Ee][Tt]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Aa][Cc][Cc][Ee][Ss][Ss][_-]?[Tt][Oo][Kk][Ee][Nn]|[Rr][Ee][Ff][Rr][Ee][Ss][Hh][_-]?[Tt][Oo][Kk][Ee][Nn]|[Aa][Uu][Tt][Hh][_-]?[Tt][Oo][Kk][Ee][Nn]|[Ii][Dd][_-]?[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Ss][Ss][Ii][Oo][Nn][_-]?[Tt][Oo][Kk][Ee][Nn]|[Tt][Oo][Kk][Ee][Nn]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][_-]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll])$"
+    },
+    "semver": {
+      "description": "Semantic version string MAJOR.MINOR.PATCH.",
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+    },
+    "duration": {
+      "description": "Duration: a number followed by ms, s, m, h or d (for example 250ms, 30s, 10m, 72h).",
+      "type": "string",
+      "pattern": "^[0-9]+(?:\\.[0-9]+)?(?:ms|s|m|h|d)$"
+    },
+    "cel": {
+      "description": "Common Expression Language (CEL) predicate that must evaluate to bool. JSON numbers are read as CEL int (int64) or double; a result that depends on digits a double cannot hold fails closed: compare.valueFilter and notFound.when make the key INCONCLUSIVE unparseable, a target's absence shape does not match (absence_unconfirmed), and a known-diff rule is not applied (results.attrs.known_diff_errors code inexact_number). Comparing two such numbers with each other (a == b) is double equality.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "celExpression": {
+      "description": "Common Expression Language (CEL) expression whose result type is stated by the property that uses it (a value or label, not necessarily bool).",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "jsonPath": {
+      "description": "RFC 9535 JSONPath expression, starting at the root $.",
+      "type": "string",
+      "pattern": "^\\$",
+      "minLength": 1
+    },
+    "jsonata": {
+      "description": "JSONata expression that maps the selected response into the canonical document shared by both sides.",
+      "type": "string",
+      "minLength": 1
+    },
+    "columnName": {
+      "description": "Database column identifier as spelled on that side (some engines fold unquoted names to lower case, others to upper case).",
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_$#]*$",
+      "maxLength": 128
+    },
+    "canonicalField": {
+      "description": "Canonical (side-independent) field name in lower snake case.",
+      "type": "string",
+      "pattern": "^[a-z_][a-z0-9_]*$",
+      "maxLength": 128
+    },
+    "rate": {
+      "description": "Fraction in (0, 1].",
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 1
+    },
+    "severity": {
+      "description": "Finding severity (findings.severity).",
+      "type": "string",
+      "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
+    },
+    "taxonomyCode": {
+      "description": "Finding taxonomy code (findings.taxonomy_code, a foreign key to the ds.taxonomy_codes registry). The schema checks only the form; the spec loader checks membership against ds.taxonomy_codes, so a new domain pack seeds its own codes at install time and needs no schema or core change. Core codes: MISSING_DOCUMENT and EXTRA_DOCUMENT (CRITICAL, presence missing / extra: the whole document is present on one side only, and one of them is always emitted for a NOT_FOUND_B / NOT_FOUND_A key at path_pattern $ and json_pointer '' with member_key_tok = the key token, so every one-sided key has a finding and a discrepancies.csv row, with or without a domain pack); FIELD_MISSING, FIELD_EXTRA, VALUE_MISMATCH, TYPE_MISMATCH, ORDER_MISMATCH, NORMALIZATION_ONLY; FILTER_MEMBERSHIP (a selection predicate - compare.valueFilter on keyed or set members, canonical.scope in graph mode, a table-side where - is evaluated on both sides and the union of selected keys is compared, so a member or row that exists on both sides but is selected on one side only is FILTER_MEMBERSHIP, never missing_in_b / extra_in_b or NOT_FOUND_*); SCHEMA_DRIFT (INFO: an observation violates the approved inferredSchema on unselected paths only; drift on a selected or compared path makes the key INCONCLUSIVE with inconclusive_reason schema_drift instead); and the graph-mode codes MISSING_NODE, EXTRA_NODE, MISSING_EDGE and EXTRA_EDGE. Entity-linking pack codes: MISSING_ENTITY and EXTRA_ENTITY (the pack's aliases of MISSING_DOCUMENT and EXTRA_DOCUMENT), MISSING_ATTACHMENT, EXTRA_ATTACHMENT, MISSING_LINK, EXTRA_LINK, LINK_EVIDENCE_MISMATCH, ATTRIBUTE_MISMATCH, FLAG_MISMATCH, CLUSTER_SPLIT, CLUSTER_MERGE, CLUSTER_REARRANGE, HOP_SEMANTICS, DIRECTIONALITY, TEMPORAL_VALIDITY, HOT_IDENTIFIER_POLICY, DUPLICATE_IDENTIFIER_NODE, INTERNAL_INCONSISTENCY.",
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]*$"
+    },
+    "outcome": {
+      "description": "Per-key per-cycle result outcome (results.outcome).",
+      "type": "string",
+      "enum": ["MATCH", "MISMATCH", "KNOWN_DIFF", "NOISE_ONLY", "DRIFT", "NOT_FOUND_A", "NOT_FOUND_B", "INCONCLUSIVE"]
+    },
+    "riskTier": {
+      "description": "Parity sign-off tier of a stratum, judged on the one-sided 95% Clopper-Pearson upper bound of the mismatch rate: standard (<= 0.1%; 2,995 clean keys at zero failures, 3,011 attempted, a 0.5% margin for keys that end INCONCLUSIVE or DRIFT) or high (<= 0.01%; 29,956 clean, 30,107 attempted). When a key falls in both tiers, high takes precedence.",
+      "type": "string",
+      "enum": ["standard", "high"]
+    },
+    "valueClass": {
+      "description": "PII value class. It is mixed into the token for domain separation and selects who may reveal the value. A deployment-level PII floor lists the classes that are always tokenised; a spec can only tighten it.",
+      "type": "string",
+      "enum": ["name", "phone", "email", "tax_id", "address", "account_number", "device_id", "date_of_birth", "identifier", "free_text", "free_number"]
+    },
+    "metadata": {
+      "description": "Spec identity. name + version identify an immutable row in ds.specs.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "owner"],
+      "properties": {
+        "name": {
+          "description": "Spec name (kebab-case). Used as spec_name in ds.known_diffs and ds.noise_masks.",
+          "$ref": "#/$defs/slug"
+        },
+        "version": {
+          "description": "Spec version (semver). Any change to the spec body requires a new version; ds.specs rows are immutable.",
+          "$ref": "#/$defs/semver"
+        },
+        "owner": {
+          "description": "Owning team or distribution list, used for routing review of known diffs and noise masks.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "description": {
+          "description": "Free-text purpose of the comparison.",
+          "type": "string",
+          "maxLength": 4000
+        }
+      }
+    },
+    "domainPack": {
+      "description": "Domain pack reference and its configuration. A pack is optional and needs no core schema change (N8): at install time it seeds its taxonomy codes in ds.taxonomy_codes and registers its config schema (JSON Schema draft 2020-12) with the spec loader under its name and major version.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {
+          "description": "Domain pack name, for example entity-linking.",
+          "$ref": "#/$defs/slug"
+        },
+        "version": {
+          "description": "Domain pack version (semver) the spec was written against; its major version selects the registered config schema.",
+          "$ref": "#/$defs/semver"
+        },
+        "config": {
+          "description": "Pack-specific configuration. This schema only requires an object: the spec loader validates the config (an absent config as {}) against the config schema registered by the installed pack for name@version, and rejects the spec, with the failing paths under domainPack.config, when the pack is not installed or the config does not validate. The entity-linking pack (1.x) registers docs/architecture/packs/entity-linking.config.schema.json ($id https://schemas.deltasleuth.example/packs/entity-linking/v1/config.schema.json); it references core $defs by this schema's $id, so the loader registers both documents in one schema registry.",
+          "type": "object"
+        }
+      }
+    },
+    "key": {
+      "description": "Canonical key definition.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type"],
+      "properties": {
+        "name": {
+          "description": "Key name as used in results.key and in request templates ({{ key }}).",
+          "$ref": "#/$defs/canonicalField"
+        },
+        "type": {
+          "description": "Canonical key type. composite keys are serialized as the parts joined by | in parts order; inside a part \\ and | are written \\\\ and \\|. Beside a service side each part of a composite key is normalized, matched against pattern and templated on its own ({{ keyParts.<name> }}).",
+          "type": "string",
+          "enum": ["string", "integer", "uuid", "composite"]
+        },
+        "pattern": {
+          "description": "Regular expression (ECMA-262) that every normalized key must match; keys that do not match are rejected at load time. Required when either side is a service side, because it bounds what can be templated into a request path (keys equal to . or .. are always rejected). Beside a service side every part of a composite key must match it, and none may be . or ..: one pattern for all parts, an alternation where their shapes differ.",
+          "type": "string",
+          "format": "regex"
+        },
+        "class": {
+          "description": "Privacy class of the key. business_code (default): entity codes are not PII and are shown in clear in results, findings, reports, spans and chat. Any value class (for example account_number, email): the key is PII and is tokenised everywhere outside raw observations (results.key views, root-cause sample keys, reports, spans, chat).",
+          "anyOf": [
+            { "const": "business_code" },
+            { "$ref": "#/$defs/valueClass" }
+          ],
+          "default": "business_code"
+        },
+        "parts": {
+          "description": "Ordered part names for a composite key. Required when type is composite.",
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/canonicalField" }
+        },
+        "normalize": {
+          "description": "Normalizer chain applied to every key before sampling, hashing and request rendering; beside a service side, to each part of a composite key.",
+          "type": "array",
+          "items": {
+            "description": "Key normalizer (parameterless).",
+            "type": "string",
+            "enum": ["trim", "collapse_ws", "nfkc", "casefold", "upper", "lower", "digits_only"]
+          }
+        },
+        "source": {
+          "description": "Where keys come from. Required when either side is a service side (service<->service or mixed); for table<->table specs the population defaults to each side's table (with its where predicate) or template.",
+          "$ref": "#/$defs/keySource"
+        }
+      },
+      "if": {
+        "properties": {
+          "type": {
+            "description": "Condition: composite key.",
+            "const": "composite"
+          }
+        }
+      },
+      "then": { "required": ["parts"] }
+    },
+    "keySource": {
+      "description": "Key source, discriminated by kind: list | csv | sql | paginated_endpoint | run_keys | table | union | hash_sample (hash_sample wraps one of the others; union combines several; table as a hash sample's frame with side, or as a key table with target and table).",
+      "oneOf": [
+        { "$ref": "#/$defs/keySourceList" },
+        { "$ref": "#/$defs/keySourceCsv" },
+        { "$ref": "#/$defs/keySourceSql" },
+        { "$ref": "#/$defs/keySourcePaginatedEndpoint" },
+        { "$ref": "#/$defs/keySourceRunKeys" },
+        { "$ref": "#/$defs/keySourceTable" },
+        { "$ref": "#/$defs/keySourceUnion" },
+        { "$ref": "#/$defs/keySourceHashSample" }
+      ]
+    },
+    "baseKeySource": {
+      "description": "Any key source except hash_sample (hash samples do not nest).",
+      "oneOf": [
+        { "$ref": "#/$defs/keySourceList" },
+        { "$ref": "#/$defs/keySourceCsv" },
+        { "$ref": "#/$defs/keySourceSql" },
+        { "$ref": "#/$defs/keySourcePaginatedEndpoint" },
+        { "$ref": "#/$defs/keySourceRunKeys" },
+        { "$ref": "#/$defs/keySourceTable" },
+        { "$ref": "#/$defs/keySourceUnion" }
+      ]
+    },
+    "keySourceUnion": {
+      "description": "Union key universe: the keys of two sources, one enumerating side a and one enumerating side b, so that B-only entities (EXTRA_ENTITY, NOT_FOUND_A) can be sampled; only as a hash sample's frame. Keys are deduplicated after key.normalize; how many keys only side a's source, only side b's or both listed is counted in the draw's frame record (origins are counts: there is no run_keys.attrs.origin). Strata see, per key, the columns of the first source in sources order that yields it, so every source must expose the columns the strata use (table strataColumns, paginated_endpoint strataFields); the loader checks this.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "sources"],
+      "properties": {
+        "kind": {
+          "description": "Discriminator.",
+          "const": "union"
+        },
+        "sources": {
+          "description": "Member sources, at least two. Neither hash_sample nor union may appear here (they do not nest); wrap the union in a hash_sample to sample it.",
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "description": "One member source.",
+            "$ref": "#/$defs/baseKeySource",
+            "not": {
+              "required": ["kind"],
+              "properties": {
+                "kind": {
+                  "description": "Condition: a nested union.",
+                  "const": "union"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "keySourceList": {
+      "description": "Inline list of keys (one-shot and small investigations).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "keys"],
+      "properties": {
+        "kind": {
+          "description": "Discriminator.",
+          "const": "list"
+        },
+        "keys": {
+          "description": "Keys to compare, each exactly as written. The YAML loader reads every unquoted item as text (00012001, 1E3 and 0x1F stay as written, never numbers); a JSON integer is its decimal text; a number with a fraction or exponent is rejected (quote it).",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "description": "One key.",
+            "type": ["string", "integer"]
+          }
+        }
+      }
+    },
+    "keySourceCsv": {
+      "description": "Keys read from a CSV object.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "uri", "column"],
+      "properties": {
+        "kind": {
+          "description": "Discriminator.",
+          "const": "csv"
+        },
+        "uri": {
+          "description": "Object-store URI (s3://bucket/key) in the deployment's object store. Local files (file://) and other schemes are rejected.",
+          "type": "string",
+          "pattern": "^s3://"
+        },
+        "column": {
+          "description": "Header name (or zero-based index as a string when header is false) of the key column.",
+          "type": "string",
+          "minLength": 1
+        },
+        "header": {
+          "description": "Whether the first row is a header.",
+          "type": "boolean",
+          "default": true
+        },
+        "delimiter": {
+          "description": "Single-character field delimiter.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1,
+          "default": ","
+        },
+        "strataColumns": {
+          "description": "Additional CSV columns exposed to strata definitions.",
+          "type": "array",
+          "items": {
+            "description": "CSV column name.",
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "keySourceSql": {
+      "description": "Keys produced by an approved, parameterised SELECT template run against a registered database target. Extra result columns are available to strata. Inline SQL text is not accepted: the SQL lives in ds.sql_templates and the spec only references it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "target", "template", "keyColumn"],
+      "properties": {
+        "kind": {
+          "description": "Discriminator.",
+          "const": "sql"
+        },
+        "target": {
+          "description": "Database target id; the template runs in a READ ONLY transaction with credentials from targets.auth_ref.",
+          "$ref": "#/$defs/targetRef"
+        },
+        "template": {
+          "description": "Approved SELECT template returning one row per key.",
+          "$ref": "#/$defs/sqlTemplateRef"
+        },
+        "keyColumn": {
+          "description": "Result column holding the key.",
+          "type": "string",
+          "minLength": 1
+        },
+        "fetchSize": {
+          "description": "Server-side cursor fetch size.",
+          "type": "integer",
+          "minimum": 1,
+          "default": 10000
+        }
+      }
+    },
+    "keySourcePaginatedEndpoint": {
+      "description": "Keys enumerated from a paginated REST endpoint.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "target", "request", "pagination", "keyPath"],
+      "properties": {
+        "kind": {
+          "description": "Discriminator.",
+          "const": "paginated_endpoint"
+        },
+        "target": {
+          "description": "Service target id serving the listing endpoint.",
+          "$ref": "#/$defs/targetRef"
+        },
+        "request": {
+          "description": "Request template for the first page.",
+          "$ref": "#/$defs/request"
+        },
+        "pagination": {
+          "description": "How to walk the pages.",
+          "$ref": "#/$defs/pagination"
+        },
+        "keyPath": {
+          "description": "JSONPath, relative to each item ($ = the item), of the key value.",
+          "$ref": "#/$defs/jsonPath"
+        },
+        "strataFields": {
+          "description": "Additional item fields exposed to strata definitions, as a map from column name to JSONPath relative to each item ($ = the item). The counterpart of csv strataColumns and of extra sql result columns.",
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/canonicalField" },
+          "additionalProperties": { "$ref": "#/$defs/jsonPath" }
+        }
+      }
+    },
+    "keySourceRunKeys": {
+      "description": "Keys taken from an earlier run (ds.run_keys joined to ds.results), for example to re-examine mismatches.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "runId"],
+      "properties": {
+        "kind": {
+          "description": "Discriminator.",
+          "const": "run_keys"
+        },
+        "runId": {
+          "description": "Source run id (ds.runs.run_id, a bigint identity).",
+          "type": "integer",
+          "minimum": 1
+        },
+        "outcomes": {
+          "description": "Only keys whose latest outcome is in this list.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/outcome" }
+        },
+        "taxonomyCodes": {
+          "description": "Only keys with at least one finding carrying one of these taxonomy codes.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/taxonomyCode" }
+        }
+      }
+    },
+    "keySourceTable": {
+      "description": "Keys read from a table, in one of two forms, never mixed. With side: a table side's population as a hash sample's frame (docs/mvp/SAMPLING.md §3): its relation, table.where and key maps, read to its end in one snapshot as the key census reads it; only as hash_sample.source or a union member, and not when both sides are tables (their scan compares every row). With target and table: a key table, a table, a view or files of their own, neither side's, whose key columns give the keys of a run beside a service side: read to its end in one snapshot when a run is created and at each roll of a rolling soak, a key several rows hold once, in key order, and at most 1,000,000 keys; only as key.source itself, and not when both sides are tables. A key table is a key list, not a census of either side.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "if": {
+        "description": "Condition: a key table.",
+        "anyOf": [
+          { "required": ["target"] },
+          { "required": ["table"] }
+        ]
+      },
+      "then": {
+        "description": "A key table takes target and table, and neither side nor strataColumns.",
+        "required": ["target", "table"],
+        "not": {
+          "anyOf": [
+            { "required": ["side"] },
+            { "required": ["strataColumns"] }
+          ]
+        }
+      },
+      "else": { "required": ["side"] },
+      "properties": {
+        "kind": {
+          "description": "Discriminator.",
+          "const": "table"
+        },
+        "side": {
+          "description": "The table side (a or b) whose rows' keys this source enumerates.",
+          "type": "string",
+          "enum": ["a", "b"]
+        },
+        "strataColumns": {
+          "description": "Columns of the side's table exposed to strata definitions, as spelled on that side.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/columnName" }
+        },
+        "target": {
+          "description": "A key table's database or files target id from ds.targets; it need be neither side's.",
+          "$ref": "#/$defs/targetRef"
+        },
+        "table": {
+          "description": "A key table's table, view or files, declared as a table side's table: its keyColumns in key.parts order (one for a key of one part), with their key maps, its where and, on a files target, its file. It takes no columns: it gives keys only. Rows without a key refuse the read: leave them out with where.",
+          "$ref": "#/$defs/tableSide/properties/table"
+        }
+      }
+    },
+    "keySourceHashSample": {
+      "description": "Hash sample over a frame: a table side's population, a side's paginated key listing, or a union of one of each side (docs/mvp/SAMPLING.md). Each draw adds a nonce of 128 random bits to the salt label, and each key gets u = the first 64 bits of sha256(label ':' nonce U+001F key), read as a fraction of 2^64. With method rate (the default), a key is selected when u is below its effective rate, which is the highest rate among the base rate and the matched stratum buckets. With method bottom_k, each sign-off bucket takes its targetSize keys with the smallest u (see method). The stratum label is written to run_keys.stratum and the sign-off label to run_keys.signoff_stratum, only there: results and findings reach them through the judging query.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "salt", "source"],
+      "properties": {
+        "kind": {
+          "description": "Discriminator.",
+          "const": "hash_sample"
+        },
+        "method": {
+          "description": "rate (default): select keys with u < effective rate; a rate sample is monitoring, never signed off. bottom_k: every key is assigned to one sign-off bucket (by signoffStratum; without it, the first matched bucket that sets targetSize, taking riskTier high buckets first). Within each bucket, keys are ranked by ascending u and the first targetSize are selected, or all of them when fewer exist (a census). Rate-only buckets and the base rate, if given, still add keys with u < rate; those keys are compared but are not counted in another bucket's bound. There is no extension stage: a draw that did not pass is closed by a person with a note of the fix (POST /v1/samples/close) before a later draw of its population is signed off, and each draw adds a new nonce to the salt label (no spec change), so the same keys are never re-tested; extending the same bucket after a failure would lower the confidence of the bound below the stated 95%.",
+          "type": "string",
+          "enum": ["rate", "bottom_k"],
+          "default": "rate"
+        },
+        "rate": {
+          "description": "Base sampling rate. Required for method rate. Optional for method bottom_k, where it adds a rate-based contrast sample outside the sign-off buckets.",
+          "$ref": "#/$defs/rate"
+        },
+        "salt": {
+          "description": "The campaign label; each draw adds a nonce, so a salt never reproduces a sample.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.+-]{4,64}$"
+        },
+        "resolve": {
+          "description": "Retries to resolution (docs/mvp/SAMPLING.md §7): a sign-off member whose reads were never comparable (an error, unstable pagination or a failed recheck) is read again, at most times times, each after delay (plus jitter), within the same cycle. A read that compared is never retried, so a discrepancy is never re-read away.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "times": {
+              "description": "Retries per sign-off member.",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10,
+              "default": 3
+            },
+            "delay": {
+              "description": "Wait before each retry.",
+              "$ref": "#/$defs/duration",
+              "default": "10m"
+            }
+          }
+        },
+        "strata": {
+          "description": "Stratification dimensions evaluated on the wrapped source's rows. The stratum label is dim=label pairs joined by | in dimension order, for example degree_bucket=d1_5|id_type=PHONE. It must match ^[A-Za-z0-9][A-Za-z0-9_.:=|+-]{0,255}$, the CHECK on run_keys.stratum (labels live on run_keys only), and the loader rejects labels longer than 256 characters. Every dimension of a hash sample needs buckets, so labels are spec constants.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/stratumDimension" }
+        },
+        "signoffStratum": {
+          "description": "CEL expression returning a string, not a bool. It is evaluated once per key after bucketing, over key, row (source columns), strata (map dim -> bucket label), riskTier ('standard' | 'high'; high if any matched bucket is high) and now (a timestamp: when the frame was read). It returns exactly ONE sign-off label per key, in the form dim=label, naming one of the key's matched buckets, so overlapping dimensions never count a key in two sign-off strata. High-risk takes precedence: when riskTier is high the label must name a high-risk bucket, so test the high-risk conditions first; the runtime rejects a standard label for a high-risk key. The one-sided Clopper-Pearson bound, targetSize and the census rule apply per sign-off label. Each label is judged only on the uniform sub-sample its own bucket selected: with bottom_k, its first targetSize keys in ascending u; with rate, the keys whose u is below that bucket's rate (or below the base rate when the bucket sets none). Keys pulled in by other buckets are compared but do not bias the bound: run_keys.signoff_member is true only for keys selected by their own sign-off bucket, bounds are computed over signoff_member = true only, and the other keys are reported as n_contrast. Recorded in run_keys.signoff_stratum only; each cycle's judgement groups sign-off rows by it. Without it, each stratum cell is its own sign-off stratum under method rate; under bottom_k the first matched targetSize bucket is used, high-risk first.",
+          "$ref": "#/$defs/celExpression"
+        },
+        "source": {
+          "description": "The wrapped population source (any source except hash_sample; a union samples the combined key universe).",
+          "$ref": "#/$defs/baseKeySource"
+        }
+      },
+      "allOf": [
+        {
+          "description": "method rate (the default) needs a base rate and must not set targetSize; method bottom_k needs at least one bucket with targetSize.",
+          "if": {
+            "not": {
+              "required": ["method"],
+              "properties": {
+                "method": {
+                  "description": "Condition: bottom-k sampling.",
+                  "const": "bottom_k"
+                }
+              }
+            }
+          },
+          "then": {
+            "required": ["rate"],
+            "properties": {
+              "strata": {
+                "description": "targetSize is used by method bottom_k only.",
+                "items": {
+                  "properties": {
+                    "buckets": {
+                      "description": "Under method rate no bucket sets targetSize.",
+                      "items": { "not": { "required": ["targetSize"] } }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "required": ["strata"],
+            "properties": {
+              "strata": {
+                "description": "method bottom_k needs at least one bucket with targetSize.",
+                "contains": {
+                  "required": ["buckets"],
+                  "properties": {
+                    "buckets": {
+                      "description": "Condition: the dimension has a bucket with targetSize.",
+                      "contains": { "required": ["targetSize"] }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "stratumDimension": {
+      "description": "One stratification dimension. Exactly one of column or cel yields the raw value; buckets turn it into a label.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "oneOf": [
+        { "required": ["column"] },
+        { "required": ["cel"] }
+      ],
+      "properties": {
+        "name": {
+          "description": "Dimension name, used in the stratum label. It starts with a letter because the stratum label must start with an alphanumeric character.",
+          "$ref": "#/$defs/canonicalField",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "column": {
+          "description": "Source column (SQL result column, CSV strataColumns entry, paginated_endpoint strataFields entry) whose value is bucketed.",
+          "type": "string",
+          "minLength": 1
+        },
+        "cel": {
+          "description": "CEL expression over row (map of source columns) returning the raw value or label (not a bool). In a hash sample it also sees key (the normalised key) and now (a timestamp: when the frame was read, the snapshot's or the listing's first page), so a side without listed fields can stratify on the key and recency counts from the cut.",
+          "$ref": "#/$defs/celExpression"
+        },
+        "buckets": {
+          "description": "Ordered buckets; the first match wins. A bucket with no values/min/max is a catch-all, and the only one null falls into. Required in a hash sample (the loader checks it), where a value read from the data would otherwise become a label in reports and packs; elsewhere, without buckets the raw value is the label, and it must use the bucket-label character set.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/stratumBucket" }
+        }
+      }
+    },
+    "stratumBucket": {
+      "description": "One bucket of a stratification dimension.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label"],
+      "not": {
+        "anyOf": [
+          { "required": ["values", "min"] },
+          { "required": ["values", "max"] }
+        ]
+      },
+      "properties": {
+        "label": {
+          "description": "Bucket label written into the stratum.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.+-]+$"
+        },
+        "values": {
+          "description": "Categorical match: raw values that fall into this bucket.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "description": "Raw value.",
+            "type": ["string", "integer", "boolean"]
+          }
+        },
+        "min": {
+          "description": "Numeric match: inclusive lower bound.",
+          "type": "number"
+        },
+        "max": {
+          "description": "Numeric match: inclusive upper bound.",
+          "type": "number"
+        },
+        "rate": {
+          "description": "Sampling rate for keys in this bucket (1.0 = every key). The effective rate is the maximum over the base rate and all matched buckets. A stratum whose own rate is 1.0 is compared whole (a census) and judged by the census rule (see targetSize); a rate sample is monitoring, never signed off.",
+          "$ref": "#/$defs/rate"
+        },
+        "targetSize": {
+          "description": "Bottom-k size (method bottom_k only): the targetSize keys with the smallest u among the keys whose sign-off bucket is this one are selected, or all of them when fewer exist (a census). Any size of at least 1 is accepted; one below its tier's zero-failure size (2,995 cleanly compared keys at 0.1%, 29,956 at 0.01%) is warned undersized: it passes only as a census. 3,011 and 30,107 reach those sizes with a 0.5% margin for keys left unresolved, absent or truncated; ds samples size gives the sizes that pass with some discrepant keys. A sampled stratum passes on the exact one-sided 95% Clopper-Pearson rule with at most floor(target * n) unresolved keys, at most floor(target * drawn) absent on both sides and none truncated; a census stratum passes on x + unresolved <= floor(target * (N_h - absent_both)), with absent_both <= floor(target * N_h) and none truncated. The size is fixed before any key is compared: a sample is never extended and an unresolved key never replaced. Only a sign-off member that no read of the cycle compared is retried, at most resolve.times times; any other stays unresolved, absent or truncated.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "riskTier": {
+          "description": "Sign-off tier for strata containing this bucket; high if any matched bucket is high, and high takes precedence when a key's sign-off label is chosen.",
+          "$ref": "#/$defs/riskTier"
+        }
+      }
+    },
+    "side": {
+      "description": "One side of the comparison, discriminated by presence: a service side has request (and no table/template); a table side has table or template (and no request). Exactly one branch matches.",
+      "oneOf": [
+        { "$ref": "#/$defs/serviceSide" },
+        { "$ref": "#/$defs/tableSide" }
+      ]
+    },
+    "serviceSide": {
+      "description": "A REST/HTTP service side: request template -> select -> map into the canonical document.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "target", "request"],
+      "not": {
+        "anyOf": [
+          { "required": ["table"] },
+          { "required": ["template"] }
+        ]
+      },
+      "properties": {
+        "role": {
+          "description": "Informational role label of this side (for example legacy, new, source, replica). Side a is always the baseline regardless of role.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+        },
+        "target": {
+          "description": "Service target id from ds.targets. Base URL, TLS settings, rate budget and authentication (targets.auth_ref) come from the registry; auth is never inline.",
+          "$ref": "#/$defs/targetRef"
+        },
+        "request": {
+          "description": "Request template rendered once per key and call.",
+          "$ref": "#/$defs/request"
+        },
+        "pagination": {
+          "description": "Pagination of the per-key response, when the endpoint pages its results. Pages are concatenated at itemsPath before select/map.",
+          "$ref": "#/$defs/pagination"
+        },
+        "select": {
+          "description": "RFC 9535 JSONPath applied to the raw response body to pick the node passed to map.",
+          "$ref": "#/$defs/jsonPath"
+        },
+        "map": {
+          "description": "JSONata expression turning the selected node into the canonical document. Both sides must map to the same canonical shape.",
+          "$ref": "#/$defs/jsonata"
+        },
+        "rawClear": {
+          "description": "Raw-response paths (side-specific, before select/map) whose values may be shown in clear when get_observations returns view=raw. Every other non-boolean, non-null leaf of the raw view is HMAC-tokenised: strings as class free_text and numbers as class free_number, so numeric PII (account numbers, national ids, epoch dates, balances) never reaches the agent in clear; only booleans and nulls stay clear, and Presidio then runs a second pass. Like security.clear, entries cannot loosen the deployment PII floor and need four-eyes approval by rule_approver, recorded in ds.spec_approvals with scope rawClear.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/jsonPath" }
+        },
+        "notFound": {
+          "description": "How a not-found response is recognised: its status is a listed 404 or 410, or the when predicate is true. It is authoritative absence (side state ABSENT) only when the response also matches the target connector's authoritative_absence declaration (status and, where declared, body shape); otherwise the side state is INCOMPLETE with reason absence_unconfirmed and the key is INCONCLUSIVE. A spec can narrow the connector's declaration but never widen it. Not-found on both sides is INCONCLUSIVE with inconclusive_reason absent_both (never MATCH), and such keys are excluded from the sign-off n. A one-sided authoritative not-found emits MISSING_DOCUMENT (absent on b) or EXTRA_DOCUMENT (absent on a) and becomes NOT_FOUND_B / NOT_FOUND_A once confirmed (see recheck).",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "status": {
+              "description": "HTTP statuses that mean the key does not exist on this side: 404 or 410, or a 2xx for APIs that signal not-found in the body (for example GraphQL {\"data\": {\"x\": null}}), so a 5xx, a 403 or any other error can never be declared not-found. A 2xx may be listed only together with when (loader rule), and a response with a listed 2xx status is not-found only when when returns true. The loader rejects the spec unless every listed status is among the statuses the target's connector declares in authoritative_absence; a target that declares no authoritative_absence therefore takes no notFound, and a 404 from it is side state ERROR through success.status.",
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "description": "HTTP status code: 404, 410 or a 2xx.",
+                "type": "integer",
+                "anyOf": [{"enum": [404, 410]}, {"minimum": 200, "maximum": 299}]
+              },
+              "default": [404]
+            },
+            "when": {
+              "description": "Optional CEL predicate over response (status, headers, body) for APIs that signal not-found in a 2xx body; required when status lists a 2xx. It is evaluated in addition to status: a response is not-found if its status is a listed 404 or 410, or when returns true.",
+              "$ref": "#/$defs/cel"
+            }
+          }
+        },
+        "success": {
+          "description": "HTTP statuses that carry a document on this side. The fetcher sets error_class only for transport failures, timeouts and 429/5xx after retries; every other response is classified here, after notFound: a status that is neither a not-found nor in success.status gives side state ERROR (inconclusive_reason error_a / error_b), so an error body is never parsed and compared as a document. Default {status: [200]}.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "status": {
+              "description": "Success statuses (2xx) whose body is the document. Default [200].",
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "description": "HTTP status code in 200-299.",
+                "type": "integer",
+                "minimum": 200,
+                "maximum": 299
+              },
+              "default": [200]
+            }
+          },
+          "default": { "status": [200] }
+        },
+        "truncation": {
+          "description": "Truncation detection. When omitted, the target connector's declared truncation_indicators (count path, items path, cap) apply; when this member declares count members (cap with countPath or itemsPath), they replace the target's for this side, and one that declares flagPaths only leaves the target's in force. The loader rejects a service side that sets no truncation when its target declares no truncation_indicators, so detection is never silently off. Let total be the count at countPath and returned the number of items at itemsPath. With countPath, the observation is truncated when total is absent or null, total > cap, or (with itemsPath) total > returned. With itemsPath only (no total reported), it is truncated when returned >= cap, because a full response cannot be told apart from a cut one. A truncated observation (observations.truncated) makes the side INCOMPLETE and the key INCONCLUSIVE. A complete response with exactly cap items and total = cap is not truncated. After that count rule, every node each of flagPaths selects in the raw response is read, path by path: true is truncated, and so is a value that is neither true nor false; false, or no node, is not. What a key truncated above the cap or by a flag reads follows recheck.outcomes. Under the default, which holds INCONCLUSIVE, it is read again and reads inconclusive_reason recheck_failed, with api_uncomparable 0. With outcomes: [MISMATCH, NOT_FOUND_A, NOT_FOUND_B] it is read once, its inconclusive_reason is truncated and it is in the api_uncomparable group: that group is excluded from the INCONCLUSIVE + DRIFT sign-off gate, listed in the report, and covered by a paginated fetch or by L2.",
+          "type": "object",
+          "additionalProperties": false,
+          "if": {
+            "description": "Condition: a count member is declared.",
+            "anyOf": [
+              { "required": ["cap"] },
+              { "required": ["countPath"] },
+              { "required": ["itemsPath"] }
+            ]
+          },
+          "then": {
+            "required": ["cap"],
+            "anyOf": [
+              { "required": ["countPath"] },
+              { "required": ["itemsPath"] }
+            ]
+          },
+          "else": {
+            "anyOf": [
+              { "required": ["countPath"] },
+              { "required": ["itemsPath"] },
+              { "required": ["flagPaths"] }
+            ]
+          },
+          "properties": {
+            "countPath": {
+              "description": "JSONPath (raw response) of the total item count the endpoint reports (total).",
+              "$ref": "#/$defs/jsonPath"
+            },
+            "itemsPath": {
+              "description": "JSONPath (raw response) of the returned item array (returned). Compared with total when both are declared; used alone when no total is reported.",
+              "$ref": "#/$defs/jsonPath"
+            },
+            "cap": {
+              "description": "Maximum number of items the endpoint returns in one response.",
+              "type": "integer",
+              "minimum": 1
+            },
+            "flagPaths": {
+              "description": "JSONPaths (raw response) of the endpoint's own flags that an answer was cut, such as a member that is true when more items exist than were returned. They are read after the count rule and never replace it. A path that selects no node detects nothing, so a misspelt or renamed flag is silent.",
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/jsonPath" }
+            }
+          }
+        }
+      }
+    },
+    "request": {
+      "description": "HTTP request template. Strings may contain logic-less placeholders: {{ key }} (normalized canonical key), {{ keyParts.<name> }}, {{ run_id }}, {{ cycle_no }} and {{ call_seq }}. In the path, placeholders are RFC 3986 path-segment encoded (quote(value, safe=\"\"), so / becomes %2F); in query they are query-component encoded. Keys equal to . or .. are rejected, and key.pattern is required for service specs. After templating, ds-fetcher parses the URL and requires it to be same-origin (scheme, host, port) as the target's registry endpoint, with the path under the target's base path. Redirects and pagination next-links or cursors must stay same-origin, and auth headers are stripped on any origin change. Resolved IPs in loopback (127.0.0.0/8, ::1), link-local (169.254.0.0/16, fe80::/10) and cloud-metadata ranges are refused unless the registry entry pins them. Authentication headers are injected by ds-fetcher from the target's auth_ref and must not be written here.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "path"],
+      "properties": {
+        "method": {
+          "description": "HTTP method. Only read semantics are allowed; POST is permitted for query endpoints that do not mutate state.",
+          "type": "string",
+          "enum": ["GET", "POST"]
+        },
+        "path": {
+          "description": "Path relative to the target base URL. It starts with a single / (never //, which would be a scheme-relative URL to another host), contains no whitespace, ? or # (query parameters go in query), and has no empty, . or .. segments (also not percent-encoded as %2e). Braces may appear only as {{ placeholder }} tokens.",
+          "type": "string",
+          "pattern": "^/(?!/)(?:[^\\s?#{}]|\\{\\{ ?[A-Za-z_][A-Za-z0-9_.]* ?\\}\\})*$",
+          "not": { "pattern": "//|(?:^|/)(?:\\.|%2[Ee]){1,2}(?:/|$)" }
+        },
+        "query": {
+          "description": "Query parameters. Credential-like parameter names (secretLikeName) are rejected.",
+          "type": "object",
+          "propertyNames": {
+            "description": "Query parameter name; credential-like names are not allowed.",
+            "not": { "$ref": "#/$defs/secretLikeName" }
+          },
+          "additionalProperties": {
+            "description": "Parameter value (scalar or list of scalars for repeated parameters).",
+            "oneOf": [
+              { "type": ["string", "number", "boolean"] },
+              {
+                "type": "array",
+                "items": { "type": ["string", "number", "boolean"] }
+              }
+            ]
+          }
+        },
+        "headers": {
+          "description": "Extra request headers. Authorization, Proxy-Authorization, Cookie, X-Api-Key, Api-Key, X-Auth-Token and X-Access-Token are rejected (case-insensitive); credentials come only from the target's auth_ref.",
+          "type": "object",
+          "propertyNames": {
+            "description": "Header name; credential-bearing headers are not allowed.",
+            "not": {
+              "pattern": "^(?:[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Pp][Rr][Oo][Xx][Yy]-[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Xx]-[Aa][Pp][Ii]-[Kk][Ee][Yy]|[Aa][Pp][Ii]-[Kk][Ee][Yy]|[Xx]-[Aa][Uu][Tt][Hh]-[Tt][Oo][Kk][Ee][Nn]|[Xx]-[Aa][Cc][Cc][Ee][Ss][Ss]-[Tt][Oo][Kk][Ee][Nn])$"
+            }
+          },
+          "additionalProperties": {
+            "description": "Header value template.",
+            "type": "string"
+          }
+        },
+        "body": {
+          "description": "JSON request body template (POST only). String leaves may contain placeholders. Object member names that look like credentials (secretLikeName) are rejected at any depth.",
+          "$ref": "#/$defs/bodyTemplate"
+        }
+      },
+      "if": {
+        "properties": {
+          "method": {
+            "description": "Condition: GET request.",
+            "const": "GET"
+          }
+        }
+      },
+      "then": {
+        "not": { "required": ["body"] }
+      }
+    },
+    "bodyTemplate": {
+      "description": "Any JSON value used as a request body template. Objects must not have credential-like member names (secretLikeName), checked recursively through nested objects and arrays; credentials come only from the target's auth_ref.",
+      "propertyNames": {
+        "not": { "$ref": "#/$defs/secretLikeName" }
+      },
+      "additionalProperties": { "$ref": "#/$defs/bodyTemplate" },
+      "items": { "$ref": "#/$defs/bodyTemplate" }
+    },
+    "pagination": {
+      "description": "Pagination strategy, discriminated by kind.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "description": "none = single response; cursor = opaque next cursor; offset = offset/limit; page = page number/size; link_header = RFC 8288 Link rel=next. Next-links (link_header) and cursors are followed only while they stay same-origin with the target; auth headers are stripped on any origin change. Offset and page pagination are no completeness proof on their own: unless the target declares stable_ordering or a per-request snapshot, a side paged that way is INCOMPLETE with inconclusive_reason unstable_pagination, and so is any page walk in which an item or key repeats across pages; for a paginated_endpoint key source the inventory is then unstable and the run's claim is observed.",
+          "type": "string",
+          "enum": ["none", "cursor", "offset", "page", "link_header"]
+        },
+        "itemsPath": {
+          "description": "JSONPath (raw response) of the item array on each page.",
+          "$ref": "#/$defs/jsonPath"
+        },
+        "cursorPath": {
+          "description": "JSONPath (raw response) of the next-page cursor; absent or null ends paging (kind cursor).",
+          "$ref": "#/$defs/jsonPath"
+        },
+        "cursorParam": {
+          "description": "Query parameter that carries the cursor (kind cursor).",
+          "type": "string",
+          "minLength": 1
+        },
+        "pageParam": {
+          "description": "Query parameter carrying the offset (kind offset) or page number (kind page).",
+          "type": "string",
+          "minLength": 1
+        },
+        "sizeParam": {
+          "description": "Query parameter carrying the page size (kinds offset and page).",
+          "type": "string",
+          "minLength": 1
+        },
+        "size": {
+          "description": "Requested page size.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxPages": {
+          "description": "Safety cap on pages per key; exceeding it marks the observation truncated.",
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "description": "Condition: cursor pagination.",
+                "const": "cursor"
+              }
+            }
+          },
+          "then": { "required": ["itemsPath", "cursorPath", "cursorParam"] }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "description": "Condition: offset or page pagination.",
+                "enum": ["offset", "page"]
+              }
+            }
+          },
+          "then": { "required": ["itemsPath", "pageParam", "sizeParam", "size"] }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "description": "Condition: link-header pagination.",
+                "const": "link_header"
+              }
+            }
+          },
+          "then": { "required": ["itemsPath"] }
+        }
+      ]
+    },
+    "tableSide": {
+      "description": "A database table side: a table (with an optional where predicate) or an approved SELECT template, fetched in a read-only session and mapped to canonical field names. In a table<->table pair ds-bulkdiff fetches the population. In a mixed pair (the other side is a service) rows are fetched per key through the SQL adapter's fetch_batch, which uses keyColumns/keyMap to translate the canonical key.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "target"],
+      "oneOf": [
+        { "required": ["table"] },
+        { "required": ["template"] }
+      ],
+      "not": { "required": ["request"] },
+      "properties": {
+        "role": {
+          "description": "Informational role label of this side (for example legacy, new, source, replica). Side a is always the baseline regardless of role.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+        },
+        "target": {
+          "description": "Database target id from ds.targets. DSN, driver and credentials (targets.auth_ref) come from the registry; auth is never inline.",
+          "$ref": "#/$defs/targetRef"
+        },
+        "table": {
+          "description": "Table source.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "keyColumns"],
+          "properties": {
+            "schema": {
+              "description": "Schema / owner of the table.",
+              "$ref": "#/$defs/columnName"
+            },
+            "name": {
+              "description": "Table name as spelled on this side.",
+              "$ref": "#/$defs/columnName"
+            },
+            "columns": {
+              "description": "Non-key columns to compare (the column subset). A string keeps the column name as the canonical field; an object renames it. Omitted: every non-key column under its lower-cased name, and in a table pair only the names both sides have (the others are reported as one-sided).",
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/columnRef" }
+            },
+            "keyColumns": {
+              "description": "Column(s) that map to the canonical key, in key.parts order for composite keys.",
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/keyColumnRef" }
+            },
+            "where": {
+              "description": "Row filter restricting this side's compared population (docs/mvp/TABLES.md §9): comparisons of a column with literals, IS [NOT] NULL, [NOT] IN, [NOT] BETWEEN, [NOT] [I]LIKE and boolean columns, combined with AND, OR, NOT and parentheses. The loader parses it (invalid_where); a connector renders the parsed tree with its own identifier quoting and bound literals, so no text of the filter reaches a statement. A key whose row the filter selects on one side only is FILTER_MEMBERSHIP, not NOT_FOUND_A/NOT_FOUND_B: the per-key read reads the other side's row whatever its filter.",
+              "type": "string",
+              "minLength": 1
+            },
+            "file": {
+              "description": "A file side (docs/mvp/FILES.md §5), with a files target only: CSV or Parquet files under the target's root, named by a relative path of a closed grammar, their format declared and, for CSV, their dialect. name stays the label reports show. The loader words each problem of it (invalid_file).",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "format"],
+              "properties": {
+                "path": {
+                  "description": "Relative to the target's root: one file, * inside one segment, or a trailing / for every regular file below (at most 8 directories deep), names starting with . or _ left out. Segments of letters, digits, space and . _ - = + @ , ( ), none starting with a dot.",
+                  "type": "string"
+                },
+                "format": {
+                  "description": "Declared, never guessed from a name.",
+                  "type": "string",
+                  "enum": ["csv", "parquet"]
+                },
+                "asOfFile": {
+                  "description": "A stamp file in the path's directory that the path does not match: its first line is one ISO-8601 instant with an offset, the export's declared time.",
+                  "type": "string"
+                },
+                "maxAge": {
+                  "description": "A duration (26h, 2d): the newest file may not be older when a run is created.",
+                  "type": "string"
+                },
+                "partitions": {
+                  "description": "key=value directories below the path's fixed part, in order, read as text columns of these names.",
+                  "type": "array",
+                  "minItems": 1,
+                  "items": { "type": "string" }
+                },
+                "binaryAsString": {
+                  "description": "Parquet: an un-annotated BYTE_ARRAY column is read as text.",
+                  "type": "boolean"
+                },
+                "csv": {
+                  "description": "The CSV dialect, declared, never sniffed: every column is text, converted only by typeMap, and a key column by keys.",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "columns": {
+                      "description": "Every field's name, once, in file order.",
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
+                    "keys": {
+                      "description": "Key columns read as {as: integer}, {as: decimal, scale: n} or {as: date}; any other is its text.",
+                      "type": "object",
+                      "additionalProperties": { "type": "object" }
+                    },
+                    "delimiter": {
+                      "description": "One character.",
+                      "type": "string"
+                    },
+                    "newline": {
+                      "description": "The line end, \"\\n\" (the default) or \"\\r\\n\": declared, never detected.",
+                      "type": "string"
+                    },
+                    "quote": {
+                      "description": "One character (default \"), or \"\" for none.",
+                      "type": "string"
+                    },
+                    "escape": {
+                      "description": "One character (default the quote), or \"\" for none.",
+                      "type": "string"
+                    },
+                    "header": {
+                      "description": "Each file's first record (after skip) names the columns as csv.columns does.",
+                      "type": "boolean"
+                    },
+                    "skip": {
+                      "description": "Lines before the header, or before the first record.",
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1000
+                    },
+                    "encoding": {
+                      "description": "utf-8 (the default), utf-16 or latin-1.",
+                      "type": "string"
+                    },
+                    "null": {
+                      "description": "The unquoted text read as NULL (default the empty field); quoted, it is the string.",
+                      "type": "string"
+                    },
+                    "compression": {
+                      "description": "none (the default), gzip or zstd.",
+                      "type": "string",
+                      "enum": ["none", "gzip", "zstd"]
+                    },
+                    "padded": {
+                      "description": "Columns are class char: trailing spaces are not compared.",
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "template": {
+          "description": "Approved SELECT template source, for sides that need a join or computed columns. A spec never carries SQL text. The template is resolved by id and version from ds.sql_templates, where its SQL text was approved under four-eyes review (approver != author); params are bound as bind variables, never interpolated.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "version", "keyColumns"],
+          "properties": {
+            "id": {
+              "description": "Template id in ds.sql_templates.",
+              "$ref": "#/$defs/sqlTemplateId"
+            },
+            "version": {
+              "description": "Approved template version.",
+              "$ref": "#/$defs/sqlTemplateVersion"
+            },
+            "params": {
+              "description": "Values bound to the template's named parameters.",
+              "$ref": "#/$defs/sqlTemplateParams"
+            },
+            "columns": {
+              "description": "Result columns to compare and their canonical names; defaults to every non-key result column under its own name.",
+              "type": "array",
+              "items": { "$ref": "#/$defs/columnRef" }
+            },
+            "keyColumns": {
+              "description": "Result column(s) that map to the canonical key.",
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/keyColumnRef" }
+            }
+          }
+        },
+        "session": {
+          "description": "Session settings applied on connect. Sessions are always opened READ ONLY.",
+          "$ref": "#/$defs/session"
+        },
+        "rawClear": {
+          "description": "Raw-row paths ($.<column as spelled on this side>) whose values may be shown in clear when get_observations returns view=raw. Every other non-boolean, non-null value of the raw view is HMAC-tokenised: strings as class free_text and numbers as class free_number, so numeric PII never reaches the agent in clear; only booleans and nulls stay clear, and Presidio then runs a second pass. Like security.clear, entries cannot loosen the deployment PII floor and need four-eyes approval by rule_approver, recorded in ds.spec_approvals with scope rawClear.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/jsonPath" }
+        },
+        "typeMap": {
+          "description": "Per-column mapping from this side's database type to a canonical type, keyed by column name as spelled on this side.",
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/columnName" },
+          "additionalProperties": { "$ref": "#/$defs/typeSpec" }
+        },
+        "collation": {
+          "description": "Collation facts for this side. The planner uses them to decide whether key ordering can be pushed down (merge strategy) or must be done in DuckDB with binary ordering.",
+          "$ref": "#/$defs/collation"
+        }
+      }
+    },
+    "columnRef": {
+      "description": "A column: a bare name (canonical field = lower-cased name), or an object that renames it to a canonical field.",
+      "oneOf": [
+        { "$ref": "#/$defs/columnName" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "as"],
+          "properties": {
+            "name": {
+              "description": "Column name on this side.",
+              "$ref": "#/$defs/columnName"
+            },
+            "as": {
+              "description": "Canonical field name the column maps to.",
+              "$ref": "#/$defs/canonicalField"
+            }
+          }
+        }
+      ]
+    },
+    "keyColumnRef": {
+      "description": "A key column: a bare name (value used as the canonical key as-is) or an object with a key mapping.",
+      "oneOf": [
+        { "$ref": "#/$defs/columnName" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name"],
+          "properties": {
+            "name": {
+              "description": "Key column name on this side.",
+              "$ref": "#/$defs/columnName"
+            },
+            "part": {
+              "description": "Composite key part this column provides (must be one of key.parts).",
+              "$ref": "#/$defs/canonicalField"
+            },
+            "keyMap": {
+              "description": "Bidirectional mapping between the canonical key and this column's value.",
+              "$ref": "#/$defs/keyMap"
+            }
+          }
+        }
+      ]
+    },
+    "keyMap": {
+      "description": "Key mapping between the canonical key and a side's key column, discriminated by kind. It is applied in both directions: canonical -> side for per-key lookups, side -> canonical for bulk joins.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": {
+              "description": "Discriminator: identity mapping.",
+              "const": "identity"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "prefix", "width", "sideType"],
+          "properties": {
+            "kind": {
+              "description": "Discriminator: canonical = prefix + zero-padded side value (for example ORG-000123 <-> 123).",
+              "const": "prefix_pad"
+            },
+            "prefix": {
+              "description": "Literal prefix of the canonical key.",
+              "type": "string",
+              "minLength": 1
+            },
+            "width": {
+              "description": "Zero-padded width of the numeric part in the canonical key.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 38
+            },
+            "sideType": {
+              "description": "Type of the side's key column.",
+              "type": "string",
+              "enum": ["integer", "string"]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "toSide", "toCanonical", "sideType"],
+          "properties": {
+            "kind": {
+              "description": "Discriminator: regex rewrite in each direction.",
+              "const": "regex"
+            },
+            "toSide": {
+              "description": "Rewrite from canonical key to side value.",
+              "$ref": "#/$defs/regexRewrite"
+            },
+            "toCanonical": {
+              "description": "Rewrite from side value to canonical key.",
+              "$ref": "#/$defs/regexRewrite"
+            },
+            "sideType": {
+              "description": "Type of the side's key column.",
+              "type": "string",
+              "enum": ["integer", "string"]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "target", "template"],
+          "properties": {
+            "kind": {
+              "description": "Discriminator: crosswalk table lookup.",
+              "const": "lookup"
+            },
+            "target": {
+              "description": "Database target id holding the crosswalk.",
+              "$ref": "#/$defs/targetRef"
+            },
+            "template": {
+              "description": "Approved SELECT template returning columns canonical_key and side_key. The lookup query is never written in the spec.",
+              "$ref": "#/$defs/sqlTemplateRef"
+            }
+          }
+        }
+      ]
+    },
+    "regexRewrite": {
+      "description": "Regex match and replacement.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pattern", "replacement"],
+      "properties": {
+        "pattern": {
+          "description": "Regular expression with capture groups; must match the whole input.",
+          "type": "string",
+          "format": "regex"
+        },
+        "replacement": {
+          "description": "Replacement using $1..$n for capture groups.",
+          "type": "string"
+        }
+      }
+    },
+    "typeSpec": {
+      "description": "Canonical type for one column.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["as"],
+      "properties": {
+        "as": {
+          "description": "Canonical type the column value is converted to before normalizers run. There is no implicit coercion beyond this declared conversion: a value that cannot be converted makes the key INCONCLUSIVE with inconclusive_reason unparseable.",
+          "type": "string",
+          "enum": ["string", "integer", "decimal", "boolean", "date", "timestamp", "json", "bytes"]
+        },
+        "sourceType": {
+          "description": "Declared database type on this side (informational, for example NUMBER(18,2) or timestamptz).",
+          "type": "string"
+        },
+        "scale": {
+          "description": "Decimal scale of the source column (as decimal).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 38
+        },
+        "precision": {
+          "description": "Fractional-second digits of the source column (as timestamp), 0-9.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9
+        },
+        "naiveTimezone": {
+          "description": "IANA zone used to interpret timestamps stored without a time zone (as timestamp).",
+          "type": "string",
+          "minLength": 1
+        },
+        "trueValues": {
+          "description": "Source values read as true (as boolean).",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "description": "Source value.",
+            "type": ["string", "integer"]
+          }
+        },
+        "falseValues": {
+          "description": "Source values read as false (as boolean).",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "description": "Source value.",
+            "type": ["string", "integer"]
+          }
+        },
+        "emptyAsNull": {
+          "description": "Read an empty string as null (as string): the other side's database stores '' as NULL.",
+          "type": "boolean"
+        },
+        "format": {
+          "description": "The text's own form (as date or timestamp), parsed whole: %Y %m %d %H %M %S %f %z and the characters - / . : T and space (docs/mvp/FILES.md §5).",
+          "type": "string"
+        },
+        "decimalSeparator": {
+          "description": "The text's decimal separator (as decimal or integer), \".\" or \",\": a text holding the other one does not convert, and group separators are not read.",
+          "type": "string"
+        }
+      }
+    },
+    "session": {
+      "description": "Database session settings.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timezone"],
+      "properties": {
+        "timezone": {
+          "description": "Session time zone (IANA). UTC is strongly recommended so that both sides render instants identically.",
+          "type": "string",
+          "minLength": 1,
+          "default": "UTC"
+        },
+        "nls": {
+          "description": "NLS-style session parameters, applied with ALTER SESSION SET ... where the engine supports it.",
+          "type": "object",
+          "propertyNames": {
+            "description": "NLS parameter name.",
+            "pattern": "^NLS_[A-Z_]+$"
+          },
+          "additionalProperties": {
+            "description": "NLS parameter value.",
+            "type": "string"
+          }
+        },
+        "settings": {
+          "description": "Other session parameters (for example run-time settings applied with SET). Credential-like names (secretLikeName) are rejected; credentials come only from the target's auth_ref.",
+          "type": "object",
+          "propertyNames": {
+            "description": "Parameter name; credential-like names are not allowed.",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_.]*$",
+            "not": { "$ref": "#/$defs/secretLikeName" }
+          },
+          "additionalProperties": {
+            "description": "Parameter value.",
+            "type": "string"
+          }
+        },
+        "statementTimeout": {
+          "description": "Client-enforced statement timeout.",
+          "$ref": "#/$defs/duration"
+        },
+        "fetchSize": {
+          "description": "Rows per network round trip.",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "collation": {
+      "description": "Collation facts for a table side.",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "name": {
+          "description": "Collation or sort name (for example en-US-x-icu, C, BINARY, BINARY_CI).",
+          "type": "string",
+          "minLength": 1
+        },
+        "caseSensitive": {
+          "description": "Whether string comparison and ordering on this side are case-sensitive.",
+          "type": "boolean"
+        },
+        "accentSensitive": {
+          "description": "Whether string comparison on this side is accent-sensitive.",
+          "type": "boolean"
+        },
+        "trailingSpaces": {
+          "description": "significant = trailing spaces are part of the value; ignored = blank-padded comparison semantics (for example fixed-width CHAR columns).",
+          "type": "string",
+          "enum": ["significant", "ignored"]
+        },
+        "note": {
+          "description": "Free-text note on collation consequences for this comparison.",
+          "type": "string"
+        }
+      }
+    },
+    "normalizer": {
+      "description": "One normalizer: a bare name for parameterless normalizers, or a single-key object for parameterized ones.",
+      "oneOf": [
+        {
+          "description": "Parameterless normalizer. address_std is valid only on fields compared with similarity.",
+          "type": "string",
+          "enum": ["trim", "collapse_ws", "nfkc", "casefold", "upper", "lower", "email_basic", "digits_only", "null_if_empty", "address_std"]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["e164"],
+          "properties": {
+            "e164": {
+              "description": "Phone number to E.164.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["defaultRegion"],
+              "properties": {
+                "defaultRegion": {
+                  "description": "ISO 3166-1 alpha-2 region assumed for numbers without a country code.",
+                  "type": "string",
+                  "pattern": "^[A-Z]{2}$"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tax_id"],
+          "properties": {
+            "tax_id": {
+              "description": "Tax identifier canonicalization (strip separators, country prefix handling, check digits).",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["country"],
+              "properties": {
+                "country": {
+                  "description": "ISO 3166-1 alpha-2 country whose tax id format applies.",
+                  "type": "string",
+                  "pattern": "^[A-Z]{2}$"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["decimal"],
+          "properties": {
+            "decimal": {
+              "description": "Decimal canonicalization to a fixed scale.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["scale"],
+              "properties": {
+                "scale": {
+                  "description": "Digits after the decimal point.",
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 38
+                },
+                "rounding": {
+                  "description": "Rounding mode applied when reducing scale.",
+                  "type": "string",
+                  "enum": ["half_even", "half_up", "down", "up", "floor", "ceiling"],
+                  "default": "half_even"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["timestamp_utc"],
+          "properties": {
+            "timestamp_utc": {
+              "description": "Instant canonicalization to UTC ISO-8601 at a fixed precision. Date-only values become midnight UTC.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["precision"],
+              "properties": {
+                "precision": {
+                  "description": "Target precision: s, ms or us.",
+                  "type": "string",
+                  "enum": ["s", "ms", "us"]
+                },
+                "mode": {
+                  "description": "How extra fractional digits are reduced.",
+                  "type": "string",
+                  "enum": ["truncate", "round"],
+                  "default": "truncate"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "fieldCompare": {
+      "description": "Field comparison mode: exact, tolerance {abs and/or rel} or similarity {threshold}. There is no implicit type coercion: a string and a number are a TYPE_MISMATCH unless a normalizer (for example decimal) or a typeMap converts them.",
+      "oneOf": [
+        {
+          "description": "Exact equality of the normalized values.",
+          "const": "exact"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tolerance"],
+          "properties": {
+            "tolerance": {
+              "description": "Numeric tolerance: abs, rel or both. Two values are equal when |a - b| <= max(abs, rel x max(|a|, |b|)), a missing bound counting as 0. Both values are read as decimals; a value that cannot be read as a decimal makes the key INCONCLUSIVE with inconclusive_reason unparseable, never a match or a mismatch. Two different values the tolerance accepts are never silent: they are reported as a NORMALIZATION_ONLY INFO finding.",
+              "type": "object",
+              "additionalProperties": false,
+              "anyOf": [
+                { "required": ["abs"] },
+                { "required": ["rel"] }
+              ],
+              "properties": {
+                "abs": {
+                  "description": "Maximum absolute difference |a - b|.",
+                  "type": "number",
+                  "minimum": 0
+                },
+                "rel": {
+                  "description": "Maximum relative difference |a - b| / max(|a|, |b|).",
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["similarity"],
+          "properties": {
+            "similarity": {
+              "description": "String similarity; values scoring at or above threshold are equal (the threshold is inclusive). Two different values the similarity accepts are never silent: they are reported as a NORMALIZATION_ONLY INFO finding. Similarity fields are never CRITICAL or HIGH.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["threshold"],
+              "properties": {
+                "threshold": {
+                  "description": "Minimum similarity score in [0, 1].",
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "method": {
+                  "description": "Similarity metric, scoring in [0, 1]. token_set ignores word order but not missing, extra or repeated words (the Indel ratio of the sorted word sequences), so at threshold 1 a dropped or added word is never equal. jaro_winkler and levenshtein_ratio compare the strings as written.",
+                  "type": "string",
+                  "enum": ["token_set", "jaro_winkler", "levenshtein_ratio"],
+                  "default": "token_set"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "compare": {
+      "description": "Diff configuration.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "arrays": {
+          "description": "Array matching rules by canonical path. Arrays without a rule are compared ordered. In canonical graph mode the typed arrays $.nodes.<type> and $.edges.<type> are keyed by canonical and take no rule here.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/arrayRule" }
+        },
+        "fields": {
+          "description": "Per-field normalizer chains, compare modes and severity/taxonomy overrides.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/fieldRule" }
+        },
+        "include": {
+          "description": "If set, only these canonical paths (and their descendants) are compared. Array members that an include path passes through keep their presence (and, for keyed arrays, their key fields), so a member present on one side only is still reported even when it lacks the included field. Population filter: a spec that sets it needs four-eyes approval with scope population_filters in ds.spec_approvals (approver != spec author) before a certified run, and it is printed verbatim in the coverage header and the sign-off report.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/jsonPath" }
+        },
+        "exclude": {
+          "description": "Canonical paths removed before diffing (applied after include). Excluded values are still stored in observations and can feed explainers (for example link provenance). Population filter: a spec that sets it needs four-eyes approval with scope population_filters in ds.spec_approvals (approver != spec author) before a certified run, and the filter is printed verbatim with its pre- and post-filter counts in the coverage header and the sign-off report, so a narrowed population is counted, never silently dropped.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/jsonPath" }
+        },
+        "valueFilter": {
+          "description": "CEL predicate evaluated per leaf value and array member after normalization, independently per side; items for which it returns false are removed before diffing. Variables: key, side ('a'|'b'), path (the path_pattern: RFC 9535 normalised form with every array index or member key replaced by [*], for example $.members[*] or $.status), pointer (the json_pointer: exact RFC 6901 pointer, member keys of keyed or set arrays tokenised when their class is tokenised), value, stratum and strata (always null and empty: strata label a hash sample's keys, never values or findings, and a spec with a hash sample refuses a predicate that reads them). FILTER_MEMBERSHIP: on keyed and set array members the predicate is a selection evaluated on both sides, and the union of the selected member keys is compared; a member present on both sides but selected on one side only yields a FILTER_MEMBERSHIP finding instead of missing_in_b / extra_in_b. Population filter: a spec that sets it needs four-eyes approval with scope population_filters in ds.spec_approvals (approver != spec author) before a certified run, and the filter is printed verbatim with its pre- and post-filter counts in the coverage header and the sign-off report, so a narrowed population is counted, never silently dropped.",
+          "$ref": "#/$defs/cel"
+        },
+        "nullEqualsAbsent": {
+          "description": "When true, an explicit null on one side equals an absent field on the other (no FIELD_MISSING/FIELD_EXTRA). Default false: absent and null are different states unless the spec opts in.",
+          "type": "boolean",
+          "default": false
+        },
+        "strategy": {
+          "description": "Table diff strategy (only when both sides are tables; rejected when either side is a service): auto lets ds-bulkdiff choose; joindiff = full outer join in DuckDB; hashdiff = bisecting segment checksums; rowhash = per-row hash then detail fetch; merge = streaming sorted merge on the key. Certification mode (claim level certified) runs merge or joindiff only, and auto then chooses between them; hashdiff is labelled probabilistic and is disabled in certification mode.",
+          "type": "string",
+          "enum": ["auto", "joindiff", "hashdiff", "rowhash", "merge"]
+        }
+      }
+    },
+    "arrayRule": {
+      "description": "How one array is matched between sides.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "mode"],
+      "properties": {
+        "path": {
+          "description": "Canonical path of the array.",
+          "$ref": "#/$defs/jsonPath"
+        },
+        "mode": {
+          "description": "ordered = position-wise (ORDER_MISMATCH on reorder); set = unordered, duplicates collapsed; keyed = members matched by key fields, then field-diffed; multiset = unordered with multiplicity.",
+          "type": "string",
+          "enum": ["ordered", "set", "keyed", "multiset"]
+        },
+        "key": {
+          "description": "Member fields forming the match key (keyed mode only).",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "description": "Member field name.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "taxonomy": {
+          "description": "Taxonomy codes for members present on one side only, keyed by change_type.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "missing_in_b": {
+              "description": "Taxonomy code when a member is in a but not in b.",
+              "$ref": "#/$defs/taxonomyCode"
+            },
+            "extra_in_b": {
+              "description": "Taxonomy code when a member is in b but not in a.",
+              "$ref": "#/$defs/taxonomyCode"
+            }
+          }
+        },
+        "severity": {
+          "description": "Severity override for one-sided members of this array.",
+          "$ref": "#/$defs/severity"
+        }
+      },
+      "if": {
+        "properties": {
+          "mode": {
+            "description": "Condition: keyed mode.",
+            "const": "keyed"
+          }
+        }
+      },
+      "then": { "required": ["key"] },
+      "else": { "not": { "required": ["key"] } }
+    },
+    "fieldRule": {
+      "description": "Normalization and comparison rule for one canonical path (may use [*] wildcards).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": {
+          "description": "Canonical path the rule applies to.",
+          "$ref": "#/$defs/jsonPath"
+        },
+        "normalize": {
+          "description": "Normalizer chain, applied in order to both sides before hashing and diffing.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/normalizer" }
+        },
+        "compare": {
+          "description": "Compare mode; defaults to exact.",
+          "$ref": "#/$defs/fieldCompare"
+        },
+        "severity": {
+          "description": "Severity override for value_changed findings on this path.",
+          "$ref": "#/$defs/severity"
+        },
+        "taxonomyCode": {
+          "description": "Taxonomy override for value_changed findings on this path (for example FLAG_MISMATCH, or ATTRIBUTE_MISMATCH at a different severity).",
+          "$ref": "#/$defs/taxonomyCode"
+        },
+        "note": {
+          "description": "Why this rule exists.",
+          "type": "string"
+        }
+      },
+      "allOf": [
+        {
+          "description": "Similarity fields are never CRITICAL or HIGH.",
+          "if": {
+            "required": ["compare"],
+            "properties": {
+              "compare": {
+                "description": "Condition: similarity compare.",
+                "type": "object",
+                "required": ["similarity"]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "description": "Similarity fields are capped at MEDIUM.",
+                "enum": ["MEDIUM", "LOW", "INFO"]
+              },
+              "taxonomyCode": {
+                "description": "Similarity fields may only use attribute-level codes: codes registered in ds.taxonomy_codes with presence none (e.g. VALUE_MISMATCH, ATTRIBUTE_MISMATCH, LINK_EVIDENCE_MISMATCH). The schema checks the form; the spec loader checks membership and presence, so a new domain pack can register its own attribute-level codes with no schema change.", "$ref": "#/$defs/taxonomyCode"
+              }
+            }
+          }
+        },
+        {
+          "description": "address_std is similarity-only.",
+          "if": {
+            "required": ["normalize"],
+            "properties": {
+              "normalize": {
+                "description": "Condition: the chain contains address_std.",
+                "contains": { "const": "address_std" }
+              }
+            }
+          },
+          "then": {
+            "required": ["compare"],
+            "properties": {
+              "compare": {
+                "description": "A field normalized with address_std must be compared with similarity.",
+                "type": "object",
+                "required": ["similarity"]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "knownDiff": {
+      "description": "One known-difference rule.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "when", "classification", "reason", "ticket"],
+      "properties": {
+        "id": {
+          "description": "Stable rule id; stored as known_diffs.rule_id and findings.rule_id.",
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*$",
+          "maxLength": 64
+        },
+        "when": {
+          "description": "CEL predicate evaluated per finding. Variables: key, stratum and strata (always null and empty: strata label a hash sample's keys, never findings, and a spec with a hash sample refuses a predicate that reads them), path (the path_pattern: RFC 9535 normalised form with every array index or member key replaced by [*], for example $.links[*].hop or $.status), pointer (the json_pointer: exact RFC 6901 pointer, member keys of keyed or set arrays tokenised when their class is tokenised, never a raw value), change_type, direction ('a_only'|'b_only'|'both'), a and b (normalized values, null when absent), value_class, taxonomy_code, severity, link_reason, hop_count, attrs (results.attrs).",
+          "$ref": "#/$defs/cel"
+        },
+        "classification": {
+          "description": "accepted = difference is acceptable; bug = known defect being fixed; expected_by_design = intended behaviour change. A key suppressed by a bug rule still counts as discrepant in the parity sign-off bound, and the report also shows a second bound that counts every suppressed key as discrepant.",
+          "type": "string",
+          "enum": ["accepted", "bug", "expected_by_design"]
+        },
+        "reason": {
+          "description": "Human explanation of why the difference is known (required).",
+          "type": "string",
+          "minLength": 10
+        },
+        "ticket": {
+          "description": "Tracking ticket id (required), for example LINK-2143.",
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9]{1,15}-[0-9]{1,7}$"
+        },
+        "active": {
+          "description": "Inactive rules are kept for audit but not applied.",
+          "type": "boolean",
+          "default": true
+        },
+        "expires": {
+          "description": "Date after which the rule stops applying and must be re-reviewed.",
+          "type": "string",
+          "format": "date"
+        }
+      }
+    },
+    "noise": {
+      "description": "Noise calibration and masks.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "calibration": {
+          "description": "Calibration run settings (runs.mode calibration). Calls per key follow call_seq L1, N1, L2, N2 ... N(1+repeatB); paths whose values differ between repeated calls on the same side are candidate masks in ds.noise_masks. Cost: sampleSize x 2 calls on side a (L1, L2 with sandwich) and sampleSize x (1 + repeatB) calls on side b.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sampleSize"],
+          "properties": {
+            "sampleSize": {
+              "description": "Number of keys drawn from the key source for calibration.",
+              "type": "integer",
+              "minimum": 1
+            },
+            "sandwich": {
+              "description": "When true, side a is called before and after side b (L1, N1, L2) so a-side volatility and drift between the two reads can be separated from real differences.",
+              "type": "boolean",
+              "default": true
+            },
+            "repeatB": {
+              "description": "Integer count of extra side-b calls per key after N1 (N2 ... N(1+repeatB)), so side b is called 1 + repeatB times. noise_b is the rate at which any pair of N1 ... N(1+repeatB) differs at a path. 0 means b-side volatility is not measured (noise_b = 0).",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 5,
+              "default": 1
+            },
+            "maskThreshold": {
+              "description": "Minimum per-path noise rate, max(noise_a, noise_b), at which a mask is proposed; below it no mask is proposed. A proposed mask is blocked (ds.noise_masks.blocked_reason) when the one-sided 95% Clopper-Pearson lower bound of the raw a-vs-b difference rate exceeds the upper bound of the noise rate, because the path then shows a real difference rather than noise.",
+              "$ref": "#/$defs/rate"
+            }
+          }
+        },
+        "masks": {
+          "description": "Noise masks applied at diff time. Differences only on masked paths yield NOISE_ONLY. Each spec mask is mirrored into ds.noise_masks (spec_name = metadata.name, path_pattern = path, side both -> NULL) and applied only once it is approved there: approval is a rule_approver action under a four-eyes rule (approver != spec author), recorded in approved_by/approved_at, with an optional expiry (expires_at).",
+          "type": "array",
+          "items": {
+            "description": "One noise mask.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "side", "reason"],
+            "properties": {
+              "path": {
+                "description": "Canonical path pattern that is masked (noise_masks.path_pattern), in path_pattern form: every array index or member key is [*], for example $.links[*].hop.",
+                "$ref": "#/$defs/jsonPath"
+              },
+              "side": {
+                "description": "Side whose volatility justifies the mask; both is stored as ds.noise_masks.side NULL.",
+                "type": "string",
+                "enum": ["a", "b", "both"]
+              },
+              "reason": {
+                "description": "Why the path is noisy.",
+                "type": "string",
+                "minLength": 5
+              },
+              "maskId": {
+                "description": "Id of the ds.noise_masks row (ds.noise_masks.mask_id, a bigint identity), if it came from calibration.",
+                "type": "integer",
+                "minimum": 1
+              },
+              "calibrationRunId": {
+                "description": "Calibration run that measured the noise (ds.runs.run_id, a bigint identity).",
+                "type": "integer",
+                "minimum": 1
+              },
+              "expires": {
+                "description": "Date after which the mask stops applying and must be re-reviewed (ds.noise_masks.expires_at).",
+                "type": "string",
+                "format": "date"
+              }
+            }
+          }
+        }
+      }
+    },
+    "recheck": {
+      "description": "Recheck policy. Each recheck is a scheduled work unit (work_units.kind = recheck, available_at = now() + delay + uniform(0, jitter)); there is no inline sleep, so a recheck never outlives a lease.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["delay", "times"],
+      "properties": {
+        "delay": {
+          "description": "Wait before each recheck work unit becomes available (the first one, and between rechecks).",
+          "$ref": "#/$defs/duration"
+        },
+        "times": {
+          "description": "Maximum rechecks per key per cycle (results.recheck_count). At least 1: recheck cannot be disabled, and NOT_FOUND_A/NOT_FOUND_B require recheck_count >= 1.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "jitter": {
+          "description": "An added duration: each recheck waits delay + uniform(0, jitter), which avoids aligned bursts.",
+          "$ref": "#/$defs/duration"
+        },
+        "outcomes": {
+          "description": "Provisional outcomes that trigger a recheck. Must contain MISMATCH, NOT_FOUND_A and NOT_FOUND_B; INCONCLUSIVE is optional. Until confirmed, such a result has confirmation provisional and counts as outstanding. The recheck decides from each side's state and its canonical hash over unmasked paths, compared with the first read: if A's state, hash or row-filter membership (a table side's selected flag) changed, the key is DRIFT with drift_reason a_changed; else if B's changed, it is DRIFT with drift_reason b_converged when no unsuppressed diff remains, otherwise MISMATCH with value_class intermittent_b; if both are unchanged the first outcome is confirmed (confirmation rechecked), a NOT_FOUND only when both side states equal the first read's. A key in the changed-since set is DRIFT with drift_reason changed_since. INCONCLUSIVE with reason recheck_failed if the rechecks are exhausted and nothing reproduces. An inconclusive recheck never confirms.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "description": "Outcome eligible for recheck.",
+            "type": "string",
+            "enum": ["MISMATCH", "NOT_FOUND_A", "NOT_FOUND_B", "INCONCLUSIVE"]
+          },
+          "allOf": [
+            { "contains": { "const": "MISMATCH" } },
+            { "contains": { "const": "NOT_FOUND_A" } },
+            { "contains": { "const": "NOT_FOUND_B" } }
+          ],
+          "default": ["MISMATCH", "NOT_FOUND_A", "NOT_FOUND_B", "INCONCLUSIVE"]
+        },
+        "oneShot": {
+          "description": "Fast confirmation for one-shot compares (CLI, REST, UI) and the agent's compare_key. The verdict is returned after this confirmation with confirmation: fast. The full recheck (delay, times, jitter) is then enqueued as a recheck work unit and may later move the result; a higher recheck_count overwrites, and the change is pushed via SSE. Keep delay x times within the one-shot latency target (F1).",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "delay": {
+              "description": "Wait before each fast recheck.",
+              "$ref": "#/$defs/duration",
+              "default": "2s"
+            },
+            "times": {
+              "description": "Number of fast rechecks before the verdict is returned.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3,
+              "default": 1
+            }
+          },
+          "default": { "delay": "2s", "times": 1 }
+        }
+      }
+    },
+    "rateWindow": {
+      "description": "A rate over a sliding window of observations.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rate", "window"],
+      "properties": {
+        "rate": {
+          "description": "Threshold fraction.",
+          "$ref": "#/$defs/rate"
+        },
+        "window": {
+          "description": "Number of most recent keys or observations the rate is computed over.",
+          "type": "integer",
+          "minimum": 10
+        }
+      }
+    },
+    "execution": {
+      "description": "Execution settings.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "concurrency": {
+          "description": "Maximum in-flight keys per side. Default 1 (sequential).",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64,
+          "default": 1
+        },
+        "delay": {
+          "description": "Minimum pause between consecutive keys per worker (applied once per key, not per request).",
+          "$ref": "#/$defs/duration"
+        },
+        "jitter": {
+          "description": "Random extra pause added to delay.",
+          "$ref": "#/$defs/duration"
+        },
+        "cycleInterval": {
+          "description": "Soak mode only: time between the starts of consecutive cycles.",
+          "$ref": "#/$defs/duration"
+        },
+        "timeouts": {
+          "description": "Per-call timeouts.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "connect": {
+              "description": "TCP/TLS connect timeout.",
+              "$ref": "#/$defs/duration"
+            },
+            "read": {
+              "description": "Timeout waiting for response bytes (or a DB fetch).",
+              "$ref": "#/$defs/duration"
+            },
+            "total": {
+              "description": "Wall-clock cap for one call including retries; exceeding it yields INCONCLUSIVE timeout.",
+              "$ref": "#/$defs/duration"
+            }
+          }
+        },
+        "retries": {
+          "description": "Retry policy for transient failures: an integer (max attempts with default backoff) or a full policy.",
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["max"],
+              "properties": {
+                "max": {
+                  "description": "Maximum retries per call.",
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10
+                },
+                "backoff": {
+                  "description": "Exponential backoff parameters.",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "initial": {
+                      "description": "First backoff delay.",
+                      "$ref": "#/$defs/duration"
+                    },
+                    "max": {
+                      "description": "Backoff ceiling.",
+                      "$ref": "#/$defs/duration"
+                    },
+                    "multiplier": {
+                      "description": "Growth factor between attempts.",
+                      "type": "number",
+                      "minimum": 1
+                    }
+                  }
+                },
+                "retryOn": {
+                  "description": "Failure classes that are retried.",
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "description": "Failure class.",
+                    "type": "string",
+                    "enum": ["connect_error", "timeout", "http_429", "http_5xx"]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "circuitBreaker": {
+          "description": "Per-target circuit breaker. While open, keys become INCONCLUSIVE with inconclusive_reason circuit_open.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["errorRate", "cooldown"],
+          "properties": {
+            "errorRate": {
+              "description": "Error rate over a window that opens the circuit.",
+              "$ref": "#/$defs/rateWindow"
+            },
+            "cooldown": {
+              "description": "How long the circuit stays open before a half-open probe.",
+              "$ref": "#/$defs/duration"
+            }
+          }
+        },
+        "stop": {
+          "description": "Stop conditions; the run stops at the first one met and records which one.",
+          "$ref": "#/$defs/stop"
+        }
+      }
+    },
+    "stop": {
+      "description": "Run stop conditions.",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "maxKeys": {
+          "description": "Stop after this many keys have a final result.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxCycles": {
+          "description": "Soak mode: stop after this many completed cycles.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxDuration": {
+          "description": "Stop after this much wall-clock time.",
+          "$ref": "#/$defs/duration"
+        },
+        "until": {
+          "description": "Stop at this instant (RFC 3339).",
+          "type": "string",
+          "format": "date-time"
+        },
+        "maxErrorRate": {
+          "description": "Stop when the call error rate over the window exceeds rate.",
+          "$ref": "#/$defs/rateWindow"
+        },
+        "maxInconclusiveRate": {
+          "description": "Stop when the INCONCLUSIVE rate over the window exceeds rate.",
+          "$ref": "#/$defs/rateWindow"
+        },
+        "maxConsecutiveErrors": {
+          "description": "Stop after this many consecutive failed calls to either side.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxUnexplainedCritical": {
+          "description": "Stop once this many unsuppressed CRITICAL findings exist (escalate instead of continuing).",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "sampling": {
+      "description": "Per-cycle sampling of run keys.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "description": "all = every run key each cycle; hash = deterministic hash sample.",
+          "type": "string",
+          "enum": ["all", "hash"]
+        },
+        "rate": {
+          "description": "Base sampling rate (mode hash).",
+          "$ref": "#/$defs/rate"
+        },
+        "salt": {
+          "description": "Hash salt (mode hash). May contain {{ cycle_no }} to rotate the sample each soak cycle.",
+          "type": "string",
+          "minLength": 4
+        },
+        "strata": {
+          "description": "Stratification dimensions evaluated on results.attrs / key-source columns.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/stratumDimension" }
+        }
+      },
+      "if": {
+        "properties": {
+          "mode": {
+            "description": "Condition: hash sampling.",
+            "const": "hash"
+          }
+        }
+      },
+      "then": { "required": ["rate", "salt"] },
+      "else": {
+        "not": {
+          "anyOf": [
+            { "required": ["rate"] },
+            { "required": ["salt"] }
+          ]
+        }
+      }
+    },
+    "security": {
+      "description": "Tokenization policy. A deployment-level PII floor lists the value classes that are always tokenised; a spec can only tighten it, never loosen it. Tokens are tok:<class>:<kv>: + base32(HMAC-SHA256(K_kv, class || 0x1F || normalised_value))[:26]. They are computed only by the tokeniser service (KMS/HSM HMAC with a non-exportable key), which users and the agent cannot call. Tokens are pseudonyms, not anonymisation. Reveal (pii_reader, audited) re-derives the raw value from the raw observation (obs ids + json_pointer); raw retention is at least the findings retention of the spec's retention class. json_pointer member keys of tokenised classes are tokens too, never raw values. Four-eyes approvals are recorded per spec in ds.spec_approvals with scope clear, rawClear, unlisted_clear or population_filters (approver != spec author), and a run trigger rejects a run of a spec that lacks an approval it needs.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tokenize": {
+          "description": "Paths whose values are replaced by deterministic keyed tokens (HMAC, class-prefixed) everywhere outside raw observations.",
+          "type": "array",
+          "items": {
+            "description": "One tokenized path.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "class"],
+            "properties": {
+              "path": {
+                "description": "Canonical path pattern.",
+                "$ref": "#/$defs/jsonPath"
+              },
+              "class": {
+                "description": "Value class; it is part of the token (domain separation) and selects who may reveal it. date_of_birth is never tokenised into findings: only its value_class is exposed.",
+                "$ref": "#/$defs/valueClass"
+              }
+            }
+          }
+        },
+        "clear": {
+          "description": "Paths explicitly allowed in clear text (codes, enums, flags). Entries cannot override the deployment PII floor, and a spec that sets any entry needs four-eyes approval by rule_approver (approver != spec author) before it can run (ds.spec_approvals scope clear).",
+          "type": "array",
+          "items": { "$ref": "#/$defs/jsonPath" }
+        },
+        "unlisted": {
+          "description": "Treatment of values on paths in neither list. clear still tokenises the classes in the deployment PII floor and needs four-eyes approval by rule_approver (approver != spec author) (ds.spec_approvals scope unlisted_clear).",
+          "type": "string",
+          "enum": ["tokenize", "clear"],
+          "default": "tokenize"
+        }
+      }
+    },
+    "reporting": {
+      "description": "Report configuration.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "formats": {
+          "description": "Output formats. Exports are built from a fixed result revision, split into numbered parts with a manifest (row counts, SHA-256) and never truncated silently. CSV text cells get OWASP formula-injection escaping and XLSX text is written as strings with formula and URL conversion off; Parquet keeps unescaped values (formula escaping applies to CSV/XLSX only; tokenisation still applies).",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "description": "Output format.",
+            "type": "string",
+            "enum": ["csv", "parquet", "xlsx", "pdf"]
+          }
+        },
+        "fields": {
+          "description": "Result and finding columns included in row-level outputs, in order.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "description": "Column name from ds.results or ds.findings, or verdict: the derived three-value verdict MATCH / DIFFERENT / INDETERMINATE. side_a_state / side_b_state are the per-side observation states; first_outcome and revision come from result revisions; confirmation (provisional | rechecked | frozen_cut | bulk_exhaustive) and drift_reason qualify the outcome. run_id, obs_a_id / obs_b_id (the observations a result cites, for evidence and audited reveal), mask_id and member_key_tok (the member-key token of a keyed or set member, or the key token on MISSING_DOCUMENT / EXTRA_DOCUMENT) are generic. link_reason, explaining_id_tok and hop_count are filled only by an optional domain-pack enrichment and are empty otherwise.",
+            "type": "string",
+            "enum": [
+              "run_id", "key", "cycle_no", "outcome", "inconclusive_reason", "drift_reason", "confirmation", "hash_a", "hash_b", "stratum", "recheck_count",
+              "compared_at", "spec_version", "verdict", "side_a_state", "side_b_state", "first_outcome", "revision", "obs_a_id", "obs_b_id",
+              "finding_id", "path_pattern", "json_pointer", "change_type", "direction", "value_a_tok", "value_b_tok", "value_class", "value_diff_desc",
+              "severity", "taxonomy_code", "signature_hash", "root_cause_id", "rule_id", "mask_id", "suppressed", "member_key_tok",
+              "link_reason", "explaining_id_tok", "hop_count"
+            ]
+          }
+        },
+        "includeSuppressed": {
+          "description": "Whether suppressed (KNOWN_DIFF / NOISE_ONLY) findings appear in row-level outputs.",
+          "type": "boolean",
+          "default": false
+        },
+        "interim": {
+          "description": "Cadence of interim reports during a run (mainly soak). An interim report is produced whenever either threshold is reached; the final report is always produced.",
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "everyCycles": {
+              "description": "Produce an interim report every this many completed cycles.",
+              "type": "integer",
+              "minimum": 1
+            },
+            "every": {
+              "description": "Produce an interim report every this much wall-clock time.",
+              "$ref": "#/$defs/duration"
+            }
+          }
+        }
+      }
+    },
+    "sqlTemplateId": {
+      "description": "Id of an approved SELECT template in ds.sql_templates, lower-case kebab-case.",
+      "$ref": "#/$defs/slug"
+    },
+    "sqlTemplateVersion": {
+      "description": "Template version, a positive integer. Template versions are immutable and only approved versions resolve.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "sqlTemplateParams": {
+      "description": "Values bound to a template's named parameters as bind variables, never interpolated into SQL text. Names must match the template's declared parameters, and every declared parameter without a default must be given (loader check). Values are scalars or lists of scalars; credential-like names (secretLikeName) are rejected.",
+      "type": "object",
+      "propertyNames": {
+        "description": "Parameter name; credential-like names are not allowed.",
+        "pattern": "^[a-z_][a-z0-9_]*$",
+        "not": { "$ref": "#/$defs/secretLikeName" }
+      },
+      "additionalProperties": {
+        "description": "Parameter value (a scalar, or a list of scalars for IN / ANY parameters).",
+        "oneOf": [
+          { "type": ["string", "number", "boolean", "null"] },
+          {
+            "type": "array",
+            "items": { "type": ["string", "number", "boolean"] }
+          }
+        ]
+      }
+    },
+    "sqlTemplateRef": {
+      "description": "Reference to an approved, parameterised SELECT template. A spec never carries SQL text, and neither the UI nor the LLM can submit SQL: the loader resolves id and version in ds.sql_templates, checks that this version is approved (four-eyes, approver != author) and that its dialect matches the target, binds params as bind variables and covers the template's sha256 in the spec content_hash. Templates run in READ ONLY transactions. No inline SQL is accepted anywhere in a spec (a key source, a table side, a keyMap lookup), not even beside an approval flag, because a flag written inside a spec is asserted by the spec's own author; approval lives only in ds.sql_templates. A query is registered as a template and referenced.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version"],
+      "properties": {
+        "id": {
+          "description": "Template id.",
+          "$ref": "#/$defs/sqlTemplateId"
+        },
+        "version": {
+          "description": "Approved template version.",
+          "$ref": "#/$defs/sqlTemplateVersion"
+        },
+        "params": {
+          "description": "Values bound to the template's named parameters.",
+          "$ref": "#/$defs/sqlTemplateParams"
+        }
+      }
+    },
+    "time": {
+      "description": "Time policy. frozen: both sides are read from a frozen cut (an EnvironmentSnapshot such as PITR clones restored to one recovery_target_time, a quiesced source, or a connector snapshot / as_of), chosen by the scheduler from the targets' consistency_profile; the cut metadata is stored on the run (runs.cut_metadata). A frozen run can be certified only when both sides' ingestion pipelines record an upstream watermark (event offset or batch id) with every commit: the cut watermarks wm_a(T) and wm_b(T) go into cut_metadata, and keys touched by events in (min(wm), max(wm)] are DRIFT with drift_reason cut_window; without both watermarks the run is observed, whatever the number of clusters. DRIFT is impossible only under a single-cluster cut (consistent_cut pitr_cluster) with aligned watermarks. shared_watermark: every observation reports the source watermark it reflects at time.watermark, and a pair is comparable only when the two watermarks agree. live: both sides are read live and only skewBudget bounds the gap between them. In every mode the capture interval (request start and end) of each observation is recorded. Every DRIFT result carries results.drift_reason: changed_since, a_changed, b_converged, watermark_mismatch, skew_exceeded or cut_window. Claim level: a run can be certified only in frozen or shared_watermark mode with every inventory exhaustive; live runs are always labelled observed.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "description": "frozen | shared_watermark | live (see the time description).",
+          "type": "string",
+          "enum": ["frozen", "shared_watermark", "live"]
+        },
+        "watermark": {
+          "description": "Where each side reports, in each observation, its source watermark: the version of the upstream data a response reflects, for example an event-stream offset, a CDC LSN or an as-of instant. Required in shared_watermark mode. In frozen mode it is optional: certification rests on the cut watermarks wm_a(T) and wm_b(T) in runs.cut_metadata (see time), and a declared per-observation watermark is recorded with the observations as a cross-check of them; in live mode it is only recorded. A response without a watermark at the declared path fails its completeness proof (side state INCOMPLETE), so the key is INCONCLUSIVE with inconclusive_reason watermark_missing. A pair whose watermarks disagree is re-read through the recheck policy; if they still disagree the key is DRIFT with drift_reason watermark_mismatch, and both watermarks are stored with the observations.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["a", "b"],
+          "properties": {
+            "a": {
+              "description": "JSONPath of the watermark in side a's raw response (before select/map); for a table side, $.<column as spelled on that side> of the raw row.",
+              "$ref": "#/$defs/jsonPath"
+            },
+            "b": {
+              "description": "JSONPath of the watermark in side b's raw response (before select/map); for a table side, $.<column as spelled on that side> of the raw row.",
+              "$ref": "#/$defs/jsonPath"
+            },
+            "kind": {
+              "description": "How the two watermarks are compared: opaque (default) must be equal as strings; integer must be numerically equal (offsets, LSNs); instant (RFC 3339) must lie within skewBudget of each other.",
+              "type": "string",
+              "enum": ["opaque", "integer", "instant"],
+              "default": "opaque"
+            }
+          }
+        },
+        "skewBudget": {
+          "description": "Maximum time skew accepted between the two sides' observations of one key: in live mode the gap between side a's and side b's capture intervals; with instant watermarks |watermark a - watermark b|; in frozen mode the gap between the two cut times when the sides are restored on different clusters. A pair beyond the budget is re-read through the recheck policy and then becomes DRIFT with drift_reason skew_exceeded. Without it, live mode records the gap without bounding it, and instant watermarks must be equal.",
+          "$ref": "#/$defs/duration"
+        }
+      },
+      "allOf": [
+        {
+          "description": "shared_watermark needs both watermark paths.",
+          "if": {
+            "required": ["mode"],
+            "properties": {
+              "mode": {
+                "description": "Condition: shared_watermark mode.",
+                "const": "shared_watermark"
+              }
+            }
+          },
+          "then": { "required": ["watermark"] }
+        }
+      ]
+    },
+    "fieldName": {
+      "description": "Member name of an emitted graph node or edge, as produced by the side map (for example code or entityType). The names type, namespace, business_key, tenant, source_id, from, to and qualifier are reserved by graph/v1 and are rejected as businessKey or attribute names (loader check).",
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+      "maxLength": 128
+    },
+    "graphNodeTypeName": {
+      "description": "Node type name in canonical graph mode, lower snake case. It is also the member name of the typed node array $.nodes.<type>.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "maxLength": 63
+    },
+    "graphEdgeTypeName": {
+      "description": "Edge type name in canonical graph mode, upper snake case (for example HAS_ACCOUNT). It is also the member name of the typed edge array $.edges.<type>.",
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]*$",
+      "maxLength": 63
+    },
+    "canonical": {
+      "description": "Canonical mode. tree (default): the mapped documents are diffed as JSON trees. graph: each side's map must emit a graph/v1 input document {nodes: [...], edges: [...]}. A node is {type, <namespaceField>?, <businessKey fields>, <attributes>}, or {type, source_id, ...} when identity.crosswalk resolves it; an edge is {type, from, to, <qualifier>?, <attributes>}, where from and to are the endpoint's business key (a list for a composite businessKey), or an object {namespace, key} or {source_id}. The projection keys every node by identity.key = [tenant?, type, namespace, business_key] and every edge by [from, type, to, qualifier], sorting the endpoints of undirected edge types, keeps only the elements inside scope, and emits the projected canonical document {nodes: {<nodeType>: [...]}, edges: {<edgeType>: [...]}}. Each typed array is a keyed array: node members carry namespace, business_key (and tenant when identity.key uses it) plus their attributes; edge members carry from, to (maps {type, namespace, business_key}), qualifier and their attributes. The existing keyed-array walk, normalizers, signatures, noise masks and known diffs apply unchanged, and every canonical path (compare.fields, include/exclude, valueFilter, security, noise masks, known diffs) addresses the projected document, for example $.nodes.entity[*].name or $.edges.LINKED_TO[*].hop. graph/v1 is also the fact schema of the P2 L1 Parquet extract (one row per node or edge, with the type as a column), so API-level and bulk parity share code. Graph mode is not a second diff engine and has no isomorphism fallback: a node type without businessKey is a spec error, and a node whose business key is null or empty, or whose source_id does not resolve to exactly one key, makes the key INCONCLUSIVE with inconclusive_reason identity_ambiguous. Nodes and edges are never compared by internal ids (for example a graph store's internal vertex ids) or by JSON position. An emitted element of an undeclared node or edge type inside the declared scope makes that side INCOMPLETE and the key INCONCLUSIVE with inconclusive_reason schema_drift, so evidence that was not compared never yields MATCH.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "description": "tree (default) or graph.",
+          "type": "string",
+          "enum": ["tree", "graph"],
+          "default": "tree"
+        },
+        "schema": {
+          "description": "Canonical schema of graph mode. Only graph/v1 exists; required in graph mode and not allowed in tree mode.",
+          "const": "graph/v1"
+        },
+        "nodes": {
+          "description": "Node types (graph mode).",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/graphNodeType" }
+        },
+        "edges": {
+          "description": "Edge types (graph mode). from, to and scope.root.type must name declared node types, and scope.edgeTypes declared edge types (loader check).",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/graphEdgeType" }
+        },
+        "scope": {
+          "description": "Traversal scope (graph mode): which part of each side's graph is compared. Population filter: a spec that sets it needs four-eyes approval with scope population_filters in ds.spec_approvals (approver != spec author) before a certified run, and it is printed verbatim in the coverage header and the sign-off report.",
+          "$ref": "#/$defs/graphScope"
+        },
+        "compare": {
+          "description": "Graph compare mode. topology (default): the typed node and edge sets in scope are compared (MISSING_NODE, EXTRA_NODE, MISSING_EDGE, EXTRA_EDGE, attribute findings). reachability: the sets of node keys reachable from the root within scope are compared, ignoring which edges realise them (MISSING_NODE / EXTRA_NODE only); equal reachability does not establish equal paths. path: the bounded sets of simple paths from the root (ordered edge sequences with no repeated node, multiplicity kept) are compared, up to scope.depth hops and limits.maxPaths.",
+          "type": "string",
+          "enum": ["topology", "reachability", "path"],
+          "default": "topology"
+        },
+        "limits": {
+          "description": "Per-key size limits of the projection (graph mode). Exceeding a limit never truncates silently: the key becomes INCONCLUSIVE with inconclusive_reason resource_limit.",
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "maxNodes": {
+              "description": "Maximum projected nodes per side per key.",
+              "type": "integer",
+              "minimum": 1
+            },
+            "maxEdges": {
+              "description": "Maximum projected edges per side per key.",
+              "type": "integer",
+              "minimum": 1
+            },
+            "maxPaths": {
+              "description": "Maximum enumerated paths per side per key (compare path).",
+              "type": "integer",
+              "minimum": 1,
+              "default": 10000
+            }
+          }
+        }
+      },
+      "if": {
+        "required": ["mode"],
+        "properties": {
+          "mode": {
+            "description": "Condition: graph mode.",
+            "const": "graph"
+          }
+        }
+      },
+      "then": { "required": ["schema", "nodes", "edges", "scope"] },
+      "else": {
+        "not": {
+          "anyOf": [
+            { "required": ["schema"] },
+            { "required": ["nodes"] },
+            { "required": ["edges"] },
+            { "required": ["scope"] },
+            { "required": ["compare"] },
+            { "required": ["limits"] }
+          ]
+        }
+      }
+    },
+    "graphNodeType": {
+      "description": "One node type of canonical graph mode (graph/v1). Node key = the identity.key components [tenant?, type, namespace, business_key]: the type scopes the key and businessKey says how to read it, as in PG-Keys.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "businessKey"],
+      "oneOf": [
+        { "required": ["namespace"] },
+        { "required": ["namespaceField"] }
+      ],
+      "properties": {
+        "type": {
+          "description": "Node type name; emitted nodes carry it in their type member.",
+          "$ref": "#/$defs/graphNodeTypeName"
+        },
+        "namespace": {
+          "description": "Literal namespace of every node of this type: the identifier scheme or issuer that makes the business key unique (for example entity_code, e164, GB-VAT). Exactly one of namespace or namespaceField. Namespaces are scheme or issuer codes and are shown in clear.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,62}$"
+        },
+        "namespaceField": {
+          "description": "Member of each emitted node that holds its namespace, for identifiers whose issuer or region varies (for example country for tax ids).",
+          "$ref": "#/$defs/fieldName"
+        },
+        "businessKey": {
+          "description": "Required: member field(s) of each emitted node that form the business key, in order (composite when more than one). A node type without a business key is a spec error; there is no blank-node or graph-isomorphism fallback. The fields are consumed into the projected business_key and are not compared again as attributes.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/fieldName" }
+        },
+        "keyNormalize": {
+          "description": "Normalizer chain applied to the businessKey fields before the node key is built, and to every edge endpoint that references this type, so an endpoint always matches its node. Identifiers are normalized only by these approved, type-specific rules. address_std is not allowed (keys are compared exactly).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/normalizer",
+            "not": { "const": "address_std" }
+          }
+        },
+        "keyClass": {
+          "description": "Privacy class of the business key, as in key.class. business_code (default) shows it in clear; a value class tokenises it everywhere it appears: node business_key, edge endpoints, json_pointer member keys, root-cause keys, reports and chat.",
+          "anyOf": [
+            { "const": "business_code" },
+            { "$ref": "#/$defs/valueClass" }
+          ],
+          "default": "business_code"
+        },
+        "attributes": {
+          "description": "Node members compared as element fields. Default: every emitted member other than type, the namespace field and the businessKey fields.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/fieldName" }
+        },
+        "taxonomy": {
+          "description": "Taxonomy codes for nodes of this type present on one side only. Defaults MISSING_NODE / EXTRA_NODE; a domain pack may map them to its own codes.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "missing_in_b": {
+              "description": "Code when a node is in a but not in b.",
+              "$ref": "#/$defs/taxonomyCode",
+              "default": "MISSING_NODE"
+            },
+            "extra_in_b": {
+              "description": "Code when a node is in b but not in a.",
+              "$ref": "#/$defs/taxonomyCode",
+              "default": "EXTRA_NODE"
+            }
+          }
+        },
+        "severity": {
+          "description": "Severity of one-sided nodes of this type.",
+          "$ref": "#/$defs/severity"
+        }
+      }
+    },
+    "graphEdgeType": {
+      "description": "One edge type of canonical graph mode (graph/v1). Edge key = [from, type, to, qualifier].",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "from", "to", "directed"],
+      "properties": {
+        "type": {
+          "description": "Edge type name; emitted edges carry it in their type member.",
+          "$ref": "#/$defs/graphEdgeTypeName"
+        },
+        "from": {
+          "description": "Node type of the from endpoint (declared in canonical.nodes; loader check).",
+          "$ref": "#/$defs/graphNodeTypeName"
+        },
+        "to": {
+          "description": "Node type of the to endpoint (declared in canonical.nodes; loader check).",
+          "$ref": "#/$defs/graphNodeTypeName"
+        },
+        "directed": {
+          "description": "Required. true: from -> to is significant. false: the edge is undirected, and its endpoints are sorted by node key before the edge key is built, so either emission order yields the same key.",
+          "type": "boolean"
+        },
+        "qualifier": {
+          "description": "Member of each emitted edge that distinguishes parallel edges of the same type between the same endpoints (for example a relationship role). It becomes the fourth key component. Without a qualifier, parallel edges are compared as a multiset: only their count per (from, type, to) matters.",
+          "$ref": "#/$defs/fieldName"
+        },
+        "attributes": {
+          "description": "Edge members compared as element fields (edge properties). Default: every emitted member other than type, from, to and the qualifier.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/fieldName" }
+        },
+        "taxonomy": {
+          "description": "Taxonomy codes for edges of this type present on one side only. Defaults MISSING_EDGE / EXTRA_EDGE; a domain pack may map them to its own codes (for example MISSING_LINK).",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "missing_in_b": {
+              "description": "Code when an edge is in a but not in b.",
+              "$ref": "#/$defs/taxonomyCode",
+              "default": "MISSING_EDGE"
+            },
+            "extra_in_b": {
+              "description": "Code when an edge is in b but not in a.",
+              "$ref": "#/$defs/taxonomyCode",
+              "default": "EXTRA_EDGE"
+            }
+          }
+        },
+        "severity": {
+          "description": "Severity of one-sided edges of this type.",
+          "$ref": "#/$defs/severity"
+        }
+      }
+    },
+    "graphScope": {
+      "description": "Graph scope: the root, the edge types followed, the direction and the depth. Elements outside scope are dropped on both sides before the diff, and cycles are bounded by visited node keys. Scope is a selection predicate: an element inside scope on one side but outside it on the other (for example at depth 1 on a and depth 2 on b) is a FILTER_MEMBERSHIP finding, not MISSING_* / EXTRA_*.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "depth"],
+      "properties": {
+        "root": {
+          "description": "Root node: the node of this type whose business key equals the canonical comparison key (key.name after key.normalize and the type's keyNormalize).",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": {
+            "type": {
+              "description": "Node type of the root.",
+              "$ref": "#/$defs/graphNodeTypeName"
+            },
+            "namespace": {
+              "description": "Namespace of the root node; needed only when the root type uses namespaceField.",
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,62}$"
+            }
+          }
+        },
+        "edgeTypes": {
+          "description": "Edge types followed from the root. Default: every declared edge type.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/graphEdgeTypeName" }
+        },
+        "direction": {
+          "description": "Direction in which directed edges are followed: out (from -> to), in (to -> from) or both (default). Undirected edge types are followed both ways.",
+          "type": "string",
+          "enum": ["out", "in", "both"],
+          "default": "both"
+        },
+        "depth": {
+          "description": "Maximum hops from the root. Always bounded: reachability and path enumeration never go further.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        }
+      }
+    },
+    "identity": {
+      "description": "Canonical identity.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "description": "Ordered components of a canonical node key: [type, namespace, business_key] (default) or [tenant, type, namespace, business_key] in a multi-tenant deployment, where tenant defaults to the deployment tenant. Used for graph-mode node keys and for crosswalk rows.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["tenant", "type", "namespace", "business_key"]
+          },
+          "enum": [
+            ["type", "namespace", "business_key"],
+            ["tenant", "type", "namespace", "business_key"]
+          ],
+          "default": ["type", "namespace", "business_key"]
+        },
+        "crosswalk": {
+          "description": "Reviewed identity crosswalk: a mapping table that translates side-specific source ids (for example a new platform's customer UUIDs) into canonical identity components, read through an approved SELECT template. The template returns one row per mapping with columns side ('a' | 'b'), type, source_id, namespace and business_key (plus tenant when identity.key uses it). It is pinned (SHA-256 and row count), so every key of a run, or of one soak cycle, uses the same mapping. Under time.mode frozen the crosswalk must be read from inside the run's EnvironmentSnapshot (a restored clone) or through a template that queries it AS OF the cut time T, and its SHA-256, row count and as_of are recorded in runs.cut_metadata; otherwise the run's claim level is observed. Live and soak runs re-read and re-pin it every cycle. Lookups are by (side, type, source_id). A source id with no row, a source id with several rows (ambiguous) and two source ids that map to the same key on one side (colliding) all make the key INCONCLUSIVE with inconclusive_reason identity_ambiguous; a crosswalk never merges entities. In graph mode, emitted nodes and edge endpoints that carry source_id are resolved automatically; in tree mode, resolve lists the canonical paths whose values are source ids.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["target", "template"],
+          "properties": {
+            "target": {
+              "description": "Database target id holding the crosswalk table; read in a READ ONLY transaction. Under time.mode frozen it must be inside the run's EnvironmentSnapshot unless the template reads the table AS OF T.",
+              "$ref": "#/$defs/targetRef"
+            },
+            "template": {
+              "description": "Approved SELECT template returning the crosswalk rows.",
+              "$ref": "#/$defs/sqlTemplateRef"
+            },
+            "resolve": {
+              "description": "Tree mode: canonical paths whose values on one side are source ids, replaced by the resolved business key before diffing.",
+              "type": "array",
+              "items": {
+                "description": "One resolved path.",
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["side", "path", "type"],
+                "properties": {
+                  "side": {
+                    "description": "Side whose values at path are source ids.",
+                    "type": "string",
+                    "enum": ["a", "b"]
+                  },
+                  "path": {
+                    "description": "Canonical path pattern (path_pattern form) of the source-id values.",
+                    "$ref": "#/$defs/jsonPath"
+                  },
+                  "type": {
+                    "description": "Entity type used for the lookup (the crosswalk type column).",
+                    "$ref": "#/$defs/graphNodeTypeName"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "inferredSchema": {
+      "description": "Approved inferred schema: a bundle with one JSON Schema (draft 2020-12) per side, keyed a and b, for that side's raw response before select/map, annotated with x-ds-* keywords (x-ds-array-mode ordered | set | multiset | keyed, x-ds-array-keys, x-ds-map, x-ds-align, x-ds-normalize) in the style of Kubernetes x-kubernetes-list-type / x-kubernetes-list-map-keys. ds-profiler drafts it from dry-run and calibration samples and a human approves it; compare.arrays and map rules are generated from its annotations. The spec only references the bundle, by ref, by digest or by both (then the digest must match the referenced bundle). The digest is part of the spec content_hash, so a changed inference makes a new spec version. Inline x-ds-* members are recorded, not validated deeply.",
+      "type": "object",
+      "additionalProperties": false,
+      "anyOf": [
+        { "required": ["ref"] },
+        { "required": ["digest"] }
+      ],
+      "properties": {
+        "ref": {
+          "description": "Registry reference name@version of the approved bundle in ds.inferred_schemas, or an s3:// URI in the deployment object store.",
+          "type": "string",
+          "pattern": "^(?:[a-z][a-z0-9]*(?:-[a-z0-9]+)*@[1-9][0-9]*|s3://\\S+)$"
+        },
+        "digest": {
+          "description": "SHA-256 of the bundle's canonical encoding, written sha256:<64 lower-case hex digits>.",
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      },
+      "patternProperties": {
+        "^x-ds-[a-z][a-z0-9]*(?:-[a-z0-9]+)*$": {
+          "description": "Inline x-ds-* annotation (for example a summary of x-ds-array-keys by path), recorded verbatim for review and covered by content_hash. It is not validated deeply, and the engine always reads the annotations from the referenced bundle."
+        }
+      }
+    },
+    "schemaDrift": {
+      "description": "Schema guard for table sides (docs/mvp/PRECHECKS.md §7). At a run's creation, at each scan pass, at a key-list cycle's start, at a resume and after a failed read, each table side's catalogue entry (column names, declared types, classes, nullability, the primary key and the relation's kind) is checked against the one the run was planned on and, at creation, against the one the version's newest earlier run read. A change that alters what the plan's statements read or how a key renders always pauses the run; a new run that would not compare what its predecessor compared is created paused. mode says what any other change does. The inferred-schema guard for service sides (validating each observation against inferredSchema) is not built: schemaDrift acts on table sides only, and the per-key reason schema_drift and the SCHEMA_DRIFT finding stay unused.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "description": "finding (default): a change that breaks nothing is recorded with a warning and the run goes on with its plan. pause: any change pauses the run (pause reason run_paused_schema_drift) until a person resumes it, which accepts the tables as they are, and a new run that would not compare what its predecessor compared is refused. A spec without a table side may not ask for pause.",
+          "type": "string",
+          "enum": ["finding", "pause"],
+          "default": "finding"
+        }
+      }
+    }
+  }
+}

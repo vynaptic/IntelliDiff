@@ -1,0 +1,15 @@
+description: 404 and 410 are both valid authoritative absences when declared by spec and target.
+sides:
+  a: {notFound: {status: [404]}}
+  b: {notFound: {status: [404, 410]}}
+targets:
+  a: {authoritativeAbsence: {status: [404]}}
+  b: {authoritativeAbsence: {status: [404, 410]}}
+a:
+  status: 404
+  body: '<html>not found</html>'
+b:
+  status: 410
+expect:
+  a: ABSENT
+  b: ABSENT

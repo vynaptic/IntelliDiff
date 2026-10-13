@@ -1,0 +1,58 @@
+# deltasleuth-pack/1 verification
+Needs OpenSSL or LibreSSL, POSIX tools, sha256sum (or: sha256sum() { shasum -a 256 "$@"; }).
+0. Use the copy filed with your key register; VERIFY.txt must match it from its line 3 (no output):
+   sed -n '3,$p' VERIFY.txt | diff - ../FILED-PROCEDURE.txt
+   Line 2 names this pack's values; never run it: this checks it and sets them (no output):
+   I='[0-9A-Z]{26}'; F="PACK=P-$I SIGNOFF=A-$I SPECAPP=A-$I HEAD=[0-9]+ UPGRADE=[0-9]+"
+   L=$(sed -n 2p VERIFY.txt | LC_ALL=C grep -Ex "$F") || echo "line 2 of VERIFY.txt is malformed"
+   v() { printf '%s\n' "$L" | cut -d' ' -f"$1" | cut -d= -f2; }
+   PACK=$(v 1) SIGNOFF=$(v 2) SPECAPP=$(v 3) HEAD=$(v 4) UPGRADE=$(v 5)
+1. The key: prints a fingerprint your register lists for the installation, in service then.
+   openssl pkey -pubin -in signing-key.pem -outform DER | sha256sum
+2. It signed the list:
+   openssl dgst -sha256 -verify signing-key.pem -signature SHA256SUMS.sig SHA256SUMS  -> Verified OK
+3. Files unchanged, none added (every line OK; diff prints nothing):
+   sha256sum -c SHA256SUMS
+   find . -type f | sed 's|^\./||' | LC_ALL=C sort > ../have.txt
+   { cut -c67- SHA256SUMS; printf '%s\n' SHA256SUMS SHA256SUMS.sig signing-key.pem; } | LC_ALL=C sort > ../want.txt
+   diff ../want.txt ../have.txt
+4. Subject: match it with your change record.
+   sed -n '/^  "subject"/,/^  }/p' manifest.json
+5. Decided (prints "decided" twice, then 1 per line):
+   decided() { h=$(sha256sum "$3" | cut -c1-64); awk -F'\t' -v o="$1" -v k="\"$2\": \"$h\"" '$5 == o {
+     if ($6 ~ /"action": "approval.revoke"/) r = 1
+     if ($6 ~ /"action": "approval.grant"/ && index($6, k) && match($6, /"step": [0-9]+/)) {
+       s = substr($6, RSTART + 8, RLENGTH - 8)
+       if (match($6, /"of": [0-9]+/) && substr($6, RSTART + 6, RLENGTH - 6) == s) g = 1 } }
+     END { print o ": " (g && !r ? "decided" : "NOT DECIDED") }' audit/chain.tsv; }
+   decided "$SIGNOFF" attests_sha256 facts/attests.json
+   decided "$SPECAPP" content_hash facts/spec.json
+   grep -F "\"plan_sha256\": \"$(sha256sum facts/plan.json | cut -c1-64)\"" audit/chain.tsv | grep -c '"action": "create_run"'
+   for f in adjudication/sheet.csv adjudication/score.json; do [ ! -f $f ] || grep -c "$(sha256sum $f | cut -c1-64)" facts/attests.json; done
+6. Internally consistent: each row hashes to its entry; none is missing between two rows shown for
+   one object, or between consecutive seqs (no output):
+   T=$(printf '\t'); while IFS="$T" read -r seq prev oprev hash object text || [ -n "$seq" ]; do
+     [ "$(printf '%s\n%s\n%s' "$prev" "$oprev" "$text" | sha256sum | cut -c1-64)" = "$hash" ] || echo "row $seq altered"
+   done < audit/chain.tsv
+   awk -F'\t' -v z="$(printf '%064d' 0)" '{ w = ($5 in l) ? l[$5] : z; if ($3 != w) print "row " $1 ": a row of " $5 " before it is missing"
+     if (($1 - 1) in h && $2 != h[$1 - 1]) print "row " $1 ": does not follow row " $1 - 1; l[$5] = $4; h[$1] = $4 }' audit/chain.tsv
+7. Unaltered and complete for these objects: export your SIEM's deltasleuth.audit lines with chain.seq
+   up to $HEAD, for the objects `cut -f5 audit/chain.tsv | LC_ALL=C sort -u` prints, as "seq<TAB>hash"
+   lines to ../siem.tsv (no output):
+   awk -F'\t' -v u="$UPGRADE" '$1 > u { print $1 "\t" $4 }' audit/chain.tsv | LC_ALL=C sort > ../pack.tsv
+   LC_ALL=C sort ../siem.tsv | diff - ../pack.tsv
+   Rows up to $UPGRADE were chained at the upgrade: match each, both ways, with the SIEM line of its id,
+   field by field: id, at, actor, actor_name, action, object, detail, request_id, session_id, client_addr
+   (at as an instant). Rows written before SIEM lines existed (migration 005) have none: only the chain
+   covers them, from the upgrade on:
+   awk -F'\t' -v u="$UPGRADE" '$1 <= u' audit/chain.tsv
+   The SIEM also holds, ingested at issue time, a pack.issue line for $PACK whose sums_sha256 is:
+   sha256sum SHA256SUMS | cut -c1-64
+8. Not revoked, with the custodian's latest revoked.txt, revoked.txt.sig and signing-key.pem:
+   openssl pkey -pubin -in signing-key.pem -outform DER | sha256sum  -> your register's current fingerprint
+   openssl dgst -sha256 -verify signing-key.pem -signature revoked.txt.sig revoked.txt  -> Verified OK
+   head -1 revoked.txt  -> # DeltaSleuth pack revocations, key <that fingerprint>, as of <UTC>
+                           (your decision date or later; after decommissioning, the final list)
+   tail -1 revoked.txt  -> # end
+   grep -c "^$PACK " revoked.txt  -> 0
+What a valid result proves: certificate.pdf, "What the signature proves".

@@ -1,0 +1,15 @@
+# The two demo databases of seed.sql. A database target holds only a DSN reference and its budget.
+# Each DSN is a one-line file: a libpq keyword string or a postgresql:// URI. A relative reference
+# resolves against this file, and secrets/ is git-ignored. In a deployment, write
+# file:/run/secrets/<name> instead (docs/mvp/DEPLOY.md, section 7).
+
+targets:
+  crm-links:
+    dsn_ref: file:secrets/crm_links_dsn
+    rate_per_s: 50                             # per-key reads; a scan and L2 are queries per side
+    max_concurrency: 2
+
+  platform-links:
+    dsn_ref: file:secrets/platform_links_dsn
+    rate_per_s: 50
+    max_concurrency: 2

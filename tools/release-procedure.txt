@@ -1,0 +1,27 @@
+# deltasleuth-release/1 verification
+Needs OpenSSL or LibreSSL, POSIX tools, sha256sum (or: sha256sum() { shasum -a 256 "$@"; }) and, for step 5, Docker. Run every step on the Docker host.
+0. Use the copy filed with the release key; VERIFY.txt must match it from its line 3 (no output):
+   sed -n '3,$p' VERIFY.txt | diff - ../FILED-RELEASE-PROCEDURE.txt
+   Line 2 names this release; never run it: this checks it and sets its values (no output):
+   F='VERSION=[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)? PLATFORM=linux-(amd64|arm64)'
+   L=$(sed -n 2p VERIFY.txt | LC_ALL=C grep -Ex "$F") || echo "line 2 of VERIFY.txt is malformed"
+   v() { printf '%s\n' "$L" | cut -d' ' -f"$1" | cut -d= -f2; }
+   VERSION=$(v 1) PLATFORM=$(v 2)
+1. The key: prints a fingerprint your register lists as a DeltaSleuth release key, in service on step 4's signed date (a withdrawn key: only if step 4's digest is in its compromise advisory).
+   openssl pkey -pubin -in release-key.pem -outform DER | sha256sum
+2. It signed the list:
+   openssl dgst -sha256 -verify release-key.pem -signature SHA256SUMS.sig SHA256SUMS  -> Verified OK
+3. Files unchanged, none added (the grep prints nothing; every line OK; diff prints nothing):
+   LC_ALL=C grep -vE '^[0-9a-f]{64}  [^/]' SHA256SUMS
+   sha256sum -c SHA256SUMS
+   find . -type f | sed 's|^\./||' | LC_ALL=C sort > ../have.txt
+   { cut -c67- SHA256SUMS; printf '%s\n' SHA256SUMS SHA256SUMS.sig release-key.pem; } | LC_ALL=C sort > ../want.txt
+   diff ../want.txt ../have.txt
+4. The release: match it with your change record, and file the list's digest there:
+   grep -E '^(version|revision|created|platform|image|config|manifest|key|signed): ' RELEASE.txt
+   sha256sum SHA256SUMS | cut -c1-64
+5. Only now: load the image; its tag must name the image the release lists (prints 1):
+   docker load -i "image/deltasleuth-$VERSION-$PLATFORM.tar.gz"
+   docker image inspect --format '{{.Id}}' "deltasleuth:$VERSION" > ../id.txt
+   grep -E '^(config|manifest): ' RELEASE.txt | cut -d' ' -f2 | grep -cxF -f ../id.txt
+What a valid result proves: SECURITY.md, "Verifying a release".

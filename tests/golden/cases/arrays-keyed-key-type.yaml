@@ -1,0 +1,15 @@
+description: >
+  Member keys are untyped, so 12 and "12" are the same member and the type difference
+  surfaces on the key field instead of as a missing plus an extra member.
+compare:
+  arrays:
+    - {path: $.xs, mode: keyed, key: [id]}
+a:
+  body: '{"xs": [{"id": 12, "v": 1}]}'
+b:
+  body: '{"xs": [{"id": "12", "v": 1}]}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/xs/12/id, "$.xs[*].id", type_changed, null]

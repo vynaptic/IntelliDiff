@@ -1,0 +1,17 @@
+description: >
+  An undeclared 404 is INCOMPLETE absence_unconfirmed even when the target would accept it,
+  and so is a declared 410 the target does not list as authoritative.
+sides:
+  b: {notFound: {status: [410]}}
+targets:
+  a: {authoritativeAbsence: {status: [404]}}
+  b: {authoritativeAbsence: {status: [404]}}
+a:
+  status: 404
+  body: '{"error": "not found"}'
+b:
+  status: 410
+  body: ''
+expect:
+  a: INCOMPLETE absence_unconfirmed
+  b: INCOMPLETE absence_unconfirmed

@@ -1,0 +1,14 @@
+description: An empty array and an absent array are different states.
+compare:
+  arrays:
+    - {path: $.xs, mode: keyed, key: [id]}
+a:
+  body: '{"xs": [], "ys": []}'
+b:
+  body: '{"ys": null}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/xs, $.xs, missing_in_b, null]
+    - [/ys, $.ys, type_changed, null]

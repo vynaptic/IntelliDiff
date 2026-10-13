@@ -1,0 +1,36 @@
+description: >
+  Tolerance |a-b| <= max(abs, rel*max(|a|,|b|)) with exact decimal arithmetic: exactly at the
+  bound is equal (reported at INFO, never silent), just above is value_changed. rate: 1.01 is
+  within 0.01*101.01 but not 0.01*100, so the relative bound must scale with the larger value,
+  in either order (rate_swapped). mixed: 0.14 exceeds max(0.05, 0.01*10.14) = 0.1014 although
+  it is within their sum (0.1514): the bounds are not added.
+compare:
+  fields:
+    - {path: $.amount, compare: {tolerance: {abs: 0.05}}}
+    - {path: $.fee, compare: {tolerance: {abs: 0.05}}}
+    - {path: $.rate, compare: {tolerance: {rel: 0.01}}}
+    - {path: $.rate_swapped, compare: {tolerance: {rel: 0.01}}}
+    - {path: $.mixed, compare: {tolerance: {abs: 0.05, rel: 0.01}}}
+    - {path: $.mixed_abs, compare: {tolerance: {abs: 0.1, rel: 0.1}}}
+    - {path: $.mixed_rel, compare: {tolerance: {abs: 0.1, rel: 0.1}}}
+a:
+  body: >
+    {"amount": 100.00, "fee": 1.00, "rate": 100, "rate_swapped": 101.01, "mixed": 10,
+     "mixed_abs": 0.5, "mixed_rel": 100}
+b:
+  body: >
+    {"amount": 100.05, "fee": 1.0500001, "rate": 101.01, "rate_swapped": 100, "mixed": 10.14,
+     "mixed_abs": 0.6, "mixed_rel": 109}
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - finding: [/amount, $.amount, value_changed, NORMALIZATION_ONLY]
+      severity: INFO
+      raw_only: false
+    - [/fee, $.fee, value_changed, null]
+    - [/rate, $.rate, value_changed, NORMALIZATION_ONLY]
+    - [/rate_swapped, $.rate_swapped, value_changed, NORMALIZATION_ONLY]
+    - [/mixed, $.mixed, value_changed, null]
+    - [/mixed_abs, $.mixed_abs, value_changed, NORMALIZATION_ONLY]
+    - [/mixed_rel, $.mixed_rel, value_changed, NORMALIZATION_ONLY]

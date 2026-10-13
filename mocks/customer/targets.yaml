@@ -1,0 +1,37 @@
+# Target registry for the customer mock pair: each target is an endpoint plus its declared,
+# observable behaviour (TargetCapabilities). Nothing here says how either service is built.
+# Truncation is declared per side in spec.yaml (the example spec's convention), not here.
+#
+# Start the services with:
+#   python -m mocks.run customer --variant a --port 18091
+#   python -m mocks.run customer --variant b --port 18092
+# Tests that pick free ports rewrite base_url; everything else stays as declared.
+
+targets:
+  customer-a:
+    base_url: http://127.0.0.1:18091
+    allow_private_network: true                # loopback needs an explicit SSRF opt-in
+    allow_insecure_http: true                  # local plain HTTP; there is no credential to protect
+    auth: {kind: none}
+    rate_per_s: 50
+    max_concurrency: 4
+    capabilities:
+      authoritative_absence:
+        status: [404]
+        shapes: [not_found_body]               # a 404 with any other body is unconfirmed absence
+      absence_shapes:
+        not_found_body: 'has(body.error) && body.error == "NOT_FOUND"'
+
+  customer-b:
+    base_url: http://127.0.0.1:18092
+    allow_private_network: true
+    allow_insecure_http: true
+    auth: {kind: none}
+    rate_per_s: 50
+    max_concurrency: 4
+    capabilities:
+      authoritative_absence:
+        status: [404]
+        shapes: [not_found_body]
+      absence_shapes:
+        not_found_body: 'has(body.error) && body.error == "NOT_FOUND"'

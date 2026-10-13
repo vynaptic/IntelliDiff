@@ -1,0 +1,87 @@
+# DeltaSleuth on one host: PostgreSQL plus the app (API, UI and worker in one process).
+# Never edit this file, which an upgrade replaces: this installation's changes go in
+# docker-compose.site.yml, which .env names after it. From the installation's folder (docs/mvp/DEPLOY.md
+# walks through every step):
+#   docker compose up -d
+#   docker compose --profile mocks up -d        # plus both mock pairs
+# Settings: deploy/config/*.yaml (from the *.example.yaml files). Secrets: deploy/secrets/, one file each.
+# An office reaches the app through a TLS reverse proxy on the host (DEPLOY section 5), never this port
+# directly; a one-machine trial opens http://localhost:8000 (deploy/up.sh, docs/guide/01-install-docker.md).
+# A checkout has no release image to load: its .env names the source override too (deploy/env.source.example).
+# After changing the site file, `docker compose up -d` applies it (`restart` does not).
+
+name: deltasleuth
+
+x-release: &release                    # the signed release: `docker load` puts it here (DEPLOY section 2)
+  image: deltasleuth:0.1.0.dev0        # always pyproject's version; source builds: docker-compose.source.yml
+  pull_policy: never
+  read_only: true                      # the app writes only to its volumes and /tmp
+  tmpfs: ["/tmp:size=64m,mode=1777,noexec,nosuid,nodev"]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
+services:
+  db:
+    image: postgres:16-alpine
+    command: [postgres, -c, log_error_verbosity=terse]   # errors log no row values (DEPLOY section 10)
+    logging: {driver: json-file, options: {max-size: 10m, max-file: "3"}}
+    environment:
+      POSTGRES_USER: deltasleuth
+      POSTGRES_DB: deltasleuth
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD, pg_isready, -U, deltasleuth, -d, deltasleuth]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  app:
+    <<: *release
+    hostname: deltasleuth-app                  # stable, so CLI audit rows read local:<DS_OPERATOR>@deltasleuth-app
+    depends_on:
+      db: {condition: service_healthy}
+    ports: ["127.0.0.1:8000:8000"]             # loopback only: an office puts its TLS reverse proxy in front
+    extra_hosts: ["host.docker.internal:host-gateway"]   # an app on this machine (DEPLOY section 7): Linux needs the line
+    volumes:
+      - ./config:/etc/deltasleuth:ro
+      - evidence:/var/lib/deltasleuth/evidence
+      - workspace:/var/lib/deltasleuth/workspace
+      - p0:/var/lib/deltasleuth/p0             # samples, specs and P0 sheets for `docker compose run app ds ...`
+    secrets: [db_dsn, kek, tokeniser]          # the site file adds the IdP credential and llm_key
+    restart: unless-stopped
+
+  mocks:                                       # both mock pairs, for a first run without real endpoints
+    <<: *release
+    profiles: [mocks]
+    volumes: ["../mocks:/app/mocks:ro"]
+    command:
+      - sh
+      - -c
+      - >-
+        python -m mocks.run linker --variant a --host 0.0.0.0 --port 18081 &
+        python -m mocks.run linker --variant b --host 0.0.0.0 --port 18082 &
+        python -m mocks.run customer --variant a --host 0.0.0.0 --port 18091 &
+        python -m mocks.run customer --variant b --host 0.0.0.0 --port 18092 &
+        wait
+    healthcheck: {disable: true}               # the image's check probes the API port
+    restart: unless-stopped
+
+networks:
+  default:
+    ipam:
+      config: [{subnet: 172.30.0.0/24, gateway: 172.30.0.1}]   # pinned: auth.trusted_proxies names the gateway (DEPLOY section 5)
+
+volumes:
+  pgdata:
+  evidence:
+  workspace:
+  p0:
+
+secrets:
+  db_password: {file: ./secrets/db_password}
+  db_dsn: {file: ./secrets/db_dsn}
+  kek: {file: ./secrets/kek}                   # the keyring and tokeniser key: never in a volume or backup
+  tokeniser: {file: ./secrets/tokeniser}       # (docs/mvp/RETENTION.md §1)

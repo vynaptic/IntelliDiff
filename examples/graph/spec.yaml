@@ -1,0 +1,59 @@
+# Entity links of a legacy CRM (a) vs the new platform's export (b): each row is a link fact, "this
+# organisation holds this identifier", in two PostgreSQL databases (seed.sql). Targets: targets.yaml.
+# Contract: docs/mvp/GRAPH.md.
+#
+# a: crm.entity_identifiers   (entity_code, id_type, id_value)
+# b: public.links_export      (org_code, kind, value)
+#
+# L1, the fact scan: a link on one side only is NOT_FOUND_A or NOT_FOUND_B.
+# L2, the structure: which entities each identifier links, and the components that split or merge.
+
+apiVersion: deltasleuth/v1
+kind: ComparisonSpec
+
+metadata:
+  name: entity-links-crm-vs-platform
+  version: "1.0.0"
+  owner: examples
+  description: Which identifiers link which organisations, in the legacy CRM and the new platform.
+
+normalizerVersion: "1.1.0"
+
+key:
+  name: link
+  type: composite                              # one key part per key column, on both sides
+  parts: [entity_code, id_type, id_value]
+  class: business_code                         # company codes and numbers, not personal data: shown clear
+
+sides:
+  a:
+    role: legacy
+    target: crm-links
+    table:
+      schema: crm
+      name: entity_identifiers
+      keyColumns: [entity_code, id_type, id_value]
+      columns: [entity_code]                   # a key column listed alone: compare which facts exist
+  b:
+    role: new
+    target: platform-links
+    table:
+      name: links_export
+      keyColumns: [org_code, kind, value]
+      columns: [{name: org_code, as: entity_code}]
+
+graph:
+  members: [entity_code]                       # the key parts naming an entity
+  groups: [id_type, id_value]                  # the key parts naming an identifier
+  maxComponent: 20                             # small for the demo; the default is 10,000
+
+compare: {}                                    # the canonical row is {entity_code}: nothing to tune
+
+recheck:                                       # a scan's keys are confirmed by their per-key read
+  delay: 5s
+  times: 1
+  outcomes: [MISMATCH, NOT_FOUND_A, NOT_FOUND_B]
+
+security:
+  unlisted: tokenize
+  clear: ["$.entity_code"]

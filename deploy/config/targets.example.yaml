@@ -1,0 +1,106 @@
+# Targets: copy to targets.yaml. A target is an endpoint plus its declared, observable behaviour;
+# specs name target ids only, so this file and the product's list (below) are all DeltaSleuth may call.
+# Credentials: secret_ref and dsn_ref file: paths only (mounted secrets; see docs/mvp/DEPLOY.md).
+# A service can be declared in the product instead, without this file or a restart (DEPLOY section 7,
+# "In the product"); for an id declared in both, this file wins.
+
+targets:
+  # Your services: one entry per endpoint. Replace these two with your real pair.
+  orders-v1:
+    base_url: https://orders-v1.internal.example/api
+    allow_private_network: true                # internal hosts resolve to private addresses
+    auth: {kind: bearer, secret_ref: file:/run/secrets/orders_v1_token}
+    rate_per_s: 20                             # the budget the service owners agreed to
+    max_concurrency: 4
+    capabilities:
+      authoritative_absence:
+        status: [404]
+        shapes: [not_found_body]               # a 404 with another body (a gateway page) is unconfirmed
+      absence_shapes:
+        not_found_body: 'has(body.error) && body.error == "NOT_FOUND"'
+
+  orders-v2:
+    base_url: https://orders-v2.internal.example
+    allow_private_network: true
+    auth: {kind: header, header: X-Api-Key, secret_ref: file:/run/secrets/orders_v2_key}
+    rate_per_s: 20
+    max_concurrency: 4
+    capabilities:
+      authoritative_absence: {status: [404]}   # every 404 from this service means "no such order"
+
+  # Your databases: a PostgreSQL table or view per side (docs/mvp/TABLES.md). A database target holds
+  # only its DSN reference and budget; the DSN file is one line, a libpq keyword string or a
+  # postgresql:// URI. examples/tables/spec.yaml names these ids.
+  crm-legacy:
+    dsn_ref: file:/run/secrets/crm_legacy_dsn
+    rate_per_s: 50                             # per-key reads per second (a group of up to 200 keys
+    max_concurrency: 2                         # between two tables); in flight, across all runs
+  platform-users:
+    dsn_ref: file:/run/secrets/platform_users_dsn
+    rate_per_s: 50
+    max_concurrency: 2
+  # Link facts for graph parity (docs/mvp/GRAPH.md): examples/graph/spec.yaml names these ids.
+  crm-links:
+    dsn_ref: file:/run/secrets/crm_links_dsn
+    rate_per_s: 50
+    max_concurrency: 2
+  platform-links:
+    dsn_ref: file:/run/secrets/platform_links_dsn
+    rate_per_s: 50
+    max_concurrency: 2
+
+  # A MySQL or Oracle table or view (docs/mvp/ENGINES.md §4; DEPLOY section 7): host, port, the account
+  # and one-line secret files. examples/tables/mysql and examples/tables/oracle hold an acceptance kit each.
+  billing-mysql:
+    engine: mysql
+    host: mysql.bank.example                   # a DNS name or an IP literal
+    port: 3306
+    database: billing
+    user: ds_reader
+    password_ref: file:/run/secrets/billing_mysql_password
+    tls_ca_ref: file:/run/secrets/billing_mysql_ca   # the CA of the server's certificate
+    # tls_verify_name: false                   # a certificate without a subjectAltName: the chain alone
+    # allow_private_network: true              # a private or loopback address
+    rate_per_s: 50
+    max_concurrency: 2
+  ledger-oracle:
+    engine: oracle
+    host: oracle.bank.example
+    port: 2484                                 # the TCPS listener; 1521 with allow_unencrypted
+    service: LEDGERPDB                         # a service name, never a SID or a connect descriptor
+    user: ds_reader
+    password_ref: file:/run/secrets/ledger_oracle_password
+    tls_ca_ref: file:/run/secrets/ledger_oracle_ca
+    tls_server_dn: "CN=oracle.bank.example,O=Bank"   # the server certificate's subject, matched exactly
+    rate_per_s: 50
+    max_concurrency: 2
+  # CSV or Parquet exports in a directory mounted read-only (docs/mvp/FILES.md §4; DEPLOY section 7).
+  # Declared only once the directory is mounted: a root that does not hold stops the service at start.
+  # legacy-exports:
+  #   engine: files
+  #   root: /var/lib/deltasleuth/files/legacy  # the directory's real path, under the settings' files.roots_under
+
+  # The mock pairs (compose profile "mocks"), for a first run; mocks/*/spec.yaml name these ids.
+  linker-a:
+    base_url: http://mocks:18081
+    allow_private_network: true
+    auth: {kind: none}
+    capabilities: &mock_absence
+      authoritative_absence: {status: [404], shapes: [not_found_body]}
+      absence_shapes:
+        not_found_body: 'has(body.error) && body.error == "NOT_FOUND"'
+  linker-b:
+    base_url: http://mocks:18082
+    allow_private_network: true
+    auth: {kind: none}
+    capabilities: *mock_absence
+  customer-a:
+    base_url: http://mocks:18091
+    allow_private_network: true
+    auth: {kind: none}
+    capabilities: *mock_absence
+  customer-b:
+    base_url: http://mocks:18092
+    allow_private_network: true
+    auth: {kind: none}
+    capabilities: *mock_absence

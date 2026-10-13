@@ -1,0 +1,18 @@
+description: >
+  Set members that are objects are identified by canonical form (member order irrelevant); their
+  member key is a short digest of that form ({#<16 hex>}), which stays bounded however deeply
+  arrays nest inside them.
+compare:
+  arrays:
+    - {path: $.roles, mode: set}
+a:
+  body: '{"roles": [{"r": "admin", "s": 1}, {"r": "user"}]}'
+b:
+  body: '{"roles": [{"s": 1.0, "r": "admin"}]}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - finding: ['/roles/{#cec7b6ecae0fe01b}', "$.roles[*]", missing_in_b, null]
+      member_key: '{#cec7b6ecae0fe01b}'
+      array_path: $.roles

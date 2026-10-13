@@ -1,0 +1,29 @@
+{
+  "status": "completed",
+  "scan": {"rows_a": 1010, "rows_b": 1012, "skipped_a": 0, "skipped_b": 1, "matched": 991, "candidates": 20},
+  "worker_columns": ["amount", "doc"],
+  "counters": {"total": 1011, "compared": 1010, "match": 991, "different": 19, "indeterminate": 1, "cancelled": 0, "outstanding": 0},
+  "outcomes": {"INCONCLUSIVE": 1, "MATCH": 991, "MISMATCH": 17, "NOT_FOUND_A": 1, "NOT_FOUND_B": 1},
+  "discrepancies": {
+    "K0005": ["MISMATCH", "$.email"],
+    "K0010": ["MISMATCH", "$.status"],
+    "K0015": ["MISMATCH", "$.balance"],
+    "K0020": ["MISMATCH", "$.amount"],
+    "K0025": ["MISMATCH", "$.ratio"],
+    "K0030": ["MISMATCH", "$.score"],
+    "K0035": ["MISMATCH", "$.visits"],
+    "K0040": ["MISMATCH", "$.flag"],
+    "K0045": ["MISMATCH", "$.born"],
+    "K0050": ["MISMATCH", "$.opened"],
+    "K0055": ["MISMATCH", "$.seen"],
+    "K0060": ["MISMATCH", "$.held"],
+    "K0065": ["MISMATCH", "$.tag"],
+    "K0070": ["MISMATCH", "$.plain"],
+    "K0075": ["MISMATCH", "$.doc"],
+    "K0080": ["MISMATCH", "$.note"],
+    "K0090": ["NOT_FOUND_B", "$"],
+    "K0100": ["identity_ambiguous"],
+    "K1001": ["NOT_FOUND_A", "$"],
+    "é": ["MISMATCH", "$.email"]
+  }
+}

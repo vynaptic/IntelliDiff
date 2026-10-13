@@ -1,0 +1,315 @@
+# DeltaSleuth ComparisonSpec: customer mock pair, Customer Profile Service v1 (a) vs v2 (b).
+# Validates against docs/architecture/spec.schema.json (a unit test checks it).
+#
+# The P0 cut of docs/architecture/examples/generic-customer-services.yaml: the same response shapes,
+# maps, array rules, normalisers and known diffs, with what P0 does not run taken out (shared
+# watermark -> live time policy, hash_sample/union -> an inline key list, no inferredSchema or
+# schemaDrift, no noise calibration, no valueFilter, no reporting block). No domain pack: nothing
+# here is specific to entity linking.
+#
+# Targets come from mocks/customer/targets.yaml (customer-a, customer-b on 127.0.0.1); no auth.
+#
+# Canonical document (both maps produce this shape):
+#   { customerId, givenName, familyName, birthDate, email, phones[{kind, number}],
+#     addresses[{type, lines[], city, postcode, country}], segment, status, createdAt,
+#     preferences{language, marketing{email, sms}},
+#     accounts[{sortCode, accountNo, product, status, balance, currency, interestRate}],
+#     consents[{purpose, granted, updatedAt}], tags[] }
+#
+# Ground truth for every seeded key is in mocks/customer/expected.json.
+
+apiVersion: deltasleuth/v1
+kind: ComparisonSpec
+
+metadata:
+  name: mock-customer-v1-vs-v2
+  version: "1.0.0"
+  owner: deltasleuth-p0
+  description: >-
+    Field-level parity of customer profiles between the v1 and v2 profile APIs of the customer mock
+    pair, with seeded discrepancies and two known diffs (see expected.json).
+
+normalizerVersion: "1.1.0"   # the ground truth in expected.json holds for normalisers 1.1.0
+
+canonical:
+  mode: tree
+
+time:
+  mode: live                                   # capture intervals recorded; claim level observed
+
+key:
+  name: customer_id
+  type: string
+  pattern: "^C[0-9]{8}$"
+  class: identifier                            # customer numbers are personal data: tokenised in reports
+  normalize: [trim, upper]
+  source:
+    kind: list                                 # the same keys, in the same order, as keys.txt
+    keys: [
+      C00012001, C00012002, C00012003, C00012004, C00012005, C00012006, C00012007, C00012008,
+      C00012009, C00012010, C00012011, C00012012, C00012013, C00012014, C00012015, C00012016,
+      C00012017, C00012018, C00012019, C00012020, C00012021, C00012022, C00012023, C00012024,
+      C00012025, C00012026, C00012027, C00012028, C00012029, C00012030, C00012031, C00012032,
+      C00012033, C00012034, C00012035, C00012036, C00012037, C00012038, C00012039, C00012040
+    ]
+
+sides:
+  a:
+    role: legacy
+    target: customer-a
+    # v1 response (abridged):
+    # { "customer": { "id": "C00012019", "firstName": "Jonah", "lastName": "Garner", "dob": "1959-02-07",
+    #                 "email": "jonah.garner.19@example.org",
+    #                 "phones": [ { "kind": "MOBILE", "number": "+447700900119" } ],
+    #                 "addresses": [ { "kind": "HOME", "lines": ["Flat 10", "3 Mill Lane"], "city": "York",
+    #                                  "postcode": "YO1 7JU", "country": "GB" } ],
+    #                 "segment": "RETAIL", "status": "A", "createdAt": "2020-04-15T06:27:27Z",
+    #                 "prefs": { "lang": "en-GB", "mktEmail": "N", "mktSms": "Y" },
+    #                 "accountCount": 1,
+    #                 "accounts": [ { "sortCode": "81-74-88", "accountNo": "00190156", "product": "CURRENT",
+    #                                 "status": "OPEN", "balance": "1250.10", "currency": "GBP", "rate": 0.0 } ],
+    #                 "consents": [ { "purpose": "MARKETING", "granted": "N", "ts": "2023-12-23T09:02:45Z" } ],
+    #                 "tags": ["PAPERLESS"] },
+    #   "asOf": { "eventOffset": 88929946 } }
+    # (balance is text for this one seeded customer; every other v1 balance is a JSON number)
+    # Not found: 404 { "error": "NOT_FOUND" }
+    request:
+      method: GET
+      path: "/api/v1/customers/{{ key }}"
+      query:
+        expand: "accounts,consents"
+      headers:
+        Accept: application/json
+    select: "$.customer"
+    map: |
+      {
+        "customerId": id,
+        "givenName": firstName,
+        "familyName": lastName,
+        "birthDate": dob,
+        "email": email,
+        "phones": [phones.{"kind": kind, "number": number}],
+        "addresses": [addresses.{
+          "type": kind, "lines": [lines], "city": city, "postcode": postcode, "country": country
+        }],
+        "segment": segment,
+        "status": $lookup({"A": "ACTIVE", "S": "SUSPENDED", "C": "CLOSED"}, status),
+        "createdAt": createdAt,
+        "preferences": {
+          "language": prefs.lang,
+          "marketing": {"email": prefs.mktEmail = "Y", "sms": prefs.mktSms = "Y"}
+        },
+        "accounts": [accounts.{
+          "sortCode": sortCode, "accountNo": accountNo, "product": product, "status": status,
+          "balance": balance, "currency": currency, "interestRate": rate
+        }],
+        "consents": [consents.{"purpose": purpose, "granted": granted = "Y", "updatedAt": ts}],
+        "tags": [tags]
+      }
+    notFound:
+      status: [404]                            # customer-a declares 404 + not_found_body authoritative
+    truncation:
+      countPath: "$.customer.accountCount"
+      itemsPath: "$.customer.accounts"
+      cap: 50                                  # v1 returns at most 50 accounts per customer
+
+  b:
+    role: new
+    target: customer-b
+    # v2 response (abridged, same customer):
+    # { "data": { "customerId": "C00012019",
+    #             "profile": { "givenName": "Jonah", "familyName": "Garner", "birthDate": "1959-02-07" },
+    #             "contactPoints": [ { "channel": "EMAIL", "value": "jonah.garner.19@example.org" },
+    #                                { "channel": "PHONE", "use": "MOBILE", "value": "+447700900119" } ],
+    #             "addresses": [ { "use": "HOME", "line": ["Flat 10", "3 Mill Lane"], "city": "York",
+    #                              "postalCode": "YO1 7JU", "countryCode": "GB" } ],
+    #             "segment": "RETAIL", "lifecycleStatus": "ACTIVE", "createdAt": "2020-04-15T06:27:27Z",
+    #             "preferences": { "locale": "en-GB",
+    #                              "channels": { "email": { "marketing": false }, "sms": { "marketing": true } } },
+    #             "productCount": 1,
+    #             "products": [ { "account": { "sortCode": "81-74-88", "number": "00190156" },
+    #                             "productCode": "CURRENT", "state": "OPEN",
+    #                             "balance": { "amount": 1250.1, "currency": "GBP" }, "interestRate": 0.0 } ],
+    #             "consents": [ { "purpose": "MARKETING", "status": "WITHDRAWN",
+    #                             "updatedAt": "2023-12-23T09:02:45Z" } ],
+    #             "labels": ["PAPERLESS"] },
+    #   "meta": { "sourceOffset": 88929946, "requestId": "req-c00012019" } }
+    # Not found: 404 { "error": "NOT_FOUND" }
+    request:
+      method: GET
+      path: "/v2/customers/{{ key }}"
+      query:
+        include: [products, consents]
+      headers:
+        Accept: application/json
+    select: "$.data"
+    map: |
+      {
+        "customerId": customerId,
+        "givenName": profile.givenName,
+        "familyName": profile.familyName,
+        "birthDate": profile.birthDate,
+        "email": contactPoints[channel = "EMAIL"][0].value,
+        "phones": [contactPoints[channel = "PHONE"].{"kind": use, "number": value}],
+        "addresses": [addresses.{
+          "type": use, "lines": [line], "city": city, "postcode": postalCode, "country": countryCode
+        }],
+        "segment": segment,
+        "status": lifecycleStatus,
+        "createdAt": createdAt,
+        "preferences": {
+          "language": preferences.locale,
+          "marketing": {
+            "email": preferences.channels.email.marketing,
+            "sms": preferences.channels.sms.marketing
+          }
+        },
+        "accounts": [products.{
+          "sortCode": account.sortCode, "accountNo": account.number, "product": productCode,
+          "status": state, "balance": balance.amount, "currency": balance.currency,
+          "interestRate": interestRate
+        }],
+        "consents": [consents.{"purpose": purpose, "granted": status = "GRANTED", "updatedAt": updatedAt}],
+        "tags": [labels]
+      }
+    notFound:
+      status: [404]                            # customer-b declares 404 + not_found_body authoritative
+    truncation:
+      countPath: "$.data.productCount"
+      itemsPath: "$.data.products"
+      cap: 100                                 # v2 returns at most 100 products per customer
+
+compare:
+  arrays:
+    - path: "$.phones"
+      mode: keyed
+      key: [number]                            # E.164 after normalisation (key fields are normalised first)
+    - path: "$.addresses"
+      mode: keyed
+      key: [type]
+    - path: "$.addresses[*].lines"
+      mode: ordered                            # address lines are positional
+    - path: "$.accounts"
+      mode: keyed
+      key: [sortCode, accountNo]
+      severity: HIGH
+    - path: "$.consents"
+      mode: keyed
+      key: [purpose]
+      severity: HIGH
+    - path: "$.tags"
+      mode: set
+  fields:
+    - path: "$.givenName"
+      normalize: [nfkc, collapse_ws, trim]
+    - path: "$.familyName"
+      normalize: [nfkc, collapse_ws, trim]
+    - path: "$.email"
+      normalize: [trim, email_basic]
+    - path: "$.phones[*].number"
+      normalize:
+        - e164: {defaultRegion: GB}
+    - path: "$.phones[*].kind"
+      normalize: [trim, upper]
+    - path: "$.addresses[*].type"
+      normalize: [trim, upper]
+    - path: "$.addresses[*].lines[*]"
+      normalize: [nfkc, collapse_ws, trim]
+    - path: "$.addresses[*].postcode"
+      normalize: [trim, collapse_ws, upper]
+    - path: "$.addresses[*].country"
+      normalize: [trim, upper]
+    - path: "$.segment"
+      normalize: [trim, upper]
+    - path: "$.createdAt"
+      normalize:
+        - timestamp_utc: {precision: s, mode: truncate}
+    - path: "$.accounts[*].sortCode"
+      normalize: [digits_only]
+    - path: "$.accounts[*].balance"
+      normalize:
+        - decimal: {scale: 2}                  # text "1250.10" and number 1250.1 become one value,
+      compare: exact                           # converted by the normaliser, never coerced implicitly
+      severity: HIGH
+    - path: "$.accounts[*].interestRate"
+      normalize:
+        - decimal: {scale: 6}
+      compare:
+        tolerance: {abs: 0.000001, rel: 0.0001}
+      severity: MEDIUM
+    - path: "$.accounts[*].currency"
+      normalize: [trim, upper]
+    - path: "$.consents[*].purpose"
+      normalize: [trim, upper]
+    - path: "$.consents[*].granted"
+      compare: exact
+      severity: CRITICAL                       # a consent that differs changes what may be done
+    - path: "$.consents[*].updatedAt"
+      normalize:
+        - timestamp_utc: {precision: ms, mode: truncate}
+    - path: "$.tags[*]"
+      normalize: [trim, lower]
+  nullEqualsAbsent: false                      # absent != null
+
+knownDiffs:
+  - id: KD-CP-0001
+    when: "path == '$.segment' && a == 'PRIVATE' && b == 'WEALTH'"
+    classification: expected_by_design
+    reason: >-
+      v2 renamed the PRIVATE segment to WEALTH in the segmentation refresh; downstream reporting
+      maps both to the same value.
+    ticket: CUST-1042
+  - id: KD-CP-0002
+    when: "path == '$.preferences.marketing.sms' && change_type == 'missing_in_b'"
+    classification: bug
+    reason: >-
+      v2 omits the SMS marketing preference for customers without a mobile number instead of
+      returning false; fix scheduled for profile service 2.3.
+    ticket: CUST-1107
+
+recheck:
+  delay: 1s
+  times: 1
+  oneShot: {delay: 250ms, times: 1}
+  outcomes: [MISMATCH, NOT_FOUND_A, NOT_FOUND_B]  # INCONCLUSIVE keys keep their first reason
+
+execution:
+  concurrency: 2
+  delay: 10ms
+  timeouts: {connect: 2s, read: 5s, total: 10s}
+  retries:
+    max: 2
+    backoff: {initial: 50ms, max: 200ms, multiplier: 2}
+    retryOn: [connect_error, timeout, http_429, http_5xx]
+
+security:
+  unlisted: tokenize
+  tokenize:
+    - {path: "$.givenName", class: name}
+    - {path: "$.familyName", class: name}
+    - {path: "$.birthDate", class: date_of_birth}
+    - {path: "$.email", class: email}
+    - {path: "$.phones[*].number", class: phone}
+    - {path: "$.addresses[*].lines[*]", class: address}
+    - {path: "$.addresses[*].city", class: address}
+    - {path: "$.addresses[*].postcode", class: address}
+    - {path: "$.accounts[*].accountNo", class: account_number}
+  clear:
+    - "$.segment"
+    - "$.status"
+    - "$.createdAt"
+    - "$.phones[*].kind"
+    - "$.addresses[*].type"
+    - "$.addresses[*].country"
+    - "$.accounts[*].sortCode"
+    - "$.accounts[*].product"
+    - "$.accounts[*].status"
+    - "$.accounts[*].currency"
+    - "$.accounts[*].interestRate"
+    - "$.consents[*].purpose"
+    - "$.consents[*].granted"
+    - "$.consents[*].updatedAt"
+    - "$.preferences.language"
+    - "$.preferences.marketing.email"
+    - "$.preferences.marketing.sms"
+    - "$.tags[*]"

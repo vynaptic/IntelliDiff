@@ -1,0 +1,14 @@
+# The table demo on the compose stack: the app also gets the two demo databases' DSN secrets
+# (deploy/secrets/crm_legacy_dsn and platform_users_dsn, git-ignored; see README.md). In the
+# installation's folder, name it in .env after the site file (and any CA or source override), never in
+# an exported COMPOSE_FILE, which overrides .env (docs/mvp/DEPLOY.md):
+#   COMPOSE_FILE=deploy/docker-compose.yml:deploy/docker-compose.site.yml:examples/tables/compose.yaml
+# Paths are relative to deploy/, the directory of the first file.
+
+services:
+  app:
+    secrets: [crm_legacy_dsn, platform_users_dsn]
+
+secrets:
+  crm_legacy_dsn: {file: ./secrets/crm_legacy_dsn}
+  platform_users_dsn: {file: ./secrets/platform_users_dsn}

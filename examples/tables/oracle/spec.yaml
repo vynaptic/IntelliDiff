@@ -1,0 +1,47 @@
+# The Oracle acceptance kit: DS_KIT_A against DS_KIT_B, the two tables of seed.sql, in one schema.
+# Target: targets.yaml. Expected result: expected.json. Contract: docs/mvp/ENGINES.md.
+#
+# Every non-key column is compared. Both sides are Oracle, so the server hashes the columns both tables
+# declare alike and the worker the others (amount, doc); each differing key is then read per key and
+# rendered by the worker. `schema` names the tables' owner; without it the reading account's own schema,
+# or its synonyms, are searched.
+
+apiVersion: deltasleuth/v1
+kind: ComparisonSpec
+
+metadata:
+  name: acceptance-kit-oracle
+  version: "1.0.0"
+  owner: examples
+  description: The Oracle acceptance kit's two tables, every type DeltaSleuth reads on Oracle 19c.
+
+normalizerVersion: "1.1.0"
+
+key:
+  name: code
+  type: string
+  class: business_code                         # synthetic codes: shown in clear, to match expected.json
+
+sides:
+  a:
+    role: legacy
+    target: kit-oracle
+    table: {name: ds_kit_a, keyColumns: [code]}     # add `schema: KIT_OWNER` when the reader is another account
+  b:
+    role: new
+    target: kit-oracle
+    table: {name: ds_kit_b, keyColumns: [code]}
+
+compare: {}
+
+recheck:
+  delay: 0s
+  times: 1
+  outcomes: [MISMATCH, NOT_FOUND_A, NOT_FOUND_B]
+
+execution:
+  concurrency: 2
+  timeouts: {total: 30s}
+
+security:
+  unlisted: tokenize

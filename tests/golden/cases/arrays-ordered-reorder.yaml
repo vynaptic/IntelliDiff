@@ -1,0 +1,16 @@
+description: >
+  Ordered arrays (unruled, or ruled ordered) that hold the same members in another order give
+  one order_changed at the array, not a cascade of position diffs.
+compare:
+  arrays:
+    - {path: $.ranks, mode: ordered}
+a:
+  body: '{"steps": ["a", "b", "c"], "ranks": [1, 2]}'
+b:
+  body: '{"steps": ["c", "a", "b"], "ranks": [2, 1]}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/steps, $.steps, order_changed, null]
+    - [/ranks, $.ranks, order_changed, null]

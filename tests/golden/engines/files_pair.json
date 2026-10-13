@@ -1,0 +1,263 @@
+{
+ "csv": {
+  "schema": null,
+  "name": "customers",
+  "keys": [
+   "id"
+  ],
+  "key_maps": [
+   null
+  ],
+  "columns": {
+   "email": "email",
+   "balance": "balance",
+   "s": "s"
+  },
+  "where": "status = 'A' AND email LIKE 'a%'",
+  "types": {
+   "balance": {
+    "as": "decimal",
+    "decimalSeparator": ","
+   }
+  },
+  "digest": [
+   "balance",
+   "email",
+   "s"
+  ],
+  "engine": "files",
+  "server": "duckdb 1.5",
+  "consistency": "fixed",
+  "classes": {
+   "id": "integer",
+   "email": "text",
+   "balance": "text",
+   "s": "text",
+   "status": "text"
+  },
+  "declared": {
+   "id": "a CSV field as integer",
+   "email": "a CSV field",
+   "balance": "a CSV field",
+   "s": "a CSV field",
+   "status": "a CSV field"
+  },
+  "file": {
+   "path": "customers/*.csv",
+   "format": "csv",
+   "csv": {
+    "columns": [
+     "id",
+     "email",
+     "balance",
+     "status",
+     "s"
+    ],
+    "delimiter": "|",
+    "header": true,
+    "keys": {
+     "id": {
+      "as": "integer"
+     }
+    }
+   }
+  }
+ },
+ "parquet": {
+  "schema": null,
+  "name": "accounts",
+  "keys": [
+   "branch",
+   "no"
+  ],
+  "key_maps": [
+   null,
+   {
+    "kind": "prefix_pad",
+    "prefix": "A-",
+    "width": 6,
+    "sideType": "integer"
+   }
+  ],
+  "columns": {
+   "amount": "amount",
+   "raw": "raw",
+   "seen": "seen"
+  },
+  "where": "amount BETWEEN 1 AND 2.5 OR seen > '2024-01-01 00:00:00'",
+  "types": {},
+  "digest": [
+   "amount",
+   "raw",
+   "seen"
+  ],
+  "strata": {
+   "region": "branch"
+  },
+  "engine": "files",
+  "server": "duckdb 1.5",
+  "consistency": "fixed",
+  "classes": {
+   "branch": "text",
+   "no": "integer",
+   "amount": "decimal",
+   "raw": "bytes",
+   "seen": "instant"
+  },
+  "declared": {
+   "branch": "VARCHAR",
+   "no": "BIGINT",
+   "amount": "DECIMAL(10,2)",
+   "raw": "BLOB",
+   "seen": "TIMESTAMP WITH TIME ZONE"
+  },
+  "file": {
+   "path": "dt=*/part.parquet",
+   "format": "parquet",
+   "partitions": [
+    "dt"
+   ]
+  }
+ },
+ "sent": {
+  "csv": {
+   "rows": [
+    "SELECT a.i, t.\"email\", t.\"balance\", t.\"s\", CASE WHEN regexp_full_match(t.\"id\", '-?[0-9]{1,38}') THEN CAST(TRY_CAST(t.\"id\" AS DECIMAL(38,0)) AS VARCHAR) END, ((t.\"status\" = $v0 AND t.\"email\" LIKE $v1 ESCAPE '\\')) IS TRUE FROM (SELECT * FROM read_csv($r_files, auto_detect=false, columns=$r_columns, header=$r_header, skip=$r_skip, delim=$r_delim, new_line=$r_new_line, quote=$r_quote, escape=$r_escape, encoding=$r_encoding, compression=$r_compression, nullstr=$r_null, allow_quoted_nulls=false, null_padding=$r_padding, union_by_name=false, filename=false, max_line_size=2097152, ignore_errors=$r_errors, parallel=$r_parallel, hive_partitioning=$r_hive) WHERE (\"id\" IS NULL OR \"id\" IS NOT NULL) AND (\"email\" IS NULL OR \"email\" IS NOT NULL) AND (\"balance\" IS NULL OR \"balance\" IS NOT NULL) AND (\"status\" IS NULL OR \"status\" IS NOT NULL) AND (\"s\" IS NULL OR \"s\" IS NOT NULL)) AS t JOIN (VALUES (0, $v2)) AS a(i, k0) ON encode(CASE WHEN regexp_full_match(t.\"id\", '-?[0-9]{1,38}') THEN CAST(TRY_CAST(t.\"id\" AS DECIMAL(38,0)) AS VARCHAR) END) = a.k0 QUALIFY row_number() OVER (PARTITION BY a.i ORDER BY ((t.\"status\" = $v0 AND t.\"email\" LIKE $v1 ESCAPE '\\')) IS TRUE DESC) <= 2 ORDER BY a.i, 6 DESC",
+    [
+     "v0",
+     "v1",
+     "v2"
+    ]
+   ],
+   "scan": [
+    "SELECT CASE WHEN regexp_full_match(t.\"id\", '-?[0-9]{1,38}') THEN CAST(TRY_CAST(t.\"id\" AS DECIMAL(38,0)) AS VARCHAR) END, t.\"balance\", t.\"email\", t.\"s\" FROM (SELECT * FROM read_csv($r_files, auto_detect=false, columns=$r_columns, header=$r_header, skip=$r_skip, delim=$r_delim, new_line=$r_new_line, quote=$r_quote, escape=$r_escape, encoding=$r_encoding, compression=$r_compression, nullstr=$r_null, allow_quoted_nulls=false, null_padding=$r_padding, union_by_name=false, filename=false, max_line_size=2097152, ignore_errors=$r_errors, parallel=$r_parallel, hive_partitioning=$r_hive) WHERE (\"id\" IS NULL OR \"id\" IS NOT NULL) AND (\"email\" IS NULL OR \"email\" IS NOT NULL) AND (\"balance\" IS NULL OR \"balance\" IS NOT NULL) AND (\"status\" IS NULL OR \"status\" IS NOT NULL) AND (\"s\" IS NULL OR \"s\" IS NOT NULL)) AS t WHERE CASE WHEN regexp_full_match(t.\"id\", '-?[0-9]{1,38}') THEN CAST(TRY_CAST(t.\"id\" AS DECIMAL(38,0)) AS VARCHAR) END IS NOT NULL AND (t.\"status\" = $v0 AND t.\"email\" LIKE $v1 ESCAPE '\\') ORDER BY encode(CASE WHEN regexp_full_match(t.\"id\", '-?[0-9]{1,38}') THEN CAST(TRY_CAST(t.\"id\" AS DECIMAL(38,0)) AS VARCHAR) END)",
+    [
+     "v0",
+     "v1"
+    ]
+   ],
+   "scan_after": [
+    "SELECT CASE WHEN regexp_full_match(t.\"id\", '-?[0-9]{1,38}') THEN CAST(TRY_CAST(t.\"id\" AS DECIMAL(38,0)) AS VARCHAR) END, t.\"balance\", t.\"email\", t.\"s\" FROM (SELECT * FROM read_csv($r_files, auto_detect=false, columns=$r_columns, header=$r_header, skip=$r_skip, delim=$r_delim, new_line=$r_new_line, quote=$r_quote, escape=$r_escape, encoding=$r_encoding, compression=$r_compression, nullstr=$r_null, allow_quoted_nulls=false, null_padding=$r_padding, union_by_name=false, filename=false, max_line_size=2097152, ignore_errors=$r_errors, parallel=$r_parallel, hive_partitioning=$r_hive) WHERE (\"id\" IS NULL OR \"id\" IS NOT NULL) AND (\"email\" IS NULL OR \"email\" IS NOT NULL) AND (\"balance\" IS NULL OR \"balance\" IS NOT NULL) AND (\"status\" IS NULL OR \"status\" IS NOT NULL) AND (\"s\" IS NULL OR \"s\" IS NOT NULL)) AS t WHERE CASE WHEN regexp_full_match(t.\"id\", '-?[0-9]{1,38}') THEN CAST(TRY_CAST(t.\"id\" AS DECIMAL(38,0)) AS VARCHAR) END IS NOT NULL AND (t.\"status\" = $v0 AND t.\"email\" LIKE $v1 ESCAPE '\\') AND ((encode(CASE WHEN regexp_full_match(t.\"id\", '-?[0-9]{1,38}') THEN CAST(TRY_CAST(t.\"id\" AS DECIMAL(38,0)) AS VARCHAR) END) > $v2)) ORDER BY encode(CASE WHEN regexp_full_match(t.\"id\", '-?[0-9]{1,38}') THEN CAST(TRY_CAST(t.\"id\" AS DECIMAL(38,0)) AS VARCHAR) END)",
+    [
+     "v0",
+     "v1",
+     "v2"
+    ]
+   ],
+   "census": [
+    "SELECT CASE WHEN regexp_full_match(t.\"id\", '-?[0-9]{1,38}') THEN CAST(TRY_CAST(t.\"id\" AS DECIMAL(38,0)) AS VARCHAR) END FROM (SELECT * FROM read_csv($r_files, auto_detect=false, columns=$r_columns, header=$r_header, skip=$r_skip, delim=$r_delim, new_line=$r_new_line, quote=$r_quote, escape=$r_escape, encoding=$r_encoding, compression=$r_compression, nullstr=$r_null, allow_quoted_nulls=false, null_padding=$r_padding, union_by_name=false, filename=false, max_line_size=2097152, ignore_errors=$r_errors, parallel=$r_parallel, hive_partitioning=$r_hive) WHERE (\"id\" IS NULL OR \"id\" IS NOT NULL) AND (\"email\" IS NULL OR \"email\" IS NOT NULL) AND (\"balance\" IS NULL OR \"balance\" IS NOT NULL) AND (\"status\" IS NULL OR \"status\" IS NOT NULL) AND (\"s\" IS NULL OR \"s\" IS NOT NULL)) AS t WHERE CASE WHEN regexp_full_match(t.\"id\", '-?[0-9]{1,38}') THEN CAST(TRY_CAST(t.\"id\" AS DECIMAL(38,0)) AS VARCHAR) END IS NOT NULL AND (t.\"status\" = $v0 AND t.\"email\" LIKE $v1 ESCAPE '\\') ORDER BY encode(CASE WHEN regexp_full_match(t.\"id\", '-?[0-9]{1,38}') THEN CAST(TRY_CAST(t.\"id\" AS DECIMAL(38,0)) AS VARCHAR) END)",
+    [
+     "v0",
+     "v1"
+    ]
+   ],
+   "frame": [
+    "",
+    []
+   ],
+   "null_keys": [
+    "SELECT COUNT(*) FROM (SELECT * FROM read_csv($r_files, auto_detect=false, columns=$r_columns, header=$r_header, skip=$r_skip, delim=$r_delim, new_line=$r_new_line, quote=$r_quote, escape=$r_escape, encoding=$r_encoding, compression=$r_compression, nullstr=$r_null, allow_quoted_nulls=false, null_padding=$r_padding, union_by_name=false, filename=false, max_line_size=2097152, ignore_errors=$r_errors, parallel=$r_parallel, hive_partitioning=$r_hive) WHERE (\"id\" IS NULL OR \"id\" IS NOT NULL) AND (\"email\" IS NULL OR \"email\" IS NOT NULL) AND (\"balance\" IS NULL OR \"balance\" IS NOT NULL) AND (\"status\" IS NULL OR \"status\" IS NOT NULL) AND (\"s\" IS NULL OR \"s\" IS NOT NULL)) AS t WHERE (CASE WHEN regexp_full_match(t.\"id\", '-?[0-9]{1,38}') THEN CAST(TRY_CAST(t.\"id\" AS DECIMAL(38,0)) AS VARCHAR) END IS NULL) AND (t.\"status\" = $v0 AND t.\"email\" LIKE $v1 ESCAPE '\\')",
+    [
+     "v0",
+     "v1"
+    ]
+   ],
+   "probe": [
+    "SELECT CASE WHEN regexp_full_match(t.\"id\", '-?[0-9]{1,38}') THEN CAST(TRY_CAST(t.\"id\" AS DECIMAL(38,0)) AS VARCHAR) END, t.\"email\", t.\"balance\", t.\"s\" FROM (SELECT * FROM read_csv($r_files, auto_detect=false, columns=$r_columns, header=$r_header, skip=$r_skip, delim=$r_delim, new_line=$r_new_line, quote=$r_quote, escape=$r_escape, encoding=$r_encoding, compression=$r_compression, nullstr=$r_null, allow_quoted_nulls=false, null_padding=$r_padding, union_by_name=false, filename=false, max_line_size=2097152, ignore_errors=$r_errors, parallel=$r_parallel, hive_partitioning=$r_hive) WHERE (\"id\" IS NULL OR \"id\" IS NOT NULL) AND (\"email\" IS NULL OR \"email\" IS NOT NULL) AND (\"balance\" IS NULL OR \"balance\" IS NOT NULL) AND (\"status\" IS NULL OR \"status\" IS NOT NULL) AND (\"s\" IS NULL OR \"s\" IS NOT NULL)) AS t WHERE CASE WHEN regexp_full_match(t.\"id\", '-?[0-9]{1,38}') THEN CAST(TRY_CAST(t.\"id\" AS DECIMAL(38,0)) AS VARCHAR) END IS NOT NULL AND (t.\"status\" = $v0 AND t.\"email\" LIKE $v1 ESCAPE '\\') LIMIT 0",
+    [
+     "v0",
+     "v1"
+    ]
+   ]
+  },
+  "parquet": {
+   "rows": [
+    "SELECT a.i, CAST(t.\"amount\" AS VARCHAR), CASE WHEN (coalesce(octet_length(t.\"raw\"), 0) > 16777216) THEN NULL ELSE t.\"raw\" END, replace(CAST(make_timestamp(epoch_us(t.\"seen\")) AS VARCHAR), ' ', 'T'), CASE WHEN (coalesce(octet_length(t.\"raw\"), 0) > 16777216) THEN 1 ELSE 0 END, t.\"branch\", CASE WHEN regexp_full_match(CAST(t.\"no\" AS VARCHAR), '[0-9]+') THEN $v0 || lpad(CAST(t.\"no\" AS VARCHAR), CAST(greatest(6, length(CAST(t.\"no\" AS VARCHAR))) AS INTEGER), '0') END, ((t.\"amount\" BETWEEN $v1 AND $v2 OR t.\"seen\" > CAST($v3 AS TIMESTAMPTZ))) IS TRUE FROM read_parquet($r_files, union_by_name=false, filename=false, binary_as_string=$r_binary, hive_partitioning=$r_hive, hive_types=$r_types) AS t JOIN (VALUES (0, $v4, $v5), (1, $v6, $v7)) AS a(i, k0, k1) ON encode(t.\"branch\") = a.k0 AND encode(CASE WHEN regexp_full_match(CAST(t.\"no\" AS VARCHAR), '[0-9]+') THEN $v0 || lpad(CAST(t.\"no\" AS VARCHAR), CAST(greatest(6, length(CAST(t.\"no\" AS VARCHAR))) AS INTEGER), '0') END) = a.k1 QUALIFY row_number() OVER (PARTITION BY a.i ORDER BY ((t.\"amount\" BETWEEN $v1 AND $v2 OR t.\"seen\" > CAST($v3 AS TIMESTAMPTZ))) IS TRUE DESC) <= 2 ORDER BY a.i, 8 DESC",
+    [
+     "v0",
+     "v1",
+     "v2",
+     "v3",
+     "v4",
+     "v5",
+     "v6",
+     "v7"
+    ]
+   ],
+   "scan": [
+    "SELECT t.\"branch\", CASE WHEN regexp_full_match(CAST(t.\"no\" AS VARCHAR), '[0-9]+') THEN $v0 || lpad(CAST(t.\"no\" AS VARCHAR), CAST(greatest(6, length(CAST(t.\"no\" AS VARCHAR))) AS INTEGER), '0') END, CAST(t.\"amount\" AS VARCHAR), CASE WHEN (coalesce(octet_length(t.\"raw\"), 0) > 16777216) THEN NULL ELSE t.\"raw\" END, replace(CAST(make_timestamp(epoch_us(t.\"seen\")) AS VARCHAR), ' ', 'T'), CASE WHEN (coalesce(octet_length(t.\"raw\"), 0) > 16777216) THEN 1 ELSE 0 END FROM read_parquet($r_files, union_by_name=false, filename=false, binary_as_string=$r_binary, hive_partitioning=$r_hive, hive_types=$r_types) AS t WHERE t.\"branch\" IS NOT NULL AND CASE WHEN regexp_full_match(CAST(t.\"no\" AS VARCHAR), '[0-9]+') THEN $v0 || lpad(CAST(t.\"no\" AS VARCHAR), CAST(greatest(6, length(CAST(t.\"no\" AS VARCHAR))) AS INTEGER), '0') END IS NOT NULL AND (t.\"amount\" BETWEEN $v1 AND $v2 OR t.\"seen\" > CAST($v3 AS TIMESTAMPTZ)) ORDER BY encode(t.\"branch\"), encode(CASE WHEN regexp_full_match(CAST(t.\"no\" AS VARCHAR), '[0-9]+') THEN $v0 || lpad(CAST(t.\"no\" AS VARCHAR), CAST(greatest(6, length(CAST(t.\"no\" AS VARCHAR))) AS INTEGER), '0') END)",
+    [
+     "v0",
+     "v1",
+     "v2",
+     "v3"
+    ]
+   ],
+   "scan_after": [
+    "SELECT t.\"branch\", CASE WHEN regexp_full_match(CAST(t.\"no\" AS VARCHAR), '[0-9]+') THEN $v0 || lpad(CAST(t.\"no\" AS VARCHAR), CAST(greatest(6, length(CAST(t.\"no\" AS VARCHAR))) AS INTEGER), '0') END, CAST(t.\"amount\" AS VARCHAR), CASE WHEN (coalesce(octet_length(t.\"raw\"), 0) > 16777216) THEN NULL ELSE t.\"raw\" END, replace(CAST(make_timestamp(epoch_us(t.\"seen\")) AS VARCHAR), ' ', 'T'), CASE WHEN (coalesce(octet_length(t.\"raw\"), 0) > 16777216) THEN 1 ELSE 0 END FROM read_parquet($r_files, union_by_name=false, filename=false, binary_as_string=$r_binary, hive_partitioning=$r_hive, hive_types=$r_types) AS t WHERE t.\"branch\" IS NOT NULL AND CASE WHEN regexp_full_match(CAST(t.\"no\" AS VARCHAR), '[0-9]+') THEN $v0 || lpad(CAST(t.\"no\" AS VARCHAR), CAST(greatest(6, length(CAST(t.\"no\" AS VARCHAR))) AS INTEGER), '0') END IS NOT NULL AND (t.\"amount\" BETWEEN $v1 AND $v2 OR t.\"seen\" > CAST($v3 AS TIMESTAMPTZ)) AND ((encode(t.\"branch\") > $v4) OR (encode(t.\"branch\") = $v4 AND encode(CASE WHEN regexp_full_match(CAST(t.\"no\" AS VARCHAR), '[0-9]+') THEN $v0 || lpad(CAST(t.\"no\" AS VARCHAR), CAST(greatest(6, length(CAST(t.\"no\" AS VARCHAR))) AS INTEGER), '0') END) > $v5)) ORDER BY encode(t.\"branch\"), encode(CASE WHEN regexp_full_match(CAST(t.\"no\" AS VARCHAR), '[0-9]+') THEN $v0 || lpad(CAST(t.\"no\" AS VARCHAR), CAST(greatest(6, length(CAST(t.\"no\" AS VARCHAR))) AS INTEGER), '0') END)",
+    [
+     "v0",
+     "v1",
+     "v2",
+     "v3",
+     "v4",
+     "v5"
+    ]
+   ],
+   "census": [
+    "SELECT t.\"branch\", CASE WHEN regexp_full_match(CAST(t.\"no\" AS VARCHAR), '[0-9]+') THEN $v0 || lpad(CAST(t.\"no\" AS VARCHAR), CAST(greatest(6, length(CAST(t.\"no\" AS VARCHAR))) AS INTEGER), '0') END FROM read_parquet($r_files, union_by_name=false, filename=false, binary_as_string=$r_binary, hive_partitioning=$r_hive, hive_types=$r_types) AS t WHERE t.\"branch\" IS NOT NULL AND CASE WHEN regexp_full_match(CAST(t.\"no\" AS VARCHAR), '[0-9]+') THEN $v0 || lpad(CAST(t.\"no\" AS VARCHAR), CAST(greatest(6, length(CAST(t.\"no\" AS VARCHAR))) AS INTEGER), '0') END IS NOT NULL AND (t.\"amount\" BETWEEN $v1 AND $v2 OR t.\"seen\" > CAST($v3 AS TIMESTAMPTZ)) ORDER BY encode(t.\"branch\"), encode(CASE WHEN regexp_full_match(CAST(t.\"no\" AS VARCHAR), '[0-9]+') THEN $v0 || lpad(CAST(t.\"no\" AS VARCHAR), CAST(greatest(6, length(CAST(t.\"no\" AS VARCHAR))) AS INTEGER), '0') END)",
+    [
+     "v0",
+     "v1",
+     "v2",
+     "v3"
+    ]
+   ],
+   "frame": [
+    "SELECT t.\"branch\", CASE WHEN regexp_full_match(CAST(t.\"no\" AS VARCHAR), '[0-9]+') THEN $v0 || lpad(CAST(t.\"no\" AS VARCHAR), CAST(greatest(6, length(CAST(t.\"no\" AS VARCHAR))) AS INTEGER), '0') END, t.\"branch\" FROM read_parquet($r_files, union_by_name=false, filename=false, binary_as_string=$r_binary, hive_partitioning=$r_hive, hive_types=$r_types) AS t WHERE t.\"branch\" IS NOT NULL AND CASE WHEN regexp_full_match(CAST(t.\"no\" AS VARCHAR), '[0-9]+') THEN $v0 || lpad(CAST(t.\"no\" AS VARCHAR), CAST(greatest(6, length(CAST(t.\"no\" AS VARCHAR))) AS INTEGER), '0') END IS NOT NULL AND (t.\"amount\" BETWEEN $v1 AND $v2 OR t.\"seen\" > CAST($v3 AS TIMESTAMPTZ)) ORDER BY encode(t.\"branch\"), encode(CASE WHEN regexp_full_match(CAST(t.\"no\" AS VARCHAR), '[0-9]+') THEN $v0 || lpad(CAST(t.\"no\" AS VARCHAR), CAST(greatest(6, length(CAST(t.\"no\" AS VARCHAR))) AS INTEGER), '0') END), encode(t.\"branch\")",
+    [
+     "v0",
+     "v1",
+     "v2",
+     "v3"
+    ]
+   ],
+   "null_keys": [
+    "SELECT COUNT(*) FROM read_parquet($r_files, union_by_name=false, filename=false, binary_as_string=$r_binary, hive_partitioning=$r_hive, hive_types=$r_types) AS t WHERE (t.\"branch\" IS NULL OR CASE WHEN regexp_full_match(CAST(t.\"no\" AS VARCHAR), '[0-9]+') THEN $v0 || lpad(CAST(t.\"no\" AS VARCHAR), CAST(greatest(6, length(CAST(t.\"no\" AS VARCHAR))) AS INTEGER), '0') END IS NULL) AND (t.\"amount\" BETWEEN $v1 AND $v2 OR t.\"seen\" > CAST($v3 AS TIMESTAMPTZ))",
+    [
+     "v0",
+     "v1",
+     "v2",
+     "v3"
+    ]
+   ],
+   "probe": [
+    "SELECT t.\"branch\", CASE WHEN regexp_full_match(CAST(t.\"no\" AS VARCHAR), '[0-9]+') THEN $v0 || lpad(CAST(t.\"no\" AS VARCHAR), CAST(greatest(6, length(CAST(t.\"no\" AS VARCHAR))) AS INTEGER), '0') END, CAST(t.\"amount\" AS VARCHAR), CASE WHEN (coalesce(octet_length(t.\"raw\"), 0) > 16777216) THEN NULL ELSE t.\"raw\" END, replace(CAST(make_timestamp(epoch_us(t.\"seen\")) AS VARCHAR), ' ', 'T'), CASE WHEN (coalesce(octet_length(t.\"raw\"), 0) > 16777216) THEN 1 ELSE 0 END, t.\"branch\" FROM read_parquet($r_files, union_by_name=false, filename=false, binary_as_string=$r_binary, hive_partitioning=$r_hive, hive_types=$r_types) AS t WHERE t.\"branch\" IS NOT NULL AND CASE WHEN regexp_full_match(CAST(t.\"no\" AS VARCHAR), '[0-9]+') THEN $v0 || lpad(CAST(t.\"no\" AS VARCHAR), CAST(greatest(6, length(CAST(t.\"no\" AS VARCHAR))) AS INTEGER), '0') END IS NOT NULL AND (t.\"amount\" BETWEEN $v1 AND $v2 OR t.\"seen\" > CAST($v3 AS TIMESTAMPTZ)) LIMIT 0",
+    [
+     "v0",
+     "v1",
+     "v2",
+     "v3"
+    ]
+   ]
+  },
+  "hashed": {
+   "csv": [
+    "SELECT CASE WHEN regexp_full_match(t.\"id\", '-?[0-9]{1,38}') THEN CAST(TRY_CAST(t.\"id\" AS DECIMAL(38,0)) AS VARCHAR) END, unhex(sha256(concat(coalesce(sha256(t.\"email\"), '-'), coalesce(sha256(t.\"s\"), '-')))), t.\"balance\" FROM (SELECT * FROM read_csv($r_files, auto_detect=false, columns=$r_columns, header=$r_header, skip=$r_skip, delim=$r_delim, new_line=$r_new_line, quote=$r_quote, escape=$r_escape, encoding=$r_encoding, compression=$r_compression, nullstr=$r_null, allow_quoted_nulls=false, null_padding=$r_padding, union_by_name=false, filename=false, max_line_size=2097152, ignore_errors=$r_errors, parallel=$r_parallel, hive_partitioning=$r_hive) WHERE (\"id\" IS NULL OR \"id\" IS NOT NULL) AND (\"email\" IS NULL OR \"email\" IS NOT NULL) AND (\"balance\" IS NULL OR \"balance\" IS NOT NULL) AND (\"status\" IS NULL OR \"status\" IS NOT NULL) AND (\"s\" IS NULL OR \"s\" IS NOT NULL)) AS t WHERE CASE WHEN regexp_full_match(t.\"id\", '-?[0-9]{1,38}') THEN CAST(TRY_CAST(t.\"id\" AS DECIMAL(38,0)) AS VARCHAR) END IS NOT NULL AND (t.\"status\" = $v0 AND t.\"email\" LIKE $v1 ESCAPE '\\') ORDER BY encode(CASE WHEN regexp_full_match(t.\"id\", '-?[0-9]{1,38}') THEN CAST(TRY_CAST(t.\"id\" AS DECIMAL(38,0)) AS VARCHAR) END)",
+    [
+     "v0",
+     "v1"
+    ]
+   ],
+   "parquet": [
+    "SELECT t.\"branch\", CASE WHEN regexp_full_match(CAST(t.\"no\" AS VARCHAR), '[0-9]+') THEN $v0 || lpad(CAST(t.\"no\" AS VARCHAR), CAST(greatest(6, length(CAST(t.\"no\" AS VARCHAR))) AS INTEGER), '0') END, unhex(sha256(concat(coalesce(sha256(CAST(t.\"amount\" AS VARCHAR)), '-'), coalesce(sha256('\\x' || lower(hex(t.\"raw\"))), '-'), coalesce(sha256(replace(CAST(make_timestamp(epoch_us(t.\"seen\")) AS VARCHAR), ' ', 'T')), '-')))) FROM read_parquet($r_files, union_by_name=false, filename=false, binary_as_string=$r_binary, hive_partitioning=$r_hive, hive_types=$r_types) AS t WHERE t.\"branch\" IS NOT NULL AND CASE WHEN regexp_full_match(CAST(t.\"no\" AS VARCHAR), '[0-9]+') THEN $v0 || lpad(CAST(t.\"no\" AS VARCHAR), CAST(greatest(6, length(CAST(t.\"no\" AS VARCHAR))) AS INTEGER), '0') END IS NOT NULL AND (t.\"amount\" BETWEEN $v1 AND $v2 OR t.\"seen\" > CAST($v3 AS TIMESTAMPTZ)) ORDER BY encode(t.\"branch\"), encode(CASE WHEN regexp_full_match(CAST(t.\"no\" AS VARCHAR), '[0-9]+') THEN $v0 || lpad(CAST(t.\"no\" AS VARCHAR), CAST(greatest(6, length(CAST(t.\"no\" AS VARCHAR))) AS INTEGER), '0') END)",
+    [
+     "v0",
+     "v1",
+     "v2",
+     "v3"
+    ]
+   ]
+  }
+ }
+}

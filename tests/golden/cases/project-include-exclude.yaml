@@ -1,0 +1,21 @@
+description: include narrows to the listed paths; exclude then removes volatile fields.
+compare:
+  include: [$.customer]
+  exclude: [$.customer.updatedAt, "$.customer.addresses[*].internalId"]
+  arrays:
+    - {path: $.customer.addresses, mode: keyed, key: [kind]}
+a:
+  body: |
+    {"customer": {"name": "A", "updatedAt": "t1",
+                  "addresses": [{"kind": "home", "line": "x", "internalId": 1}]},
+     "meta": {"v": 1}}
+b:
+  body: |
+    {"customer": {"name": "B", "updatedAt": "t2",
+                  "addresses": [{"kind": "home", "line": "x", "internalId": 2}]},
+     "meta": {"v": 2}}
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/customer/name, $.customer.name, value_changed, null]

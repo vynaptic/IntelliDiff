@@ -1,0 +1,18 @@
+description: >
+  decimal{scale, rounding} reads numeric strings and numbers as a quantized Decimal, so
+  "12.5" and 12.50 compare equal (the raw type change is INFO); non-numeric text is unchanged.
+compare:
+  fields:
+    - {path: $.amount, normalize: [{decimal: {scale: 2}}]}
+    - {path: $.rounded, normalize: [{decimal: {scale: 0, rounding: half_up}}]}
+    - {path: $.text, normalize: [{decimal: {scale: 2}}]}
+a:
+  body: '{"amount": "12.5", "rounded": 2.5, "text": "n/a"}'
+b:
+  body: '{"amount": 12.50, "rounded": 3, "text": "n/a"}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/amount, $.amount, type_changed, NORMALIZATION_ONLY]
+    - [/rounded, $.rounded, value_changed, NORMALIZATION_ONLY]

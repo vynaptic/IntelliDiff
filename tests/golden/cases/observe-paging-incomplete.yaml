@@ -1,0 +1,12 @@
+description: max_pages stopping before EOF is truncated; an item repeated across pages is unstable_pagination.
+a:
+  body: '{"items": [1]}'
+  pages: 5
+  pages_eof: false
+b:
+  body: '{"items": [1]}'
+  pages: 2
+  pagination_unstable: true
+expect:
+  a: INCOMPLETE truncated
+  b: INCOMPLETE unstable_pagination

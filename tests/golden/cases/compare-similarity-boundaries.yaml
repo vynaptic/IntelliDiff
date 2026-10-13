@@ -1,0 +1,31 @@
+description: >
+  The similarity threshold is inclusive: a score exactly equal to it is accepted (reported at
+  INFO), for every method. Scores here are exact: Indel ratio 3/4 ('abcd' vs 'abce'), sorted-word
+  Indel ratio 4/5 ('ab cd' vs 'ab ce'), Jaro-Winkler 0.84 ('aa' vs 'aaaaa') and 13/18 ('aaaa' vs
+  'baa', a score that scaling to 100 and back would round below itself).
+compare:
+  fields:
+    - {path: $.lev, compare: {similarity: {threshold: 0.75, method: levenshtein_ratio}}}
+    - {path: $.lev_above, compare: {similarity: {threshold: 0.76, method: levenshtein_ratio}}}
+    - {path: $.tok, compare: {similarity: {threshold: 0.8, method: token_set}}}
+    - {path: $.tok_above, compare: {similarity: {threshold: 0.81, method: token_set}}}
+    - {path: $.jw, compare: {similarity: {threshold: 0.84, method: jaro_winkler}}}
+    - {path: $.jw_last_bit, compare: {similarity: {threshold: 0.7222222222222222, method: jaro_winkler}}}
+a:
+  body: >
+    {"lev": "abcd", "lev_above": "abcd", "tok": "ab cd", "tok_above": "ab cd", "jw": "aa",
+     "jw_last_bit": "aaaa"}
+b:
+  body: >
+    {"lev": "abce", "lev_above": "abce", "tok": "ab ce", "tok_above": "ab ce", "jw": "aaaaa",
+     "jw_last_bit": "baa"}
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/lev, $.lev, value_changed, NORMALIZATION_ONLY]
+    - [/lev_above, $.lev_above, value_changed, null]
+    - [/tok, $.tok, value_changed, NORMALIZATION_ONLY]
+    - [/tok_above, $.tok_above, value_changed, null]
+    - [/jw, $.jw, value_changed, NORMALIZATION_ONLY]
+    - [/jw_last_bit, $.jw_last_bit, value_changed, NORMALIZATION_ONLY]

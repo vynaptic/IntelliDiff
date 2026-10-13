@@ -1,0 +1,11 @@
+description: >
+  A string cut inside a UTF-16 surrogate pair ("\ud83d" alone) is not Unicode text and has no
+  canonical form: the side is INCOMPLETE unparseable (never an exception that aborts the run). A
+  complete pair is ordinary text.
+a:
+  body: '{"firstName": "Rosa\ud83d"}'
+b:
+  body: '{"firstName": "Rosa😀"}'
+expect:
+  a: INCOMPLETE unparseable
+  b: COMPLETE

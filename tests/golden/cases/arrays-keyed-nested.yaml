@@ -1,0 +1,23 @@
+description: Keyed arrays nested in keyed members; findings carry the innermost member context.
+compare:
+  arrays:
+    - {path: $.members, mode: keyed, key: [id]}
+    - {path: "$.members[*].accounts", mode: keyed, key: ["no"]}
+a:
+  body: |
+    {"members": [{"id": "M1", "accounts": [{"no": "1", "bal": 1}, {"no": "2", "bal": 2}]},
+                 {"id": "M2", "accounts": []}]}
+b:
+  body: |
+    {"members": [{"id": "M1", "accounts": [{"no": "3", "bal": 1}, {"no": "2", "bal": 3}]}]}
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - finding: [/members/M1/accounts/1, "$.members[*].accounts[*]", missing_in_b, null]
+      member_key: "1"
+      array_path: "$.members[*].accounts"
+    - [/members/M1/accounts/2/bal, "$.members[*].accounts[*].bal", value_changed, null]
+    - [/members/M1/accounts/3, "$.members[*].accounts[*]", extra_in_b, null]
+    - finding: [/members/M2, "$.members[*]", missing_in_b, null]
+      array_path: $.members

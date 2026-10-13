@@ -1,0 +1,460 @@
+# DeltaSleuth ComparisonSpec: Customer Profile Service v1 (a) vs Customer Profile Service v2 (b).
+# Validates against docs/architecture/spec.schema.json.
+#
+# A generic REST-vs-REST parity check with no domain pack: nothing here is specific to entity linking
+# or graphs. It compares nested objects and keyed, composite-keyed, ordered and set
+# arrays in the default tree mode. The spec was drafted by ds-profiler from dry-run and calibration
+# samples and approved by a human; inferredSchema pins the approved annotated schema.
+#
+# All hosts, ids, names and values below are fictional. Targets come from ds.targets and credentials
+# from targets.auth_ref -> ds.secrets_ref (never inline):
+#   customer-profile-v1  -> https://customers-v1.retailbank.example  (side a, legacy monolith, /api/v1)
+#   customer-profile-v2  -> https://customers.retailbank.example     (side b, new microservice, /v2)
+#
+# Both services are read models of the same customer event stream and report the stream offset they
+# reflect, so time.mode is shared_watermark: a pair is compared only when both report the same offset,
+# and a run with exhaustive key inventories can be claimed certified.
+#
+# Canonical document (tree mode; both maps produce this shape):
+#   { customerId, givenName, familyName, birthDate, email, phones[{kind, number}],
+#     addresses[{type, lines[], city, postcode, country}], segment, status, createdAt,
+#     preferences{language, marketing{email, sms}},
+#     accounts[{sortCode, accountNo, product, status, balance, currency, interestRate}],
+#     consents[{purpose, granted, updatedAt}], tags[] }
+
+apiVersion: deltasleuth/v1
+kind: ComparisonSpec
+
+metadata:
+  name: customer-profile-v1-vs-v2
+  version: "1.0.0"
+  owner: customer-platform-migration
+  description: >-
+    Field-level parity of customer profiles between the legacy v1 profile API and the v2 profile
+    microservice before cut-over: personal details, contact points, addresses, accounts, consents,
+    preferences and tags, including nested objects and keyed arrays.
+
+normalizerVersion: "1.0.0"                     # pinned normalizer library; part of content_hash
+
+canonical:
+  mode: tree                                   # the default: plain JSON trees, no graph projection
+
+time:
+  mode: shared_watermark                       # compare only pairs that reflect the same stream offset
+  watermark:
+    a: "$.asOf.eventOffset"                    # raw-response paths (before select/map)
+    b: "$.meta.sourceOffset"
+    kind: integer                              # offsets in the same customer event stream: must be equal; a pair
+                                               # still unequal after the recheck is DRIFT(watermark_mismatch)
+
+retention: standard                            # raw 90 d, findings 90 d
+
+inferredSchema:                                # approved ds-profiler bundle, one JSON Schema per side
+  ref: customer-profile-v1-vs-v2@1
+  digest: "sha256:8d521443bdb32730c6331fa5284255ccd4bda3f79e653b4f342c0ab9cdae516a"
+  x-ds-array-keys:                             # review summary of the bundle's annotations (recorded only)
+    "$.accounts": [sortCode, accountNo]
+    "$.consents": [purpose]
+    "$.addresses": [type]
+    "$.phones": [number]
+  x-ds-array-mode:
+    "$.tags": set
+    "$.addresses[*].lines": ordered
+
+schemaDrift:
+  mode: finding                                # drift on unselected paths -> SCHEMA_DRIFT (INFO) finding; on a
+                                               # selected or compared path -> INCONCLUSIVE(schema_drift)
+
+key:
+  name: customer_id
+  type: string
+  pattern: "^C[0-9]{8}$"                       # required with a service side: bounds what reaches the path
+  class: identifier                            # customer numbers are personal data: tokenised outside raw observations
+  normalize: [trim, upper]
+  source:
+    kind: hash_sample
+    method: rate
+    rate: 0.05
+    salt: "cust-v2-parity-2026q4"
+    strata:
+      - name: segment
+        column: segment
+        buckets:
+          - {label: RETAIL, values: [RETAIL]}
+          - {label: SME, values: [SME]}
+          - {label: PRIVATE, values: [PRIVATE], rate: 0.25, riskTier: high}
+          - {label: other}                                       # catch-all
+      - name: accounts
+        column: account_count
+        buckets:
+          - {label: a0, max: 0}
+          - {label: a1_3, min: 1, max: 3}
+          - {label: a4_plus, min: 4, rate: 0.20}
+    source:
+      kind: union                              # v1 keys U v2 keys, so v2-only customers are sampled too
+      sources:
+        - kind: paginated_endpoint             # sources[0]: side-a keys; page pagination needs stable_ordering or a
+                                               # snapshot on customer-profile-v1, else the inventory is unstable
+                                               # and the run is observed
+          target: customer-profile-v1
+          request:
+            method: GET
+            path: "/api/v1/customers"
+            query:
+              fields: "id,segment,accountCount"
+          pagination:
+            kind: page
+            itemsPath: "$.customers"
+            pageParam: page
+            sizeParam: pageSize
+            size: 500
+          keyPath: "$.id"
+          strataFields:
+            segment: "$.segment"
+            account_count: "$.accountCount"
+        - kind: paginated_endpoint             # sources[1]: side-b keys
+          target: customer-profile-v2
+          request:
+            method: GET
+            path: "/v2/customers"
+            query:
+              select: "customerId,segmentCode,productCount"
+              limit: 500
+          pagination:
+            kind: cursor
+            itemsPath: "$.data"
+            cursorPath: "$.meta.next"
+            cursorParam: after
+          keyPath: "$.customerId"
+          strataFields:                        # same columns as sources[0], so v2-only keys get strata too
+            segment: "$.segmentCode"
+            account_count: "$.productCount"
+
+sides:
+  a:
+    role: legacy
+    target: customer-profile-v1
+    # v1 response (abridged):
+    # { "customer": { "id": "C00012345", "firstName": "Ada", "lastName": "Lovelace", "dob": "1990-05-17",
+    #                 "email": "Ada.Lovelace@Example.org",
+    #                 "phones": [ { "kind": "MOBILE", "number": "07700 900123" } ],
+    #                 "addresses": [ { "kind": "HOME", "lines": ["Flat 2", "1 Example Street"], "city": "London",
+    #                                  "postcode": "sw1a 1aa", "country": "gb" } ],
+    #                 "segment": "RETAIL", "status": "A", "createdAt": "2019-03-02T10:11:12Z",
+    #                 "prefs": { "lang": "en-GB", "mktEmail": "Y", "mktSms": "N" },
+    #                 "accountCount": 1,
+    #                 "accounts": [ { "sortCode": "00-00-00", "accountNo": "12345678", "product": "CURRENT",
+    #                                 "status": "OPEN", "balance": "1250.10", "currency": "GBP", "rate": "0.0125" } ],
+    #                 "consents": [ { "purpose": "MARKETING", "granted": "Y", "ts": "2025-01-01T00:00:00Z" } ],
+    #                 "tags": ["VIP", "PAPERLESS"] },
+    #   "asOf": { "eventOffset": 88123411 } }
+    request:
+      method: GET
+      path: "/api/v1/customers/{{ key }}"
+      query:
+        expand: "accounts,consents"
+      headers:
+        Accept: application/json
+        X-Request-Id: "ds-{{ run_id }}-{{ call_seq }}"
+    select: "$.customer"
+    map: |
+      {
+        "customerId": id,
+        "givenName": firstName,
+        "familyName": lastName,
+        "birthDate": dob,
+        "email": email,
+        "phones": [phones.{"kind": kind, "number": number}],
+        "addresses": [addresses.{
+          "type": kind, "lines": [lines], "city": city, "postcode": postcode, "country": country
+        }],
+        "segment": segment,
+        "status": $lookup({"A": "ACTIVE", "S": "SUSPENDED", "C": "CLOSED"}, status),
+        "createdAt": createdAt,
+        "preferences": {
+          "language": prefs.lang,
+          "marketing": {"email": prefs.mktEmail = "Y", "sms": prefs.mktSms = "Y"}
+        },
+        "accounts": [accounts.{
+          "sortCode": sortCode, "accountNo": accountNo, "product": product, "status": status,
+          "balance": balance, "currency": currency, "interestRate": rate
+        }],
+        "consents": [consents.{"purpose": purpose, "granted": granted = "Y", "updatedAt": ts}],
+        "tags": [tags]
+      }
+    rawClear:                                  # raw-view paths shown in clear; every other non-boolean, non-null
+                                               # leaf is tokenised, numbers too (v2 balance.amount becomes
+                                               # free_number); four-eyes approved
+      - "$.customer.segment"
+      - "$.customer.status"
+      - "$.customer.accounts[*].product"
+      - "$.customer.accounts[*].status"
+      - "$.customer.accounts[*].currency"
+      - "$.customer.consents[*].purpose"
+      - "$.customer.consents[*].granted"
+    notFound:
+      status: [404]                            # 404/410 (a 2xx only with `when`), each declared by customer-profile-v1 in
+                                               # authoritative_absence (loader check)
+    truncation:
+      countPath: "$.customer.accountCount"
+      itemsPath: "$.customer.accounts"
+      cap: 50                                  # v1 returns at most 50 accounts per customer; required here because
+                                               # customer-profile-v1 declares no truncation_indicators
+
+  b:
+    role: new
+    target: customer-profile-v2
+    # v2 response (abridged):
+    # { "data": { "customerId": "C00012345",
+    #             "profile": { "givenName": "Ada", "familyName": "Lovelace", "birthDate": "1990-05-17" },
+    #             "contactPoints": [ { "channel": "EMAIL", "value": "ada.lovelace@example.org" },
+    #                                { "channel": "PHONE", "use": "MOBILE", "value": "+447700900123" } ],
+    #             "addresses": [ { "use": "HOME", "line": ["Flat 2", "1 Example Street"], "city": "London",
+    #                              "postalCode": "SW1A 1AA", "countryCode": "GB" } ],
+    #             "segment": "retail", "lifecycleStatus": "ACTIVE", "createdAt": "2019-03-02T10:11:12.000Z",
+    #             "preferences": { "locale": "en-GB",
+    #                              "channels": { "email": { "marketing": true }, "sms": { "marketing": false } } },
+    #             "productCount": 1,
+    #             "products": [ { "account": { "sortCode": "000000", "number": "12345678" }, "productCode": "CURRENT",
+    #                             "state": "OPEN", "balance": { "amount": 1250.1, "currency": "GBP" },
+    #                             "interestRate": 0.0125 } ],
+    #             "consents": [ { "purpose": "marketing", "status": "GRANTED", "updatedAt": "2025-01-01T00:00:00.000Z" } ],
+    #             "labels": ["paperless", "vip"] },
+    #   "meta": { "sourceOffset": 88123411, "requestId": "3c1f..." } }
+    request:
+      method: GET
+      path: "/v2/customers/{{ key }}"
+      query:
+        include: [products, consents]
+      headers:
+        Accept: application/json
+        X-Request-Id: "ds-{{ run_id }}-{{ call_seq }}"
+    select: "$.data"
+    map: |
+      {
+        "customerId": customerId,
+        "givenName": profile.givenName,
+        "familyName": profile.familyName,
+        "birthDate": profile.birthDate,
+        "email": contactPoints[channel = "EMAIL"][0].value,
+        "phones": [contactPoints[channel = "PHONE"].{"kind": use, "number": value}],
+        "addresses": [addresses.{
+          "type": use, "lines": [line], "city": city, "postcode": postalCode, "country": countryCode
+        }],
+        "segment": segment,
+        "status": lifecycleStatus,
+        "createdAt": createdAt,
+        "preferences": {
+          "language": preferences.locale,
+          "marketing": {
+            "email": preferences.channels.email.marketing,
+            "sms": preferences.channels.sms.marketing
+          }
+        },
+        "accounts": [products.{
+          "sortCode": account.sortCode, "accountNo": account.number, "product": productCode,
+          "status": state, "balance": balance.amount, "currency": balance.currency,
+          "interestRate": interestRate
+        }],
+        "consents": [consents.{"purpose": purpose, "granted": status = "GRANTED", "updatedAt": updatedAt}],
+        "tags": [labels]
+      }
+    rawClear:
+      - "$.data.segment"
+      - "$.data.lifecycleStatus"
+      - "$.data.products[*].productCode"
+      - "$.data.products[*].state"
+      - "$.data.products[*].balance.currency"
+      - "$.data.consents[*].purpose"
+      - "$.data.consents[*].status"
+    notFound:
+      status: [404]                            # must be declared by customer-profile-v2
+    truncation:
+      countPath: "$.data.productCount"
+      itemsPath: "$.data.products"
+      cap: 100                                 # v2 returns at most 100 products per customer
+
+compare:
+  arrays:
+    - path: "$.phones"
+      mode: keyed
+      key: [number]                            # E.164 after normalization (key fields are normalized first)
+    - path: "$.addresses"
+      mode: keyed
+      key: [type]
+    - path: "$.addresses[*].lines"
+      mode: ordered                            # address lines are positional (explicit; ordered is the default)
+    - path: "$.accounts"
+      mode: keyed
+      key: [sortCode, accountNo]               # composite member key suggested by ds-profiler (UCC)
+      severity: HIGH
+    - path: "$.consents"
+      mode: keyed
+      key: [purpose]
+      severity: HIGH
+    - path: "$.tags"
+      mode: set
+  fields:
+    - path: "$.givenName"
+      normalize: [nfkc, collapse_ws, trim]
+    - path: "$.familyName"
+      normalize: [nfkc, collapse_ws, trim]
+    - path: "$.email"
+      normalize: [trim, email_basic]
+    - path: "$.phones[*].number"
+      normalize:
+        - e164: {defaultRegion: GB}
+    - path: "$.phones[*].kind"
+      normalize: [trim, upper]
+    - path: "$.addresses[*].type"
+      normalize: [trim, upper]
+    - path: "$.addresses[*].lines[*]"
+      normalize: [nfkc, collapse_ws, trim]
+    - path: "$.addresses[*].postcode"
+      normalize: [trim, collapse_ws, upper]
+    - path: "$.addresses[*].country"
+      normalize: [trim, upper]
+    - path: "$.segment"
+      normalize: [trim, upper]
+    - path: "$.createdAt"
+      normalize:
+        - timestamp_utc: {precision: s, mode: truncate}
+    - path: "$.accounts[*].sortCode"
+      normalize: [digits_only]                 # 00-00-00 vs 000000
+    - path: "$.accounts[*].balance"
+      normalize:
+        - decimal: {scale: 2}                  # v1 sends "1250.10" (a string), v2 1250.1 (a number): converted
+      compare: exact                           # explicitly by the normalizer, never coerced implicitly
+      severity: HIGH
+    - path: "$.accounts[*].interestRate"
+      normalize:
+        - decimal: {scale: 6}
+      compare:
+        tolerance: {abs: 0.000001, rel: 0.0001}   # equal when |a-b| <= max(abs, rel x max(|a|,|b|))
+      severity: MEDIUM
+    - path: "$.accounts[*].currency"
+      normalize: [trim, upper]
+    - path: "$.consents[*].purpose"
+      normalize: [trim, upper]                 # v2 sends lower case; normalized before member keys are built
+    - path: "$.consents[*].granted"
+      compare: exact
+      severity: CRITICAL                       # a consent that differs changes what may be done
+    - path: "$.consents[*].updatedAt"
+      normalize:
+        - timestamp_utc: {precision: ms, mode: truncate}
+    - path: "$.tags[*]"
+      normalize: [trim, lower]
+  # Closed accounts are out of scope. FILTER_MEMBERSHIP: the filter is a selection evaluated on both
+  # sides and the union of selected account keys is compared, so an account that is OPEN on one side and
+  # CLOSED on the other yields a FILTER_MEMBERSHIP finding, not missing_in_b / extra_in_b. As a population filter
+  # it needs four-eyes approval (ds.spec_approvals scope population_filters) before a certified run, and it is
+  # printed verbatim with pre/post-filter counts in the coverage header and sign-off.
+  valueFilter: "!(path == '$.accounts[*]' && value.status == 'CLOSED')"
+  nullEqualsAbsent: false                      # the default, stated for clarity: absent != null
+
+knownDiffs:
+  - id: KD-CP-0001
+    when: "path == '$.segment' && a == 'PRIVATE' && b == 'WEALTH'"
+    classification: expected_by_design
+    reason: >-
+      v2 renamed the PRIVATE segment to WEALTH in the segmentation refresh; downstream reporting
+      maps both to the same value.
+    ticket: CUST-1042
+  - id: KD-CP-0002
+    when: "path == '$.preferences.marketing.sms' && change_type == 'missing_in_b'"
+    classification: bug
+    reason: >-
+      v2 omits the SMS marketing preference for customers without a mobile number instead of
+      returning false; fix scheduled for profile service 2.3.
+    ticket: CUST-1107
+    expires: "2027-01-31"
+
+noise:
+  calibration:
+    sampleSize: 200
+    sandwich: true                             # v1 before and after v2
+    repeatB: 1
+    maskThreshold: 0.01
+
+recheck:
+  delay: 5m
+  times: 1
+  jitter: 30s
+  outcomes: [MISMATCH, NOT_FOUND_A, NOT_FOUND_B, INCONCLUSIVE]
+
+execution:
+  concurrency: 2
+  delay: 150ms                                 # about 13 keys/s over 2 workers: under 20 req/s per target
+  jitter: 50ms
+  timeouts: {connect: 2s, read: 10s, total: 30s}
+  retries:
+    max: 2
+    backoff: {initial: 250ms, max: 4s, multiplier: 2}
+    retryOn: [connect_error, timeout, http_429, http_5xx]
+  circuitBreaker:
+    errorRate: {rate: 0.2, window: 50}
+    cooldown: 1m
+  stop:
+    maxDuration: 6h
+    maxErrorRate: {rate: 0.05, window: 500}
+    maxInconclusiveRate: {rate: 0.02, window: 1000}
+
+sampling:
+  mode: all
+
+security:
+  unlisted: tokenize
+  tokenize:
+    - {path: "$.givenName", class: name}
+    - {path: "$.familyName", class: name}
+    - {path: "$.birthDate", class: date_of_birth}     # never tokenised into findings: only its value class is shown
+    - {path: "$.email", class: email}
+    - {path: "$.phones[*].number", class: phone}
+    - {path: "$.addresses[*].lines[*]", class: address}
+    - {path: "$.addresses[*].city", class: address}
+    - {path: "$.addresses[*].postcode", class: address}
+    - {path: "$.accounts[*].accountNo", class: account_number}
+  clear:                                       # four-eyes approved (ds.spec_approvals scope clear)
+    - "$.segment"
+    - "$.status"
+    - "$.createdAt"
+    - "$.phones[*].kind"
+    - "$.addresses[*].type"
+    - "$.addresses[*].country"
+    - "$.accounts[*].sortCode"
+    - "$.accounts[*].product"
+    - "$.accounts[*].status"
+    - "$.accounts[*].currency"
+    - "$.accounts[*].interestRate"
+    - "$.consents[*].purpose"
+    - "$.consents[*].granted"
+    - "$.consents[*].updatedAt"
+    - "$.preferences.language"
+    - "$.preferences.marketing.email"
+    - "$.preferences.marketing.sms"
+    - "$.tags[*]"
+
+reporting:
+  formats: [csv, parquet, xlsx]
+  fields:
+    - key
+    - stratum
+    - outcome
+    - verdict                                  # derived MATCH / DIFFERENT / INDETERMINATE
+    - side_a_state                             # COMPLETE | ABSENT | INCOMPLETE | ERROR
+    - side_b_state
+    - inconclusive_reason
+    - taxonomy_code
+    - severity
+    - change_type
+    - direction
+    - path_pattern
+    - json_pointer
+    - value_a_tok
+    - value_b_tok
+    - value_class
+    - member_key_tok                           # key token on MISSING_DOCUMENT / EXTRA_DOCUMENT
+    - drift_reason                             # watermark_mismatch, a_changed, ...
+    - rule_id
+    - root_cause_id
+  includeSuppressed: false

@@ -1,0 +1,88 @@
+# Characters in the Rick and Morty API: REST (a) vs GraphQL (b), the same data over two protocols.
+# Drafted with the profiler from tests/fixtures/public/rickandmorty, then reviewed by hand.
+# Targets: targets.yaml; keys: keys.txt.
+#
+# a: GET /api/character/1  {"id": 1, "name": "Rick Sanchez", ..., "origin": {"name": "Earth (C-137)",
+#                           "url": ".../location/1"}, "episode": [".../episode/1", ...], "url": ..., "created": ...}
+# b: POST /graphql         {"data": {"character": {"id": "1", "name": "Rick Sanchez", ...,
+#                           "origin": {"name": "Earth (C-137)"}, "episode": [{"id": "1"}, ...], "created": ...}}}
+#
+# Canonical document: {id, name, status, species, type, gender, origin{name}, location{name}, image,
+# episode[], created}. Episodes become ids on both sides; the REST-only self and location links are
+# left out because the GraphQL query does not ask for them.
+
+apiVersion: deltasleuth/v1
+kind: ComparisonSpec
+
+metadata:
+  name: public-rickandmorty-characters
+  version: "1.0.0"
+  owner: examples
+  description: Characters of the Rick and Morty REST and GraphQL APIs, compared field by field.
+
+normalizerVersion: "1.1.0"
+
+key:
+  name: character_id
+  type: integer
+  pattern: "^[1-9][0-9]{0,5}$"
+  class: business_code                         # public reference ids, not personal data
+  source:
+    kind: list                                 # the same keys as keys.txt
+    keys: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 99999]
+
+sides:
+  a:
+    role: rest
+    target: rickandmorty-rest
+    request: {method: GET, path: "/character/{{ key }}"}
+    select: "$"
+    map: |
+      {
+        "id": id, "name": name, "status": status, "species": species, "type": type, "gender": gender,
+        "origin": {"name": origin.name}, "location": {"name": location.name}, "image": image,
+        "episode": [episode.$replace($, /^.*\/([0-9]+)$/, "$1")],
+        "created": created
+      }
+    notFound: {status: [404]}                  # 404 {"error": "Character not found"}
+    truncation: {itemsPath: "$.episode", cap: 1000}   # records are not paged; the cap only guards
+
+  b:
+    role: graphql
+    target: rickandmorty-graphql
+    request:
+      method: POST
+      path: /graphql
+      body:
+        query: >-
+          query($id: ID!) { character(id: $id) { id name status species type gender
+          origin { name } location { name } image episode { id } created } }
+        variables: {id: "{{ key }}"}
+    select: "$.data.character"
+    map: |
+      {
+        "id": id, "name": name, "status": status, "species": species, "type": type, "gender": gender,
+        "origin": {"name": origin.name}, "location": {"name": location.name}, "image": image,
+        "episode": [episode.id],
+        "created": created
+      }
+    notFound:
+      status: [200]
+      when: "has(body.data) && body.data.character == null"
+    truncation: {itemsPath: "$.data.character.episode", cap: 1000}
+
+compare:
+  arrays:
+    - {path: "$.episode", mode: set}           # appearances: order carries no meaning
+  fields:
+    - path: "$.id"
+      normalize: [{decimal: {scale: 0}}]       # REST sends a number, a GraphQL ID is a string
+      note: The representation gap stays visible as NORMALIZATION_ONLY (INFO) on every key.
+
+recheck:
+  delay: 2s
+  times: 1
+  outcomes: [MISMATCH, NOT_FOUND_A, NOT_FOUND_B]
+
+security:
+  unlisted: clear                              # public, fictional data; real specs keep the tokenize default

@@ -1,0 +1,14 @@
+description: >
+  Two member names of one object that differ only in Unicode normalisation (NFC "café" and
+  NFD "café") are distinct names. Swapping their values is a real difference on both, not
+  a NORMALIZATION_ONLY one hidden behind an equal canonical hash.
+a:
+  body: '{"café": "on", "café": "off"}'
+b:
+  body: '{"café": "on", "café": "off"}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - ["/café", "$['café']", value_changed, null]
+    - ["/café", "$['café']", value_changed, null]

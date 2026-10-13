@@ -1,0 +1,253 @@
+# DeltaSleuth ComparisonSpec: PostgreSQL crm.customer_account (a) vs Oracle COREBANK.CUSTOMER_ACCOUNT (b).
+# Validates against docs/architecture/spec.schema.json. Run with runs.mode = table_diff (ds-bulkdiff).
+#
+# All hosts, ids, names and values below are fictional. Targets are resolved from ds.targets and
+# credentials come from targets.auth_ref -> ds.secrets_ref (never inline):
+#   crm-pg-ro        -> postgresql://crm-pg-ro.acme.example:5432/crm      (PostgreSQL 16, system of record)
+#   corebank-ora-ro  -> oracle://corebank-ora-ro.acme.example:1521/CBPRD  (Oracle 19c, CDC-fed copy)
+#
+# Key mapping: the canonical key is the PG text code 'ORG-000123'; Oracle stores the number 123 in ORG_ID.
+# Column mapping: canonical field names are the PG column names; Oracle columns are renamed with `as`.
+# No key.source: the compared population is each side's table + where predicate; ds-bulkdiff joins on the
+# canonical key. The where predicates are restricted predicates checked by the loader, not free SQL;
+# a side that needs a join would reference an approved SELECT template instead of carrying SQL text.
+# Both where predicates are population filters: this certified run needs their four-eyes approval
+# (ds.spec_approvals scope population_filters), and they are printed verbatim with pre/post-filter counts.
+# Time policy: frozen (certification run on a month-end freeze cut), so the run can be claimed certified once
+# both cut watermarks are recorded.
+
+apiVersion: deltasleuth/v1
+kind: ComparisonSpec
+
+metadata:
+  name: customer-account-pg-vs-oracle
+  version: "1.1.0"
+  owner: customer-data-platform
+  description: >-
+    Row and column parity of EMEA customer accounts between the PostgreSQL CRM system of record and
+    the Oracle core-banking copy maintained by CDC. Compares a column subset only (audit and
+    ETL-managed columns are out of scope).
+
+normalizerVersion: "1.0.0"                     # pinned normalizer library; part of content_hash
+
+canonical:
+  mode: tree                                   # rows are flat canonical documents (the default mode)
+
+time:
+  mode: frozen                                 # certification run in the month-end freeze window:
+  skewBudget: 1s                               # crm writes are stopped and the CDC apply is drained, then both
+                                               # sides are read at the cut (crm-pg: PITR clone restored to the
+                                               # cut; corebank-ora: flashback AS OF the cut). The scheduler
+                                               # checks each target's consistency_profile and stores both
+                                               # cut times on the run; skewBudget bounds their gap (beyond it:
+                                               # DRIFT(skew_exceeded)). cut_metadata also records wm_a(T), the
+                                               # crm-pg LSN at the cut, and wm_b(T), the last crm-pg LSN applied
+                                               # by CDC to corebank-ora; keys touched in (min, max] are
+                                               # DRIFT(cut_window), and without both the run is observed.
+
+retention: standard                            # raw 90 d, findings 90 d
+
+key:
+  name: org_code
+  type: string
+  pattern: "^ORG-[0-9]{6}$"
+  normalize: [trim, upper]
+
+sides:
+  a:
+    role: source
+    target: crm-pg-ro
+    table:
+      schema: crm
+      name: customer_account
+      keyColumns: [org_code]                   # text 'ORG-000123', identity mapping
+      columns:                                 # column subset of a 40+ column table
+        - account_name
+        - status
+        - currency
+        - balance
+        - credit_limit
+        - opened_at
+        - is_active
+        - email
+        - country_code
+      where: "deleted_at IS NULL AND region = 'EMEA'"
+    session:
+      timezone: UTC
+      settings:
+        search_path: crm
+        datestyle: "ISO, YMD"
+        extra_float_digits: "3"
+      statementTimeout: 20m
+      fetchSize: 20000
+    rawClear: ["$.org_code", "$.status", "$.currency", "$.country_code", "$.is_active", "$.opened_at"]
+                                               # every other non-null, non-boolean raw value, numbers such as
+                                               # balance included, is tokenised; four-eyes approved
+    typeMap:
+      balance: {as: decimal, sourceType: "numeric(18,2)", scale: 2}
+      credit_limit: {as: decimal, sourceType: "numeric(18,4)", scale: 4}
+      opened_at: {as: timestamp, sourceType: timestamptz, precision: 6}
+      is_active: {as: boolean, sourceType: boolean}
+      account_name: {as: string, sourceType: "varchar(120)"}
+    collation:
+      name: en-US-x-icu
+      caseSensitive: true
+      accentSensitive: true
+      trailingSpaces: significant
+      note: >-
+        ICU linguistic ordering differs from Oracle BINARY ordering for mixed-case and accented
+        names, so ORDER BY cannot be pushed down for a merge; the planner orders both extracts by
+        the canonical key in binary (C) order in DuckDB. Keys are upper-case ASCII so equality is
+        unaffected.
+
+  b:
+    role: replica
+    target: corebank-ora-ro
+    table:
+      schema: COREBANK
+      name: CUSTOMER_ACCOUNT
+      keyColumns:
+        - name: ORG_ID                         # NUMBER(10): 123 <-> 'ORG-000123'
+          keyMap:
+            kind: prefix_pad
+            prefix: "ORG-"
+            width: 6
+            sideType: integer
+      columns:
+        - {name: ACCT_NAME, as: account_name}
+        - {name: ACCT_STATUS_CD, as: status}
+        - {name: CCY_CD, as: currency}
+        - {name: LEDGER_BAL_AMT, as: balance}
+        - {name: CR_LIMIT_AMT, as: credit_limit}
+        - {name: OPEN_TS, as: opened_at}
+        - {name: ACTIVE_FLG, as: is_active}
+        - {name: EMAIL_ADDR, as: email}
+        - {name: CNTRY_CD, as: country_code}
+      where: "REC_STAT_CD <> 'D' AND RGN_CD = 'EMEA'"
+    session:
+      timezone: UTC
+      nls:
+        NLS_DATE_FORMAT: 'YYYY-MM-DD"T"HH24:MI:SS'
+        NLS_TIMESTAMP_FORMAT: 'YYYY-MM-DD"T"HH24:MI:SS.FF6'
+        NLS_TIMESTAMP_TZ_FORMAT: 'YYYY-MM-DD"T"HH24:MI:SS.FF6TZH:TZM'
+        NLS_NUMERIC_CHARACTERS: ".,"
+        NLS_SORT: BINARY
+        NLS_COMP: BINARY
+        NLS_LENGTH_SEMANTICS: CHAR
+      statementTimeout: 20m
+      fetchSize: 20000
+    rawClear: ["$.ORG_ID", "$.ACCT_STATUS_CD", "$.CCY_CD", "$.CNTRY_CD", "$.ACTIVE_FLG", "$.OPEN_TS"]   # raw-row paths use Oracle names
+    typeMap:
+      ORG_ID: {as: integer, sourceType: "NUMBER(10)"}
+      LEDGER_BAL_AMT: {as: decimal, sourceType: "NUMBER(18,2)", scale: 2}
+      CR_LIMIT_AMT: {as: decimal, sourceType: "NUMBER(18,2)", scale: 2}
+      OPEN_TS: {as: timestamp, sourceType: "TIMESTAMP(3)", precision: 3, naiveTimezone: UTC}
+      ACTIVE_FLG: {as: boolean, sourceType: "CHAR(1)", trueValues: ["Y"], falseValues: ["N"]}
+      ACCT_NAME: {as: string, sourceType: "CHAR(120 CHAR)"}
+    collation:
+      name: BINARY
+      caseSensitive: true
+      accentSensitive: true
+      trailingSpaces: ignored
+      note: >-
+        ACCT_NAME is CHAR(120) and is blank-padded; Oracle also stores '' as NULL. Handled by the
+        trim and null_if_empty normalizers rather than by collation.
+
+compare:
+  strategy: auto                               # ds-bulkdiff picks joindiff / hashdiff / rowhash / merge; a
+                                               # certified run uses merge or joindiff only
+  include:                                     # compared column subset (canonical names)
+    - "$.account_name"
+    - "$.status"
+    - "$.currency"
+    - "$.balance"
+    - "$.credit_limit"
+    - "$.opened_at"
+    - "$.is_active"
+    - "$.email"
+    - "$.country_code"
+  nullEqualsAbsent: false                      # the default; table rows carry every column, so a column is
+                                               # never absent, and Oracle '' -> NULL is handled by null_if_empty
+  fields:
+    - path: "$.account_name"
+      normalize: [trim, collapse_ws, nfkc, null_if_empty]
+    - path: "$.status"
+      normalize: [trim, upper]
+    - path: "$.currency"
+      normalize: [trim, upper]
+    - path: "$.balance"
+      normalize:
+        - decimal: {scale: 2, rounding: half_even}
+      compare: exact
+      severity: HIGH
+    - path: "$.credit_limit"
+      normalize:
+        - decimal: {scale: 2, rounding: half_up}     # PG keeps 4 dp; Oracle NUMBER(18,2) rounds half away from zero
+      compare: exact                                 # after rounding to 2 dp every difference is a multiple of 0.01
+      severity: MEDIUM
+    - path: "$.opened_at"
+      normalize:
+        - timestamp_utc: {precision: ms, mode: truncate}   # PG microseconds vs Oracle TIMESTAMP(3)
+    - path: "$.is_active"
+      compare: exact
+    - path: "$.email"
+      normalize: [trim, email_basic, null_if_empty]
+    - path: "$.country_code"
+      normalize: [trim, upper]
+
+knownDiffs:
+  - id: KD-CA-0001
+    when: "path == '$.country_code' && a == 'GB' && b == 'UK'"
+    classification: accepted
+    reason: >-
+      Core banking still uses the pre-ISO code UK for Great Britain; the CDC mapper fix is
+      scheduled and downstream reports translate both.
+    ticket: CORE-4471
+    expires: "2027-03-31"
+
+recheck:
+  delay: 15m                                   # re-reads the frozen cut: confirms a diff reproduces (and still
+                                               # absorbs CDC lag if the spec is run live outside the freeze)
+  times: 1
+  jitter: 1m
+  outcomes: [MISMATCH, NOT_FOUND_A, NOT_FOUND_B]
+
+execution:
+  concurrency: 2
+  timeouts:
+    connect: 10s
+    read: 30m
+    total: 3h
+  retries: 1
+  stop:
+    maxDuration: 3h
+
+security:
+  unlisted: tokenize
+  tokenize:
+    - {path: "$.account_name", class: name}
+    - {path: "$.email", class: email}
+  clear:                                       # four-eyes approved (ds.spec_approvals scope clear)
+    - "$.status"
+    - "$.currency"
+    - "$.country_code"
+    - "$.is_active"
+    - "$.opened_at"
+
+reporting:
+  formats: [csv, parquet, xlsx]
+  fields:
+    - key
+    - outcome
+    - verdict                                  # derived MATCH / DIFFERENT / INDETERMINATE
+    - inconclusive_reason
+    - taxonomy_code
+    - severity
+    - change_type
+    - direction
+    - path_pattern
+    - value_a_tok
+    - value_b_tok
+    - value_diff_desc
+    - rule_id
+  includeSuppressed: false

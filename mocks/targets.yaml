@@ -1,0 +1,71 @@
+# Target registry for both mock pairs together: the four entries of linker/targets.yaml and
+# customer/targets.yaml, unchanged, for a settings file that serves both specs
+# (deploy/config/deltasleuth.dev.example.yaml).
+#
+# Start the four services with:
+#   python -m mocks.run all
+
+targets:
+  linker-a:
+    base_url: http://127.0.0.1:18081
+    allow_private_network: true                # loopback needs an explicit SSRF opt-in
+    allow_insecure_http: true                  # local plain HTTP; there is no credential to protect
+    auth: {kind: none}
+    rate_per_s: 50
+    max_concurrency: 4
+    capabilities:
+      authoritative_absence:
+        status: [404]
+        shapes: [not_found_body]               # a 404 with any other body is unconfirmed absence
+      absence_shapes:
+        not_found_body: 'has(body.error) && body.error == "NOT_FOUND"'
+      truncation_indicators:                   # same values as the spec's side a truncation block
+        cap: 200
+        items_path: "$.links"
+        count_path: "$.linkCount"
+
+  linker-b:
+    base_url: http://127.0.0.1:18082
+    allow_private_network: true
+    allow_insecure_http: true
+    auth: {kind: none}
+    rate_per_s: 50
+    max_concurrency: 4
+    capabilities:
+      authoritative_absence:
+        status: [404]
+        shapes: [not_found_body]
+      absence_shapes:
+        not_found_body: 'has(body.error) && body.error == "NOT_FOUND"'
+      truncation_indicators:                   # at most 50 links returned; totalLinked is the true count
+        cap: 50
+        items_path: "$.data.linkedEntities"
+        count_path: "$.data.totalLinked"
+
+  customer-a:
+    base_url: http://127.0.0.1:18091
+    allow_private_network: true                # loopback needs an explicit SSRF opt-in
+    allow_insecure_http: true                  # local plain HTTP; there is no credential to protect
+    auth: {kind: none}
+    rate_per_s: 50
+    max_concurrency: 4
+    capabilities:
+      authoritative_absence:
+        status: [404]
+        shapes: [not_found_body]               # a 404 with any other body is unconfirmed absence
+      absence_shapes:
+        not_found_body: 'has(body.error) && body.error == "NOT_FOUND"'
+
+  customer-b:
+    base_url: http://127.0.0.1:18092
+    allow_private_network: true
+    allow_insecure_http: true
+    auth: {kind: none}
+    rate_per_s: 50
+    max_concurrency: 4
+    capabilities:
+      authoritative_absence:
+        status: [404]
+        shapes: [not_found_body]
+      absence_shapes:
+        not_found_body: 'has(body.error) && body.error == "NOT_FOUND"'

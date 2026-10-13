@@ -1,0 +1,14 @@
+description: >
+  Canonical strings are NFC, so precomposed and decomposed forms are equal; the byte-level
+  difference is still reported by the raw walk as NORMALIZATION_ONLY.
+a:
+  body: '{"name": "José"}'
+b:
+  body: '{"name": "José"}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - finding: [/name, $.name, value_changed, NORMALIZATION_ONLY]
+      severity: INFO
+      raw_only: true

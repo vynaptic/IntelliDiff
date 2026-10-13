@@ -1,0 +1,117 @@
+{
+ "about": "What Oracle sends for a table pre-check's figures at each level, and for its duplicate keys (docs/mvp/PRECHECKS.md §4): the plain and mapped sides of oracle_pair.json (a composite key, a prefix_pad key map, a filter, a typeMap column, a float, large-object, bytes and moment columns). Regenerate only with a contract change.",
+ "sent": {
+  "plain": {
+   "counts": [
+    "SELECT COUNT(*), COUNT(CASE WHEN TO_CHAR(t.\"ID\", 'TM9') IS NULL THEN 1 END) FROM \"APP\".\"CUSTOMERS\" t",
+    {}
+   ],
+   "columns": [
+    "SELECT COUNT(*), COUNT(CASE WHEN TO_CHAR(t.\"ID\", 'TM9') IS NULL THEN 1 END), COUNT(CASE WHEN t.\"EMAIL\" IS NULL THEN 1 END), COUNT(CASE WHEN LENGTH4(t.\"EMAIL\") = 0 THEN 1 END), MIN(LENGTH4(t.\"EMAIL\")), MAX(LENGTH4(t.\"EMAIL\")), COUNT(CASE WHEN t.\"AMOUNT\" IS NULL THEN 1 END), TO_CHAR(SUM(t.\"AMOUNT\"), 'TM9'), TO_CHAR(MIN(t.\"AMOUNT\"), 'TM9'), TO_CHAR(MAX(t.\"AMOUNT\"), 'TM9') FROM \"APP\".\"CUSTOMERS\" t",
+    {}
+   ],
+   "distinct": [
+    [
+     "SELECT COUNT(DISTINCT t.\"EMAIL\"), COUNT(DISTINCT t.\"AMOUNT\") FROM \"APP\".\"CUSTOMERS\" t",
+     {}
+    ]
+   ],
+   "duplicates": [
+    "SELECT COUNT(*), COALESCE(SUM(d.n), 0) FROM (SELECT COUNT(*) AS n FROM \"APP\".\"CUSTOMERS\" t WHERE TO_CHAR(t.\"ID\", 'TM9') IS NOT NULL GROUP BY TO_CHAR(t.\"ID\", 'TM9') HAVING COUNT(*) > 1) d",
+    {}
+   ]
+  },
+  "mapped": {
+   "counts": [
+    "SELECT COUNT(*), COUNT(CASE WHEN RTRIM(t.\"BRANCH\", ' ') IS NULL OR CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END IS NULL OR TO_CHAR(t.\"AMT\", 'FM99999990.00') IS NULL THEN 1 END) FROM \"APP\".\"Accounts\" t WHERE (t.\"ST\" = CAST(:b1 AS CHAR(2000)) AND ( t.\"RATE\" BETWEEN TO_NUMBER(:b2) AND TO_NUMBER(:b3) OR t.\"NOTE\" NOT LIKE :b4 ESCAPE '\\' ) AND t.\"NO\" IN ( TO_NUMBER(:b5) , TO_NUMBER(:b6) ) AND t.\"OPENED\" < TO_DATE(:b7, 'YYYY-MM-DD HH24:MI:SS') AND t.\"RAW\" IS NOT NULL AND t.\"FLAG\" AND t.\"ST\" IN ( CAST(:b8 AS CHAR(2000)) , CAST(:b9 AS CHAR(2000)) ) AND t.\"ST\" BETWEEN CAST(:b10 AS CHAR(2000)) AND CAST(:b11 AS CHAR(2000)) AND t.\"ST\" < CAST(:b12 AS CHAR(2000)))",
+    {
+     "b0": "A-",
+     "b1": "ok",
+     "b2": "1",
+     "b3": "2.5",
+     "b4": "x\\_%",
+     "b5": "1",
+     "b6": "2",
+     "b7": "2024-01-01",
+     "b8": "a",
+     "b9": "b",
+     "b10": "a",
+     "b11": "b",
+     "b12": "c"
+    }
+   ],
+   "columns": [
+    "SELECT COUNT(*), COUNT(CASE WHEN RTRIM(t.\"BRANCH\", ' ') IS NULL OR CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END IS NULL OR TO_CHAR(t.\"AMT\", 'FM99999990.00') IS NULL THEN 1 END), COUNT(CASE WHEN t.\"ST\" IS NULL THEN 1 END), COUNT(CASE WHEN NVL2(t.\"ST\", NVL(LENGTH4(RTRIM(t.\"ST\", ' ')), 0), NULL) = 0 THEN 1 END), MIN(NVL2(t.\"ST\", NVL(LENGTH4(RTRIM(t.\"ST\", ' ')), 0), NULL)), MAX(NVL2(t.\"ST\", NVL(LENGTH4(RTRIM(t.\"ST\", ' ')), 0), NULL)), COUNT(CASE WHEN t.\"OPENED\" IS NULL THEN 1 END), COUNT(CASE WHEN t.\"SEEN\" IS NULL THEN 1 END), TO_CHAR(SYS_EXTRACT_UTC(MIN(t.\"SEEN\")), 'SYYYY-MM-DD\"T\"HH24:MI:SS.FF9'), TO_CHAR(SYS_EXTRACT_UTC(MAX(t.\"SEEN\")), 'SYYYY-MM-DD\"T\"HH24:MI:SS.FF9'), COUNT(CASE WHEN t.\"RATE\" IS NULL THEN 1 END), COUNT(CASE WHEN t.\"NOTE\" IS NULL THEN 1 END), COUNT(CASE WHEN t.\"RAW\" IS NULL THEN 1 END), MIN(LENGTH(RAWTOHEX(t.\"RAW\")) / 2), MAX(LENGTH(RAWTOHEX(t.\"RAW\")) / 2), COUNT(CASE WHEN t.\"DOC\" IS NULL THEN 1 END), COUNT(CASE WHEN t.\"FLAG\" IS NULL THEN 1 END), COUNT(CASE WHEN t.\"FLAG\" THEN 1 END), COUNT(CASE WHEN t.\"SPAN\" IS NULL THEN 1 END), COUNT(CASE WHEN t.\"AT\" IS NULL THEN 1 END), TO_CHAR(MIN(t.\"AT\"), 'SYYYY-MM-DD\"T\"HH24:MI:SS.FF9'), TO_CHAR(MAX(t.\"AT\"), 'SYYYY-MM-DD\"T\"HH24:MI:SS.FF9') FROM \"APP\".\"Accounts\" t WHERE (t.\"ST\" = CAST(:b1 AS CHAR(2000)) AND ( t.\"RATE\" BETWEEN TO_NUMBER(:b2) AND TO_NUMBER(:b3) OR t.\"NOTE\" NOT LIKE :b4 ESCAPE '\\' ) AND t.\"NO\" IN ( TO_NUMBER(:b5) , TO_NUMBER(:b6) ) AND t.\"OPENED\" < TO_DATE(:b7, 'YYYY-MM-DD HH24:MI:SS') AND t.\"RAW\" IS NOT NULL AND t.\"FLAG\" AND t.\"ST\" IN ( CAST(:b8 AS CHAR(2000)) , CAST(:b9 AS CHAR(2000)) ) AND t.\"ST\" BETWEEN CAST(:b10 AS CHAR(2000)) AND CAST(:b11 AS CHAR(2000)) AND t.\"ST\" < CAST(:b12 AS CHAR(2000)))",
+    {
+     "b0": "A-",
+     "b1": "ok",
+     "b2": "1",
+     "b3": "2.5",
+     "b4": "x\\_%",
+     "b5": "1",
+     "b6": "2",
+     "b7": "2024-01-01",
+     "b8": "a",
+     "b9": "b",
+     "b10": "a",
+     "b11": "b",
+     "b12": "c"
+    }
+   ],
+   "distinct": [
+    [
+     "SELECT COUNT(DISTINCT t.\"ST\"), COUNT(DISTINCT t.\"SEEN\"), COUNT(DISTINCT t.\"RAW\"), COUNT(DISTINCT t.\"FLAG\") FROM \"APP\".\"Accounts\" t WHERE (t.\"ST\" = CAST(:b0 AS CHAR(2000)) AND ( t.\"RATE\" BETWEEN TO_NUMBER(:b1) AND TO_NUMBER(:b2) OR t.\"NOTE\" NOT LIKE :b3 ESCAPE '\\' ) AND t.\"NO\" IN ( TO_NUMBER(:b4) , TO_NUMBER(:b5) ) AND t.\"OPENED\" < TO_DATE(:b6, 'YYYY-MM-DD HH24:MI:SS') AND t.\"RAW\" IS NOT NULL AND t.\"FLAG\" AND t.\"ST\" IN ( CAST(:b7 AS CHAR(2000)) , CAST(:b8 AS CHAR(2000)) ) AND t.\"ST\" BETWEEN CAST(:b9 AS CHAR(2000)) AND CAST(:b10 AS CHAR(2000)) AND t.\"ST\" < CAST(:b11 AS CHAR(2000)))",
+     {
+      "b0": "ok",
+      "b1": "1",
+      "b2": "2.5",
+      "b3": "x\\_%",
+      "b4": "1",
+      "b5": "2",
+      "b6": "2024-01-01",
+      "b7": "a",
+      "b8": "b",
+      "b9": "a",
+      "b10": "b",
+      "b11": "c"
+     }
+    ],
+    [
+     "SELECT COUNT(DISTINCT t.\"AT\") FROM \"APP\".\"Accounts\" t WHERE (t.\"ST\" = CAST(:b0 AS CHAR(2000)) AND ( t.\"RATE\" BETWEEN TO_NUMBER(:b1) AND TO_NUMBER(:b2) OR t.\"NOTE\" NOT LIKE :b3 ESCAPE '\\' ) AND t.\"NO\" IN ( TO_NUMBER(:b4) , TO_NUMBER(:b5) ) AND t.\"OPENED\" < TO_DATE(:b6, 'YYYY-MM-DD HH24:MI:SS') AND t.\"RAW\" IS NOT NULL AND t.\"FLAG\" AND t.\"ST\" IN ( CAST(:b7 AS CHAR(2000)) , CAST(:b8 AS CHAR(2000)) ) AND t.\"ST\" BETWEEN CAST(:b9 AS CHAR(2000)) AND CAST(:b10 AS CHAR(2000)) AND t.\"ST\" < CAST(:b11 AS CHAR(2000)))",
+     {
+      "b0": "ok",
+      "b1": "1",
+      "b2": "2.5",
+      "b3": "x\\_%",
+      "b4": "1",
+      "b5": "2",
+      "b6": "2024-01-01",
+      "b7": "a",
+      "b8": "b",
+      "b9": "a",
+      "b10": "b",
+      "b11": "c"
+     }
+    ]
+   ],
+   "duplicates": [
+    "SELECT COUNT(*), COALESCE(SUM(d.n), 0) FROM (SELECT COUNT(*) AS n FROM \"APP\".\"Accounts\" t WHERE RTRIM(t.\"BRANCH\", ' ') IS NOT NULL AND CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END IS NOT NULL AND TO_CHAR(t.\"AMT\", 'FM99999990.00') IS NOT NULL AND (t.\"ST\" = CAST(:b1 AS CHAR(2000)) AND ( t.\"RATE\" BETWEEN TO_NUMBER(:b2) AND TO_NUMBER(:b3) OR t.\"NOTE\" NOT LIKE :b4 ESCAPE '\\' ) AND t.\"NO\" IN ( TO_NUMBER(:b5) , TO_NUMBER(:b6) ) AND t.\"OPENED\" < TO_DATE(:b7, 'YYYY-MM-DD HH24:MI:SS') AND t.\"RAW\" IS NOT NULL AND t.\"FLAG\" AND t.\"ST\" IN ( CAST(:b8 AS CHAR(2000)) , CAST(:b9 AS CHAR(2000)) ) AND t.\"ST\" BETWEEN CAST(:b10 AS CHAR(2000)) AND CAST(:b11 AS CHAR(2000)) AND t.\"ST\" < CAST(:b12 AS CHAR(2000))) GROUP BY RTRIM(t.\"BRANCH\", ' '), CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END, TO_CHAR(t.\"AMT\", 'FM99999990.00') HAVING COUNT(*) > 1) d",
+    {
+     "b0": "A-",
+     "b1": "ok",
+     "b2": "1",
+     "b3": "2.5",
+     "b4": "x\\_%",
+     "b5": "1",
+     "b6": "2",
+     "b7": "2024-01-01",
+     "b8": "a",
+     "b9": "b",
+     "b10": "a",
+     "b11": "b",
+     "b12": "c"
+    }
+   ]
+  }
+ }
+}

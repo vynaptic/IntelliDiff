@@ -1,0 +1,108 @@
+# People in the Star Wars API: swapi.dev (a) vs swapi.tech (b). Drafted with the profiler from
+# tests/fixtures/public/swapi, then reviewed by hand. Targets: targets.yaml; keys: keys.txt.
+#
+# a: GET /api/people/1/  {"name": "Luke Skywalker", ..., "homeworld": "https://swapi.dev/api/planets/1/",
+#                         "films": ["https://swapi.dev/api/films/1/", ...], "species": [], ...}
+# b: GET /api/people/1   {"message": "ok", "result": {"properties": {"name": "Luke Skywalker", ...,
+#                         "homeworld": "https://www.swapi.tech/api/planets/1", ...}, "uid": "1"}}
+#
+# Canonical document (both maps produce it; links become the ids they point at, because each API
+# links to its own host):
+#   {id, name, height, mass, hair_color, skin_color, eye_color, birth_year, gender, homeworld,
+#    films[], species[], vehicles[], starships[], created, edited}
+
+apiVersion: deltasleuth/v1
+kind: ComparisonSpec
+
+metadata:
+  name: public-swapi-people
+  version: "1.0.0"
+  owner: examples
+  description: People records of swapi.dev and swapi.tech, compared field by field.
+
+normalizerVersion: "1.1.0"
+
+key:
+  name: person_id
+  type: integer
+  pattern: "^[1-9][0-9]{0,3}$"
+  class: business_code                         # public reference ids, not personal data
+  source:
+    kind: list                                 # the same keys as keys.txt
+    keys: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 84]
+
+sides:
+  a:
+    role: baseline
+    target: swapi-dev
+    request: {method: GET, path: "/people/{{ key }}/"}
+    select: "$"
+    map: |
+      (
+        $id := function($link) { $replace($link, /^.*\/([0-9]+)\/?$/, "$1") };
+        {
+          "id": $id(url), "name": name, "height": height, "mass": mass,
+          "hair_color": hair_color, "skin_color": skin_color, "eye_color": eye_color,
+          "birth_year": birth_year, "gender": gender, "homeworld": $id(homeworld),
+          "films": [films.$id($)], "species": [species.$id($)],
+          "vehicles": [vehicles.$id($)], "starships": [starships.$id($)],
+          "created": created, "edited": edited
+        }
+      )
+    notFound: {status: [404]}                  # 404 {"detail": "Not found."}
+    truncation: {itemsPath: "$.films", cap: 100}   # records are not paged; the cap only guards
+
+  b:
+    role: candidate
+    target: swapi-tech
+    request: {method: GET, path: "/people/{{ key }}"}
+    select: "$.result.properties"
+    map: |
+      (
+        $id := function($link) { $replace($link, /^.*\/([0-9]+)\/?$/, "$1") };
+        {
+          "id": $id(url), "name": name, "height": height, "mass": mass,
+          "hair_color": hair_color, "skin_color": skin_color, "eye_color": eye_color,
+          "birth_year": birth_year, "gender": gender, "homeworld": $id(homeworld),
+          "films": [films.$id($)], "vehicles": [vehicles.$id($)], "starships": [starships.$id($)],
+          "created": created, "edited": edited
+        }
+      )
+    notFound: {status: [404]}                  # 404 {"message": "not found", ...}
+    truncation: {itemsPath: "$.result.properties.films", cap: 100}
+
+compare:
+  arrays:                                      # links are memberships: order carries no meaning
+    - {path: "$.films", mode: set}
+    - {path: "$.species", mode: set}
+    - {path: "$.vehicles", mode: set}
+    - {path: "$.starships", mode: set}
+  fields:
+    - path: "$.created"
+      normalize: [{timestamp_utc: {precision: ms}}]  # a writes microseconds, b milliseconds
+    - path: "$.edited"
+      normalize: [{timestamp_utc: {precision: ms}}]
+
+knownDiffs:
+  - id: KD-SWAPI-TIMESTAMPS
+    when: "path in ['$.created', '$.edited'] && change_type == 'value_changed'"
+    classification: accepted
+    reason: >-
+      swapi.tech sets created and edited to the time its data was last loaded (one instant on every
+      record), so they never match swapi.dev's original 2014 timestamps.
+    ticket: EXAMPLE-1
+  - id: KD-SWAPI-SPECIES
+    when: "path == '$.species' && change_type == 'missing_in_b'"
+    classification: expected_by_design
+    reason: >-
+      swapi.tech people records carry no species member at all, so it is missing on b for every
+      person, including those with no species on a.
+    ticket: EXAMPLE-2
+
+recheck:
+  delay: 2s
+  times: 1
+  outcomes: [MISMATCH, NOT_FOUND_A, NOT_FOUND_B]
+
+security:
+  unlisted: clear                              # public, fictional data; real specs keep the tokenize default

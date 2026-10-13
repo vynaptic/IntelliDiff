@@ -1,0 +1,10 @@
+# DeltaSleuth settings for a source checkout without Docker (docs/guide/02-run-from-source.md): copy to
+# .deltasleuth/deltasleuth.yaml in the checkout, which git ignores, and name that file in DS_CONFIG.
+# Developer mode: no auth block, so ds serve listens on this machine only and every local user and
+# process acts as admin; never put a proxy or a port forward in front of it. The keys are files in the
+# workspace (ds init) and AI chat is off. Every path below is relative to this file's folder.
+
+database_dsn_ref: file:db_dsn          # one line: postgresql://deltasleuth:<password>@127.0.0.1:5432/deltasleuth
+evidence_dir: evidence                 # response bodies, encrypted
+workspace_dir: workspace               # working files, and the tokeniser key and keyring ds init creates
+targets_file: ../mocks/targets.yaml    # the four mock services on 127.0.0.1 (python -m mocks.run all)

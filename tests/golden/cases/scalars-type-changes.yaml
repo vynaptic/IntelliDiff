@@ -1,0 +1,15 @@
+description: No implicit coercion between JSON types; every class change is type_changed.
+a:
+  body: '{"n": 1, "s": "1", "o": {"x": 1}, "l": [1], "b": true, "z": null}'
+b:
+  body: '{"n": "1", "s": 1, "o": [1], "l": {"x": 1}, "b": "true", "z": false}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/n, $.n, type_changed, null]
+    - [/s, $.s, type_changed, null]
+    - [/o, $.o, type_changed, null]
+    - [/l, $.l, type_changed, null]
+    - [/b, $.b, type_changed, null]
+    - [/z, $.z, type_changed, null]

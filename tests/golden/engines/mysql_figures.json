@@ -1,0 +1,49 @@
+{
+ "about": "What MySQL sends for a table pre-check's figures at each level, and for its duplicate keys (docs/mvp/PRECHECKS.md §4): the plain and mapped sides of mysql_pair.json (a composite key, a prefix_pad key map, a filter, a typeMap column, a float, large-object, bytes and moment columns). Regenerate only with a contract change.",
+ "sent": {
+  "plain": {
+   "counts": [
+    "SELECT COUNT(*), COUNT(CASE WHEN CAST(t.`id` AS CHAR) IS NULL THEN 1 END) FROM `ledger`.`customers` AS t",
+    {}
+   ],
+   "columns": [
+    "SELECT COUNT(*), COUNT(CASE WHEN CAST(t.`id` AS CHAR) IS NULL THEN 1 END), COUNT(CASE WHEN t.`email` IS NULL THEN 1 END), COUNT(CASE WHEN CHAR_LENGTH(t.`email`) = 0 THEN 1 END), MIN(CHAR_LENGTH(t.`email`)), MAX(CHAR_LENGTH(t.`email`)), COUNT(CASE WHEN t.`amount` IS NULL THEN 1 END), CAST(SUM(t.`amount`) AS CHAR), CAST(MIN(t.`amount`) AS CHAR), CAST(MAX(t.`amount`) AS CHAR) FROM `ledger`.`customers` AS t",
+    {}
+   ],
+   "distinct": [
+    [
+     "SELECT COUNT(DISTINCT CAST(CONVERT(t.`email` USING utf8mb4) AS BINARY)), COUNT(DISTINCT t.`amount`) FROM `ledger`.`customers` AS t",
+     {}
+    ]
+   ],
+   "duplicates": [
+    "SELECT COUNT(*), COALESCE(SUM(d.n), 0) FROM (SELECT COUNT(*) AS n FROM `ledger`.`customers` AS t WHERE CAST(t.`id` AS CHAR) IS NOT NULL GROUP BY CAST(CAST(t.`id` AS CHAR) AS BINARY) HAVING COUNT(*) > 1) d",
+    {}
+   ]
+  },
+  "mapped": {
+   "counts": [
+    "SELECT COUNT(*), COUNT(CASE WHEN CONVERT(t.`branch` USING utf8mb4) IS NULL OR CASE WHEN CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) <> '' AND CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) NOT REGEXP '[^0-9]' THEN CONCAT(_utf8mb4 X'412d', LPAD(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR), GREATEST(6, CHAR_LENGTH(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR))), '0')) END IS NULL THEN 1 END) FROM `led``ger`.`Accounts` AS t WHERE (t.`st` = _utf8mb4 X'6f6b' AND ( t.`rate` BETWEEN 1 AND 2.5 OR t.`note` NOT LIKE _utf8mb4 X'785c5f25' ) AND t.`No` IN ( 1 , 2 ) AND t.`opened` < _utf8mb4 X'323032342d30312d3031' AND t.`raw` IS NOT NULL)",
+    {}
+   ],
+   "columns": [
+    "SELECT COUNT(*), COUNT(CASE WHEN CONVERT(t.`branch` USING utf8mb4) IS NULL OR CASE WHEN CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) <> '' AND CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) NOT REGEXP '[^0-9]' THEN CONCAT(_utf8mb4 X'412d', LPAD(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR), GREATEST(6, CHAR_LENGTH(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR))), '0')) END IS NULL THEN 1 END), COUNT(CASE WHEN t.`st` IS NULL THEN 1 END), COUNT(CASE WHEN CHAR_LENGTH(t.`st`) = 0 THEN 1 END), MIN(CHAR_LENGTH(t.`st`)), MAX(CHAR_LENGTH(t.`st`)), COUNT(CASE WHEN t.`opened` IS NULL THEN 1 END), COUNT(CASE WHEN t.`seen` IS NULL THEN 1 END), DATE_FORMAT(MIN(t.`seen`), '%Y-%m-%dT%H:%i:%s.%f'), DATE_FORMAT(MAX(t.`seen`), '%Y-%m-%dT%H:%i:%s.%f'), COUNT(CASE WHEN t.`rate` IS NULL THEN 1 END), COUNT(CASE WHEN t.`flags` IS NULL THEN 1 END), CAST(SUM(t.`flags`) AS CHAR), CAST(CAST(MIN(t.`flags`) AS UNSIGNED) AS CHAR), CAST(CAST(MAX(t.`flags`) AS UNSIGNED) AS CHAR), COUNT(CASE WHEN t.`note` IS NULL THEN 1 END), COUNT(CASE WHEN t.`raw` IS NULL THEN 1 END), MIN(LENGTH(t.`raw`)), MAX(LENGTH(t.`raw`)), COUNT(CASE WHEN t.`doc` IS NULL THEN 1 END), COUNT(CASE WHEN t.`at` IS NULL THEN 1 END), CAST(MIN(t.`at`) AS CHAR), CAST(MAX(t.`at`) AS CHAR), COUNT(CASE WHEN t.`day` IS NULL THEN 1 END), CAST(MIN(t.`day`) AS CHAR), CAST(MAX(t.`day`) AS CHAR) FROM `led``ger`.`Accounts` AS t WHERE (t.`st` = _utf8mb4 X'6f6b' AND ( t.`rate` BETWEEN 1 AND 2.5 OR t.`note` NOT LIKE _utf8mb4 X'785c5f25' ) AND t.`No` IN ( 1 , 2 ) AND t.`opened` < _utf8mb4 X'323032342d30312d3031' AND t.`raw` IS NOT NULL)",
+    {}
+   ],
+   "distinct": [
+    [
+     "SELECT COUNT(DISTINCT CAST(CONVERT(t.`st` USING utf8mb4) AS BINARY)), COUNT(DISTINCT t.`seen`), COUNT(DISTINCT t.`flags`), COUNT(DISTINCT t.`raw`) FROM `led``ger`.`Accounts` AS t WHERE (t.`st` = _utf8mb4 X'6f6b' AND ( t.`rate` BETWEEN 1 AND 2.5 OR t.`note` NOT LIKE _utf8mb4 X'785c5f25' ) AND t.`No` IN ( 1 , 2 ) AND t.`opened` < _utf8mb4 X'323032342d30312d3031' AND t.`raw` IS NOT NULL)",
+     {}
+    ],
+    [
+     "SELECT COUNT(DISTINCT t.`at`), COUNT(DISTINCT t.`day`) FROM `led``ger`.`Accounts` AS t WHERE (t.`st` = _utf8mb4 X'6f6b' AND ( t.`rate` BETWEEN 1 AND 2.5 OR t.`note` NOT LIKE _utf8mb4 X'785c5f25' ) AND t.`No` IN ( 1 , 2 ) AND t.`opened` < _utf8mb4 X'323032342d30312d3031' AND t.`raw` IS NOT NULL)",
+     {}
+    ]
+   ],
+   "duplicates": [
+    "SELECT COUNT(*), COALESCE(SUM(d.n), 0) FROM (SELECT COUNT(*) AS n FROM `led``ger`.`Accounts` AS t WHERE CONVERT(t.`branch` USING utf8mb4) IS NOT NULL AND CASE WHEN CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) <> '' AND CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) NOT REGEXP '[^0-9]' THEN CONCAT(_utf8mb4 X'412d', LPAD(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR), GREATEST(6, CHAR_LENGTH(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR))), '0')) END IS NOT NULL AND (t.`st` = _utf8mb4 X'6f6b' AND ( t.`rate` BETWEEN 1 AND 2.5 OR t.`note` NOT LIKE _utf8mb4 X'785c5f25' ) AND t.`No` IN ( 1 , 2 ) AND t.`opened` < _utf8mb4 X'323032342d30312d3031' AND t.`raw` IS NOT NULL) GROUP BY CAST(CONVERT(t.`branch` USING utf8mb4) AS BINARY), CAST(CASE WHEN CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) <> '' AND CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) NOT REGEXP '[^0-9]' THEN CONCAT(_utf8mb4 X'412d', LPAD(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR), GREATEST(6, CHAR_LENGTH(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR))), '0')) END AS BINARY) HAVING COUNT(*) > 1) d",
+    {}
+   ]
+  }
+ }
+}

@@ -1,0 +1,19 @@
+description: >
+  A GraphQL null entity nobody declared is never ABSENT and never a document. Without a notFound
+  declaration (side a) the select finds only null: INCOMPLETE unparseable. With the spec's
+  declaration but a target that lists only 404 as authoritative (side b): absence_unconfirmed.
+sides:
+  a: {select: $.data.character}
+  b:
+    select: $.data.character
+    notFound: {status: [200], when: "has(body.data.character) && body.data.character == null"}
+targets:
+  a: {authoritativeAbsence: {status: [404]}}
+  b: {authoritativeAbsence: {status: [404]}}
+a:
+  body: '{"data": {"character": null}}'
+b:
+  body: '{"data": {"character": null}}'
+expect:
+  a: INCOMPLETE unparseable
+  b: INCOMPLETE absence_unconfirmed

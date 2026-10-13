@@ -1,0 +1,241 @@
+{
+  "pair": "customer",
+  "spec": "mocks/customer/spec.yaml",
+  "targets": "mocks/customer/targets.yaml",
+  "keys_file": "mocks/customer/keys.txt",
+  "dataset": "mocks.customer.dataset.build_dataset: the seeded keys and their behaviour are the same for every seed; DEFAULT_SEED (20260924) fixes the rest of the content.",
+  "modes": {
+    "file": "Layout-1 samples from `python -m mocks.fixtures customer --out DIR`, compared once, no recheck.",
+    "live": "Both services freshly started (or reset with POST /__reset), fetched with the spec's execution block and rechecked once when the first outcome is in recheck.outcomes (MISMATCH, NOT_FOUND_A, NOT_FOUND_B). No customer key changes between calls, so every rechecked key keeps its first outcome."
+  },
+  "matching": "An expected finding matches an actual one when every field it states (taxonomy_code, change_type, path_pattern, severity, rule_id, rule_classification) is equal; fields it omits are unconstrained. Every actual finding of the key must match an expected entry, and each entry must match exactly `count` findings when `count` is given, at least one otherwise. `findings: []` means no finding at all, INFO included. Severity is stated where the spec sets it or the core contract fixes it (NORMALIZATION_ONLY is INFO, MISSING_DOCUMENT is CRITICAL) and omitted where it falls to the core taxonomy default. path_pattern uses the canonical shape of spec.yaml. `rechecked` (live) says whether the first outcome triggers the recheck.",
+  "all_other_keys": "MATCH",
+  "all_other_keys_findings": [],
+  "keys": {
+    "C00012003": {
+      "seed": "consent_granted_mismatch",
+      "why": "The customer's MARKETING consent is granted \"Y\" on v1 (mapped to true) and status WITHDRAWN on v2 (mapped to false). consents is keyed by purpose, so the members align and the difference is one value_changed at $.consents[*].granted, which the field rule marks CRITICAL (core VALUE_MISMATCH). Stable on recheck.",
+      "file": {
+        "outcome": "MISMATCH",
+        "verdict": "DIFFERENT",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "findings": [
+          {"taxonomy_code": "VALUE_MISMATCH", "change_type": "value_changed", "path_pattern": "$.consents[*].granted", "severity": "CRITICAL", "count": 1}
+        ]
+      },
+      "live": {
+        "outcome": "MISMATCH",
+        "verdict": "DIFFERENT",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "rechecked": true,
+        "findings": [
+          {"taxonomy_code": "VALUE_MISMATCH", "change_type": "value_changed", "path_pattern": "$.consents[*].granted", "severity": "CRITICAL", "count": 1}
+        ]
+      }
+    },
+    "C00012007": {
+      "seed": "account_missing_in_v2",
+      "why": "The customer holds two accounts on v1; v2 lists only one (productCount 1, so v2 is complete, not truncated). accounts is keyed by [sortCode, accountNo], so the gap is one missing_in_b member at $.accounts[*]: core default FIELD_MISSING at the array rule's HIGH. Stable on recheck.",
+      "file": {
+        "outcome": "MISMATCH",
+        "verdict": "DIFFERENT",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "findings": [
+          {"taxonomy_code": "FIELD_MISSING", "change_type": "missing_in_b", "path_pattern": "$.accounts[*]", "severity": "HIGH", "count": 1}
+        ]
+      },
+      "live": {
+        "outcome": "MISMATCH",
+        "verdict": "DIFFERENT",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "rechecked": true,
+        "findings": [
+          {"taxonomy_code": "FIELD_MISSING", "change_type": "missing_in_b", "path_pattern": "$.accounts[*]", "severity": "HIGH", "count": 1}
+        ]
+      }
+    },
+    "C00012011": {
+      "seed": "tags_case_only",
+      "why": "v1 tags are [\"PAPERLESS\", \"VIP\"], v2 labels the same words in lower case. tags is a set normalised with [trim, lower], so the normalised sets are equal and only the raw walk differs: NORMALIZATION_ONLY (INFO) at $.tags[*]. How many raw findings (one value_changed per tag, or a missing/extra pair per tag) depends on how raw set members are keyed, so neither change_type nor count is fixed. INFO-only keys stay MATCH.",
+      "file": {
+        "outcome": "MATCH",
+        "verdict": "MATCH",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "findings": [
+          {"taxonomy_code": "NORMALIZATION_ONLY", "path_pattern": "$.tags[*]", "severity": "INFO"}
+        ]
+      },
+      "live": {
+        "outcome": "MATCH",
+        "verdict": "MATCH",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "rechecked": false,
+        "findings": [
+          {"taxonomy_code": "NORMALIZATION_ONLY", "path_pattern": "$.tags[*]", "severity": "INFO"}
+        ]
+      }
+    },
+    "C00012015": {
+      "seed": "phone_format_only",
+      "why": "v1 writes the customer's mobile in UK national format (07700 900115), v2 in E.164 (+447700900115). phones is keyed by the e164-normalised number, so the members align and only the raw value differs: one NORMALIZATION_ONLY (INFO) at $.phones[*].number. The 07700 900xxx drama range is possible but not valid for libphonenumber, so this holds only if e164 formats every parseable number without a validity gate.",
+      "file": {
+        "outcome": "MATCH",
+        "verdict": "MATCH",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "findings": [
+          {"taxonomy_code": "NORMALIZATION_ONLY", "change_type": "value_changed", "path_pattern": "$.phones[*].number", "severity": "INFO", "count": 1}
+        ]
+      },
+      "live": {
+        "outcome": "MATCH",
+        "verdict": "MATCH",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "rechecked": false,
+        "findings": [
+          {"taxonomy_code": "NORMALIZATION_ONLY", "change_type": "value_changed", "path_pattern": "$.phones[*].number", "severity": "INFO", "count": 1}
+        ]
+      }
+    },
+    "C00012019": {
+      "seed": "balance_scale_only",
+      "why": "v1 sends this customer's only balance as the text \"1250.10\", v2 as the number 1250.1 (every other balance is a JSON number on both). decimal {scale: 2} turns both into the same value, so the normalised walk is clean; the raw values differ in JSON type, so the raw walk reports one type_changed tagged NORMALIZATION_ONLY (INFO) at $.accounts[*].balance. INFO-only keys stay MATCH.",
+      "file": {
+        "outcome": "MATCH",
+        "verdict": "MATCH",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "findings": [
+          {"taxonomy_code": "NORMALIZATION_ONLY", "change_type": "type_changed", "path_pattern": "$.accounts[*].balance", "severity": "INFO", "count": 1}
+        ]
+      },
+      "live": {
+        "outcome": "MATCH",
+        "verdict": "MATCH",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "rechecked": false,
+        "findings": [
+          {"taxonomy_code": "NORMALIZATION_ONLY", "change_type": "type_changed", "path_pattern": "$.accounts[*].balance", "severity": "INFO", "count": 1}
+        ]
+      }
+    },
+    "C00012023": {
+      "seed": "created_at_ms_only",
+      "why": "v2 writes createdAt with milliseconds (\"...:SS.000Z\"), v1 without (\"...:SSZ\"). timestamp_utc {precision: s, mode: truncate} makes them equal, so only the raw walk differs: one NORMALIZATION_ONLY (INFO) at $.createdAt. INFO-only keys stay MATCH.",
+      "file": {
+        "outcome": "MATCH",
+        "verdict": "MATCH",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "findings": [
+          {"taxonomy_code": "NORMALIZATION_ONLY", "change_type": "value_changed", "path_pattern": "$.createdAt", "severity": "INFO", "count": 1}
+        ]
+      },
+      "live": {
+        "outcome": "MATCH",
+        "verdict": "MATCH",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "rechecked": false,
+        "findings": [
+          {"taxonomy_code": "NORMALIZATION_ONLY", "change_type": "value_changed", "path_pattern": "$.createdAt", "severity": "INFO", "count": 1}
+        ]
+      }
+    },
+    "C00012027": {
+      "seed": "one_sided_404",
+      "why": "v1 returns the customer; v2 answers 404 {\"error\": \"NOT_FOUND\"}, which the spec's notFound matches and customer-b declares authoritative (status 404 with the not_found_body shape). NOT_FOUND_B with the core document-level MISSING_DOCUMENT finding (path $, CRITICAL). No known diff matches it. The recheck returns the same side states.",
+      "file": {
+        "outcome": "NOT_FOUND_B",
+        "verdict": "DIFFERENT",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "findings": [
+          {"taxonomy_code": "MISSING_DOCUMENT", "change_type": "missing_in_b", "path_pattern": "$", "severity": "CRITICAL", "count": 1}
+        ]
+      },
+      "live": {
+        "outcome": "NOT_FOUND_B",
+        "verdict": "DIFFERENT",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "rechecked": true,
+        "findings": [
+          {"taxonomy_code": "MISSING_DOCUMENT", "change_type": "missing_in_b", "path_pattern": "$", "severity": "CRITICAL", "count": 1}
+        ]
+      }
+    },
+    "C00012031": {
+      "seed": "segment_known_diff",
+      "why": "The customer's segment is PRIVATE on v1 and WEALTH on v2: one value_changed at $.segment (core VALUE_MISMATCH, no field severity). KD-CP-0001 (path == '$.segment' && a == 'PRIVATE' && b == 'WEALTH', expected_by_design) suppresses it, so the only finding above INFO is suppressed by a rule: KNOWN_DIFF with suppressed_count 1, and an expected_by_design rule makes the derived verdict MATCH. KNOWN_DIFF is not rechecked.",
+      "file": {
+        "outcome": "KNOWN_DIFF",
+        "verdict": "MATCH",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 1,
+        "findings": [
+          {"taxonomy_code": "VALUE_MISMATCH", "change_type": "value_changed", "path_pattern": "$.segment", "rule_id": "KD-CP-0001", "rule_classification": "expected_by_design", "count": 1}
+        ]
+      },
+      "live": {
+        "outcome": "KNOWN_DIFF",
+        "verdict": "MATCH",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 1,
+        "rechecked": false,
+        "findings": [
+          {"taxonomy_code": "VALUE_MISMATCH", "change_type": "value_changed", "path_pattern": "$.segment", "rule_id": "KD-CP-0001", "rule_classification": "expected_by_design", "count": 1}
+        ]
+      }
+    },
+    "C00012035": {
+      "seed": "sms_preference_missing",
+      "why": "The customer has no mobile number; v1 returns mktSms \"N\" (mapped to false) while v2 omits preferences.channels.sms, so the v2 map leaves marketing.sms out: one missing_in_b at $.preferences.marketing.sms (core FIELD_MISSING). KD-CP-0002 (path and change_type missing_in_b, classification bug) suppresses it: KNOWN_DIFF with suppressed_count 1, and a bug rule makes the derived verdict DIFFERENT. KNOWN_DIFF is not rechecked.",
+      "file": {
+        "outcome": "KNOWN_DIFF",
+        "verdict": "DIFFERENT",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 1,
+        "findings": [
+          {"taxonomy_code": "FIELD_MISSING", "change_type": "missing_in_b", "path_pattern": "$.preferences.marketing.sms", "rule_id": "KD-CP-0002", "rule_classification": "bug", "count": 1}
+        ]
+      },
+      "live": {
+        "outcome": "KNOWN_DIFF",
+        "verdict": "DIFFERENT",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 1,
+        "rechecked": false,
+        "findings": [
+          {"taxonomy_code": "FIELD_MISSING", "change_type": "missing_in_b", "path_pattern": "$.preferences.marketing.sms", "rule_id": "KD-CP-0002", "rule_classification": "bug", "count": 1}
+        ]
+      }
+    }
+  }
+}

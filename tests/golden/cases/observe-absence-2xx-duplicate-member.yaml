@@ -1,0 +1,21 @@
+description: >
+  A body that repeats a member name has no defined meaning (RFC 8259), so no absence decision
+  reads it: a GraphQL 200 whose repeated "data" holds a null character is INCOMPLETE whichever
+  repeated member comes last, never ABSENT.
+sides:
+  a: &graphql
+    select: $.data.character
+    notFound: {status: [200], when: "has(body.data.character) && body.data.character == null"}
+  b: *graphql
+targets:
+  a: &declared
+    authoritativeAbsence: {status: [200], shapes: [null_character]}
+    absenceShapes: {null_character: "!has(body.errors) && body.data.character == null"}
+  b: *declared
+a:
+  body: '{"data": {"character": {"id": "1", "name": "Rick Sanchez"}}, "data": {"character": null}}'
+b:
+  body: '{"data": {"character": null}, "data": {"character": {"id": "1", "name": "Rick Sanchez"}}}'
+expect:
+  a: INCOMPLETE duplicate_member_name
+  b: INCOMPLETE duplicate_member_name

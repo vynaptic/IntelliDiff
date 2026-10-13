@@ -1,0 +1,1301 @@
+{
+ "format": "deltasleuth-bench/1",
+ "bench_id": "987c2c66",
+ "complete": true,
+ "started": "2026-09-30T15:18:53Z",
+ "ended": "2026-09-30T15:22:37Z",
+ "publishable": true,
+ "problems": [],
+ "commit": {
+  "sha": "10f295cf6e88e5294ec227b3bb31c325502478a7",
+  "dirty": false
+ },
+ "version": "0.1.0.dev0",
+ "uv_lock_sha256": "5e2483830df1c3afca0a04fd833664d7c6a87ff49059f77e0bf561a896f1764b",
+ "options": {
+  "rows": [
+   1000000
+  ],
+  "scenarios": [
+   "sparse",
+   "dense"
+  ],
+  "shape": "wide",
+  "repeat": 3,
+  "server": false,
+  "timeout_min": 240,
+  "stall_min": 10,
+  "max_rss_bytes": 41231686041
+ },
+ "environment": {
+  "host": {
+   "os": "darwin",
+   "model": "Mac15,9",
+   "cpu": "Apple M3 Max",
+   "cpus": 16,
+   "memory_bytes": 68719476736,
+   "python": "3.13.2",
+   "psycopg": "3.3.6",
+   "libpq": "18.6"
+  },
+  "docker": {
+   "version": "29.1.3",
+   "cpus": 16,
+   "memory_bytes": 17011298304,
+   "cgroup": "2",
+   "os": "Docker Desktop"
+  },
+  "postgres": {
+   "image": "postgres:16-alpine",
+   "image_id": "sha256:0ab885cf71916beded83c51df1ea71acddeab24048fd957b4f4471f59dcb9bc5",
+   "version": "16.14",
+   "settings": {
+    "shared_buffers": "128MB",
+    "work_mem": "4MB",
+    "maintenance_work_mem": "64MB",
+    "max_wal_size": "1GB",
+    "synchronous_commit": "on",
+    "fsync": "on",
+    "jit": "on",
+    "max_parallel_workers_per_gather": "2",
+    "temp_file_limit": "-1"
+   }
+  },
+  "topology": "container",
+  "rtt_ms": 0.24
+ },
+ "profile": {
+  "settings": {
+   "database_dsn_ref": "file:<work>/dsn_run",
+   "evidence_dir": "<work>/evidence",
+   "workspace_dir": "<work>/workspace",
+   "targets_file": "<work>/targets.json",
+   "worker": {
+    "concurrency": 4,
+    "lease_seconds": 120,
+    "poll_seconds": 0.05
+   }
+  },
+  "targets": {
+   "targets": {
+    "db-a": {
+     "dsn_ref": "file:<work>/dsn_a",
+     "rate_per_s": 1000,
+     "max_concurrency": 4
+    },
+    "db-b": {
+     "dsn_ref": "file:<work>/dsn_b",
+     "rate_per_s": 1000,
+     "max_concurrency": 4
+    }
+   }
+  },
+  "specs": {
+   "bench-tables": {
+    "sha256": "25d1bed192215ad19d10fd90e26e0466742198d422f43ae3a3db1a00a1359a52",
+    "document": {
+     "apiVersion": "deltasleuth/v1",
+     "kind": "ComparisonSpec",
+     "normalizerVersion": "1.1.0",
+     "compare": {},
+     "recheck": {
+      "delay": "0s",
+      "times": 1,
+      "outcomes": [
+       "MISMATCH",
+       "NOT_FOUND_A",
+       "NOT_FOUND_B"
+      ]
+     },
+     "metadata": {
+      "name": "bench-tables",
+      "version": "1.0.0",
+      "owner": "bench"
+     },
+     "key": {
+      "name": "userid",
+      "type": "string",
+      "class": "identifier"
+     },
+     "sides": {
+      "a": {
+       "role": "legacy",
+       "target": "db-a",
+       "table": {
+        "name": "users",
+        "keyColumns": [
+         "userid"
+        ]
+       }
+      },
+      "b": {
+       "role": "new",
+       "target": "db-b",
+       "table": {
+        "name": "users",
+        "keyColumns": [
+         "userid"
+        ]
+       }
+      }
+     },
+     "execution": {
+      "concurrency": 8
+     },
+     "security": {
+      "unlisted": "tokenize",
+      "clear": [
+       "$.amount"
+      ]
+     }
+    }
+   },
+   "bench-graph": {
+    "sha256": "956dfd8aa92d20f4fa1543154e119f91dcb6d77dec22d05462629cb9f5cbb98b",
+    "document": {
+     "apiVersion": "deltasleuth/v1",
+     "kind": "ComparisonSpec",
+     "normalizerVersion": "1.1.0",
+     "compare": {},
+     "recheck": {
+      "delay": "0s",
+      "times": 1,
+      "outcomes": [
+       "MISMATCH",
+       "NOT_FOUND_A",
+       "NOT_FOUND_B"
+      ]
+     },
+     "metadata": {
+      "name": "bench-graph",
+      "version": "1.0.0",
+      "owner": "bench"
+     },
+     "key": {
+      "name": "link",
+      "type": "composite",
+      "parts": [
+       "entity_code",
+       "id_type",
+       "id_value"
+      ],
+      "class": "identifier"
+     },
+     "sides": {
+      "a": {
+       "role": "legacy",
+       "target": "db-a",
+       "table": {
+        "name": "links",
+        "keyColumns": [
+         "entity_code",
+         "id_type",
+         "id_value"
+        ],
+        "columns": [
+         "entity_code"
+        ]
+       }
+      },
+      "b": {
+       "role": "new",
+       "target": "db-b",
+       "table": {
+        "name": "links",
+        "keyColumns": [
+         "entity_code",
+         "id_type",
+         "id_value"
+        ],
+        "columns": [
+         "entity_code"
+        ]
+       }
+      }
+     },
+     "graph": {
+      "members": [
+       "entity_code"
+      ],
+      "groups": [
+       "id_type",
+       "id_value"
+      ],
+      "maxComponent": 20
+     },
+     "security": {
+      "unlisted": "tokenize"
+     }
+    }
+   }
+  },
+  "read_batch": 200,
+  "scan_batch": 10000,
+  "baseline_rss_bytes": 88866816
+ },
+ "sizes": [
+  {
+   "rows": 1000000,
+   "fits_in_memory": true,
+   "did_not_run": null,
+   "tables": {
+    "users.a": {
+     "rows": 1000000,
+     "columns": 24,
+     "table_bytes": 420528128,
+     "index_bytes": 22487040,
+     "row_bytes": 389,
+     "generated_s": 7.4
+    },
+    "users.b.sparse": {
+     "rows": 999999,
+     "columns": 24,
+     "table_bytes": 420528128,
+     "index_bytes": 22487040,
+     "row_bytes": 389,
+     "generated_s": 7.0
+    },
+    "users.b.dense": {
+     "rows": 1000000,
+     "columns": 24,
+     "table_bytes": 420536320,
+     "index_bytes": 22487040,
+     "row_bytes": 389,
+     "generated_s": 6.8
+    }
+   },
+   "scenarios": [
+    {
+     "scenario": "sparse",
+     "truth": {
+      "rows_a": 1000000,
+      "rows_b": 999999,
+      "skipped_a": 0,
+      "skipped_b": 0,
+      "matched": 999989,
+      "candidates": 11,
+      "MATCH": 999989,
+      "MISMATCH": 10,
+      "NOT_FOUND_A": 0,
+      "NOT_FOUND_B": 1,
+      "KNOWN_DIFF": 0,
+      "NOISE_ONLY": 0,
+      "DRIFT": 0,
+      "INCONCLUSIVE": 0
+     },
+     "repetitions": [
+      {
+       "n": 1,
+       "cache": "restarted",
+       "restart_clean": true,
+       "correct": true,
+       "problems": [],
+       "aborted": null,
+       "exit": 0,
+       "status": "completed",
+       "noise": {
+        "quiet_wait_s": 0.0,
+        "load_1m": 1.77,
+        "power": "ac",
+        "others": {
+         "containers": 7,
+         "cpu_pct": 2.8
+        },
+        "slept_s": 0.0
+       },
+       "observed": {
+        "rows_a": 1000000,
+        "rows_b": 999999,
+        "skipped_a": 0,
+        "skipped_b": 0,
+        "matched": 999989,
+        "candidates": 11,
+        "MATCH": 999989,
+        "MISMATCH": 10,
+        "NOT_FOUND_A": 0,
+        "NOT_FOUND_B": 1,
+        "KNOWN_DIFF": 0,
+        "NOISE_ONLY": 0,
+        "DRIFT": 0,
+        "INCONCLUSIVE": 0,
+        "snapshots_a": 1,
+        "snapshots_b": 1
+       },
+       "seconds": {
+        "run": 16.223,
+        "first_progress": 12.887,
+        "scan": 16.156,
+        "l1": null,
+        "l2": null,
+        "reads_tail": 0.0,
+        "cycle_end": 0.0,
+        "process": 16.664
+       },
+       "reads": {
+        "keys": 11,
+        "span_s": 2.794,
+        "open_at_scan_end": 0,
+        "keys_per_s": null,
+        "tail_keys_per_s": null
+       },
+       "memory": {
+        "peak_rss_bytes": 102449152,
+        "rss_scan_end_bytes": 0
+       },
+       "cpu": {
+        "ds_s": 3.99,
+        "database_s": 14.24
+       },
+       "sources": {
+        "a": {
+         "temp_files": 1,
+         "temp_bytes": 60973056,
+         "blks_read": 54302,
+         "blks_hit": 3627,
+         "tup_returned": 2002983
+        },
+        "b": {
+         "temp_files": 1,
+         "temp_bytes": 60973056,
+         "blks_read": 54301,
+         "blks_hit": 3409,
+         "tup_returned": 2002884
+        }
+       },
+       "temp_peak_bytes": 121946112,
+       "stored": {
+        "store_bytes": 424456,
+        "evidence_bytes": 9508,
+        "evidence_files": 21
+       },
+       "statistics": {
+        "finished_s": 16.138794,
+        "tables": {
+         "findings": {
+          "analyze_s": -0.001092,
+          "autoanalyze_s": null
+         },
+         "observations": {
+          "analyze_s": -0.000783,
+          "autoanalyze_s": null
+         },
+         "results": {
+          "analyze_s": -0.001337,
+          "autoanalyze_s": null
+         },
+         "run_keys": {
+          "analyze_s": -0.001743,
+          "autoanalyze_s": null
+         }
+        }
+       }
+      },
+      {
+       "n": 2,
+       "cache": "warm",
+       "restart_clean": null,
+       "correct": true,
+       "problems": [],
+       "aborted": null,
+       "exit": 0,
+       "status": "completed",
+       "noise": {
+        "quiet_wait_s": 0.0,
+        "load_1m": 1.92,
+        "power": "ac",
+        "others": {
+         "containers": 7,
+         "cpu_pct": 3.9
+        },
+        "slept_s": 0.0
+       },
+       "observed": {
+        "rows_a": 1000000,
+        "rows_b": 999999,
+        "skipped_a": 0,
+        "skipped_b": 0,
+        "matched": 999989,
+        "candidates": 11,
+        "MATCH": 999989,
+        "MISMATCH": 10,
+        "NOT_FOUND_A": 0,
+        "NOT_FOUND_B": 1,
+        "KNOWN_DIFF": 0,
+        "NOISE_ONLY": 0,
+        "DRIFT": 0,
+        "INCONCLUSIVE": 0,
+        "snapshots_a": 1,
+        "snapshots_b": 1
+       },
+       "seconds": {
+        "run": 16.129,
+        "first_progress": 12.898,
+        "scan": 16.065,
+        "l1": null,
+        "l2": null,
+        "reads_tail": 0.0,
+        "cycle_end": 0.0,
+        "process": 16.669
+       },
+       "reads": {
+        "keys": 11,
+        "span_s": 2.74,
+        "open_at_scan_end": 0,
+        "keys_per_s": null,
+        "tail_keys_per_s": null
+       },
+       "memory": {
+        "peak_rss_bytes": 102400000,
+        "rss_scan_end_bytes": 102203392
+       },
+       "cpu": {
+        "ds_s": 4.02,
+        "database_s": 14.23
+       },
+       "sources": {
+        "a": {
+         "temp_files": 1,
+         "temp_bytes": 60973056,
+         "blks_read": 51274,
+         "blks_hit": 5512,
+         "tup_returned": 2002321
+        },
+        "b": {
+         "temp_files": 1,
+         "temp_bytes": 60973056,
+         "blks_read": 51279,
+         "blks_hit": 5143,
+         "tup_returned": 2003016
+        }
+       },
+       "temp_peak_bytes": 121946112,
+       "stored": {
+        "store_bytes": 506376,
+        "evidence_bytes": 9508,
+        "evidence_files": 21
+       },
+       "statistics": {
+        "finished_s": 16.088496,
+        "tables": {
+         "findings": {
+          "analyze_s": -0.001109,
+          "autoanalyze_s": null
+         },
+         "observations": {
+          "analyze_s": -0.0008,
+          "autoanalyze_s": null
+         },
+         "results": {
+          "analyze_s": -0.001371,
+          "autoanalyze_s": null
+         },
+         "run_keys": {
+          "analyze_s": -0.001826,
+          "autoanalyze_s": null
+         }
+        }
+       }
+      },
+      {
+       "n": 3,
+       "cache": "warm",
+       "restart_clean": null,
+       "correct": true,
+       "problems": [],
+       "aborted": null,
+       "exit": 0,
+       "status": "completed",
+       "noise": {
+        "quiet_wait_s": 0.0,
+        "load_1m": 2.08,
+        "power": "ac",
+        "others": {
+         "containers": 7,
+         "cpu_pct": 3.1
+        },
+        "slept_s": 0.0
+       },
+       "observed": {
+        "rows_a": 1000000,
+        "rows_b": 999999,
+        "skipped_a": 0,
+        "skipped_b": 0,
+        "matched": 999989,
+        "candidates": 11,
+        "MATCH": 999989,
+        "MISMATCH": 10,
+        "NOT_FOUND_A": 0,
+        "NOT_FOUND_B": 1,
+        "KNOWN_DIFF": 0,
+        "NOISE_ONLY": 0,
+        "DRIFT": 0,
+        "INCONCLUSIVE": 0,
+        "snapshots_a": 1,
+        "snapshots_b": 1
+       },
+       "seconds": {
+        "run": 16.232,
+        "first_progress": 12.894,
+        "scan": 16.053,
+        "l1": null,
+        "l2": null,
+        "reads_tail": 0.0,
+        "cycle_end": 0.115,
+        "process": 16.781
+       },
+       "reads": {
+        "keys": 11,
+        "span_s": 2.78,
+        "open_at_scan_end": 0,
+        "keys_per_s": null,
+        "tail_keys_per_s": null
+       },
+       "memory": {
+        "peak_rss_bytes": 102465536,
+        "rss_scan_end_bytes": 102285312
+       },
+       "cpu": {
+        "ds_s": 4.05,
+        "database_s": 14.21
+       },
+       "sources": {
+        "a": {
+         "temp_files": 1,
+         "temp_bytes": 60973056,
+         "blks_read": 51246,
+         "blks_hit": 5177,
+         "tup_returned": 2003019
+        },
+        "b": {
+         "temp_files": 1,
+         "temp_bytes": 60973056,
+         "blks_read": 51243,
+         "blks_hit": 5106,
+         "tup_returned": 2002126
+        }
+       },
+       "temp_peak_bytes": 121946112,
+       "stored": {
+        "store_bytes": 489992,
+        "evidence_bytes": 9508,
+        "evidence_files": 21
+       },
+       "statistics": {
+        "finished_s": 16.158056,
+        "tables": {
+         "findings": {
+          "analyze_s": -0.001206,
+          "autoanalyze_s": null
+         },
+         "observations": {
+          "analyze_s": -0.000851,
+          "autoanalyze_s": null
+         },
+         "results": {
+          "analyze_s": -0.001493,
+          "autoanalyze_s": null
+         },
+         "run_keys": {
+          "analyze_s": -0.00198,
+          "autoanalyze_s": null
+         }
+        }
+       }
+      }
+     ],
+     "summary": {
+      "restarted": {
+       "n": 1,
+       "statistics": "analysed",
+       "run_s": {
+        "median": 16.223,
+        "min": 16.223,
+        "max": 16.223
+       },
+       "first_progress_s": {
+        "median": 12.887,
+        "min": 12.887,
+        "max": 12.887
+       },
+       "scan_s": {
+        "median": 16.156,
+        "min": 16.156,
+        "max": 16.156
+       },
+       "reads_tail_s": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+       },
+       "cycle_end_s": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+       },
+       "process_s": {
+        "median": 16.664,
+        "min": 16.664,
+        "max": 16.664
+       },
+       "rows_per_s": {
+        "median": 61896.5,
+        "min": 61896.5,
+        "max": 61896.5
+       },
+       "peak_rss_bytes": {
+        "median": 102449152,
+        "min": 102449152,
+        "max": 102449152
+       },
+       "rss_scan_end_bytes": {
+        "median": 0,
+        "min": 0,
+        "max": 0
+       },
+       "ds_cpu_s": {
+        "median": 3.99,
+        "min": 3.99,
+        "max": 3.99
+       },
+       "database_cpu_s": {
+        "median": 14.24,
+        "min": 14.24,
+        "max": 14.24
+       },
+       "temp_bytes": {
+        "median": 121946112,
+        "min": 121946112,
+        "max": 121946112
+       },
+       "store_bytes": {
+        "median": 424456,
+        "min": 424456,
+        "max": 424456
+       },
+       "evidence_bytes": {
+        "median": 9508,
+        "min": 9508,
+        "max": 9508
+       },
+       "stored_per_key": {
+        "median": 39451,
+        "min": 39451,
+        "max": 39451
+       },
+       "noisy": false
+      },
+      "warm": {
+       "n": 2,
+       "statistics": "analysed",
+       "run_s": {
+        "median": 16.180500000000002,
+        "min": 16.129,
+        "max": 16.232
+       },
+       "first_progress_s": {
+        "median": 12.896,
+        "min": 12.894,
+        "max": 12.898
+       },
+       "scan_s": {
+        "median": 16.059,
+        "min": 16.053,
+        "max": 16.065
+       },
+       "reads_tail_s": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+       },
+       "cycle_end_s": {
+        "median": 0.0575,
+        "min": 0.0,
+        "max": 0.115
+       },
+       "process_s": {
+        "median": 16.725,
+        "min": 16.669,
+        "max": 16.781
+       },
+       "rows_per_s": {
+        "median": 62270.399999999994,
+        "min": 62247.1,
+        "max": 62293.7
+       },
+       "peak_rss_bytes": {
+        "median": 102432768.0,
+        "min": 102400000,
+        "max": 102465536
+       },
+       "rss_scan_end_bytes": {
+        "median": 102244352.0,
+        "min": 102203392,
+        "max": 102285312
+       },
+       "ds_cpu_s": {
+        "median": 4.035,
+        "min": 4.02,
+        "max": 4.05
+       },
+       "database_cpu_s": {
+        "median": 14.22,
+        "min": 14.21,
+        "max": 14.23
+       },
+       "temp_bytes": {
+        "median": 121946112.0,
+        "min": 121946112,
+        "max": 121946112
+       },
+       "store_bytes": {
+        "median": 498184.0,
+        "min": 489992,
+        "max": 506376
+       },
+       "evidence_bytes": {
+        "median": 9508.0,
+        "min": 9508,
+        "max": 9508
+       },
+       "stored_per_key": {
+        "median": 46154.0,
+        "min": 45409,
+        "max": 46899
+       },
+       "noisy": false
+      }
+     }
+    },
+    {
+     "scenario": "dense",
+     "truth": {
+      "rows_a": 1000000,
+      "rows_b": 1000000,
+      "skipped_a": 0,
+      "skipped_b": 0,
+      "matched": 991000,
+      "candidates": 10000,
+      "MATCH": 991000,
+      "MISMATCH": 8000,
+      "NOT_FOUND_A": 1000,
+      "NOT_FOUND_B": 1000,
+      "KNOWN_DIFF": 0,
+      "NOISE_ONLY": 0,
+      "DRIFT": 0,
+      "INCONCLUSIVE": 0
+     },
+     "repetitions": [
+      {
+       "n": 1,
+       "cache": "restarted",
+       "restart_clean": true,
+       "correct": true,
+       "problems": [],
+       "aborted": null,
+       "exit": 0,
+       "status": "completed",
+       "noise": {
+        "quiet_wait_s": 0.0,
+        "load_1m": 2.18,
+        "power": "ac",
+        "others": {
+         "containers": 7,
+         "cpu_pct": 25.6
+        },
+        "slept_s": 0.0
+       },
+       "observed": {
+        "rows_a": 1000000,
+        "rows_b": 1000000,
+        "skipped_a": 0,
+        "skipped_b": 0,
+        "matched": 991000,
+        "candidates": 10000,
+        "MATCH": 991000,
+        "MISMATCH": 8000,
+        "NOT_FOUND_A": 1000,
+        "NOT_FOUND_B": 1000,
+        "KNOWN_DIFF": 0,
+        "NOISE_ONLY": 0,
+        "DRIFT": 0,
+        "INCONCLUSIVE": 0,
+        "snapshots_a": 1,
+        "snapshots_b": 1
+       },
+       "seconds": {
+        "run": 39.94,
+        "first_progress": 12.986,
+        "scan": 17.21,
+        "l1": null,
+        "l2": null,
+        "reads_tail": 17.523,
+        "cycle_end": 5.145,
+        "process": 40.484
+       },
+       "reads": {
+        "keys": 10000,
+        "span_s": 19.885,
+        "open_at_scan_end": 9087,
+        "keys_per_s": 492.8,
+        "tail_keys_per_s": 518.6
+       },
+       "memory": {
+        "peak_rss_bytes": 288882688,
+        "rss_scan_end_bytes": 119160832
+       },
+       "cpu": {
+        "ds_s": 25.58,
+        "database_s": 60.03
+       },
+       "sources": {
+        "a": {
+         "temp_files": 1,
+         "temp_bytes": 60973056,
+         "blks_read": 64593,
+         "blks_hit": 32074,
+         "tup_returned": 2011876
+        },
+        "b": {
+         "temp_files": 1,
+         "temp_bytes": 60973056,
+         "blks_read": 63494,
+         "blks_hit": 33229,
+         "tup_returned": 2012766
+        }
+       },
+       "temp_peak_bytes": 121946112,
+       "stored": {
+        "store_bytes": 40468480,
+        "evidence_bytes": 8270367,
+        "evidence_files": 18000
+       },
+       "statistics": {
+        "finished_s": 34.901461,
+        "tables": {
+         "findings": {
+          "analyze_s": -0.063912,
+          "autoanalyze_s": null
+         },
+         "observations": {
+          "analyze_s": -0.001353,
+          "autoanalyze_s": null
+         },
+         "results": {
+          "analyze_s": -0.111049,
+          "autoanalyze_s": null
+         },
+         "run_keys": {
+          "analyze_s": -0.141268,
+          "autoanalyze_s": null
+         }
+        }
+       }
+      },
+      {
+       "n": 2,
+       "cache": "warm",
+       "restart_clean": null,
+       "correct": true,
+       "problems": [],
+       "aborted": null,
+       "exit": 0,
+       "status": "completed",
+       "noise": {
+        "quiet_wait_s": 0.0,
+        "load_1m": 5.27,
+        "power": "ac",
+        "others": {
+         "containers": 7,
+         "cpu_pct": 3.0
+        },
+        "slept_s": 0.0
+       },
+       "observed": {
+        "rows_a": 1000000,
+        "rows_b": 1000000,
+        "skipped_a": 0,
+        "skipped_b": 0,
+        "matched": 991000,
+        "candidates": 10000,
+        "MATCH": 991000,
+        "MISMATCH": 8000,
+        "NOT_FOUND_A": 1000,
+        "NOT_FOUND_B": 1000,
+        "KNOWN_DIFF": 0,
+        "NOISE_ONLY": 0,
+        "DRIFT": 0,
+        "INCONCLUSIVE": 0,
+        "snapshots_a": 1,
+        "snapshots_b": 1
+       },
+       "seconds": {
+        "run": 42.468,
+        "first_progress": 13.009,
+        "scan": 17.481,
+        "l1": null,
+        "l2": null,
+        "reads_tail": 19.798,
+        "cycle_end": 5.123,
+        "process": 43.014
+       },
+       "reads": {
+        "keys": 10000,
+        "span_s": 22.111,
+        "open_at_scan_end": 9065,
+        "keys_per_s": 443.2,
+        "tail_keys_per_s": 457.9
+       },
+       "memory": {
+        "peak_rss_bytes": 289046528,
+        "rss_scan_end_bytes": 118833152
+       },
+       "cpu": {
+        "ds_s": 25.36,
+        "database_s": 63.38
+       },
+       "sources": {
+        "a": {
+         "temp_files": 1,
+         "temp_bytes": 60973056,
+         "blks_read": 58704,
+         "blks_hit": 36675,
+         "tup_returned": 2012008
+        },
+        "b": {
+         "temp_files": 1,
+         "temp_bytes": 60973056,
+         "blks_read": 58138,
+         "blks_hit": 37151,
+         "tup_returned": 2011118
+        }
+       },
+       "temp_peak_bytes": 121946112,
+       "stored": {
+        "store_bytes": 40230912,
+        "evidence_bytes": 8270367,
+        "evidence_files": 18000
+       },
+       "statistics": {
+        "finished_s": 37.436038,
+        "tables": {
+         "findings": {
+          "analyze_s": -0.064213,
+          "autoanalyze_s": null
+         },
+         "observations": {
+          "analyze_s": -0.001688,
+          "autoanalyze_s": null
+         },
+         "results": {
+          "analyze_s": -0.111573,
+          "autoanalyze_s": null
+         },
+         "run_keys": {
+          "analyze_s": -0.141389,
+          "autoanalyze_s": null
+         }
+        }
+       }
+      },
+      {
+       "n": 3,
+       "cache": "warm",
+       "restart_clean": null,
+       "correct": true,
+       "problems": [],
+       "aborted": null,
+       "exit": 0,
+       "status": "completed",
+       "noise": {
+        "quiet_wait_s": 0.0,
+        "load_1m": 4.75,
+        "power": "ac",
+        "others": {
+         "containers": 7,
+         "cpu_pct": 3.5
+        },
+        "slept_s": 0.0
+       },
+       "observed": {
+        "rows_a": 1000000,
+        "rows_b": 1000000,
+        "skipped_a": 0,
+        "skipped_b": 0,
+        "matched": 991000,
+        "candidates": 10000,
+        "MATCH": 991000,
+        "MISMATCH": 8000,
+        "NOT_FOUND_A": 1000,
+        "NOT_FOUND_B": 1000,
+        "KNOWN_DIFF": 0,
+        "NOISE_ONLY": 0,
+        "DRIFT": 0,
+        "INCONCLUSIVE": 0,
+        "snapshots_a": 1,
+        "snapshots_b": 1
+       },
+       "seconds": {
+        "run": 41.313,
+        "first_progress": 12.949,
+        "scan": 17.395,
+        "l1": null,
+        "l2": null,
+        "reads_tail": 18.702,
+        "cycle_end": 5.154,
+        "process": 41.857
+       },
+       "reads": {
+        "keys": 10000,
+        "span_s": 21.045,
+        "open_at_scan_end": 9044,
+        "keys_per_s": 465.7,
+        "tail_keys_per_s": 483.6
+       },
+       "memory": {
+        "peak_rss_bytes": 288620544,
+        "rss_scan_end_bytes": 121257984
+       },
+       "cpu": {
+        "ds_s": 25.33,
+        "database_s": 62.2
+       },
+       "sources": {
+        "a": {
+         "temp_files": 1,
+         "temp_bytes": 60973056,
+         "blks_read": 58841,
+         "blks_hit": 36538,
+         "tup_returned": 2012008
+        },
+        "b": {
+         "temp_files": 1,
+         "temp_bytes": 60973056,
+         "blks_read": 58106,
+         "blks_hit": 37183,
+         "tup_returned": 2011118
+        }
+       },
+       "temp_peak_bytes": 121946112,
+       "stored": {
+        "store_bytes": 40493056,
+        "evidence_bytes": 8270367,
+        "evidence_files": 18000
+       },
+       "statistics": {
+        "finished_s": 36.258175,
+        "tables": {
+         "findings": {
+          "analyze_s": -0.062907,
+          "autoanalyze_s": null
+         },
+         "observations": {
+          "analyze_s": -0.001272,
+          "autoanalyze_s": null
+         },
+         "results": {
+          "analyze_s": -0.110234,
+          "autoanalyze_s": null
+         },
+         "run_keys": {
+          "analyze_s": -0.140054,
+          "autoanalyze_s": null
+         }
+        }
+       }
+      }
+     ],
+     "summary": {
+      "restarted": {
+       "n": 1,
+       "statistics": "analysed",
+       "run_s": {
+        "median": 39.94,
+        "min": 39.94,
+        "max": 39.94
+       },
+       "first_progress_s": {
+        "median": 12.986,
+        "min": 12.986,
+        "max": 12.986
+       },
+       "scan_s": {
+        "median": 17.21,
+        "min": 17.21,
+        "max": 17.21
+       },
+       "reads_tail_s": {
+        "median": 17.523,
+        "min": 17.523,
+        "max": 17.523
+       },
+       "cycle_end_s": {
+        "median": 5.145,
+        "min": 5.145,
+        "max": 5.145
+       },
+       "process_s": {
+        "median": 40.484,
+        "min": 40.484,
+        "max": 40.484
+       },
+       "keys_per_s": {
+        "median": 492.8,
+        "min": 492.8,
+        "max": 492.8
+       },
+       "tail_keys_per_s": {
+        "median": 518.6,
+        "min": 518.6,
+        "max": 518.6
+       },
+       "rows_per_s": {
+        "median": 58105.8,
+        "min": 58105.8,
+        "max": 58105.8
+       },
+       "peak_rss_bytes": {
+        "median": 288882688,
+        "min": 288882688,
+        "max": 288882688
+       },
+       "rss_scan_end_bytes": {
+        "median": 119160832,
+        "min": 119160832,
+        "max": 119160832
+       },
+       "ds_cpu_s": {
+        "median": 25.58,
+        "min": 25.58,
+        "max": 25.58
+       },
+       "database_cpu_s": {
+        "median": 60.03,
+        "min": 60.03,
+        "max": 60.03
+       },
+       "temp_bytes": {
+        "median": 121946112,
+        "min": 121946112,
+        "max": 121946112
+       },
+       "store_bytes": {
+        "median": 40468480,
+        "min": 40468480,
+        "max": 40468480
+       },
+       "evidence_bytes": {
+        "median": 8270367,
+        "min": 8270367,
+        "max": 8270367
+       },
+       "stored_per_key": {
+        "median": 4874,
+        "min": 4874,
+        "max": 4874
+       },
+       "noisy": false
+      },
+      "warm": {
+       "n": 2,
+       "statistics": "analysed",
+       "run_s": {
+        "median": 41.8905,
+        "min": 41.313,
+        "max": 42.468
+       },
+       "first_progress_s": {
+        "median": 12.979,
+        "min": 12.949,
+        "max": 13.009
+       },
+       "scan_s": {
+        "median": 17.438000000000002,
+        "min": 17.395,
+        "max": 17.481
+       },
+       "reads_tail_s": {
+        "median": 19.25,
+        "min": 18.702,
+        "max": 19.798
+       },
+       "cycle_end_s": {
+        "median": 5.1385000000000005,
+        "min": 5.123,
+        "max": 5.154
+       },
+       "process_s": {
+        "median": 42.435500000000005,
+        "min": 41.857,
+        "max": 43.014
+       },
+       "keys_per_s": {
+        "median": 454.45,
+        "min": 443.2,
+        "max": 465.7
+       },
+       "tail_keys_per_s": {
+        "median": 470.75,
+        "min": 457.9,
+        "max": 483.6
+       },
+       "rows_per_s": {
+        "median": 57346.4,
+        "min": 57205.0,
+        "max": 57487.8
+       },
+       "peak_rss_bytes": {
+        "median": 288833536.0,
+        "min": 288620544,
+        "max": 289046528
+       },
+       "rss_scan_end_bytes": {
+        "median": 120045568.0,
+        "min": 118833152,
+        "max": 121257984
+       },
+       "ds_cpu_s": {
+        "median": 25.345,
+        "min": 25.33,
+        "max": 25.36
+       },
+       "database_cpu_s": {
+        "median": 62.790000000000006,
+        "min": 62.2,
+        "max": 63.38
+       },
+       "temp_bytes": {
+        "median": 121946112.0,
+        "min": 121946112,
+        "max": 121946112
+       },
+       "store_bytes": {
+        "median": 40361984.0,
+        "min": 40230912,
+        "max": 40493056
+       },
+       "evidence_bytes": {
+        "median": 8270367.0,
+        "min": 8270367,
+        "max": 8270367
+       },
+       "stored_per_key": {
+        "median": 4863.0,
+        "min": 4850,
+        "max": 4876
+       },
+       "noisy": false
+      }
+     }
+    }
+   ]
+  }
+ ],
+ "notes": [
+  "worker {concurrency: 4, lease_seconds: 120, poll_seconds: 0.05}: the shipped concurrency and lease, the DS_PERF poll, so it measures work rather than idle polling (D4)",
+  "darwin: os.fsync does not use F_FULLFSYNC, so writes reach the disk's cache, not stable storage",
+  "the database is reached through Docker's port forward on 127.0.0.1, which each round trip pays",
+  "sources fit in the page cache: reads are memory reads",
+  "restarted: the server restarted before each scenario's first repetition at a size, shared buffers empty, OS page cache warm (the Docker VM's or the host's); not a cold cache",
+  "the table scenarios differ from the DS_PERF table test (TABLES \u00a77): key class identifier, not business_code; execution.concurrency 8, not the spec default; lease 120 s, not 30 s; side b generated, not UPDATEd and DELETEd, so no dead tuples; frozen tables"
+ ]
+}

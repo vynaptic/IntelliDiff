@@ -1,0 +1,7 @@
+description: 401/403 (auth_error) is ERROR error_<side>; the other side is unaffected.
+a: {status: 401, error_class: auth_error}
+b:
+  body: '{"a": 1}'
+expect:
+  a: ERROR error_a
+  b: COMPLETE

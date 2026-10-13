@@ -1,0 +1,13 @@
+description: A 404 the spec declares not-found and the target declares authoritative is ABSENT.
+sides:
+  b: {notFound: {status: [404]}}
+targets:
+  b: {authoritativeAbsence: {status: [404]}}
+a:
+  body: '{"id": "K1"}'
+b:
+  status: 404
+  body: '{"error": "not found"}'
+expect:
+  a: COMPLETE
+  b: ABSENT

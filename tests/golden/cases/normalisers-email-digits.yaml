@@ -1,0 +1,17 @@
+description: email_basic and digits_only; a real difference that survives normalisation stays a finding.
+compare:
+  fields:
+    - {path: $.email, normalize: [email_basic]}
+    - {path: $.email2, normalize: [email_basic]}
+    - {path: $.phone, normalize: [digits_only]}
+a:
+  body: '{"email": " Ann.Lee@Example.COM", "email2": "Ann@x.com", "phone": "+44 (20) 7946-0018"}'
+b:
+  body: '{"email": "ann.lee@example.com", "email2": "Bob@x.com", "phone": "442079460018"}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/email, $.email, value_changed, NORMALIZATION_ONLY]
+    - [/phone, $.phone, value_changed, NORMALIZATION_ONLY]
+    - [/email2, $.email2, value_changed, null]

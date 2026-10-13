@@ -1,0 +1,20 @@
+# The database of seed.sql, on the MySQL server you will compare (docs/mvp/ENGINES.md §4; DEPLOY.md,
+# section 7). Both sides of spec.yaml read it. password_ref and tls_ca_ref are one-line files; a relative
+# reference resolves against this file, and secrets/ is git-ignored.
+
+targets:
+  kit-mysql:
+    engine: mysql
+    host: mysql.bank.example                      # a DNS name or an IP literal
+    port: 3306
+    database: ds_kit
+    user: ds_reader
+    password_ref: file:secrets/kit_mysql_password
+    tls_ca_ref: file:secrets/kit_mysql_ca         # the CA of the server's certificate
+    # A certificate without a subjectAltName (the one a MySQL server makes for itself) passes only with
+    # the chain alone verified, against that CA:
+    # tls_verify_name: false
+    # A private or loopback address needs:
+    # allow_private_network: true
+    rate_per_s: 50
+    max_concurrency: 2

@@ -1,0 +1,280 @@
+{
+  "pair": "linker",
+  "spec": "mocks/linker/spec.yaml",
+  "targets": "mocks/linker/targets.yaml",
+  "keys_file": "mocks/linker/keys.txt",
+  "dataset": "mocks.linker.dataset.build_dataset: the seeded keys and their behaviour are the same for every seed; DEFAULT_SEED (20260924) fixes the rest of the content.",
+  "modes": {
+    "file": "Layout-1 samples from `python -m mocks.fixtures linker --out DIR`, compared once, no recheck. Each sample is the first non-retryable reply: the drift key holds variant b's stale first answer, the 5xx key holds its final 200.",
+    "live": "Both services freshly started (or reset with POST /__reset), fetched with the spec's execution block (up to 2 retries on http_5xx) and rechecked once when the first outcome is in recheck.outcomes (MISMATCH, NOT_FOUND_A, NOT_FOUND_B). INCONCLUSIVE is not rechecked, so an INCONCLUSIVE key keeps its first reason."
+  },
+  "matching": "An expected finding matches an actual one when every field it states (taxonomy_code, change_type, path_pattern, severity, rule_id, rule_classification) is equal; fields it omits are unconstrained. Every actual finding of the key must match an expected entry, and each entry must match exactly `count` findings when `count` is given, at least one otherwise. `findings: []` means no finding at all, INFO included. Severity is stated where the spec sets it or the core contract fixes it (NORMALIZATION_ONLY is INFO, MISSING_DOCUMENT is CRITICAL) and omitted where it falls to the core taxonomy default. path_pattern uses the canonical shape of spec.yaml. `rechecked` (live) says whether the first outcome triggers the recheck.",
+  "all_other_keys": "MATCH",
+  "all_other_keys_findings": [],
+  "keys": {
+    "ORG-000007": {
+      "seed": "missing_link",
+      "why": "Variant b's answer omits one of the entity's two anchored links; variant a returns both. $.links is keyed by code, so the gap is one missing_in_b member at $.links[*], not an index cascade. No domain pack claims it, so the core default FIELD_MISSING applies, at the HIGH severity the array rule sets. Both sides answer the same on recheck, so live mode confirms the MISMATCH.",
+      "file": {
+        "outcome": "MISMATCH",
+        "verdict": "DIFFERENT",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "findings": [
+          {"taxonomy_code": "FIELD_MISSING", "change_type": "missing_in_b", "path_pattern": "$.links[*]", "severity": "HIGH", "count": 1}
+        ]
+      },
+      "live": {
+        "outcome": "MISMATCH",
+        "verdict": "DIFFERENT",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "rechecked": true,
+        "findings": [
+          {"taxonomy_code": "FIELD_MISSING", "change_type": "missing_in_b", "path_pattern": "$.links[*]", "severity": "HIGH", "count": 1}
+        ]
+      }
+    },
+    "ORG-000012": {
+      "seed": "extra_link",
+      "why": "Variant b reports one link that variant a does not have (to an unsampled entity the key is not linked to). One extra_in_b member at $.links[*]; core default FIELD_EXTRA at the array rule's HIGH. Stable on recheck, so live mode confirms the MISMATCH.",
+      "file": {
+        "outcome": "MISMATCH",
+        "verdict": "DIFFERENT",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "findings": [
+          {"taxonomy_code": "FIELD_EXTRA", "change_type": "extra_in_b", "path_pattern": "$.links[*]", "severity": "HIGH", "count": 1}
+        ]
+      },
+      "live": {
+        "outcome": "MISMATCH",
+        "verdict": "DIFFERENT",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "rechecked": true,
+        "findings": [
+          {"taxonomy_code": "FIELD_EXTRA", "change_type": "extra_in_b", "path_pattern": "$.links[*]", "severity": "HIGH", "count": 1}
+        ]
+      }
+    },
+    "ORG-000018": {
+      "seed": "normalisation_only",
+      "why": "Variant a writes one shared phone in UK national format (07700 900123), variant b in E.164 (+447700900123). The maps put PHONE identifiers in sharedIdentifiers.phones, whose values the spec's e164 {defaultRegion: GB} normaliser makes equal, and phones member keys are built from the normalised value, so the raw and normalised trees align member for member: only the raw walk sees the difference, as one NORMALIZATION_ONLY (INFO) finding. INFO-only keys stay MATCH, so there is no recheck. The 07700 900xxx drama range is possible but not valid for libphonenumber, so this holds only if e164 formats every parseable number without a validity gate.",
+      "file": {
+        "outcome": "MATCH",
+        "verdict": "MATCH",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "findings": [
+          {"taxonomy_code": "NORMALIZATION_ONLY", "change_type": "value_changed", "path_pattern": "$.links[*].sharedIdentifiers.phones[*].value", "severity": "INFO", "count": 1}
+        ]
+      },
+      "live": {
+        "outcome": "MATCH",
+        "verdict": "MATCH",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "rechecked": false,
+        "findings": [
+          {"taxonomy_code": "NORMALIZATION_ONLY", "change_type": "value_changed", "path_pattern": "$.links[*].sharedIdentifiers.phones[*].value", "severity": "INFO", "count": 1}
+        ]
+      }
+    },
+    "ORG-000023": {
+      "seed": "flag_mismatch",
+      "why": "One link is flagged \"Y\" on variant a (mapped to true) and isFlagged false on variant b. The field rule on $.links[*].flagged sets CRITICAL; with no domain pack the code is the core VALUE_MISMATCH (FLAG_MISMATCH belongs to the entity-linking pack, which this spec does not use). Stable on recheck.",
+      "file": {
+        "outcome": "MISMATCH",
+        "verdict": "DIFFERENT",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "findings": [
+          {"taxonomy_code": "VALUE_MISMATCH", "change_type": "value_changed", "path_pattern": "$.links[*].flagged", "severity": "CRITICAL", "count": 1}
+        ]
+      },
+      "live": {
+        "outcome": "MISMATCH",
+        "verdict": "DIFFERENT",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "rechecked": true,
+        "findings": [
+          {"taxonomy_code": "VALUE_MISMATCH", "change_type": "value_changed", "path_pattern": "$.links[*].flagged", "severity": "CRITICAL", "count": 1}
+        ]
+      }
+    },
+    "ORG-000029": {
+      "seed": "drift",
+      "why": "Variant b's first answer for this key carries the entity's previous name; every later answer is current. File mode stores that first (stale) answer, so the key is a MISMATCH on $.name (core VALUE_MISMATCH; the spec sets no severity). Live mode sees the same MISMATCH first; the recheck finds variant a unchanged and variant b changed with the difference gone, so the key becomes DRIFT(b_converged) with no remaining finding (§8.3). first_findings are the findings of that first, provisional comparison.",
+      "file": {
+        "outcome": "MISMATCH",
+        "verdict": "DIFFERENT",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "findings": [
+          {"taxonomy_code": "VALUE_MISMATCH", "change_type": "value_changed", "path_pattern": "$.name", "count": 1}
+        ]
+      },
+      "live": {
+        "outcome": "DRIFT",
+        "verdict": "INDETERMINATE",
+        "inconclusive_reason": null,
+        "drift_reason": "b_converged",
+        "suppressed_count": 0,
+        "rechecked": true,
+        "first_outcome": "MISMATCH",
+        "first_findings": [
+          {"taxonomy_code": "VALUE_MISMATCH", "change_type": "value_changed", "path_pattern": "$.name", "count": 1}
+        ],
+        "findings": []
+      }
+    },
+    "ORG-000034": {
+      "seed": "truncation",
+      "why": "The entity has 57 links. Variant b returns exactly its cap of 50 with totalLinked 57 (total > returned), so side b is INCOMPLETE(truncated) and the key INCONCLUSIVE(truncated); variant a returns all 57 (linkCount 57, within its cap of 200) and is COMPLETE. An incomplete side is never diffed, so there are no findings. INCONCLUSIVE is not in recheck.outcomes, so live mode keeps the reason.",
+      "file": {
+        "outcome": "INCONCLUSIVE",
+        "verdict": "INDETERMINATE",
+        "inconclusive_reason": "truncated",
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "findings": []
+      },
+      "live": {
+        "outcome": "INCONCLUSIVE",
+        "verdict": "INDETERMINATE",
+        "inconclusive_reason": "truncated",
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "rechecked": false,
+        "findings": []
+      }
+    },
+    "ORG-000041": {
+      "seed": "one_sided_404",
+      "why": "Variant a returns the entity; variant b answers 404 {\"error\": \"NOT_FOUND\"}, which the spec's notFound matches and linker-b declares authoritative (status 404 with the not_found_body shape). Side b is ABSENT, side a COMPLETE: NOT_FOUND_B with the core document-level MISSING_DOCUMENT finding (path $, CRITICAL). The recheck returns the same side states, so live mode confirms it.",
+      "file": {
+        "outcome": "NOT_FOUND_B",
+        "verdict": "DIFFERENT",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "findings": [
+          {"taxonomy_code": "MISSING_DOCUMENT", "change_type": "missing_in_b", "path_pattern": "$", "severity": "CRITICAL", "count": 1}
+        ]
+      },
+      "live": {
+        "outcome": "NOT_FOUND_B",
+        "verdict": "DIFFERENT",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "rechecked": true,
+        "findings": [
+          {"taxonomy_code": "MISSING_DOCUMENT", "change_type": "missing_in_b", "path_pattern": "$", "severity": "CRITICAL", "count": 1}
+        ]
+      }
+    },
+    "ORG-000046": {
+      "seed": "unannounced_404",
+      "why": "Variant a answers 404 {\"message\": \"no route\"}. The spec's notFound status matches, but linker-a declares a 404 authoritative only with the not_found_body shape (has(body.error) && body.error == \"NOT_FOUND\"), which this body fails, so side a is INCOMPLETE(absence_unconfirmed); variant b returns the entity. The key is INCONCLUSIVE(absence_unconfirmed) with no findings, in both modes.",
+      "file": {
+        "outcome": "INCONCLUSIVE",
+        "verdict": "INDETERMINATE",
+        "inconclusive_reason": "absence_unconfirmed",
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "findings": []
+      },
+      "live": {
+        "outcome": "INCONCLUSIVE",
+        "verdict": "INDETERMINATE",
+        "inconclusive_reason": "absence_unconfirmed",
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "rechecked": false,
+        "findings": []
+      }
+    },
+    "ORG-000052": {
+      "seed": "server_error_then_success",
+      "why": "Variant b answers 503 {\"error\": \"UNAVAILABLE\"} on the first call for this key and the entity on every later call. Live mode retries (http_5xx is in retryOn) and compares the second answer: MATCH, with side b's observation recording attempts 2. File mode stores the final 200, so the key is a plain MATCH.",
+      "file": {
+        "outcome": "MATCH",
+        "verdict": "MATCH",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "findings": []
+      },
+      "live": {
+        "outcome": "MATCH",
+        "verdict": "MATCH",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "rechecked": false,
+        "attempts": {"a": 1, "b": 2},
+        "findings": []
+      }
+    },
+    "ORG-000057": {
+      "seed": "device_id_changed",
+      "why": "Variant b reports the device one link shares under a re-issued serial (DEV-7700-900555-B where variant a has DEV-7700-900555-A). The maps split shared identifiers by type and only phones are phone-normalised, so device ids are compared as they are: sharedIdentifiers.devices is keyed by value, and the change is one missing_in_b and one extra_in_b member at $.links[*].sharedIdentifiers.devices[*] (core FIELD_MISSING / FIELD_EXTRA; the array rule sets no severity). Phone-number parsing reads both serials as +447700900555, so a phone normaliser on device ids could merge them into one member, a false MATCH. Stable on recheck, so live mode confirms the MISMATCH.",
+      "file": {
+        "outcome": "MISMATCH",
+        "verdict": "DIFFERENT",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "findings": [
+          {"taxonomy_code": "FIELD_MISSING", "change_type": "missing_in_b", "path_pattern": "$.links[*].sharedIdentifiers.devices[*]", "count": 1},
+          {"taxonomy_code": "FIELD_EXTRA", "change_type": "extra_in_b", "path_pattern": "$.links[*].sharedIdentifiers.devices[*]", "count": 1}
+        ]
+      },
+      "live": {
+        "outcome": "MISMATCH",
+        "verdict": "DIFFERENT",
+        "inconclusive_reason": null,
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "rechecked": true,
+        "findings": [
+          {"taxonomy_code": "FIELD_MISSING", "change_type": "missing_in_b", "path_pattern": "$.links[*].sharedIdentifiers.devices[*]", "count": 1},
+          {"taxonomy_code": "FIELD_EXTRA", "change_type": "extra_in_b", "path_pattern": "$.links[*].sharedIdentifiers.devices[*]", "count": 1}
+        ]
+      }
+    },
+    "ORG-000999": {
+      "seed": "absent_both",
+      "why": "The key exists on neither variant: both answer 404 {\"error\": \"NOT_FOUND\"}, which both targets declare authoritative. ABSENT/ABSENT is INCONCLUSIVE(absent_both) (a stale key list), never a match, and has no findings.",
+      "file": {
+        "outcome": "INCONCLUSIVE",
+        "verdict": "INDETERMINATE",
+        "inconclusive_reason": "absent_both",
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "findings": []
+      },
+      "live": {
+        "outcome": "INCONCLUSIVE",
+        "verdict": "INDETERMINATE",
+        "inconclusive_reason": "absent_both",
+        "drift_reason": null,
+        "suppressed_count": 0,
+        "rechecked": false,
+        "findings": []
+      }
+    }
+  }
+}

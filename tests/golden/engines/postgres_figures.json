@@ -1,0 +1,147 @@
+{
+ "about": "What PostgreSQL sends for a table pre-check's figures at each level, and for its duplicate keys (docs/mvp/PRECHECKS.md §4): a plain side, and one with a composite key, two key maps, a filter and a typeMap column. Regenerate only with a contract change.",
+ "plain": {
+  "schema": "public",
+  "name": "users",
+  "keys": [
+   "userid"
+  ],
+  "key_maps": [
+   null
+  ],
+  "columns": {
+   "email": "email",
+   "name": "full_name",
+   "flag": "legacy_flag"
+  },
+  "where": null,
+  "types": {},
+  "digest": []
+ },
+ "mapped": {
+  "schema": "crm",
+  "name": "Accounts",
+  "keys": [
+   "branch",
+   "acct"
+  ],
+  "key_maps": [
+   {
+    "kind": "prefix_pad",
+    "prefix": "BR",
+    "width": 4,
+    "sideType": "integer"
+   },
+   {
+    "kind": "regex",
+    "sideType": "string",
+    "toCanonical": {
+     "pattern": "A-([0-9]+)",
+     "replacement": "$1"
+    },
+    "toSide": {
+     "pattern": "([0-9]+)",
+     "replacement": "A-$1"
+    }
+   }
+  ],
+  "columns": {
+   "amount": "Amount",
+   "opened": "opened",
+   "status": "status",
+   "raw": "raw",
+   "seen": "seen",
+   "rate": "rate",
+   "doc": "doc",
+   "fee": "fee"
+  },
+  "where": "\"status\" IN ('active', 'dormant') AND \"Amount\" > 10 AND NOT \"closed\"",
+  "types": {
+   "amount": {
+    "as": "decimal",
+    "scale": 2
+   }
+  },
+  "digest": [
+   "amount"
+  ]
+ },
+ "sent": {
+  "plain": {
+   "counts": [
+    "SELECT (count(*))::text, (count(*) FILTER (WHERE (t.\"userid\"::text COLLATE \"C\") IS NULL))::text FROM \"public\".\"users\" AS t",
+    {}
+   ],
+   "columns": [
+    "SELECT (count(*))::text, (count(*) FILTER (WHERE (t.\"userid\"::text COLLATE \"C\") IS NULL))::text, (count(*) FILTER (WHERE t.\"email\" IS NULL))::text, (count(*) FILTER (WHERE (t.\"email\"::text COLLATE \"C\") = ''))::text, (min(char_length((t.\"email\"::text COLLATE \"C\"))))::text, (max(char_length((t.\"email\"::text COLLATE \"C\"))))::text, (count(*) FILTER (WHERE t.\"full_name\" IS NULL))::text, (count(*) FILTER (WHERE (t.\"full_name\"::text COLLATE \"C\") = ''))::text, (min(char_length((t.\"full_name\"::text COLLATE \"C\"))))::text, (max(char_length((t.\"full_name\"::text COLLATE \"C\"))))::text, (count(*) FILTER (WHERE t.\"legacy_flag\" IS NULL))::text, (count(*) FILTER (WHERE t.\"legacy_flag\"))::text FROM \"public\".\"users\" AS t",
+    {}
+   ],
+   "distinct": [
+    [
+     "SELECT (count(DISTINCT (t.\"email\"::text COLLATE \"C\")))::text, (count(DISTINCT (t.\"full_name\"::text COLLATE \"C\")))::text, (count(DISTINCT t.\"legacy_flag\"))::text FROM \"public\".\"users\" AS t",
+     {}
+    ]
+   ],
+   "duplicates": [
+    "SELECT count(*), coalesce(sum(d.n), 0) FROM (SELECT count(*) AS n FROM \"public\".\"users\" AS t WHERE (t.\"userid\"::text COLLATE \"C\") IS NOT NULL GROUP BY (t.\"userid\"::text COLLATE \"C\") HAVING count(*) > 1) AS d",
+    {}
+   ]
+  },
+  "mapped": {
+   "counts": [
+    "SELECT (count(*))::text, (count(*) FILTER (WHERE CASE WHEN (t.\"branch\"::text COLLATE \"C\") ~ '^[0-9]+$' THEN %(m0_prefix)s || lpad((t.\"branch\"::text COLLATE \"C\"), greatest(%(m0_width)s, length((t.\"branch\"::text COLLATE \"C\"))), '0') END IS NULL OR CASE WHEN (t.\"acct\"::text COLLATE \"C\") ~ %(m1_pattern)s THEN regexp_replace((t.\"acct\"::text COLLATE \"C\"), %(m1_pattern)s, %(m1_replacement)s) END IS NULL))::text FROM \"crm\".\"Accounts\" AS t WHERE (t.\"status\" IN ( %(w0)s , %(w1)s ) AND t.\"Amount\" > %(w2)s AND NOT t.\"closed\")",
+    {
+     "m0_prefix": "BR",
+     "m0_width": 4,
+     "m1_pattern": "^(?:A-([0-9]+))$",
+     "m1_replacement": "\\1",
+     "w0": "active",
+     "w1": "dormant",
+     "w2": "10"
+    }
+   ],
+   "columns": [
+    "SELECT (count(*))::text, (count(*) FILTER (WHERE CASE WHEN (t.\"branch\"::text COLLATE \"C\") ~ '^[0-9]+$' THEN %(m0_prefix)s || lpad((t.\"branch\"::text COLLATE \"C\"), greatest(%(m0_width)s, length((t.\"branch\"::text COLLATE \"C\"))), '0') END IS NULL OR CASE WHEN (t.\"acct\"::text COLLATE \"C\") ~ %(m1_pattern)s THEN regexp_replace((t.\"acct\"::text COLLATE \"C\"), %(m1_pattern)s, %(m1_replacement)s) END IS NULL))::text, (count(*) FILTER (WHERE t.\"Amount\" IS NULL))::text, (count(*) FILTER (WHERE t.\"opened\" IS NULL))::text, (to_jsonb(min(t.\"opened\")) #>> '{}')::text, (to_jsonb(max(t.\"opened\")) #>> '{}')::text, (count(*) FILTER (WHERE t.\"status\" IS NULL))::text, (count(*) FILTER (WHERE (t.\"status\"::text COLLATE \"C\") = ''))::text, (min(char_length((t.\"status\"::text COLLATE \"C\"))))::text, (max(char_length((t.\"status\"::text COLLATE \"C\"))))::text, (count(*) FILTER (WHERE t.\"raw\" IS NULL))::text, (min(octet_length(t.\"raw\")))::text, (max(octet_length(t.\"raw\")))::text, (count(*) FILTER (WHERE t.\"seen\" IS NULL))::text, (to_jsonb(min(t.\"seen\")) #>> '{}')::text, (to_jsonb(max(t.\"seen\")) #>> '{}')::text, (count(*) FILTER (WHERE t.\"rate\" IS NULL))::text, (count(*) FILTER (WHERE t.\"doc\" IS NULL))::text, (count(*) FILTER (WHERE t.\"fee\" IS NULL))::text, (sum(t.\"fee\"::numeric))::text, (min(t.\"fee\"))::text, (max(t.\"fee\"))::text FROM \"crm\".\"Accounts\" AS t WHERE (t.\"status\" IN ( %(w0)s , %(w1)s ) AND t.\"Amount\" > %(w2)s AND NOT t.\"closed\")",
+    {
+     "m0_prefix": "BR",
+     "m0_width": 4,
+     "m1_pattern": "^(?:A-([0-9]+))$",
+     "m1_replacement": "\\1",
+     "w0": "active",
+     "w1": "dormant",
+     "w2": "10"
+    }
+   ],
+   "distinct": [
+    [
+     "SELECT (count(DISTINCT t.\"opened\"))::text, (count(DISTINCT (t.\"status\"::text COLLATE \"C\")))::text, (count(DISTINCT t.\"raw\"))::text, (count(DISTINCT t.\"seen\"))::text FROM \"crm\".\"Accounts\" AS t WHERE (t.\"status\" IN ( %(w0)s , %(w1)s ) AND t.\"Amount\" > %(w2)s AND NOT t.\"closed\")",
+     {
+      "w0": "active",
+      "w1": "dormant",
+      "w2": "10"
+     }
+    ],
+    [
+     "SELECT (count(DISTINCT t.\"fee\"))::text FROM \"crm\".\"Accounts\" AS t WHERE (t.\"status\" IN ( %(w0)s , %(w1)s ) AND t.\"Amount\" > %(w2)s AND NOT t.\"closed\")",
+     {
+      "w0": "active",
+      "w1": "dormant",
+      "w2": "10"
+     }
+    ]
+   ],
+   "duplicates": [
+    "SELECT count(*), coalesce(sum(d.n), 0) FROM (SELECT count(*) AS n FROM \"crm\".\"Accounts\" AS t WHERE CASE WHEN (t.\"branch\"::text COLLATE \"C\") ~ '^[0-9]+$' THEN %(m0_prefix)s || lpad((t.\"branch\"::text COLLATE \"C\"), greatest(%(m0_width)s, length((t.\"branch\"::text COLLATE \"C\"))), '0') END IS NOT NULL AND CASE WHEN (t.\"acct\"::text COLLATE \"C\") ~ %(m1_pattern)s THEN regexp_replace((t.\"acct\"::text COLLATE \"C\"), %(m1_pattern)s, %(m1_replacement)s) END IS NOT NULL AND (t.\"status\" IN ( %(w0)s , %(w1)s ) AND t.\"Amount\" > %(w2)s AND NOT t.\"closed\") GROUP BY CASE WHEN (t.\"branch\"::text COLLATE \"C\") ~ '^[0-9]+$' THEN %(m0_prefix)s || lpad((t.\"branch\"::text COLLATE \"C\"), greatest(%(m0_width)s, length((t.\"branch\"::text COLLATE \"C\"))), '0') END, CASE WHEN (t.\"acct\"::text COLLATE \"C\") ~ %(m1_pattern)s THEN regexp_replace((t.\"acct\"::text COLLATE \"C\"), %(m1_pattern)s, %(m1_replacement)s) END HAVING count(*) > 1) AS d",
+    {
+     "m0_prefix": "BR",
+     "m0_width": 4,
+     "m1_pattern": "^(?:A-([0-9]+))$",
+     "m1_replacement": "\\1",
+     "w0": "active",
+     "w1": "dormant",
+     "w2": "10"
+    }
+   ]
+  }
+ }
+}

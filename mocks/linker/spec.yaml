@@ -1,0 +1,234 @@
+# DeltaSleuth ComparisonSpec: linker mock pair, legacy links API (a) vs new linked-entities API (b).
+# Validates against docs/architecture/spec.schema.json (a unit test checks it).
+#
+# Black-box: the spec knows each service only by what its endpoint returns. P0 subset only: tree
+# mode, the live time policy, an inline key list, no domain pack, no graph mode, no noise
+# calibration, no shared watermark, no hash_sample/union key sources.
+#
+# Targets come from mocks/linker/targets.yaml (linker-a, linker-b on 127.0.0.1); no auth.
+#
+# Canonical document (side a's names; side b is mapped onto them):
+#   { code, name, kind (PERSON | COMPANY),
+#     links[{ code, kind, flagged (boolean),
+#             sharedIdentifiers{ phones[{value}], emails[{value}], devices[{value}],
+#                                other[{idType, value}] } }] }
+# The maps split shared identifiers by type, so each value path holds one kind of identifier and
+# gets that kind's normalisers. e164 runs on phones only: phone-number parsing is lenient
+# (libphonenumber reads device id DEV-7700-900555-A as +447700900555), so on device ids it could
+# merge two distinct devices into one member and hide the difference. A type a side's contract
+# does not list lands in `other`, compared as it is, so no identifier is ever dropped.
+# linkCount / totalLinked are completeness metadata: truncation reads them from the raw response,
+# and they are not mapped, so a count never doubles a membership finding.
+#
+# Ground truth for every seeded key is in mocks/linker/expected.json.
+
+apiVersion: deltasleuth/v1
+kind: ComparisonSpec
+
+metadata:
+  name: mock-linker-legacy-vs-new
+  version: "1.1.0"
+  owner: deltasleuth-p0
+  description: >-
+    Entity -> linked entities parity between the legacy links API and the new linked-entities API
+    of the linker mock pair, with seeded discrepancies (see expected.json).
+
+normalizerVersion: "1.1.0"   # the ground truth in expected.json holds for normalisers 1.1.0
+
+canonical:
+  mode: tree
+
+time:
+  mode: live                                   # capture intervals recorded; claim level observed
+
+key:
+  name: entity_code
+  type: string
+  pattern: "^ORG-[0-9]{6}$"                     # bounds what reaches the request path
+  class: business_code
+  normalize: [trim, upper]
+  source:
+    kind: list                                 # the same keys, in the same order, as keys.txt (a unit
+    keys: [                                    # test keeps the two in step)
+      ORG-000001, ORG-000002, ORG-000003, ORG-000004, ORG-000005, ORG-000006, ORG-000007, ORG-000008,
+      ORG-000009, ORG-000010, ORG-000011, ORG-000012, ORG-000013, ORG-000014, ORG-000015, ORG-000016,
+      ORG-000017, ORG-000018, ORG-000019, ORG-000020, ORG-000021, ORG-000022, ORG-000023, ORG-000024,
+      ORG-000025, ORG-000026, ORG-000027, ORG-000028, ORG-000029, ORG-000030, ORG-000031, ORG-000032,
+      ORG-000033, ORG-000034, ORG-000035, ORG-000036, ORG-000037, ORG-000038, ORG-000039, ORG-000040,
+      ORG-000041, ORG-000042, ORG-000043, ORG-000044, ORG-000045, ORG-000046, ORG-000047, ORG-000048,
+      ORG-000049, ORG-000050, ORG-000051, ORG-000052, ORG-000053, ORG-000054, ORG-000055, ORG-000056,
+      ORG-000057, ORG-000058, ORG-000059, ORG-000060, ORG-000999
+    ]
+
+sides:
+  a:
+    role: legacy
+    target: linker-a
+    # Response (abridged, DEFAULT_SEED):
+    # { "entity": { "code": "ORG-000010", "name": "Priya Oakley", "kind": "PERSON" },
+    #   "links": [ { "code": "ORG-000031", "kind": "PERSON", "flagged": "Y",
+    #                "sharedIdentifiers": [ { "idType": "EMAIL", "value": "shared.aadb@example.org" } ] },
+    #              { "code": "ORG-000045", "kind": "PERSON", "flagged": "N",
+    #                "sharedIdentifiers": [ { "idType": "PHONE", "value": "+447700900415" } ] }, ... ],
+    #   "linkCount": 4 }
+    # Not found: 404 { "error": "NOT_FOUND" }
+    request:
+      method: GET
+      path: "/entities/{{ key }}/links"
+      headers:
+        Accept: application/json
+    select: "$"
+    map: |
+      {
+        "code": entity.code,
+        "name": entity.name,
+        "kind": entity.kind,
+        "links": [links.{
+          "code": code,
+          "kind": kind,
+          "flagged": flagged = "Y",
+          "sharedIdentifiers": {
+            "phones": [sharedIdentifiers[idType = "PHONE"].{"value": value}],
+            "emails": [sharedIdentifiers[idType = "EMAIL"].{"value": value}],
+            "devices": [sharedIdentifiers[idType = "DEVICE"].{"value": value}],
+            "other": [sharedIdentifiers[$not(idType in ["PHONE", "EMAIL", "DEVICE"])].{
+              "idType": idType, "value": value
+            }]
+          }
+        }]
+      }
+    notFound:
+      status: [404]                            # linker-a declares 404 + not_found_body authoritative
+    truncation:
+      countPath: "$.linkCount"
+      itemsPath: "$.links"
+      cap: 200                                 # the legacy API documents a 200-link ceiling
+
+  b:
+    role: new
+    target: linker-b
+    # Response (abridged, DEFAULT_SEED). Own names, one more level of nesting, native booleans, its
+    # own entity-type vocabulary, lower-case identifier types, descending order, at most 50 links:
+    # { "data": { "entityCode": "ORG-000010", "entityName": "Priya Oakley", "entityType": "INDIVIDUAL",
+    #             "linkedEntities": [ { "entityCode": "ORG-000056", "entityType": "ORGANISATION",
+    #                                   "isFlagged": false,
+    #                                   "matchedOn": [ { "type": "phone", "value": "+447700900415" } ] },
+    #                                 ... ],
+    #             "totalLinked": 4 } }
+    # Not found: 404 { "error": "NOT_FOUND" }
+    request:
+      method: GET
+      path: "/v2/entities/{{ key }}/linked-entities"
+      headers:
+        Accept: application/json
+    select: "$.data"
+    map: |
+      (
+        $types := {"INDIVIDUAL": "PERSON", "ORGANISATION": "COMPANY"};
+        {
+          "code": entityCode,
+          "name": entityName,
+          "kind": $lookup($types, entityType),
+          "links": [linkedEntities.{
+            "code": entityCode,
+            "kind": $lookup($types, entityType),
+            "flagged": isFlagged,
+            "sharedIdentifiers": {
+              "phones": [matchedOn[type = "phone"].{"value": value}],
+              "emails": [matchedOn[type = "email"].{"value": value}],
+              "devices": [matchedOn[type = "device"].{"value": value}],
+              "other": [matchedOn[$not(type in ["phone", "email", "device"])].{
+                "idType": $uppercase(type), "value": value
+              }]
+            }
+          }]
+        }
+      )
+    notFound:
+      status: [404]                            # linker-b declares 404 + not_found_body authoritative
+    truncation:
+      countPath: "$.data.totalLinked"
+      itemsPath: "$.data.linkedEntities"
+      cap: 50                                  # returns at most 50 links and reports the true total
+
+compare:
+  arrays:
+    - path: "$.links"
+      mode: keyed                              # one missing link is one finding, never an index cascade
+      key: [code]
+      severity: HIGH
+    - path: "$.links[*].sharedIdentifiers.phones"
+      mode: keyed
+      key: [value]                             # member keys use the normalised value: E.164
+    - path: "$.links[*].sharedIdentifiers.emails"
+      mode: keyed
+      key: [value]
+    - path: "$.links[*].sharedIdentifiers.devices"
+      mode: keyed
+      key: [value]
+    - path: "$.links[*].sharedIdentifiers.other"
+      mode: keyed
+      key: [idType, value]
+  fields:
+    - path: "$.code"
+      normalize: [trim, upper]
+    - path: "$.name"
+      normalize: [nfkc, collapse_ws, trim]
+    - path: "$.kind"
+      normalize: [trim, upper]
+    - path: "$.links[*].code"
+      normalize: [trim, upper]
+    - path: "$.links[*].kind"
+      normalize: [trim, upper]
+    - path: "$.links[*].flagged"
+      compare: exact
+      severity: CRITICAL
+      note: A flag that differs changes what a reviewer sees.
+    - path: "$.links[*].sharedIdentifiers.phones[*].value"
+      normalize:
+        - trim
+        - e164: {defaultRegion: GB}
+      note: Only PHONE identifiers reach this path (the maps split identifiers by type).
+    - path: "$.links[*].sharedIdentifiers.emails[*].value"
+      normalize: [trim]
+    - path: "$.links[*].sharedIdentifiers.devices[*].value"
+      normalize: [trim]
+      note: >-
+        Device ids are opaque serials: compared as they are after trimming, never phone-normalised,
+        even when they carry digit runs.
+    - path: "$.links[*].sharedIdentifiers.other[*].idType"
+      normalize: [trim, upper]
+    - path: "$.links[*].sharedIdentifiers.other[*].value"
+      normalize: [trim]
+  nullEqualsAbsent: false
+
+recheck:
+  delay: 1s
+  times: 1
+  oneShot: {delay: 250ms, times: 1}
+  outcomes: [MISMATCH, NOT_FOUND_A, NOT_FOUND_B]  # INCONCLUSIVE keys keep their first reason
+
+execution:
+  concurrency: 2
+  delay: 10ms
+  timeouts: {connect: 2s, read: 5s, total: 10s}
+  retries:
+    max: 2
+    backoff: {initial: 50ms, max: 200ms, multiplier: 2}
+    retryOn: [connect_error, timeout, http_429, http_5xx]
+
+security:
+  unlisted: tokenize
+  tokenize:
+    - {path: "$.name", class: name}
+    - {path: "$.links[*].sharedIdentifiers.phones[*].value", class: phone}
+    - {path: "$.links[*].sharedIdentifiers.emails[*].value", class: email}
+    - {path: "$.links[*].sharedIdentifiers.devices[*].value", class: device_id}
+    - {path: "$.links[*].sharedIdentifiers.other[*].value", class: identifier}
+  clear:
+    - "$.code"
+    - "$.kind"
+    - "$.links[*].code"
+    - "$.links[*].kind"
+    - "$.links[*].flagged"
+    - "$.links[*].sharedIdentifiers.other[*].idType"

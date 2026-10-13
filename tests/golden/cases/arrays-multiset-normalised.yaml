@@ -1,0 +1,16 @@
+description: Multiset identity uses normalised members; counts are compared after normalisation.
+compare:
+  arrays:
+    - {path: $.codes, mode: multiset}
+  fields:
+    - {path: "$.codes[*]", normalize: [upper]}
+a:
+  body: '{"codes": ["a", "A", "b"]}'
+b:
+  body: '{"codes": ["A", "b", "B"]}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - ['/codes/"A"', "$.codes[*]", value_changed, null]
+    - ['/codes/"B"', "$.codes[*]", value_changed, null]

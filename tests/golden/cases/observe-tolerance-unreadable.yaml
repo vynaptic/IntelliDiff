@@ -1,0 +1,11 @@
+description: A value under a tolerance rule that cannot be read as a decimal is INCOMPLETE unparseable.
+compare:
+  fields:
+    - {path: $.amount, compare: {tolerance: {abs: 0.01}}}
+a:
+  body: '{"amount": "n/a"}'
+b:
+  body: '{"amount": 1}'
+expect:
+  a: INCOMPLETE unparseable
+  b: COMPLETE

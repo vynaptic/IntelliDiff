@@ -1,0 +1,16 @@
+description: Set arrays are unordered and collapse duplicates; members are keyed by canonical form.
+compare:
+  arrays:
+    - {path: $.tags, mode: set}
+a:
+  body: '{"tags": ["red", "blue", "red"]}'
+b:
+  body: '{"tags": ["blue", "green"]}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - finding: ['/tags/"red"', "$.tags[*]", missing_in_b, null]
+      member_key: '"red"'
+      array_path: $.tags
+    - ['/tags/"green"', "$.tags[*]", extra_in_b, null]

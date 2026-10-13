@@ -1,0 +1,101 @@
+{
+ "portable": {
+  "beyond": {
+   "c_integer": null,
+   "c_decimal": null,
+   "c_double": 52990648348713780,
+   "c_real": 46056590,
+   "c_text": null,
+   "c_char": null,
+   "c_date": null,
+   "c_timestamp": null,
+   "c_instant": null,
+   "c_time": null,
+   "c_bytes": null,
+   "c_json": null
+  },
+  "edges": {
+   "c_integer": -9223372036854775808,
+   "c_decimal": -0.5,
+   "c_double": 1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,
+   "c_real": 1.1234599,
+   "c_text": "",
+   "c_char": "",
+   "c_date": "1000-01-01",
+   "c_timestamp": "9999-12-31T23:59:59.999999",
+   "c_instant": "1970-01-01T00:00:01+00:00",
+   "c_time": "23:59:59.999999",
+   "c_bytes": "\\x",
+   "c_json": []
+  },
+  "nulls": {
+   "c_integer": null,
+   "c_decimal": null,
+   "c_double": null,
+   "c_real": null,
+   "c_text": null,
+   "c_char": null,
+   "c_date": null,
+   "c_timestamp": null,
+   "c_instant": null,
+   "c_time": null,
+   "c_bytes": null,
+   "c_json": null
+  },
+  "power": {
+   "c_integer": null,
+   "c_decimal": null,
+   "c_double": 18014398509481984,
+   "c_real": 33554432,
+   "c_text": null,
+   "c_char": null,
+   "c_date": null,
+   "c_timestamp": null,
+   "c_instant": null,
+   "c_time": null,
+   "c_bytes": null,
+   "c_json": null
+  },
+  "small": {
+   "c_integer": 0,
+   "c_decimal": 0,
+   "c_double": -1e-07,
+   "c_real": 16777216,
+   "c_text": " padded ",
+   "c_char": "a   b",
+   "c_date": "2000-01-01",
+   "c_timestamp": "2000-01-01T00:00:00",
+   "c_instant": "2038-01-19T03:14:07+00:00",
+   "c_time": "00:00:00",
+   "c_bytes": "\\x000102",
+   "c_json": "text"
+  },
+  "typical": {
+   "c_integer": 9007199254740993,
+   "c_decimal": 1.5,
+   "c_double": 0.1,
+   "c_real": 1.1234567,
+   "c_text": "héllo 😀",
+   "c_char": "ab",
+   "c_date": "2024-02-29",
+   "c_timestamp": "2024-05-01T12:00:00.12",
+   "c_instant": "2024-05-01T12:00:00.5+00:00",
+   "c_time": "03:04:05.12",
+   "c_bytes": "\\x00ff",
+   "c_json": {
+    "a": 1,
+    "b": [
+     100,
+     "x"
+    ],
+    "c": null
+   }
+  }
+ },
+ "amounts": [
+  "-0.50",
+  "1.50",
+  "10.00",
+  "2.00"
+ ]
+}

@@ -1,0 +1,11 @@
+# An unsigned build of this checkout (DEPLOY section 2), tagged with the Compose project's name, so two
+# checkouts on one machine share no image; after taking new source: docker compose up -d --build
+# The app also sees the checkout's mocks/ and examples/, read-only, in the image's working directory:
+# `docker compose run --rm app ds run mocks/customer/spec.yaml` reads them by their path in the checkout.
+x-image: &image "${COMPOSE_PROJECT_NAME:-deltasleuth}:source"
+services:
+  app:
+    build: {context: .., dockerfile: deploy/Dockerfile}
+    image: *image
+    volumes: ["../mocks:/app/mocks:ro", "../examples:/app/examples:ro"]
+  mocks: {image: *image}                       # the app's build: one image, built once

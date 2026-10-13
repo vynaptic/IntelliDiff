@@ -1,0 +1,14 @@
+description: >
+  A 200 without data is not a document: a select that hits only null (a GraphQL-style
+  {"data": null, "errors": [...]}) and a map that finds none of its fields in an error envelope
+  are INCOMPLETE unparseable, so two failed responses can never compare as equal documents.
+sides:
+  a: {select: $.data}
+  b: {map: "{'id': customer.id, 'name': customer.name, 'tier': customer.tier}"}
+a:
+  body: '{"data": null, "errors": [{"message": "upstream timeout"}]}'
+b:
+  body: '{"error": {"code": "DB_DOWN"}}'
+expect:
+  a: INCOMPLETE unparseable
+  b: INCOMPLETE unparseable

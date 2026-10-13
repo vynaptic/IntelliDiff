@@ -1,0 +1,28 @@
+# The Rick and Morty API over two protocols: REST and GraphQL. Only observable behaviour is declared.
+# GraphQL answers an unknown id with 200 {"data": {"character": null}}; that body is authoritative
+# only when it carries no "errors" (a failed resolver also returns null data, plus errors).
+
+targets:
+  rickandmorty-rest:
+    base_url: https://rickandmortyapi.com/api
+    auth: {kind: none}
+    rate_per_s: 3                              # a free public service: stay well below any limit
+    max_concurrency: 1
+    capabilities:
+      authoritative_absence:
+        status: [404]
+        shapes: [not_found_body]
+      absence_shapes:
+        not_found_body: 'has(body.error)'      # 404 {"error": "Character not found"}
+
+  rickandmorty-graphql:
+    base_url: https://rickandmortyapi.com
+    auth: {kind: none}
+    rate_per_s: 3
+    max_concurrency: 1
+    capabilities:
+      authoritative_absence:
+        status: [200]
+        shapes: [data_without_errors]
+      absence_shapes:
+        data_without_errors: 'has(body.data) && !has(body.errors)'

@@ -1,0 +1,28 @@
+# {{ doc.title | md }}
+
+{% if doc.warning %}
+> **{{ doc.warning | md }}**
+
+{% endif %}
+{{ doc.meta | md }}
+{% for s in doc.sections %}
+
+## {{ loop.index }}. {{ s.title | md }}
+
+{% for line in s.lines %}
+- {{ line | md }}
+{% endfor %}
+{% if s.header %}
+{% if s.lines %}
+
+{% endif %}
+|{% for h in s.header %} {{ h | md }} |{% endfor %}
+
+|{% for h in s.header %}---|{% endfor %}
+
+{% for row in s.rows %}
+|{% for c in row %} {{ c | md }} |{% endfor %}
+
+{% endfor %}
+{% endif %}
+{% endfor %}

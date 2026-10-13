@@ -1,0 +1,13 @@
+description: >
+  Target truncation indicators apply when the side declares none. With no total reported,
+  returned >= cap is truncated because a full response cannot be told from a cut one.
+targets:
+  a: &caps {truncationIndicators: {cap: 2, itemsPath: $.links}}
+  b: *caps
+a:
+  body: '{"links": [1]}'
+b:
+  body: '{"links": [1, 2]}'
+expect:
+  a: COMPLETE
+  b: INCOMPLETE truncated

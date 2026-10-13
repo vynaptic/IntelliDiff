@@ -1,0 +1,18 @@
+description: >
+  A tolerance rule with a [*] path applies inside every keyed member; the accepted difference is
+  reported at INFO, the one beyond the bound is value_changed.
+compare:
+  arrays:
+    - {path: $.xs, mode: keyed, key: [id]}
+  fields:
+    - {path: "$.xs[*].amt", compare: {tolerance: {abs: 0.5}}}
+a:
+  body: '{"xs": [{"id": "a", "amt": 1}, {"id": "b", "amt": 1}]}'
+b:
+  body: '{"xs": [{"id": "a", "amt": 1.5}, {"id": "b", "amt": 1.6}]}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/xs/a/amt, "$.xs[*].amt", value_changed, NORMALIZATION_ONLY]
+    - [/xs/b/amt, "$.xs[*].amt", value_changed, null]

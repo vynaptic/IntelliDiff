@@ -1,0 +1,135 @@
+{
+ "plain": {
+  "schema": "ledger",
+  "name": "customers",
+  "keys": [
+   "id"
+  ],
+  "key_maps": [
+   null
+  ],
+  "columns": {
+   "email": "email",
+   "amount": "amount"
+  },
+  "where": null,
+  "types": {},
+  "digest": [
+   "amount",
+   "email"
+  ],
+  "engine": "mysql",
+  "classes": {
+   "id": "integer",
+   "email": "text",
+   "amount": "decimal"
+  },
+  "declared": {
+   "id": "int",
+   "email": "varchar(120)",
+   "amount": "decimal(10,2)"
+  }
+ },
+ "mapped": {
+  "schema": "led`ger",
+  "name": "Accounts",
+  "keys": [
+   "branch",
+   "No"
+  ],
+  "key_maps": [
+   null,
+   {
+    "kind": "prefix_pad",
+    "prefix": "A-",
+    "width": 6,
+    "sideType": "integer"
+   }
+  ],
+  "columns": {
+   "status": "st",
+   "opened": "opened",
+   "seen": "seen",
+   "rate": "rate",
+   "flags": "flags",
+   "note": "note",
+   "blob": "raw",
+   "doc": "doc",
+   "at": "at",
+   "day": "day"
+  },
+  "where": "\"st\" = 'ok' AND (\"rate\" BETWEEN 1 AND 2.5 OR \"note\" NOT LIKE 'x\\_%') AND \"No\" IN (1, 2) AND \"opened\" < '2024-01-01' AND \"raw\" IS NOT NULL",
+  "types": {
+   "opened": {
+    "as": "timestamp"
+   }
+  },
+  "digest": [
+   "at",
+   "blob",
+   "day",
+   "doc",
+   "flags",
+   "note",
+   "opened",
+   "rate",
+   "seen",
+   "status"
+  ],
+  "strata": {
+   "region": "branch",
+   "kind": "st"
+  },
+  "engine": "mysql",
+  "classes": {
+   "branch": "char",
+   "No": "integer",
+   "st": "char",
+   "opened": "timestamp",
+   "seen": "instant",
+   "rate": "float32",
+   "flags": "integer",
+   "note": "text",
+   "raw": "bytes",
+   "doc": "json",
+   "at": "time",
+   "day": "date"
+  },
+  "declared": {
+   "branch": "char(4)",
+   "No": "int(8) unsigned zerofill",
+   "st": "char(3)",
+   "opened": "datetime(6)",
+   "seen": "timestamp",
+   "rate": "float",
+   "flags": "bit(8)",
+   "note": "longtext",
+   "raw": "varbinary(16)",
+   "doc": "json",
+   "at": "time(3)",
+   "day": "date"
+  }
+ },
+ "sent": {
+  "plain": {
+   "rows": "(SELECT 0, CONVERT(t.`email` USING utf8mb4), CAST(t.`amount` AS CHAR), CAST(t.`id` AS CHAR), 1 FROM `ledger`.`customers` AS t WHERE t.`id` IN (7) AND CAST(CAST(t.`id` AS CHAR) AS BINARY) = X'37' ORDER BY 5 DESC LIMIT 2) UNION ALL (SELECT 2, CONVERT(t.`email` USING utf8mb4), CAST(t.`amount` AS CHAR), CAST(t.`id` AS CHAR), 1 FROM `ledger`.`customers` AS t WHERE t.`id` IN (1.5) AND CAST(CAST(t.`id` AS CHAR) AS BINARY) = X'312e35' ORDER BY 5 DESC LIMIT 2)",
+   "scan": "SELECT CAST(t.`id` AS CHAR), CAST(t.`amount` AS CHAR), CONVERT(t.`email` USING utf8mb4) FROM `ledger`.`customers` AS t WHERE CAST(t.`id` AS CHAR) IS NOT NULL ORDER BY CAST(CAST(t.`id` AS CHAR) AS BINARY)",
+   "scan_after": "SELECT CAST(t.`id` AS CHAR), CAST(t.`amount` AS CHAR), CONVERT(t.`email` USING utf8mb4) FROM `ledger`.`customers` AS t WHERE CAST(t.`id` AS CHAR) IS NOT NULL AND (CAST(CAST(t.`id` AS CHAR) AS BINARY)) > (X'3431') ORDER BY CAST(CAST(t.`id` AS CHAR) AS BINARY)",
+   "scan_hashed": "SELECT CAST(t.`id` AS CHAR), UNHEX(SHA2(JSON_ARRAY(CAST(t.`amount` AS CHAR), CONVERT(t.`email` USING utf8mb4)), 256)) FROM `ledger`.`customers` AS t WHERE CAST(t.`id` AS CHAR) IS NOT NULL ORDER BY CAST(CAST(t.`id` AS CHAR) AS BINARY)",
+   "census": "SELECT CAST(t.`id` AS CHAR) FROM `ledger`.`customers` AS t WHERE CAST(t.`id` AS CHAR) IS NOT NULL ORDER BY CAST(CAST(t.`id` AS CHAR) AS BINARY)",
+   "frame": "SELECT CAST(t.`id` AS CHAR) FROM `ledger`.`customers` AS t WHERE CAST(t.`id` AS CHAR) IS NOT NULL ORDER BY CAST(CAST(t.`id` AS CHAR) AS BINARY)",
+   "null_keys": "SELECT COUNT(*) FROM `ledger`.`customers` AS t WHERE (CAST(t.`id` AS CHAR) IS NULL)",
+   "probe": "(SELECT CAST(t.`id` AS CHAR), CONVERT(t.`email` USING utf8mb4), CAST(t.`amount` AS CHAR) FROM `ledger`.`customers` AS t WHERE CAST(t.`id` AS CHAR) IS NOT NULL LIMIT 0)"
+  },
+  "mapped": {
+   "rows": "(SELECT 0, CONVERT(t.`st` USING utf8mb4), DATE_FORMAT(t.`opened`, '%Y-%m-%dT%H:%i:%s.%f'), DATE_FORMAT(t.`seen`, '%Y-%m-%dT%H:%i:%s.%f'), CAST(CAST(t.`rate` AS JSON) AS CHAR), CAST(CAST(t.`flags` AS UNSIGNED) AS CHAR), CASE WHEN (COALESCE(LENGTH(t.`note`), 0) + COALESCE(LENGTH(t.`doc`), 0) > 16777216) THEN NULL ELSE CONVERT(t.`note` USING utf8mb4) END, t.`raw`, CASE WHEN (COALESCE(LENGTH(t.`note`), 0) + COALESCE(LENGTH(t.`doc`), 0) > 16777216) THEN NULL ELSE CAST(t.`doc` AS CHAR) END, CAST(t.`at` AS CHAR), CAST(t.`day` AS CHAR), CASE WHEN (COALESCE(LENGTH(t.`note`), 0) + COALESCE(LENGTH(t.`doc`), 0) > 16777216) THEN 1 ELSE 0 END, CONVERT(t.`branch` USING utf8mb4), CASE WHEN CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) <> '' AND CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) NOT REGEXP '[^0-9]' THEN CONCAT(_utf8mb4 X'412d', LPAD(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR), GREATEST(6, CHAR_LENGTH(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR))), '0')) END, CASE WHEN (t.`st` = _utf8mb4 X'6f6b' AND ( t.`rate` BETWEEN 1 AND 2.5 OR t.`note` NOT LIKE _utf8mb4 X'785c5f25' ) AND t.`No` IN ( 1 , 2 ) AND t.`opened` < _utf8mb4 X'323032342d30312d3031' AND t.`raw` IS NOT NULL) THEN 1 ELSE 0 END FROM `led``ger`.`Accounts` AS t WHERE t.`branch` IN (_utf8mb4 X'6575') AND t.`No` IN (42) AND CAST(CONVERT(t.`branch` USING utf8mb4) AS BINARY) = X'6575' AND CAST(CASE WHEN CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) <> '' AND CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) NOT REGEXP '[^0-9]' THEN CONCAT(_utf8mb4 X'412d', LPAD(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR), GREATEST(6, CHAR_LENGTH(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR))), '0')) END AS BINARY) = X'412d303030303432' ORDER BY 15 DESC LIMIT 2) UNION ALL (SELECT 1, CONVERT(t.`st` USING utf8mb4), DATE_FORMAT(t.`opened`, '%Y-%m-%dT%H:%i:%s.%f'), DATE_FORMAT(t.`seen`, '%Y-%m-%dT%H:%i:%s.%f'), CAST(CAST(t.`rate` AS JSON) AS CHAR), CAST(CAST(t.`flags` AS UNSIGNED) AS CHAR), CASE WHEN (COALESCE(LENGTH(t.`note`), 0) + COALESCE(LENGTH(t.`doc`), 0) > 16777216) THEN NULL ELSE CONVERT(t.`note` USING utf8mb4) END, t.`raw`, CASE WHEN (COALESCE(LENGTH(t.`note`), 0) + COALESCE(LENGTH(t.`doc`), 0) > 16777216) THEN NULL ELSE CAST(t.`doc` AS CHAR) END, CAST(t.`at` AS CHAR), CAST(t.`day` AS CHAR), CASE WHEN (COALESCE(LENGTH(t.`note`), 0) + COALESCE(LENGTH(t.`doc`), 0) > 16777216) THEN 1 ELSE 0 END, CONVERT(t.`branch` USING utf8mb4), CASE WHEN CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) <> '' AND CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) NOT REGEXP '[^0-9]' THEN CONCAT(_utf8mb4 X'412d', LPAD(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR), GREATEST(6, CHAR_LENGTH(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR))), '0')) END, CASE WHEN (t.`st` = _utf8mb4 X'6f6b' AND ( t.`rate` BETWEEN 1 AND 2.5 OR t.`note` NOT LIKE _utf8mb4 X'785c5f25' ) AND t.`No` IN ( 1 , 2 ) AND t.`opened` < _utf8mb4 X'323032342d30312d3031' AND t.`raw` IS NOT NULL) THEN 1 ELSE 0 END FROM `led``ger`.`Accounts` AS t WHERE t.`branch` IN (_utf8mb4 X'652775') AND t.`No` IN (7) AND CAST(CONVERT(t.`branch` USING utf8mb4) AS BINARY) = X'652775' AND CAST(CASE WHEN CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) <> '' AND CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) NOT REGEXP '[^0-9]' THEN CONCAT(_utf8mb4 X'412d', LPAD(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR), GREATEST(6, CHAR_LENGTH(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR))), '0')) END AS BINARY) = X'412d303030303037' ORDER BY 15 DESC LIMIT 2)",
+   "scan": "SELECT CONVERT(t.`branch` USING utf8mb4), CASE WHEN CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) <> '' AND CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) NOT REGEXP '[^0-9]' THEN CONCAT(_utf8mb4 X'412d', LPAD(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR), GREATEST(6, CHAR_LENGTH(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR))), '0')) END, CAST(t.`at` AS CHAR), t.`raw`, CAST(t.`day` AS CHAR), CASE WHEN (COALESCE(LENGTH(t.`doc`), 0) + COALESCE(LENGTH(t.`note`), 0) > 16777216) THEN NULL ELSE CAST(t.`doc` AS CHAR) END, CAST(CAST(t.`flags` AS UNSIGNED) AS CHAR), CASE WHEN (COALESCE(LENGTH(t.`doc`), 0) + COALESCE(LENGTH(t.`note`), 0) > 16777216) THEN NULL ELSE CONVERT(t.`note` USING utf8mb4) END, DATE_FORMAT(t.`opened`, '%Y-%m-%dT%H:%i:%s.%f'), CAST(CAST(t.`rate` AS JSON) AS CHAR), DATE_FORMAT(t.`seen`, '%Y-%m-%dT%H:%i:%s.%f'), CONVERT(t.`st` USING utf8mb4), CASE WHEN (COALESCE(LENGTH(t.`doc`), 0) + COALESCE(LENGTH(t.`note`), 0) > 16777216) THEN 1 ELSE 0 END FROM `led``ger`.`Accounts` AS t WHERE CONVERT(t.`branch` USING utf8mb4) IS NOT NULL AND CASE WHEN CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) <> '' AND CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) NOT REGEXP '[^0-9]' THEN CONCAT(_utf8mb4 X'412d', LPAD(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR), GREATEST(6, CHAR_LENGTH(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR))), '0')) END IS NOT NULL AND (t.`st` = _utf8mb4 X'6f6b' AND ( t.`rate` BETWEEN 1 AND 2.5 OR t.`note` NOT LIKE _utf8mb4 X'785c5f25' ) AND t.`No` IN ( 1 , 2 ) AND t.`opened` < _utf8mb4 X'323032342d30312d3031' AND t.`raw` IS NOT NULL) ORDER BY CAST(CONVERT(t.`branch` USING utf8mb4) AS BINARY), CAST(CASE WHEN CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) <> '' AND CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) NOT REGEXP '[^0-9]' THEN CONCAT(_utf8mb4 X'412d', LPAD(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR), GREATEST(6, CHAR_LENGTH(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR))), '0')) END AS BINARY)",
+   "scan_after": "SELECT CONVERT(t.`branch` USING utf8mb4), CASE WHEN CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) <> '' AND CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) NOT REGEXP '[^0-9]' THEN CONCAT(_utf8mb4 X'412d', LPAD(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR), GREATEST(6, CHAR_LENGTH(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR))), '0')) END, CAST(t.`at` AS CHAR), t.`raw`, CAST(t.`day` AS CHAR), CASE WHEN (COALESCE(LENGTH(t.`doc`), 0) + COALESCE(LENGTH(t.`note`), 0) > 16777216) THEN NULL ELSE CAST(t.`doc` AS CHAR) END, CAST(CAST(t.`flags` AS UNSIGNED) AS CHAR), CASE WHEN (COALESCE(LENGTH(t.`doc`), 0) + COALESCE(LENGTH(t.`note`), 0) > 16777216) THEN NULL ELSE CONVERT(t.`note` USING utf8mb4) END, DATE_FORMAT(t.`opened`, '%Y-%m-%dT%H:%i:%s.%f'), CAST(CAST(t.`rate` AS JSON) AS CHAR), DATE_FORMAT(t.`seen`, '%Y-%m-%dT%H:%i:%s.%f'), CONVERT(t.`st` USING utf8mb4), CASE WHEN (COALESCE(LENGTH(t.`doc`), 0) + COALESCE(LENGTH(t.`note`), 0) > 16777216) THEN 1 ELSE 0 END FROM `led``ger`.`Accounts` AS t WHERE CONVERT(t.`branch` USING utf8mb4) IS NOT NULL AND CASE WHEN CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) <> '' AND CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) NOT REGEXP '[^0-9]' THEN CONCAT(_utf8mb4 X'412d', LPAD(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR), GREATEST(6, CHAR_LENGTH(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR))), '0')) END IS NOT NULL AND (t.`st` = _utf8mb4 X'6f6b' AND ( t.`rate` BETWEEN 1 AND 2.5 OR t.`note` NOT LIKE _utf8mb4 X'785c5f25' ) AND t.`No` IN ( 1 , 2 ) AND t.`opened` < _utf8mb4 X'323032342d30312d3031' AND t.`raw` IS NOT NULL) AND (CAST(CONVERT(t.`branch` USING utf8mb4) AS BINARY), CAST(CASE WHEN CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) <> '' AND CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) NOT REGEXP '[^0-9]' THEN CONCAT(_utf8mb4 X'412d', LPAD(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR), GREATEST(6, CHAR_LENGTH(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR))), '0')) END AS BINARY)) > (X'6575', X'412d303030303431') ORDER BY CAST(CONVERT(t.`branch` USING utf8mb4) AS BINARY), CAST(CASE WHEN CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) <> '' AND CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) NOT REGEXP '[^0-9]' THEN CONCAT(_utf8mb4 X'412d', LPAD(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR), GREATEST(6, CHAR_LENGTH(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR))), '0')) END AS BINARY)",
+   "scan_hashed": "SELECT CONVERT(t.`branch` USING utf8mb4), CASE WHEN CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) <> '' AND CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) NOT REGEXP '[^0-9]' THEN CONCAT(_utf8mb4 X'412d', LPAD(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR), GREATEST(6, CHAR_LENGTH(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR))), '0')) END, UNHEX(SHA2(JSON_ARRAY(CAST(t.`at` AS CHAR), HEX(t.`raw`), CAST(t.`day` AS CHAR), CAST(CAST(t.`flags` AS UNSIGNED) AS CHAR), CAST(CAST(t.`rate` AS JSON) AS CHAR), DATE_FORMAT(t.`seen`, '%Y-%m-%dT%H:%i:%s.%f'), CONVERT(t.`st` USING utf8mb4)), 256)), CASE WHEN (COALESCE(LENGTH(t.`doc`), 0) + COALESCE(LENGTH(t.`note`), 0) > 16777216) THEN NULL ELSE CAST(t.`doc` AS CHAR) END, CASE WHEN (COALESCE(LENGTH(t.`doc`), 0) + COALESCE(LENGTH(t.`note`), 0) > 16777216) THEN NULL ELSE CONVERT(t.`note` USING utf8mb4) END, DATE_FORMAT(t.`opened`, '%Y-%m-%dT%H:%i:%s.%f'), CASE WHEN (COALESCE(LENGTH(t.`doc`), 0) + COALESCE(LENGTH(t.`note`), 0) > 16777216) THEN 1 ELSE 0 END FROM `led``ger`.`Accounts` AS t WHERE CONVERT(t.`branch` USING utf8mb4) IS NOT NULL AND CASE WHEN CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) <> '' AND CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) NOT REGEXP '[^0-9]' THEN CONCAT(_utf8mb4 X'412d', LPAD(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR), GREATEST(6, CHAR_LENGTH(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR))), '0')) END IS NOT NULL AND (t.`st` = _utf8mb4 X'6f6b' AND ( t.`rate` BETWEEN 1 AND 2.5 OR t.`note` NOT LIKE _utf8mb4 X'785c5f25' ) AND t.`No` IN ( 1 , 2 ) AND t.`opened` < _utf8mb4 X'323032342d30312d3031' AND t.`raw` IS NOT NULL) ORDER BY CAST(CONVERT(t.`branch` USING utf8mb4) AS BINARY), CAST(CASE WHEN CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) <> '' AND CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) NOT REGEXP '[^0-9]' THEN CONCAT(_utf8mb4 X'412d', LPAD(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR), GREATEST(6, CHAR_LENGTH(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR))), '0')) END AS BINARY)",
+   "census": "SELECT CONVERT(t.`branch` USING utf8mb4), CASE WHEN CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) <> '' AND CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) NOT REGEXP '[^0-9]' THEN CONCAT(_utf8mb4 X'412d', LPAD(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR), GREATEST(6, CHAR_LENGTH(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR))), '0')) END FROM `led``ger`.`Accounts` AS t WHERE CONVERT(t.`branch` USING utf8mb4) IS NOT NULL AND CASE WHEN CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) <> '' AND CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) NOT REGEXP '[^0-9]' THEN CONCAT(_utf8mb4 X'412d', LPAD(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR), GREATEST(6, CHAR_LENGTH(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR))), '0')) END IS NOT NULL AND (t.`st` = _utf8mb4 X'6f6b' AND ( t.`rate` BETWEEN 1 AND 2.5 OR t.`note` NOT LIKE _utf8mb4 X'785c5f25' ) AND t.`No` IN ( 1 , 2 ) AND t.`opened` < _utf8mb4 X'323032342d30312d3031' AND t.`raw` IS NOT NULL) ORDER BY CAST(CONVERT(t.`branch` USING utf8mb4) AS BINARY), CAST(CASE WHEN CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) <> '' AND CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) NOT REGEXP '[^0-9]' THEN CONCAT(_utf8mb4 X'412d', LPAD(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR), GREATEST(6, CHAR_LENGTH(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR))), '0')) END AS BINARY)",
+   "frame": "SELECT CONVERT(t.`branch` USING utf8mb4), CASE WHEN CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) <> '' AND CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) NOT REGEXP '[^0-9]' THEN CONCAT(_utf8mb4 X'412d', LPAD(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR), GREATEST(6, CHAR_LENGTH(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR))), '0')) END, CONVERT(t.`branch` USING utf8mb4), CONVERT(t.`st` USING utf8mb4) FROM `led``ger`.`Accounts` AS t WHERE CONVERT(t.`branch` USING utf8mb4) IS NOT NULL AND CASE WHEN CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) <> '' AND CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) NOT REGEXP '[^0-9]' THEN CONCAT(_utf8mb4 X'412d', LPAD(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR), GREATEST(6, CHAR_LENGTH(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR))), '0')) END IS NOT NULL AND (t.`st` = _utf8mb4 X'6f6b' AND ( t.`rate` BETWEEN 1 AND 2.5 OR t.`note` NOT LIKE _utf8mb4 X'785c5f25' ) AND t.`No` IN ( 1 , 2 ) AND t.`opened` < _utf8mb4 X'323032342d30312d3031' AND t.`raw` IS NOT NULL) ORDER BY CAST(CONVERT(t.`branch` USING utf8mb4) AS BINARY), CAST(CASE WHEN CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) <> '' AND CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) NOT REGEXP '[^0-9]' THEN CONCAT(_utf8mb4 X'412d', LPAD(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR), GREATEST(6, CHAR_LENGTH(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR))), '0')) END AS BINARY), CAST(CONVERT(t.`branch` USING utf8mb4) AS BINARY), CAST(CONVERT(t.`st` USING utf8mb4) AS BINARY)",
+   "null_keys": "SELECT COUNT(*) FROM `led``ger`.`Accounts` AS t WHERE (CONVERT(t.`branch` USING utf8mb4) IS NULL OR CASE WHEN CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) <> '' AND CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) NOT REGEXP '[^0-9]' THEN CONCAT(_utf8mb4 X'412d', LPAD(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR), GREATEST(6, CHAR_LENGTH(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR))), '0')) END IS NULL) AND (t.`st` = _utf8mb4 X'6f6b' AND ( t.`rate` BETWEEN 1 AND 2.5 OR t.`note` NOT LIKE _utf8mb4 X'785c5f25' ) AND t.`No` IN ( 1 , 2 ) AND t.`opened` < _utf8mb4 X'323032342d30312d3031' AND t.`raw` IS NOT NULL)",
+   "probe": "(SELECT CONVERT(t.`branch` USING utf8mb4), CASE WHEN CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) <> '' AND CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) NOT REGEXP '[^0-9]' THEN CONCAT(_utf8mb4 X'412d', LPAD(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR), GREATEST(6, CHAR_LENGTH(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR))), '0')) END, CONVERT(t.`st` USING utf8mb4), DATE_FORMAT(t.`opened`, '%Y-%m-%dT%H:%i:%s.%f'), DATE_FORMAT(t.`seen`, '%Y-%m-%dT%H:%i:%s.%f'), CAST(CAST(t.`rate` AS JSON) AS CHAR), CAST(CAST(t.`flags` AS UNSIGNED) AS CHAR), CASE WHEN (COALESCE(LENGTH(t.`note`), 0) + COALESCE(LENGTH(t.`doc`), 0) > 16777216) THEN NULL ELSE CONVERT(t.`note` USING utf8mb4) END, t.`raw`, CASE WHEN (COALESCE(LENGTH(t.`note`), 0) + COALESCE(LENGTH(t.`doc`), 0) > 16777216) THEN NULL ELSE CAST(t.`doc` AS CHAR) END, CAST(t.`at` AS CHAR), CAST(t.`day` AS CHAR), CASE WHEN (COALESCE(LENGTH(t.`note`), 0) + COALESCE(LENGTH(t.`doc`), 0) > 16777216) THEN 1 ELSE 0 END, CONVERT(t.`branch` USING utf8mb4), CONVERT(t.`st` USING utf8mb4) FROM `led``ger`.`Accounts` AS t WHERE CONVERT(t.`branch` USING utf8mb4) IS NOT NULL AND CASE WHEN CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) <> '' AND CAST(CAST(t.`No` AS UNSIGNED) AS CHAR) NOT REGEXP '[^0-9]' THEN CONCAT(_utf8mb4 X'412d', LPAD(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR), GREATEST(6, CHAR_LENGTH(CAST(CAST(t.`No` AS UNSIGNED) AS CHAR))), '0')) END IS NOT NULL AND (t.`st` = _utf8mb4 X'6f6b' AND ( t.`rate` BETWEEN 1 AND 2.5 OR t.`note` NOT LIKE _utf8mb4 X'785c5f25' ) AND t.`No` IN ( 1 , 2 ) AND t.`opened` < _utf8mb4 X'323032342d30312d3031' AND t.`raw` IS NOT NULL) LIMIT 0)"
+  }
+ }
+}

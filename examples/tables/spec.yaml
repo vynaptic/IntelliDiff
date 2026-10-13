@@ -1,0 +1,86 @@
+# Customers of a legacy CRM (a) vs users of the new platform (b), two PostgreSQL tables in two
+# databases (seed.sql). Targets: targets.yaml. Contract: docs/mvp/TABLES.md.
+#
+# a: crm.customers    (customer_id, email_address, full_name, phone, status, country, balance,
+#                      created_at timestamp, branch_code)
+# b: public.users     (user_id, email, name, phone, status, country, balance, created_at timestamptz,
+#                      marketing_opt_in, updated_at)
+#
+# Canonical row (the compared columns under their canonical names):
+#   {email, name, phone, status, country, balance, created_at}
+# A batch run without keys scans both tables (side a: open accounts only); explicit keys and
+# `ds compare` read per key.
+
+apiVersion: deltasleuth/v1
+kind: ComparisonSpec
+
+metadata:
+  name: crm-customers-vs-platform-users
+  version: "1.0.0"
+  owner: examples
+  description: Customer rows of the legacy CRM and the new platform, compared column by column.
+
+normalizerVersion: "1.1.0"
+
+key:
+  name: customer_id
+  type: string                                 # keys are the key columns' values as text
+  pattern: "^[0-9]{6}$"                        # six digits: an evidence pack tells a raw key by it
+  class: identifier                            # customer numbers are personal data: tokenised in outputs
+
+sides:
+  a:
+    role: legacy
+    target: crm-legacy
+    table:
+      schema: crm
+      name: customers
+      keyColumns: [customer_id]
+      where: "status <> 'closed'"              # closed accounts were not migrated: not compared
+      columns:                                 # only these are read; branch_code is not
+        - {name: email_address, as: email}     # renamed onto side b's names
+        - {name: full_name, as: name}
+        - phone
+        - status
+        - country
+        - balance
+        - created_at
+    typeMap:                                   # local time without a zone, read as an instant
+      created_at: {as: timestamp, naiveTimezone: Europe/London}
+
+  b:
+    role: new
+    target: platform-users
+    table:
+      name: users                              # no schema: the search_path finds it (public)
+      keyColumns: [user_id]
+      # columns omitted: every non-key column under its lower-cased name. Those side a has no
+      # counterpart for (marketing_opt_in, updated_at) are listed as one-sided, not compared.
+    typeMap:                                   # both sides map it, so both render the same UTC text
+      created_at: {as: timestamp}
+
+compare:
+  fields:
+    - path: "$.email"
+      normalize: [email_basic]                 # case and surrounding spaces are not a difference
+    - path: "$.name"
+      normalize: [nfkc, collapse_ws, trim]
+    - path: "$.balance"
+      severity: HIGH
+
+recheck:                                       # keys given with the run, and `ds compare`; a scan's keys
+  delay: 5s                                    # are confirmed by their per-key read (TABLES.md §12)
+  times: 1
+  outcomes: [MISMATCH, NOT_FOUND_A, NOT_FOUND_B]
+
+execution:
+  concurrency: 2
+  timeouts: {total: 10s}                       # each per-key query's statement_timeout
+
+security:
+  unlisted: tokenize
+  tokenize:
+    - {path: "$.email", class: email}
+    - {path: "$.name", class: name}
+    - {path: "$.phone", class: phone}
+  clear: ["$.status", "$.country", "$.balance", "$.created_at"]

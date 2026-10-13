@@ -1,0 +1,17 @@
+description: trim, collapse_ws and casefold remove differences, which the raw walk reports as INFO.
+compare:
+  fields:
+    - {path: $.a, normalize: [trim]}
+    - {path: $.b, normalize: [collapse_ws]}
+    - {path: $.c, normalize: [casefold]}
+a:
+  body: '{"a": "  x ", "b": "p  \t q", "c": "Straße"}'
+b:
+  body: '{"a": "x", "b": "p q", "c": "STRASSE"}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/a, $.a, value_changed, NORMALIZATION_ONLY]
+    - [/b, $.b, value_changed, NORMALIZATION_ONLY]
+    - [/c, $.c, value_changed, NORMALIZATION_ONLY]

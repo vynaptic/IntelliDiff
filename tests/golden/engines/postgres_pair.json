@@ -1,0 +1,337 @@
+{
+ "about": "A PostgreSQL pair as stored and sent before the engine seam (docs/mvp/ENGINES.md D3): the plan of a pair and of a table with a service side, the hash of a run's params holding the pair's, and what each read sends as [cursor, statement, parameters].",
+ "pair": {
+  "a": {
+   "schema": "public",
+   "name": "users",
+   "keys": [
+    "userid"
+   ],
+   "key_maps": [
+    null
+   ],
+   "columns": {
+    "email": "email",
+    "name": "full_name"
+   },
+   "where": null,
+   "types": {},
+   "digest": []
+  },
+  "b": {
+   "schema": "public",
+   "name": "users_v",
+   "keys": [
+    "user_id"
+   ],
+   "key_maps": [
+    null
+   ],
+   "columns": {
+    "email": "Email",
+    "name": "name"
+   },
+   "where": null,
+   "types": {},
+   "digest": []
+  },
+  "only_a": [],
+  "only_b": []
+ },
+ "mixed": {
+  "a": {
+   "schema": "public",
+   "name": "users",
+   "keys": [
+    "userid"
+   ],
+   "key_maps": [
+    null
+   ],
+   "columns": {
+    "email": "email",
+    "full_name": "full_name",
+    "legacy_flag": "legacy_flag"
+   },
+   "where": null,
+   "types": {},
+   "digest": []
+  },
+  "only_a": [],
+  "only_b": []
+ },
+ "params": {
+  "keys_source": "table_scan",
+  "samples_dir": null,
+  "soak": null,
+  "capabilities": {
+   "db-a": {
+    "authoritative_absence": {
+     "status": [
+      404
+     ]
+    }
+   },
+   "db-b": {
+    "authoritative_absence": {
+     "status": [
+      404
+     ]
+    }
+   }
+  },
+  "tables": {
+   "a": {
+    "schema": "public",
+    "name": "users",
+    "keys": [
+     "userid"
+    ],
+    "key_maps": [
+     null
+    ],
+    "columns": {
+     "email": "email",
+     "name": "full_name"
+    },
+    "where": null,
+    "types": {},
+    "digest": []
+   },
+   "b": {
+    "schema": "public",
+    "name": "users_v",
+    "keys": [
+     "user_id"
+    ],
+    "key_maps": [
+     null
+    ],
+    "columns": {
+     "email": "Email",
+     "name": "name"
+    },
+    "where": null,
+    "types": {},
+    "digest": []
+   },
+   "only_a": [],
+   "only_b": []
+  },
+  "approval": null
+ },
+ "plan_sha256": "acfe5521883b0992665cbd68313e7e018122d754f470580f5564ea378b7ac561",
+ "mapped": {
+  "schema": "crm",
+  "name": "Accounts",
+  "keys": [
+   "branch",
+   "acct"
+  ],
+  "key_maps": [
+   {
+    "kind": "prefix_pad",
+    "prefix": "BR",
+    "width": 4,
+    "sideType": "integer"
+   },
+   {
+    "kind": "regex",
+    "sideType": "string",
+    "toCanonical": {
+     "pattern": "A-([0-9]+)",
+     "replacement": "$1"
+    },
+    "toSide": {
+     "pattern": "([0-9]+)",
+     "replacement": "A-$1"
+    }
+   }
+  ],
+  "columns": {
+   "amount": "Amount",
+   "opened": "opened",
+   "status": "status"
+  },
+  "where": "\"status\" IN ('active', 'dormant') AND \"Amount\" > 10 AND NOT \"closed\"",
+  "types": {
+   "amount": {
+    "as": "decimal",
+    "scale": 2
+   }
+  },
+  "digest": [
+   "amount"
+  ],
+  "strata": {
+   "segment": "segment",
+   "Region": "region"
+  }
+ },
+ "sent": {
+  "pair": {
+   "rows": [
+    [
+     null,
+     "(SELECT 0, to_jsonb(r.*)::text, coalesce(true, false) FROM \"public\".\"users\" AS t CROSS JOIN LATERAL (SELECT t.\"email\" AS \"email\", t.\"full_name\" AS \"name\") AS r WHERE t.\"userid\" IN (%(k0_0_0)s) AND (t.\"userid\"::text COLLATE \"C\") = %(c0_0)s ORDER BY 3 DESC LIMIT 2) UNION ALL (SELECT 1, to_jsonb(r.*)::text, coalesce(true, false) FROM \"public\".\"users\" AS t CROSS JOIN LATERAL (SELECT t.\"email\" AS \"email\", t.\"full_name\" AS \"name\") AS r WHERE t.\"userid\" IN (%(k1_0_0)s) AND (t.\"userid\"::text COLLATE \"C\") = %(c1_0)s ORDER BY 3 DESC LIMIT 2)",
+     {
+      "k0_0_0": "7",
+      "c0_0": "7",
+      "k1_0_0": "o'x",
+      "c1_0": "o'x"
+     }
+    ]
+   ],
+   "scan": [
+    [
+     "ds_scan",
+     "SELECT (t.\"userid\"::text COLLATE \"C\"), sha256(convert_to(to_jsonb(r.*)::text, 'UTF8')) FROM \"public\".\"users\" AS t CROSS JOIN LATERAL (SELECT t.\"email\" AS \"email\", t.\"full_name\" AS \"name\") AS r WHERE (t.\"userid\"::text COLLATE \"C\") IS NOT NULL ORDER BY convert_to((t.\"userid\"::text COLLATE \"C\"), 'UTF8')",
+     {}
+    ]
+   ],
+   "scan_after": [
+    [
+     "ds_scan",
+     "SELECT (t.\"userid\"::text COLLATE \"C\"), sha256(convert_to(to_jsonb(r.*)::text, 'UTF8')) FROM \"public\".\"users\" AS t CROSS JOIN LATERAL (SELECT t.\"email\" AS \"email\", t.\"full_name\" AS \"name\") AS r WHERE (t.\"userid\"::text COLLATE \"C\") IS NOT NULL AND (convert_to((t.\"userid\"::text COLLATE \"C\"), 'UTF8')) > (%(a0)s) ORDER BY convert_to((t.\"userid\"::text COLLATE \"C\"), 'UTF8')",
+     {
+      "a0": "41"
+     }
+    ]
+   ],
+   "census": [
+    [
+     "ds_census",
+     "SELECT (t.\"userid\"::text COLLATE \"C\") FROM \"public\".\"users\" AS t WHERE (t.\"userid\"::text COLLATE \"C\") IS NOT NULL ORDER BY convert_to((t.\"userid\"::text COLLATE \"C\"), 'UTF8')",
+     {}
+    ]
+   ],
+   "frame": [
+    [
+     "ds_frame",
+     "SELECT (t.\"userid\"::text COLLATE \"C\"), '{}' FROM \"public\".\"users\" AS t WHERE (t.\"userid\"::text COLLATE \"C\") IS NOT NULL ORDER BY convert_to((t.\"userid\"::text COLLATE \"C\"), 'UTF8')",
+     {}
+    ]
+   ],
+   "null_keys": [
+    [
+     null,
+     "SELECT count(*) FROM \"public\".\"users\" AS t WHERE ((t.\"userid\"::text COLLATE \"C\") IS NULL)",
+     {}
+    ]
+   ],
+   "probe": [
+    [
+     null,
+     "SELECT (t.\"userid\"::text COLLATE \"C\") FROM \"public\".\"users\" AS t WHERE (t.\"userid\"::text COLLATE \"C\") IS NOT NULL LIMIT 0",
+     {}
+    ]
+   ]
+  },
+  "mapped": {
+   "rows": [
+    [
+     null,
+     "(SELECT 0, to_jsonb(r.*)::text, coalesce((t.\"status\" IN ( %(w0)s , %(w1)s ) AND t.\"Amount\" > %(w2)s AND NOT t.\"closed\"), false) FROM \"crm\".\"Accounts\" AS t CROSS JOIN LATERAL (SELECT t.\"Amount\" AS \"amount\", t.\"opened\" AS \"opened\", t.\"status\" AS \"status\") AS r WHERE t.\"branch\" IN (%(k0_0_0)s) AND t.\"acct\" IN (%(k0_1_0)s) AND CASE WHEN (t.\"branch\"::text COLLATE \"C\") ~ '^[0-9]+$' THEN %(m0_prefix)s || lpad((t.\"branch\"::text COLLATE \"C\"), greatest(%(m0_width)s, length((t.\"branch\"::text COLLATE \"C\"))), '0') END = %(c0_0)s AND CASE WHEN (t.\"acct\"::text COLLATE \"C\") ~ %(m1_pattern)s THEN regexp_replace((t.\"acct\"::text COLLATE \"C\"), %(m1_pattern)s, %(m1_replacement)s) END = %(c0_1)s ORDER BY 3 DESC LIMIT 2)",
+     {
+      "w0": "active",
+      "w1": "dormant",
+      "w2": "10",
+      "m0_prefix": "BR",
+      "m0_width": 4,
+      "m1_pattern": "^(?:A-([0-9]+))$",
+      "m1_replacement": "\\1",
+      "k0_0_0": "7",
+      "k0_1_0": "A-42",
+      "c0_0": "BR0007",
+      "c0_1": "42"
+     }
+    ]
+   ],
+   "scan_after": [
+    [
+     "ds_scan",
+     "SELECT CASE WHEN (t.\"branch\"::text COLLATE \"C\") ~ '^[0-9]+$' THEN %(m0_prefix)s || lpad((t.\"branch\"::text COLLATE \"C\"), greatest(%(m0_width)s, length((t.\"branch\"::text COLLATE \"C\"))), '0') END, CASE WHEN (t.\"acct\"::text COLLATE \"C\") ~ %(m1_pattern)s THEN regexp_replace((t.\"acct\"::text COLLATE \"C\"), %(m1_pattern)s, %(m1_replacement)s) END, sha256(convert_to(to_jsonb(r.*)::text, 'UTF8')), to_jsonb(m.*)::text FROM \"crm\".\"Accounts\" AS t CROSS JOIN LATERAL (SELECT t.\"opened\" AS \"opened\", t.\"status\" AS \"status\") AS r CROSS JOIN LATERAL (SELECT t.\"Amount\" AS \"amount\") AS m WHERE CASE WHEN (t.\"branch\"::text COLLATE \"C\") ~ '^[0-9]+$' THEN %(m0_prefix)s || lpad((t.\"branch\"::text COLLATE \"C\"), greatest(%(m0_width)s, length((t.\"branch\"::text COLLATE \"C\"))), '0') END IS NOT NULL AND CASE WHEN (t.\"acct\"::text COLLATE \"C\") ~ %(m1_pattern)s THEN regexp_replace((t.\"acct\"::text COLLATE \"C\"), %(m1_pattern)s, %(m1_replacement)s) END IS NOT NULL AND (t.\"status\" IN ( %(w0)s , %(w1)s ) AND t.\"Amount\" > %(w2)s AND NOT t.\"closed\") AND (convert_to(CASE WHEN (t.\"branch\"::text COLLATE \"C\") ~ '^[0-9]+$' THEN %(m0_prefix)s || lpad((t.\"branch\"::text COLLATE \"C\"), greatest(%(m0_width)s, length((t.\"branch\"::text COLLATE \"C\"))), '0') END, 'UTF8'), convert_to(CASE WHEN (t.\"acct\"::text COLLATE \"C\") ~ %(m1_pattern)s THEN regexp_replace((t.\"acct\"::text COLLATE \"C\"), %(m1_pattern)s, %(m1_replacement)s) END, 'UTF8')) > (%(a0)s, %(a1)s) ORDER BY convert_to(CASE WHEN (t.\"branch\"::text COLLATE \"C\") ~ '^[0-9]+$' THEN %(m0_prefix)s || lpad((t.\"branch\"::text COLLATE \"C\"), greatest(%(m0_width)s, length((t.\"branch\"::text COLLATE \"C\"))), '0') END, 'UTF8'), convert_to(CASE WHEN (t.\"acct\"::text COLLATE \"C\") ~ %(m1_pattern)s THEN regexp_replace((t.\"acct\"::text COLLATE \"C\"), %(m1_pattern)s, %(m1_replacement)s) END, 'UTF8')",
+     {
+      "m0_prefix": "BR",
+      "m0_width": 4,
+      "m1_pattern": "^(?:A-([0-9]+))$",
+      "m1_replacement": "\\1",
+      "w0": "active",
+      "w1": "dormant",
+      "w2": "10",
+      "a0": "BR0007",
+      "a1": "42"
+     }
+    ]
+   ],
+   "census": [
+    [
+     "ds_census",
+     "SELECT CASE WHEN (t.\"branch\"::text COLLATE \"C\") ~ '^[0-9]+$' THEN %(m0_prefix)s || lpad((t.\"branch\"::text COLLATE \"C\"), greatest(%(m0_width)s, length((t.\"branch\"::text COLLATE \"C\"))), '0') END, CASE WHEN (t.\"acct\"::text COLLATE \"C\") ~ %(m1_pattern)s THEN regexp_replace((t.\"acct\"::text COLLATE \"C\"), %(m1_pattern)s, %(m1_replacement)s) END FROM \"crm\".\"Accounts\" AS t WHERE CASE WHEN (t.\"branch\"::text COLLATE \"C\") ~ '^[0-9]+$' THEN %(m0_prefix)s || lpad((t.\"branch\"::text COLLATE \"C\"), greatest(%(m0_width)s, length((t.\"branch\"::text COLLATE \"C\"))), '0') END IS NOT NULL AND CASE WHEN (t.\"acct\"::text COLLATE \"C\") ~ %(m1_pattern)s THEN regexp_replace((t.\"acct\"::text COLLATE \"C\"), %(m1_pattern)s, %(m1_replacement)s) END IS NOT NULL AND (t.\"status\" IN ( %(w0)s , %(w1)s ) AND t.\"Amount\" > %(w2)s AND NOT t.\"closed\") ORDER BY convert_to(CASE WHEN (t.\"branch\"::text COLLATE \"C\") ~ '^[0-9]+$' THEN %(m0_prefix)s || lpad((t.\"branch\"::text COLLATE \"C\"), greatest(%(m0_width)s, length((t.\"branch\"::text COLLATE \"C\"))), '0') END, 'UTF8'), convert_to(CASE WHEN (t.\"acct\"::text COLLATE \"C\") ~ %(m1_pattern)s THEN regexp_replace((t.\"acct\"::text COLLATE \"C\"), %(m1_pattern)s, %(m1_replacement)s) END, 'UTF8')",
+     {
+      "m0_prefix": "BR",
+      "m0_width": 4,
+      "m1_pattern": "^(?:A-([0-9]+))$",
+      "m1_replacement": "\\1",
+      "w0": "active",
+      "w1": "dormant",
+      "w2": "10"
+     }
+    ]
+   ],
+   "frame": [
+    [
+     "ds_frame",
+     "SELECT CASE WHEN (t.\"branch\"::text COLLATE \"C\") ~ '^[0-9]+$' THEN %(m0_prefix)s || lpad((t.\"branch\"::text COLLATE \"C\"), greatest(%(m0_width)s, length((t.\"branch\"::text COLLATE \"C\"))), '0') END, CASE WHEN (t.\"acct\"::text COLLATE \"C\") ~ %(m1_pattern)s THEN regexp_replace((t.\"acct\"::text COLLATE \"C\"), %(m1_pattern)s, %(m1_replacement)s) END, to_jsonb(r.*)::text FROM \"crm\".\"Accounts\" AS t CROSS JOIN LATERAL (SELECT t.\"segment\" AS \"segment\", t.\"region\" AS \"Region\") AS r WHERE CASE WHEN (t.\"branch\"::text COLLATE \"C\") ~ '^[0-9]+$' THEN %(m0_prefix)s || lpad((t.\"branch\"::text COLLATE \"C\"), greatest(%(m0_width)s, length((t.\"branch\"::text COLLATE \"C\"))), '0') END IS NOT NULL AND CASE WHEN (t.\"acct\"::text COLLATE \"C\") ~ %(m1_pattern)s THEN regexp_replace((t.\"acct\"::text COLLATE \"C\"), %(m1_pattern)s, %(m1_replacement)s) END IS NOT NULL AND (t.\"status\" IN ( %(w0)s , %(w1)s ) AND t.\"Amount\" > %(w2)s AND NOT t.\"closed\") ORDER BY convert_to(CASE WHEN (t.\"branch\"::text COLLATE \"C\") ~ '^[0-9]+$' THEN %(m0_prefix)s || lpad((t.\"branch\"::text COLLATE \"C\"), greatest(%(m0_width)s, length((t.\"branch\"::text COLLATE \"C\"))), '0') END, 'UTF8'), convert_to(CASE WHEN (t.\"acct\"::text COLLATE \"C\") ~ %(m1_pattern)s THEN regexp_replace((t.\"acct\"::text COLLATE \"C\"), %(m1_pattern)s, %(m1_replacement)s) END, 'UTF8'), to_jsonb(r.*)::text COLLATE \"C\"",
+     {
+      "m0_prefix": "BR",
+      "m0_width": 4,
+      "m1_pattern": "^(?:A-([0-9]+))$",
+      "m1_replacement": "\\1",
+      "w0": "active",
+      "w1": "dormant",
+      "w2": "10"
+     }
+    ]
+   ],
+   "null_keys": [
+    [
+     null,
+     "SELECT count(*) FROM \"crm\".\"Accounts\" AS t WHERE (CASE WHEN (t.\"branch\"::text COLLATE \"C\") ~ '^[0-9]+$' THEN %(m0_prefix)s || lpad((t.\"branch\"::text COLLATE \"C\"), greatest(%(m0_width)s, length((t.\"branch\"::text COLLATE \"C\"))), '0') END IS NULL OR CASE WHEN (t.\"acct\"::text COLLATE \"C\") ~ %(m1_pattern)s THEN regexp_replace((t.\"acct\"::text COLLATE \"C\"), %(m1_pattern)s, %(m1_replacement)s) END IS NULL) AND (t.\"status\" IN ( %(w0)s , %(w1)s ) AND t.\"Amount\" > %(w2)s AND NOT t.\"closed\")",
+     {
+      "m0_prefix": "BR",
+      "m0_width": 4,
+      "m1_pattern": "^(?:A-([0-9]+))$",
+      "m1_replacement": "\\1",
+      "w0": "active",
+      "w1": "dormant",
+      "w2": "10"
+     }
+    ]
+   ],
+   "probe": [
+    [
+     null,
+     "SELECT CASE WHEN (t.\"branch\"::text COLLATE \"C\") ~ '^[0-9]+$' THEN %(m0_prefix)s || lpad((t.\"branch\"::text COLLATE \"C\"), greatest(%(m0_width)s, length((t.\"branch\"::text COLLATE \"C\"))), '0') END, CASE WHEN (t.\"acct\"::text COLLATE \"C\") ~ %(m1_pattern)s THEN regexp_replace((t.\"acct\"::text COLLATE \"C\"), %(m1_pattern)s, %(m1_replacement)s) END FROM \"crm\".\"Accounts\" AS t WHERE CASE WHEN (t.\"branch\"::text COLLATE \"C\") ~ '^[0-9]+$' THEN %(m0_prefix)s || lpad((t.\"branch\"::text COLLATE \"C\"), greatest(%(m0_width)s, length((t.\"branch\"::text COLLATE \"C\"))), '0') END IS NOT NULL AND CASE WHEN (t.\"acct\"::text COLLATE \"C\") ~ %(m1_pattern)s THEN regexp_replace((t.\"acct\"::text COLLATE \"C\"), %(m1_pattern)s, %(m1_replacement)s) END IS NOT NULL AND (t.\"status\" IN ( %(w0)s , %(w1)s ) AND t.\"Amount\" > %(w2)s AND NOT t.\"closed\") LIMIT 0",
+     {
+      "m0_prefix": "BR",
+      "m0_width": 4,
+      "m1_pattern": "^(?:A-([0-9]+))$",
+      "m1_replacement": "\\1",
+      "w0": "active",
+      "w1": "dormant",
+      "w2": "10"
+     }
+    ],
+    [
+     null,
+     "SELECT regexp_replace('', %s, %s)",
+     [
+      "^(?:A-([0-9]+))$",
+      "$1"
+     ]
+    ]
+   ]
+  }
+ }
+}

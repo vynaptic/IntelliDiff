@@ -1,0 +1,46 @@
+# The MySQL acceptance kit: accounts_a against accounts_b, the two tables of seed.sql, in one database.
+# Target: targets.yaml. Expected result: expected.json. Contract: docs/mvp/ENGINES.md.
+#
+# Every non-key column is compared. Both sides are MySQL, so the server hashes the columns both tables
+# declare alike and the worker the others (amount, doc, note); each differing key is then read per key
+# and rendered by the worker.
+
+apiVersion: deltasleuth/v1
+kind: ComparisonSpec
+
+metadata:
+  name: acceptance-kit-mysql
+  version: "1.0.0"
+  owner: examples
+  description: The MySQL acceptance kit's two tables, every type DeltaSleuth reads.
+
+normalizerVersion: "1.1.0"
+
+key:
+  name: code
+  type: string
+  class: business_code                         # synthetic codes: shown in clear, to match expected.json
+
+sides:
+  a:
+    role: legacy
+    target: kit-mysql
+    table: {name: accounts_a, keyColumns: [code]}
+  b:
+    role: new
+    target: kit-mysql
+    table: {name: accounts_b, keyColumns: [code]}
+
+compare: {}
+
+recheck:
+  delay: 0s
+  times: 1
+  outcomes: [MISMATCH, NOT_FOUND_A, NOT_FOUND_B]
+
+execution:
+  concurrency: 2
+  timeouts: {total: 30s}
+
+security:
+  unlisted: tokenize

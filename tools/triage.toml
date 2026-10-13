@@ -1,0 +1,24 @@
+# What the release gate accepts (docs/mvp/RELEASE.md §8), each decision with an expiry.
+# tools/release.py reads this file. It does not ship, but its decisions do: each matched [[finding]] as an
+# OpenVEX statement (scan/vex.openvex.json), and every decision in scan/SUMMARY.txt, [[vendored]] ones also in
+# sbom/vendored-libraries.txt. The maintainer decides; there are no decisions yet. The two kinds, for example:
+#
+# [[finding]]
+# id = "CVE-2026-82049"                     # grype's id, a related id, or a pip-audit id or alias
+# component = "pkg:generic/python@3.13.15"  # the SBOM purl without qualifiers: a new version needs a new decision
+# status = "not_affected"                   # or "affected": shipped with a dated action, never suppressed
+# justification = "vulnerable_code_not_in_execute_path"   # not_affected only: one of OpenVEX's five
+# statement = "One sentence a site's reviewer can check; for affected, the action and its date."
+# decided = 2026-10-01
+# expires = 2026-12-30                      # at most 90 days after decided (affected: 30)
+# by = "maintainer"                         # a role, never an e-mail address
+#
+# [[vendored]]                              # a wheel's bundled libraries, which no scanner matches
+# distribution = "psycopg-binary"
+# version = "3.3.6"                         # another version needs a new decision
+# files = ["psycopg_binary.libs/libcrypto-02bae65c.so.1.1.1k"]   # as vendored-libraries.txt lists them
+# status = "affected"                       # or "not_affected", with a justification, as above
+# statement = "OpenSSL 1.1.1k is end of life; libpq uses it only for ...; moving to psycopg[c] by 2026-10-31."
+# decided = 2026-10-01
+# expires = 2026-10-31
+# by = "maintainer"

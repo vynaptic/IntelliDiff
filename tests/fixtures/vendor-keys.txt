@@ -1,0 +1,4 @@
+# The vendor's production licence keys (docs/mvp/LICENCE.md §4), one line each: "<fingerprint> trusted",
+# or "<fingerprint> removed YYYY-MM-DD" once a release stops trusting it. licence.SHIPPED_KEYS embeds
+# exactly the trusted ones, and licence.REMOVED_KEYS the removed ones with their days
+# (tests/unit/test_licence.py). None yet: the maintainer has not generated keys.

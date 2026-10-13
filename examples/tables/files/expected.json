@@ -1,0 +1,16 @@
+{
+  "status": "completed",
+  "scan": {"rows_a": 1000, "rows_b": 1002, "skipped_a": 0, "skipped_b": 1, "matched": 995, "candidates": 6, "repeated_a": 0, "repeated_b": 1},
+  "worker_columns": ["balance", "holder", "opened", "status"],
+  "files": {"a": [1, 1000, 0], "b": [1, 1002, 0]},
+  "counters": {"total": 1001, "compared": 1000, "match": 995, "different": 5, "indeterminate": 1, "cancelled": 0, "outstanding": 0},
+  "outcomes": {"INCONCLUSIVE": 1, "MATCH": 995, "MISMATCH": 3, "NOT_FOUND_A": 1, "NOT_FOUND_B": 1},
+  "discrepancies": {
+    "5": ["MISMATCH", "$.holder"],
+    "10": ["MISMATCH", "$.balance"],
+    "15": ["MISMATCH", "$.opened"],
+    "20": ["NOT_FOUND_B", "$"],
+    "30": ["identity_ambiguous"],
+    "1001": ["NOT_FOUND_A", "$"]
+  }
+}

@@ -1,0 +1,4 @@
+# DeltaSleuth release keys (docs/mvp/RELEASE.md §4), one line each: "<fingerprint> <status> procedure=<sha256>",
+# the status signing, standby, "retired YYYY-MM-DD" or "withdrawn YYYY-MM-DD". SECURITY.md's key table mirrors
+# it. tools/release.py build signs only with the signing key, and only while release.PROCEDURE hashes to its
+# procedure=. None yet: the maintainer generates the first (uv run python tools/release.py keygen --out DIR).

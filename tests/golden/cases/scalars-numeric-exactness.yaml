@@ -1,0 +1,19 @@
+description: >
+  Numbers are exact Decimals: 1.0 == 1, 1e2 == 100 and -0 == 0, but 1.50 vs "1.50" is a type
+  change, and digits beyond a double's precision still count.
+a:
+  body: |
+    {"one": 1.0, "price": 1.50, "text": "1.50", "big": 12345678901234567890,
+     "exp": 1e2, "neg0": -0, "tiny": 0.1}
+b:
+  body: |
+    {"one": 1, "price": "1.50", "text": 1.5, "big": 12345678901234567891,
+     "exp": 100, "neg0": 0, "tiny": 0.10000000000000001}
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/price, $.price, type_changed, null]
+    - [/text, $.text, type_changed, null]
+    - [/big, $.big, value_changed, null]
+    - [/tiny, $.tiny, value_changed, null]

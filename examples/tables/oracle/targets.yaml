@@ -1,0 +1,20 @@
+# The schema of seed.sql, on the Oracle server you will compare (docs/mvp/ENGINES.md §4; DEPLOY.md,
+# section 7). Both sides of spec.yaml read it. password_ref and tls_ca_ref are one-line files; a relative
+# reference resolves against this file, and secrets/ is git-ignored.
+
+targets:
+  kit-oracle:
+    engine: oracle
+    host: oracle.bank.example                     # a DNS name or an IP literal
+    port: 2484                                    # the TCPS listener; 1521 with allow_unencrypted
+    service: KITPDB                               # a service name, never a SID or a connect descriptor
+    user: ds_reader
+    password_ref: file:secrets/kit_oracle_password
+    tls_ca_ref: file:secrets/kit_oracle_ca        # the CA of the server's certificate
+    tls_server_dn: "CN=oracle.bank.example,O=Bank"   # the server certificate's subject
+    # A listener without TCPS (Native Network Encryption is not supported):
+    # allow_unencrypted: true                     # and remove tls_ca_ref and tls_server_dn
+    # A private or loopback address needs:
+    # allow_private_network: true
+    rate_per_s: 50
+    max_concurrency: 2

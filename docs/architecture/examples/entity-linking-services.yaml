@@ -1,0 +1,633 @@
+# DeltaSleuth ComparisonSpec: a legacy relational linker service (a) vs a new graph-backed linker service (b).
+# Validates against docs/architecture/spec.schema.json; domainPack.config is validated by the spec loader against
+# the pack-owned docs/architecture/packs/entity-linking.config.schema.json.
+#
+# All hosts, ids, names and values below are fictional. Targets are resolved from ds.targets.
+# Credentials are never written here: each target row carries auth_ref -> ds.secrets_ref.
+#   legacy-linker-api       -> https://linker-legacy.acme.example   (side a, legacy relational service, v3 API)
+#   graph-linker-api        -> https://graph-linker.acme.example    (side b, new graph-backed service; also
+#                                                                    lists side-b keys for the key union)
+#   legacy-linker-replica   -> postgresql://pg-linker-ro.acme.example:5432/linker  (read replica, side-a keys)
+#   identity-xwalk-ro       -> postgresql://pg-migration-ro.acme.example:5432/migration
+#                                                                   (reviewed crosswalk: graph member
+#                                                                    UUID -> MBR entity code)
+#
+# Canonical mode: graph (graph/v1). Each side's map emits a graph input document
+#   { nodes: [ {type, <businessKey fields>, <attributes>} | {type, source_id, ...} ],
+#     edges: [ {type, from, to, <attributes>} ] }
+# and the projection builds the typed, keyed arrays that are compared (canonical paths address these):
+#   $.nodes.entity[*]   {namespace: entity_code, business_key, entityType, name, status, flagged,
+#                        score, lastEvaluatedAt, addresses[{type, line}]}  (root; linked entities and
+#                        members carry business_key and entityType only)
+#   $.nodes.phone[*] / $.nodes.email[*] / $.nodes.tax_id[*]   identifier nodes (business keys tokenised)
+#   $.edges.LINKED_TO[*]            {from, to, hop, validFrom, validTo, via?{idType, value}}  # via: side a only
+#   $.edges.HAS_MEMBER[*]           {from, to}
+#   $.edges.HAS_PHONE[*] / $.edges.HAS_EMAIL[*] / $.edges.HAS_TAX_ID[*]   {from, to}
+# Link provenance (via) is an optional enrichment: it is excluded from the diff and only fills
+# findings.link_reason; the generic root-causer works without it.
+
+apiVersion: deltasleuth/v1
+kind: ComparisonSpec
+
+metadata:
+  name: entity-linking-legacy-vs-graph
+  version: "2.0.0"
+  owner: data-platform
+  description: >-
+    Parity of 1-hop entity links, attachments and linking identifiers for ORG/MBR entity codes between
+    the legacy linker service and the new graph-backed linker service, compared as a typed graph
+    (graph/v1). The legacy endpoint returns link provenance (via idType/value) and the new endpoint
+    does not, so provenance is excluded from the diff and used only to set findings.link_reason.
+
+normalizerVersion: "1.0.0"                   # pinned normalizer library; part of content_hash
+
+time:
+  mode: live                                 # both services are read live: runs are labelled "observed"
+  skewBudget: 30s                            # a and b reads of one key must start within 30 s; otherwise the
+                                             # pair is re-read through the recheck policy, then becomes DRIFT
+                                             # (drift_reason skew_exceeded)
+
+retention: audit                             # raw 1 y, findings 1 y
+
+inferredSchema:                              # approved ds-profiler bundle, one JSON Schema per side
+  ref: entity-linking-legacy-vs-graph@2
+  digest: "sha256:782f871a1edfbd2dc3811b3e23c84141576cc7a2a1f8a9c936d64b11e76177f2"
+
+schemaDrift:
+  mode: pause                                # pause the run for review on drift;
+                                             # drift on a compared path, or an undeclared graph type in scope, also
+                                             # makes the key INCONCLUSIVE(schema_drift)
+
+domainPack:
+  name: entity-linking
+  version: "1.0.0"
+  config:                                    # checked against the pack's own config schema, not the core
+    hopDepth: 1                              # = canonical.scope.depth
+    rollUpMembersToParent: true
+    linksPath: "$.edges.LINKED_TO"
+    attachmentsPath: "$.edges.HAS_MEMBER"
+    linkDirection: undirected                # = canonical.edges[LINKED_TO].directed: false
+    linkingIdentifierTypes: [PHONE, EMAIL, TAX_ID, ADDRESS, BANK_ACCOUNT]
+    validityFilter:
+      mode: current
+      validFromField: validFrom
+      validToField: validTo
+      clockSkew: 5m
+    hotIdentifiers:
+      degreeCap: 250
+      policy: exclude_from_linking
+      stoplist:
+        - idType: PHONE
+          value: "+442079460000"          # Ofcom drama range; stands in for a shared switchboard
+          reason: Shared switchboard of a company-formation agent (fictional)
+        - idType: EMAIL
+          value: "filings@formation-agent.example"
+          reason: Registered-agent mailbox used by thousands of client companies
+        - idType: TAX_ID
+          value: "GB000000000"
+          reason: Placeholder tax id back-filled by the 2019 data migration
+        - idType: ADDRESS
+          value: "1 formation way london ec1a 9zz"
+          reason: Registered-office address of a formation agent (virtual office)
+    existenceDoubleCheck:                    # enables graph-linker-api's declared existence_check; a hit keeps
+      enabled: true                          # NOT_FOUND_B and adds INTERNAL_INCONSISTENCY
+      methods: [lookup_by_code]              # probe names graph-linker-api declares in its capabilities
+                                             # (existence_check.probes): a second lookup endpoint the target declares
+    provenance:                              # optional enrichment
+      side: a
+      viaField: via
+      idTypeField: idType
+      valueField: value
+
+key:
+  name: entity_code
+  type: string
+  pattern: "^(?:ORG-[0-9]{6}|MBR-[0-9]{7})$" # required with a service side: bounds what reaches the path
+  class: business_code                       # entity codes are not PII: shown in clear
+  normalize: [trim, upper]
+  source:
+    kind: hash_sample
+    method: rate                           # rate | bottom_k; the sign-off spec uses bottom_k + targetSize
+    rate: 0.02                             # base rate; buckets below raise it (effective = max)
+    salt: "el-parity-2026q3-v1"
+    # One sign-off label per key; high-risk buckets (FLAGGED, hot) are tested first.
+    signoffStratum: >-
+      strata.flag_status == 'FLAGGED' ? 'flag_status=FLAGGED' : 'degree_bucket=' + strata.degree_bucket
+    strata:
+      - name: degree_bucket
+        column: degree
+        buckets:
+          - {label: d0, max: 0}
+          - {label: d1_5, min: 1, max: 5}
+          - {label: d6_50, min: 6, max: 50}
+          - {label: d51_250, min: 51, max: 250}
+          - {label: hot, min: 251, rate: 1.0, riskTier: high}   # census above the degree cap
+      - name: id_type
+        column: id_type
+        buckets:
+          - {label: PHONE, values: [PHONE]}
+          - {label: EMAIL, values: [EMAIL]}
+          - {label: TAX_ID, values: [TAX_ID]}
+          - {label: ADDRESS, values: [ADDRESS]}
+          - {label: BANK_ACCOUNT, values: [BANK_ACCOUNT]}
+          - {label: other}                                       # catch-all
+      - name: flag_status
+        column: flag_status
+        buckets:
+          - {label: FLAGGED, values: [FLAGGED], rate: 1.0, riskTier: high}  # census for flagged entities
+          - {label: CLEAR, values: [CLEAR]}
+      - name: recency
+        column: days_since_change
+        buckets:
+          - {label: le_7d, max: 7, rate: 0.10}
+          - {label: d8_90, min: 8, max: 90}
+          - {label: gt_90d, min: 91}
+    # Key universe = A keys U B keys, so B-only entities (EXTRA_ENTITY, NOT_FOUND_A) can be sampled.
+    # Keys are deduplicated after key.normalize; run_keys.attrs.origin records a, b or both.
+    source:
+      kind: union
+      sources:
+        - kind: sql                          # sources[0]: side-a keys (legacy read replica)
+          target: legacy-linker-replica
+          keyColumn: entity_code
+          fetchSize: 20000
+          template:                          # approved SELECT template; the spec carries no SQL text
+            id: linker-entity-keys
+            version: 3
+            params:
+              entity_kinds: [ORG, MBR]
+              excluded_status: P             # pending onboarding records are out of scope
+          # Approved text of linker-entity-keys v3 in ds.sql_templates (shown for reviewers only):
+          #   SELECT e.entity_code                                          AS entity_code,
+          #          COALESCE(d.link_degree, 0)                             AS degree,
+          #          COALESCE(e.primary_id_type, 'NONE')                    AS id_type,
+          #          CASE WHEN e.flagged_ind = 'Y' THEN 'FLAGGED'
+          #               ELSE 'CLEAR' END                                  AS flag_status,
+          #          (CURRENT_DATE - e.last_changed_at::date)               AS days_since_change
+          #   FROM   linker.entity e
+          #   LEFT JOIN linker.entity_degree_mv d ON d.entity_code = e.entity_code
+          #   WHERE  e.entity_kind = ANY(:entity_kinds)
+          #     AND  e.status_code <> :excluded_status
+        - kind: paginated_endpoint           # sources[1]: side-b keys (graph linker listing)
+          target: graph-linker-api
+          request:
+            method: GET
+            path: "/v1/graph/entities"
+            query:
+              kinds: "ORG,MBR"
+              excludeStatus: PENDING         # same population rule as the SQL source
+              fields: "code,degree,primaryIdType,flagStatus,daysSinceChange"
+              limit: 1000
+          pagination:
+            kind: cursor
+            itemsPath: "$.items"
+            cursorPath: "$.nextCursor"
+            cursorParam: cursor
+          keyPath: "$.code"
+          strataFields:                      # same columns as the SQL source, so B-only keys get strata too
+            degree: "$.degree"
+            id_type: "$.primaryIdType"
+            flag_status: "$.flagStatus"
+            days_since_change: "$.daysSinceChange"
+
+sides:
+  a:
+    role: legacy
+    target: legacy-linker-api
+    # Legacy response (abridged):
+    # { "entity": { "entityCode": "ORG-000123", "entityKind": "ORG", "name": "Harrowgate Tiling Ltd",
+    #               "statusCode": "A", "flaggedInd": "N",
+    #               "contact": { "phones": ["020 7946 0321"], "emails": ["Accounts@HarrowgateTiling.example"] },
+    #               "taxRef": "GB 123 4567 89",
+    #               "addresses": [ { "addrType": "REG", "addrText": "Unit 4, 12 Fictional Row, Leeds LS1 9ZZ" } ],
+    #               "score": 0.4213, "evaluatedTs": "2026-09-22T23:10:04Z" },
+    #   "members": [ { "memberCode": "MBR-0045123" } ],
+    #   "links": [ { "linkedEntityCode": "ORG-000456", "hopNo": 1, "effFrom": "2024-03-01", "effTo": null,
+    #                "via": { "idType": "PHONE", "value": "+442079460321" } } ],
+    #   "linkCount": 1 }
+    request:
+      method: GET
+      path: "/api/v3/entities/{{ key }}/links"
+      query:
+        depth: 1
+        include: provenance
+        rollup: members_to_parent
+      headers:
+        Accept: application/json
+        X-Correlation-Id: "ds-{{ run_id }}-{{ call_seq }}"
+    select: "$"
+    map: |
+      (
+        $rootCode := entity.entityCode;
+        {
+          "nodes": [
+            {
+              "type": "entity",
+              "code": entity.entityCode,
+              "entityType": entity.entityKind,
+              "name": entity.name,
+              "status": $lookup({"A": "ACTIVE", "I": "INACTIVE", "D": "DORMANT"}, entity.statusCode),
+              "flagged": entity.flaggedInd = "Y",
+              "score": entity.score,
+              "lastEvaluatedAt": entity.evaluatedTs,
+              "addresses": [entity.addresses.{
+                "type": $lookup({"REG": "REGISTERED", "TRD": "TRADING"}, addrType),
+                "line": addrText
+              }]
+            },
+            members.{"type": "entity", "code": memberCode, "entityType": "MBR"},
+            links.{"type": "entity", "code": linkedEntityCode,
+                   "entityType": $substringBefore(linkedEntityCode, "-")},
+            entity.contact.phones.{"type": "phone", "number": $},
+            entity.contact.emails.{"type": "email", "address": $},
+            entity.taxRef.{"type": "tax_id", "country": "GB", "value": $}
+          ],
+          "edges": [
+            members.{"type": "HAS_MEMBER", "from": $rootCode, "to": memberCode},
+            links.{
+              "type": "LINKED_TO", "from": $rootCode, "to": linkedEntityCode,
+              "hop": hopNo, "validFrom": effFrom, "validTo": effTo,
+              "via": {"idType": via.idType, "value": via.value}
+            },
+            entity.contact.phones.{"type": "HAS_PHONE", "from": $rootCode, "to": $},
+            entity.contact.emails.{"type": "HAS_EMAIL", "from": $rootCode, "to": $},
+            entity.taxRef.{"type": "HAS_TAX_ID", "from": $rootCode, "to": {"namespace": "GB", "key": $}}
+          ]
+        }
+      )
+    rawClear:                                # raw-view paths shown in clear; every other non-boolean, non-null leaf,
+                                             # numbers included, is tokenised; four-eyes approved
+      - "$.entity.entityCode"
+      - "$.entity.entityKind"
+      - "$.entity.statusCode"
+      - "$.entity.flaggedInd"
+      - "$.members[*].memberCode"
+      - "$.links[*].linkedEntityCode"
+      - "$.links[*].effFrom"
+      - "$.links[*].effTo"
+      - "$.links[*].via.idType"
+    notFound:
+      status: [404]                          # 404/410 (a 2xx only with `when`), each declared by legacy-linker-api in
+                                             # authoritative_absence (loader check)
+    truncation:                              # replaces the target's truncation_indicators for this side
+      countPath: "$.linkCount"
+      itemsPath: "$.links"
+      cap: 1000                              # legacy API hard limit; total > returned or total > 1000 => truncated
+
+  b:
+    role: new
+    target: graph-linker-api
+    # Graph linker response (abridged). No link provenance is returned, and members are
+    # returned by the new platform's member UUID, not by MBR code (resolved through identity.crosswalk).
+    # { "result": { "vertex": { "code": "ORG-000123", "label": "organisation",
+    #                           "props": { "name": "Harrowgate Tiling Ltd", "status": "ACTIVE", "flagged": false,
+    #                                      "phone": ["+442079460321"], "email": ["accounts@harrowgatetiling.example"],
+    #                                      "taxId": "GB123456789",
+    #                                      "address": [ { "kind": "REGISTERED", "line": "Unit 4 12 Fictional Row Leeds LS1 9ZZ" } ],
+    #                                      "score": 0.4209, "evaluatedAt": "2026-09-23T08:15:31.207Z" } },
+    #               "members": [ { "memberId": "5b0e6c1e-3f4a-4c8e-9d2b-7a1f0c9e4d21" } ],
+    #               "neighbours": [ { "code": "ORG-000456", "hops": 1, "since": "2024-03-01T00:00:00Z", "until": null } ],
+    #               "page": { "total": 1, "returned": 1, "limit": 500 } },
+    #   "traceId": "8f0c..." }
+    request:
+      method: POST
+      path: "/v1/graph/entity-links:query"
+      headers:
+        Accept: application/json
+        Content-Type: application/json
+        X-Correlation-Id: "ds-{{ run_id }}-{{ call_seq }}"
+      body:
+        entityCode: "{{ key }}"
+        maxHops: 1
+        rollUpMembers: true
+        includeExpired: true                 # validity is filtered by the domain pack on both sides
+        limit: 500
+    select: "$.result"
+    map: |
+      (
+        $rootCode := vertex.code;
+        {
+          "nodes": [
+            {
+              "type": "entity",
+              "code": vertex.code,
+              "entityType": $lookup({"organisation": "ORG", "member": "MBR"}, vertex.label),
+              "name": vertex.props.name,
+              "status": vertex.props.status,
+              "flagged": vertex.props.flagged,
+              "score": vertex.props.score,
+              "lastEvaluatedAt": vertex.props.evaluatedAt,
+              "addresses": [vertex.props.address.{"type": kind, "line": line}]
+            },
+            members.{"type": "entity", "source_id": memberId, "entityType": "MBR"},
+            neighbours.{"type": "entity", "code": code, "entityType": $substringBefore(code, "-")},
+            vertex.props.phone.{"type": "phone", "number": $},
+            vertex.props.email.{"type": "email", "address": $},
+            vertex.props.taxId.{"type": "tax_id", "country": "GB", "value": $}
+          ],
+          "edges": [
+            members.{"type": "HAS_MEMBER", "from": $rootCode, "to": {"source_id": memberId}},
+            neighbours.{
+              "type": "LINKED_TO", "from": $rootCode, "to": code,
+              "hop": hops, "validFrom": since, "validTo": until
+            },
+            vertex.props.phone.{"type": "HAS_PHONE", "from": $rootCode, "to": $},
+            vertex.props.email.{"type": "HAS_EMAIL", "from": $rootCode, "to": $},
+            vertex.props.taxId.{"type": "HAS_TAX_ID", "from": $rootCode, "to": {"namespace": "GB", "key": $}}
+          ]
+        }
+      )
+    rawClear:
+      - "$.result.vertex.code"
+      - "$.result.vertex.label"
+      - "$.result.vertex.props.status"
+      - "$.result.members[*].memberId"       # internal platform UUID, not PII
+      - "$.result.neighbours[*].code"
+      - "$.result.neighbours[*].since"
+      - "$.result.neighbours[*].until"
+    notFound:
+      status: [404, 200]                     # a listed 2xx is a not-found only when `when` is true
+      when: "response.status == 200 && !has(response.body.result.vertex)"   # ABSENT only if graph-linker-api
+                                             # declares 200 with a matching shape in authoritative_absence,
+                                             # else INCOMPLETE(absence_unconfirmed)
+    success:
+      status: [200]                          # the default: any other status that is not a not-found is side ERROR
+    truncation:
+      countPath: "$.result.page.total"
+      itemsPath: "$.result.neighbours"
+      cap: 500                               # graph linker page limit; total > returned or total > 500
+                                             # => INCONCLUSIVE/truncated (api_uncomparable group)
+
+canonical:
+  mode: graph
+  schema: graph/v1
+  nodes:
+    - type: entity                           # key (entity, entity_code, ORG-000123)
+      namespace: entity_code
+      businessKey: [code]
+      keyNormalize: [trim, upper]
+      keyClass: business_code                # entity codes are not PII: shown in clear
+    - type: phone                            # key (phone, e164, +442079460321), tokenised as class phone
+      namespace: e164
+      businessKey: [number]
+      keyNormalize:
+        - e164: {defaultRegion: GB}
+      keyClass: phone
+    - type: email
+      namespace: email
+      businessKey: [address]
+      keyNormalize: [trim, casefold]
+      keyClass: email
+    - type: tax_id                           # namespace = issuing country, read from each node
+      namespaceField: country
+      businessKey: [value]
+      keyNormalize:
+        - tax_id: {country: GB}
+      keyClass: tax_id
+  edges:
+    - type: LINKED_TO
+      from: entity
+      to: entity
+      directed: false                        # links are undirected pairs: endpoints sorted by node key
+      taxonomy: {missing_in_b: MISSING_LINK, extra_in_b: EXTRA_LINK}
+      severity: HIGH
+    - type: HAS_MEMBER
+      from: entity
+      to: entity
+      directed: true                         # ORG -> MBR (rollUpMembersToParent)
+      taxonomy: {missing_in_b: MISSING_ATTACHMENT, extra_in_b: EXTRA_ATTACHMENT}
+      severity: HIGH
+    - type: HAS_PHONE
+      from: entity
+      to: phone
+      directed: true
+      taxonomy: {missing_in_b: MISSING_ATTACHMENT, extra_in_b: EXTRA_ATTACHMENT}
+    - type: HAS_EMAIL
+      from: entity
+      to: email
+      directed: true
+      taxonomy: {missing_in_b: MISSING_ATTACHMENT, extra_in_b: EXTRA_ATTACHMENT}
+    - type: HAS_TAX_ID
+      from: entity
+      to: tax_id
+      directed: true
+      taxonomy: {missing_in_b: MISSING_ATTACHMENT, extra_in_b: EXTRA_ATTACHMENT}
+      severity: HIGH                         # tax id drives linking; override from MEDIUM
+  scope:
+    root: {type: entity}                     # the entity whose business key is the compared entity_code
+    edgeTypes: [LINKED_TO, HAS_MEMBER, HAS_PHONE, HAS_EMAIL, HAS_TAX_ID]
+    direction: both
+    depth: 1                                 # = domainPack.config.hopDepth
+  compare: topology                          # typed node and edge sets (reachability | path also available)
+  limits: {maxNodes: 2000, maxEdges: 2000}   # above the API caps; beyond them INCONCLUSIVE/resource_limit
+
+identity:
+  key: [type, namespace, business_key]       # single-tenant deployment: tenant omitted
+  crosswalk:
+    # Graph members arrive as platform UUIDs ({source_id}). The reviewed migration crosswalk maps
+    # (side b, entity, source_id) -> (entity_code, MBR-xxxxxxx). An unmapped, ambiguous or colliding id makes
+    # the key INCONCLUSIVE (identity_ambiguous); ids are never guessed and entities are never merged.
+    # This run is live, so the crosswalk is re-read and re-pinned every cycle; under time.mode frozen it would
+    # have to come from inside the snapshot or be read AS OF T, else the claim is observed.
+    target: identity-xwalk-ro
+    template:
+      id: graph-member-id-to-code
+      version: 2
+      params:
+        source_system: graph-linker
+
+compare:
+  arrays:
+    - path: "$.nodes.entity[*].addresses"    # arrays inside node attributes still take array rules
+      mode: keyed
+      key: [type]
+  fields:
+    - path: "$.nodes.entity[*].name"
+      normalize: [nfkc, collapse_ws, trim, casefold]
+      taxonomyCode: ATTRIBUTE_MISMATCH
+      severity: MEDIUM
+    - path: "$.nodes.entity[*].status"
+      normalize: [trim, upper]
+      taxonomyCode: ATTRIBUTE_MISMATCH
+      severity: MEDIUM
+    - path: "$.nodes.entity[*].flagged"
+      compare: exact
+      taxonomyCode: FLAG_MISMATCH
+      severity: CRITICAL
+    - path: "$.nodes.entity[*].addresses[*].line"
+      normalize: [nfkc, address_std]
+      compare:
+        similarity: {threshold: 0.88, method: token_set}
+      taxonomyCode: ATTRIBUTE_MISMATCH
+      severity: MEDIUM                       # similarity fields are capped at MEDIUM
+    - path: "$.nodes.entity[*].score"
+      compare:
+        tolerance: {abs: 0.005, rel: 0.01}   # equal when |a-b| <= max(0.005, 0.01 x max(|a|,|b|))
+      severity: LOW
+    - path: "$.edges.LINKED_TO[*].hop"
+      taxonomyCode: HOP_SEMANTICS
+      severity: MEDIUM
+    - path: "$.edges.LINKED_TO[*].validFrom"
+      normalize:
+        - timestamp_utc: {precision: s, mode: truncate}   # legacy sends a date, graph sends an instant
+      taxonomyCode: TEMPORAL_VALIDITY
+      severity: MEDIUM
+    - path: "$.edges.LINKED_TO[*].validTo"
+      normalize:
+        - timestamp_utc: {precision: s, mode: truncate}
+      taxonomyCode: TEMPORAL_VALIDITY
+      severity: MEDIUM
+  # exclude and valueFilter are population filters: four-eyes approval (ds.spec_approvals scope
+  # population_filters) before a certified run, printed with pre/post-filter counts.
+  exclude:
+    - "$.edges.LINKED_TO[*].via"             # provenance exists on side a only; feeds link_reason
+  # Synthetic test members are out of scope on both sides (node and member edge alike).
+  valueFilter: >-
+    !((path == '$.nodes.entity[*]' && value.business_key.startsWith('MBR-99')) ||
+      (path == '$.edges.HAS_MEMBER[*]' && value.to.business_key.startsWith('MBR-99')))
+  nullEqualsAbsent: true                     # reviewed opt-in (default false): the legacy API serialises
+                                             # unset attributes as null, the graph API omits them
+
+knownDiffs:
+  - id: KD-EL-0001
+    when: "taxonomy_code == 'MISSING_LINK' && link_reason == 'DEVICE_ID'"
+    classification: expected_by_design
+    reason: >-
+      DEVICE_ID is not a linking identifier type in the new policy; the legacy linker still
+      creates links from shared device fingerprints and the graph linker correctly does not.
+    ticket: LINK-2143
+  - id: KD-EL-0002
+    when: "path == '$.nodes.entity[*].status' && a == 'DORMANT' && b == 'INACTIVE'"
+    classification: accepted
+    reason: >-
+      The graph linker folds DORMANT into INACTIVE; downstream review treats both identically.
+    ticket: LINK-2177
+  - id: KD-EL-0003
+    when: "(path == '$.edges.HAS_TAX_ID[*]' || path == '$.nodes.tax_id[*]') && change_type == 'missing_in_b'"
+    classification: bug
+    reason: >-
+      The graph loader drops tax ids that fail the GB checksum instead of keeping them flagged as
+      unverified; fix scheduled for loader 2.4.
+    ticket: LINK-2201
+    expires: "2026-12-31"
+
+noise:
+  calibration:
+    sampleSize: 400
+    sandwich: true                           # L1 N1 L2: a before and after b
+    repeatB: 2                               # 2 extra B calls (N2, N3), so 3 B calls per key: graph-side volatility
+    maskThreshold: 0.01
+  masks:
+    - path: "$.nodes.entity[*].lastEvaluatedAt"
+      side: b
+      reason: Graph linker stamps evaluation time on every read; differed in 100% of N1/N2 pairs
+
+recheck:                                     # required; each recheck is a scheduled work unit, no inline sleep
+  delay: 10m
+  times: 2
+  jitter: 90s                                # added: available_at = now() + delay + uniform(0, jitter)
+  outcomes: [MISMATCH, NOT_FOUND_A, NOT_FOUND_B, INCONCLUSIVE]
+  oneShot: {delay: 2s, times: 1}             # one-shot / compare_key: verdict after this (confirmation: fast);
+                                             # the full recheck above is then queued and may move the result
+
+execution:
+  concurrency: 1                             # one key in flight per side
+  delay: 250ms                               # pause between consecutive keys per worker; well under 20 req/s
+  jitter: 100ms
+  timeouts:
+    connect: 2s
+    read: 15s
+    total: 45s
+  retries:
+    max: 2
+    backoff: {initial: 500ms, max: 5s, multiplier: 2}
+    retryOn: [connect_error, timeout, http_429, http_5xx]
+  circuitBreaker:
+    errorRate: {rate: 0.2, window: 50}
+    cooldown: 2m
+  stop:
+    maxDuration: 12h
+    maxErrorRate: {rate: 0.05, window: 500}
+    maxInconclusiveRate: {rate: 0.02, window: 1000}
+    maxUnexplainedCritical: 50
+
+# --- Soak variant (runs.mode = soak) -------------------------------------------------------------
+# Publish as version 2.1.0 with `execution` and `sampling` replaced, and `reporting.interim` set, by the
+# block below. Each hourly cycle re-compares a rotating quarter of the run keys; the run stops at the
+# first condition met. (This block is validated separately against the schema.)
+# BEGIN-SOAK-VARIANT
+# execution:
+#   concurrency: 1
+#   delay: 400ms
+#   jitter: 100ms
+#   cycleInterval: 1h
+#   timeouts: {connect: 2s, read: 15s, total: 45s}
+#   retries:
+#     max: 2
+#     backoff: {initial: 500ms, max: 5s, multiplier: 2}
+#     retryOn: [connect_error, timeout, http_429, http_5xx]
+#   circuitBreaker:
+#     errorRate: {rate: 0.2, window: 50}
+#     cooldown: 2m
+#   stop:
+#     maxCycles: 72
+#     maxDuration: 74h
+#     until: "2026-09-27T06:00:00Z"
+#     maxInconclusiveRate: {rate: 0.005, window: 2000}
+#     maxUnexplainedCritical: 25
+# sampling:
+#   mode: hash
+#   rate: 0.25
+#   salt: "el-soak-{{ cycle_no }}"
+# reporting:
+#   interim: {everyCycles: 6}                # interim report (with outcome changes) every 6 cycles
+# END-SOAK-VARIANT
+
+sampling:
+  mode: all                                  # batch run: every run key is compared once per cycle
+
+security:
+  unlisted: tokenize
+  tokenize:
+    - {path: "$.nodes.entity[*].name", class: name}
+    - {path: "$.nodes.entity[*].addresses[*].line", class: address}
+    - {path: "$.edges.LINKED_TO[*].via.value", class: identifier}
+    # phone, email and tax_id business keys are tokenised by canonical.nodes[].keyClass: node keys, edge
+    # endpoints and json_pointer member keys alike
+  clear:                                     # four-eyes approved (ds.spec_approvals scope clear)
+    - "$.nodes.entity[*].business_key"
+    - "$.nodes.entity[*].entityType"
+    - "$.nodes.entity[*].status"
+    - "$.nodes.entity[*].flagged"
+    - "$.nodes.entity[*].score"
+    - "$.edges.LINKED_TO[*].hop"
+    - "$.edges.LINKED_TO[*].validFrom"
+    - "$.edges.LINKED_TO[*].validTo"
+    - "$.edges.LINKED_TO[*].via.idType"
+
+reporting:
+  formats: [csv, parquet, xlsx, pdf]
+  fields:
+    - key
+    - stratum
+    - outcome
+    - verdict                                # derived MATCH / DIFFERENT / INDETERMINATE
+    - side_a_state                           # COMPLETE | ABSENT | INCOMPLETE | ERROR
+    - side_b_state
+    - inconclusive_reason
+    - taxonomy_code
+    - severity
+    - change_type
+    - direction
+    - path_pattern
+    - json_pointer
+    - value_a_tok
+    - value_b_tok
+    - member_key_tok                         # generic member-key token
+    - link_reason                            # link_reason, explaining_id_tok, hop_count: pack enrichment
+    - explaining_id_tok
+    - hop_count
+    - rule_id
+    - root_cause_id
+  includeSuppressed: false
+  interim: {every: 2h}                       # interim report every 2 h of the 12 h batch run

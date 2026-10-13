@@ -1,0 +1,19 @@
+description: >
+  tax_id via python-stdnum (separators and country prefix stripped, check digits validated);
+  invalid ids stay unchanged; countries without a module use the alphanumeric fallback.
+compare:
+  fields:
+    - {path: $.vat, normalize: [{tax_id: {country: GB}}]}
+    - {path: $.bad, normalize: [{tax_id: {country: GB}}]}
+    - {path: $.tin, normalize: [{tax_id: {country: ZZ}}]}
+a:
+  body: '{"vat": "GB 980 7806 84", "bad": "GB 980 7806 85", "tin": "ab-12"}'
+b:
+  body: '{"vat": "980780684", "bad": "980780685", "tin": "AB12"}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/vat, $.vat, value_changed, NORMALIZATION_ONLY]
+    - [/tin, $.tin, value_changed, NORMALIZATION_ONLY]
+    - [/bad, $.bad, value_changed, null]

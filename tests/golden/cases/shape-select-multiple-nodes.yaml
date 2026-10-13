@@ -1,0 +1,17 @@
+description: A select matching several nodes yields a list (here items across pages, keyed at the root).
+compare:
+  arrays:
+    - {path: $, mode: keyed, key: [id]}
+sides:
+  a: {select: "$.pages[*].items[*]"}
+  b: {select: "$.items[*]"}
+a:
+  body: '{"pages": [{"items": [{"id": "1"}]}, {"items": [{"id": "2"}]}]}'
+b:
+  body: '{"items": [{"id": "2"}, {"id": "1"}, {"id": "3"}]}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - finding: [/3, "$[*]", extra_in_b, null]
+      array_path: $

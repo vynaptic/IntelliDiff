@@ -1,0 +1,12 @@
+description: Ordered arrays that differ as multisets are compared position-wise plus surplus positions.
+a:
+  body: '{"steps": ["a", "b", "c"]}'
+b:
+  body: '{"steps": ["a", "x"]}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/steps/1, "$.steps[*]", value_changed, null]
+    - finding: [/steps/2, "$.steps[*]", missing_in_b, null]
+      direction: a_only

@@ -1,0 +1,11 @@
+# The build context is the repository root: send only what the image copies, never secrets or keys.
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!deltasleuth
+!web
+!deploy/uv-requirements.txt
+web/node_modules
+web/dist
+**/__pycache__

@@ -1,0 +1,18 @@
+# This installation's changes to docker-compose.yml, which you never edit (DEPLOY section 3). Upgrades
+# never overwrite this file. Compose adds these lists to the base file's. As copied it changes nothing:
+# token sign-in with AI off needs no secret beyond the base file's four.
+services:
+  app:
+    secrets: []                                # single sign-on: oidc_client_secret; AI chat: llm_key; each with its line under secrets: below
+    # Exported CSV or Parquet files a files target reads (DEPLOY section 7, Files): read-only, readable by
+    # uid 10001, in every service that runs ds; ":ro,z" on an SELinux host.
+    # volumes: ["/srv/exports/legacy:/var/lib/deltasleuth/files/legacy:ro"]
+    # Another host port than 8000 (auth.public_url then names it): !override, since Compose would add this
+    # one to the base file's.
+    # ports: !override ["127.0.0.1:8001:8000"]   # !override: Compose 2.24.4 or later
+  # db: {image: "registry.bank.example/postgres@sha256:<64 hex>"}   # your verified PostgreSQL 16
+# secrets:
+#   oidc_client_secret: {file: ./secrets/oidc_client_secret}
+#   llm_key: {file: ./secrets/llm_key}
+# Another subnet (then auth.trusted_proxies names its gateway):
+# networks: {default: {ipam: {config: !override [{subnet: 10.99.0.0/24, gateway: 10.99.0.1}]}}}

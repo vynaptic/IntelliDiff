@@ -1,0 +1,49 @@
+# LLM profiles: copy to llm_profiles.yaml. A profile is a reviewable endpoint record; the chat uses
+# deltasleuth.yaml's llm_profile. Trust comes from `hosts`: a host listed as internal may receive
+# tokenised production data in prod. Every other host is external: dev/test/eval only, and only
+# synthetic, golden and schema-summary data. The chat always sends tokenised production findings,
+# so only an internal profile can serve it; the external ones here are for `ds llm-probe
+# --environment eval`. Credentials: auth_ref file: paths only.
+
+hosts:
+  models.internal.example: internal            # your model gateway, and nothing else
+
+profiles:
+  gateway:                                     # any OpenAI-compatible Chat Completions endpoint
+    dialect: openai_chat
+    base_url: https://models.internal.example/v1
+    model: your-model-id
+    auth_ref: file:/run/secrets/llm_key
+    # auth_header: api-key                     # a gateway that takes the key in another header
+    # auth_scheme: Bearer                      # the value's prefix; omit it for a bare key
+    data_classes: [synthetic, golden, schema_summary, aggregates, production_tokenised]
+    environments: [dev, test, eval, staging, prod]
+    capabilities: {tool_calling: true}         # the chat needs tool calling; the probe checks it
+    budgets: {max_tool_calls: 8, max_input_tokens_per_call: 20000, max_wall_s: 60}
+
+  claude:
+    dialect: anthropic_messages
+    base_url: https://api.anthropic.com
+    model: claude-opus-5
+    auth_ref: file:/run/secrets/anthropic_key
+    data_classes: [synthetic, golden, schema_summary]
+    environments: [dev, test, eval]
+    capabilities: {tool_calling: true, prompt_caching: explicit}
+    pricing:                                   # USD per million tokens; recorded with every call
+      version: anthropic-2026-09
+      currency: USD
+      input_per_mtok: 5
+      output_per_mtok: 25
+      cache_read_mult: 0.1
+      cache_write_mult: 1.25
+      cache_write_1h_mult: 2
+
+  openai:
+    dialect: openai_chat
+    base_url: https://api.openai.com/v1
+    model: gpt-5                               # a model your OpenAI account offers
+    auth_ref: file:/run/secrets/openai_key
+    data_classes: [synthetic, golden, schema_summary]
+    environments: [dev, test, eval]
+    # gpt-5 reasons before it answers, and its reasoning counts against the reply limit (default 2048).
+    capabilities: {tool_calling: true, prompt_caching: automatic, max_output: 16000}

@@ -1,0 +1,24 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.hypothesis/
+.deltasleuth/
+p0-out/
+samples/
+secrets/
+*.key
+*.key.*
+/*.sql
+web/node_modules/
+web/dist/
+.DS_Store
+# Local deployment settings (copies of the *.example.yaml files, the site's compose changes and .env)
+deploy/config/*.yaml
+!deploy/config/*.example.yaml
+deploy/docker-compose.site.yml
+/.env
+# A reader's own specs and practice files (docs/guide): they hold a site's endpoints and keys
+/my-specs/
+/practice/
