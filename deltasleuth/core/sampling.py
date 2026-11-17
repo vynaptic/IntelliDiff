@@ -15,6 +15,7 @@ import hashlib
 import heapq
 import math
 import secrets
+import sys
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -41,6 +42,9 @@ _SHOWN = Context(prec=4, rounding=ROUND_CEILING)
 _FLOOR = Context(prec=4, rounding=ROUND_FLOOR)
 _INVERT = bytes(range(255, -1, -1))  # reverses the byte order a heap compares keys in
 _MEMO = 4096  # bucket lookups a selector memoises at most
+_MEMO_VALUE_BYTES = 1024  # larger frame values are compared but not retained by the lookup cache
+_LABELS = 16_384  # distinct bucket and combined labels a frame may retain, even at a tiny selection rate
+_LABEL_BYTES = 1 << 20  # UTF-8 bytes of those labels, shared by counts, tiers, errors and selections
 
 
 class DrawError(ValueError):
@@ -272,6 +276,8 @@ class Selector:
         self._buckets = {f"{d.name}={b.label}": b for d in sample.dimensions for b in d.buckets}
         self._matches: dict[tuple[int, type, Any], StratumBucket | None] = {}  # by id of the dimension
         self._strings: dict[str, str] = {}  # one copy of each label
+        self._label_bytes = 0
+        self._label_error: str | None = None
         signoff = sample.signoff_stratum
         memo = signoff is not None and not any(reads(signoff, "signoff_stratum", v) for v in ("key", "row"))
         self._signoffs: dict[tuple[str, str], Any] | None = {} if memo else None
@@ -290,6 +296,8 @@ class Selector:
     def add(self, keys: Sequence[tuple[str, Mapping[str, Any]]], *, source: int = 0, first: int = 1) -> None:
         """Label and rank a batch of distinct frame keys with their strata rows: source ``source``'s
         keys from position ``first`` on."""
+        if self._label_error is not None:
+            raise DrawError(self._label_error)
         rate = self.sample.rate or 0
         for position, (key, row) in enumerate(keys, start=first):
             self.frame_keys += 1
@@ -319,6 +327,8 @@ class Selector:
     def result(self) -> Selection:
         """The sample in seq order and each sign-off stratum's record; DrawError for label errors,
         a sign-off bucket without keys, over ``LIMIT`` keys or nothing to draw."""
+        if self._label_error is not None:
+            raise DrawError(self._label_error)
         if not self.frame_keys:
             raise DrawError("the frame is empty")
         problems = self._problems()
@@ -366,7 +376,8 @@ class Selector:
     def _bucket(self, dimension: StratumDimension, value: Any) -> StratumBucket | None:
         """The first bucket ``value`` falls into: ``values`` as JSON values, ``min``/``max`` inclusive in
         Decimal, null only into a catch-all."""
-        memo = (id(dimension), type(value), value) if _scalar(value) else None
+        memo = ((id(dimension), type(value), value)
+                if _scalar(value) and sys.getsizeof(value) <= _MEMO_VALUE_BYTES else None)  # fmt: skip
         if memo is not None and memo in self._matches:
             return self._matches[memo]
         number = value if isinstance(value, Decimal | int) and not isinstance(value, bool) else None
@@ -421,7 +432,13 @@ class Selector:
             except (predicates.PredicateError, ExpressionError):
                 value = None
             if self._signoffs is not None:
-                self._signoffs[memo] = value
+                if len(self._signoffs) >= _MEMO:
+                    self._signoffs.clear()
+                # Never retain an arbitrary expression result; valid labels are spec constants.
+                if not isinstance(value, str):
+                    self._signoffs[memo] = None
+                elif value in self._buckets:
+                    self._signoffs[memo] = self._string(value)
         if not isinstance(value, str):
             self._failed(("signoff",), source, position)
         if value not in labels:
@@ -441,7 +458,18 @@ class Selector:
         return self._buckets[signoff].rate or self.sample.rate or 0
 
     def _string(self, text: str) -> str:
-        return self._strings.setdefault(text, text)
+        if text in self._strings:
+            return self._strings[text]
+        size = len(text.encode())
+        if len(self._strings) >= _LABELS or self._label_bytes + size > _LABEL_BYTES:
+            self._label_error = (
+                f"the frame exceeds the sampling label budget ({_LABELS:,} labels or {_LABEL_BYTES:,}"
+                " UTF-8 bytes): use fewer strata, or compare the population as a census"
+            )
+            raise DrawError(self._label_error)
+        self._strings[text] = text
+        self._label_bytes += size
+        return text
 
     def _failed(self, kind: tuple[str, ...], source: int, position: int) -> NoReturn:
         found = self._failures.setdefault(kind, [0, source, position])
@@ -450,7 +478,7 @@ class Selector:
 
     def _named(self, kind: str, label: str | None) -> NoReturn:
         if label is not None:
-            self._labels_named[kind].add(label)
+            self._labels_named[kind].add(self._string(label))
         self._failed((kind,), 0, 0)
 
     def _problems(self) -> list[str]:

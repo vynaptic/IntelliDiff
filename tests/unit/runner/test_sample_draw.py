@@ -252,6 +252,24 @@ async def test_a_refused_draw_pauses_the_run_until_a_resume_draws_again_with_a_n
     assert stored is not None and stored["nonce"] == nonces[1] != nonces[0]
 
 
+async def test_a_label_budget_failure_pauses_without_storing_a_partial_draw(
+    harness: Harness, service: ScriptedService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service.listings = [KEYS]
+    run_id = await create_run(harness.ctx, await harness.spec(listed()), "batch", who=TESTER)
+    with monkeypatch.context() as patched:
+        patched.setattr(sampling, "_LABELS", 1)
+        await sample.draw(harness.ctx, run_id)
+    paused = await harness.run(run_id)
+    assert (paused["status"], paused["stop_reason"]) == ("paused", sample.DRAW_PAUSE)
+    assert "sampling label budget" in paused["draw"]["error"]
+    assert await drawn(harness, run_id) is None and await keys(harness, run_id) == []
+    assert await audited(harness, run_id, "sample.draw") == []
+    assert await resume_run(harness.ctx, run_id, who=TESTER) == "running"
+    await sample.draw(harness.ctx, run_id)
+    assert await drawn(harness, run_id) is not None
+
+
 # Customers as MySQL and Oracle hold them (CUSTOMERS's first two), and how each puts back their segment.
 FRAMED = {
     "mysql": (

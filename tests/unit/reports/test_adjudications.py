@@ -177,6 +177,12 @@ async def test_what_a_draw_or_score_refuses(ctx: Context) -> None:
     assert await refused(AdjudicationError, store_score(ctx, drawn["adjudication_id"], b"", who=olga)) == (
         "the reviewed sheet cannot be read as a CSV sheet: the reviewed sheet is empty"
     )
+    too_many = (",".join(SHEET_COLUMNS) + "\n" + "K\n" * 501).encode()
+    assert await refused(
+        AdjudicationError, store_score(ctx, drawn["adjudication_id"], too_many, who=olga)
+    ) == (
+        "the reviewed sheet cannot be read as a CSV sheet: the reviewed sheet has more than 500 rows"
+    )
     # A header naming a column twice would keep the last one's cells, not the ones reviewed: refused.
     twice = drawn["sheet"].replace("reviewer_notes\r\n", "reviewer_notes,reviewer_verdict\r\n", 1).encode()
     assert await refused(AdjudicationError, store_score(ctx, drawn["adjudication_id"], twice, who=olga)) == (

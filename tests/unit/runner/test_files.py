@@ -583,7 +583,7 @@ def _add(path: Path) -> None:
         (lambda path: os.chmod(path, 0o600), "file 1 of 1 is not the file the run was created on (changed)"),
         (_replace, "file 1 of 1 is not the file the run was created on (replaced)"),
         (_link, "file 1 of 1 is not the file the run was created on (link)"),  # never followed
-        (_add, "2 files match now, 1 when the run was created"),
+        (_add, "at least 2 files match now, 1 when the run was created"),
     ],
     ids=["size", "modified", "changed", "replaced", "link", "added"],
 )

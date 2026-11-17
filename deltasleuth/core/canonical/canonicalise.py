@@ -13,6 +13,7 @@ from deltasleuth.core.canonical.mapping import apply_map, apply_select
 from deltasleuth.core.canonical.normalisers import normalise_document, read_decimal
 from deltasleuth.core.canonical.paths import ROOT_PATTERN, find, pattern_of
 from deltasleuth.core.canonical.project import apply_value_filter, project_paths
+from deltasleuth.core.jsonio import check_number_budget
 from deltasleuth.core.types import JSON, Canonical, CompiledSpec, FieldRule, SideConfig
 
 
@@ -26,7 +27,10 @@ def canonicalise(doc: JSON, side_cfg: SideConfig, spec: CompiledSpec, *, key: st
     raw, include_matched = project_paths(
         shape(doc, side_cfg), include=compare.include, exclude=compare.exclude, arrays=compare.arrays
     )
+    # Array rewriting retains separately encoded members; check the whole mapped document first.
+    check_number_budget(raw)
     normed = normalise_document(copy.deepcopy(raw), compare.fields)
+    check_number_budget(normed)
     _check_tolerance_values(normed, compare.fields)
     normed, raw = rewrite_pair(normed, raw, compare.arrays)
     filtered = {}

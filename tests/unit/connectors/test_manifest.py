@@ -115,7 +115,9 @@ async def test_no_file_is_not_ready(root: Path) -> None:
 async def test_too_many_files_at_the_settings_limit(root: Path) -> None:
     _write(root, *(f"many/f{n}.csv" for n in range(3)))
     limited = FilesSettings(max_files=2)
-    with pytest.raises(ValueError, match=r"matches 3 files: a side reads at most 2 \(files.max_files\)"):
+    with pytest.raises(
+        ValueError, match=r"matches at least 3 files: a side reads at most 2 \(files.max_files\)"
+    ):
         await manifest.pin(_target(root), "many/", "side a", limited)
 
 
@@ -173,7 +175,7 @@ async def test_a_directory_named_as_a_pattern_is_refused_and_never_entered(root:
     )
     with pytest.raises(FilesChanged) as changed:  # made after the run was created, it fails the next check
         await manifest.verify(_target(root), "*/part.csv", "a", pinned.files, pinned.pins)
-    assert str(changed.value) == "side a: 2 files match now, 1 when the run was created"
+    assert str(changed.value) == "side a: at least 2 files match now, 1 when the run was created"
 
 
 async def test_a_root_that_is_not_there_or_writable(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -786,7 +788,7 @@ async def test_verify_names_each_change(root: Path, tmp_path: Path) -> None:
     assert await changed() == "side a: file 1 of 3 is not the file the run was created on (link)"
     (root / "e" / "1.csv").unlink()
     _write(root, "e/1.csv", "e/4.csv")
-    assert await changed() == "side a: 4 files match now, 3 when the run was created"
+    assert await changed() == "side a: at least 4 files match now, 3 when the run was created"
     shutil.rmtree(root)
     with pytest.raises(TargetUnreachable):
         await manifest.verify(target, "e/", "a", pinned.files, pinned.pins)
@@ -873,10 +875,10 @@ async def test_stuck_mount_stalls_nothing(
     healthy = Target("healthy", "", root=str(other), settle_s=0, allow_writable=True)
     hung, listed = threading.Event(), manifest._listed
 
-    def blocked(directory: str) -> Any:
+    def blocked(directory: str, *args: Any) -> Any:
         if directory.startswith(str(root)):
             hung.wait()
-        return listed(directory)
+        return listed(directory, *args)
 
     monkeypatch.setattr(manifest, "_listed", blocked)
     monkeypatch.setattr(manifest, "STAT_S", 0.2)

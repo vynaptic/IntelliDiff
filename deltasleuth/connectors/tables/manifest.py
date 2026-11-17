@@ -56,6 +56,7 @@ STUCK_ALL = 8  # and of all together before every target's is: half the pool sta
 CHUNK = 2**20  # a hash's read
 STAMP_MAX = 4096  # bytes of a stamp file
 DEPTH = 8  # directories below a directory read
+WALK_ENTRIES = 200_000  # all entries, including skipped ones; enough for 20,000 files eight levels deep
 PATH_MAX = 512
 CACHE_MAX = 100_000  # hashes a process keeps
 FOOTER_MAX = 16 * 2**20  # bytes of a Parquet footer
@@ -363,7 +364,22 @@ def path_error(path: str) -> str | None:
 
 def _globbed(pattern: str, name: str) -> bool:
     """Whether ``name`` is matched by ``pattern``, whose ``*`` matches any characters of one name."""
-    return re.fullmatch(".*".join(map(re.escape, pattern.split("*"))), name, re.DOTALL) is not None
+    first, *rest = pattern.split("*")
+    if not rest:
+        return name == first
+    last = rest.pop()
+    if not name.startswith(first) or not name.endswith(last):
+        return False
+    at, end = len(first), len(name) - len(last)
+    # Each literal is placed at its earliest position. Searching never revisits a consumed prefix;
+    # consecutive stars add empty literals, not regex branches or backtracking.
+    for literal in rest:
+        if literal:
+            found = name.find(literal, at, end)
+            if found < 0:
+                return False
+            at = found + len(literal)
+    return at <= end
 
 
 def stamp_error(path: str, name: str) -> bool:
@@ -419,13 +435,51 @@ def _entry(directory: str, name: str) -> os.stat_result | None:
         return None
 
 
-def _listed(directory: str) -> list[tuple[str, os.stat_result]] | None:
-    """A directory's entries with their ``lstat``, never following a link; None when it may not be read."""
+@dataclass
+class _Walk:
+    max_files: int
+    end: float | None
+    cancelled: threading.Event = dataclasses.field(default_factory=threading.Event)
+    found: list[Found] = dataclasses.field(default_factory=list)
+    visited: int = 0
+    due: float = 0
+
+    def check(self) -> None:
+        now = time.monotonic()
+        if self.end is not None and now >= self.end:
+            raise Late
+        if self.cancelled.is_set() or now >= self.due:
+            raise TargetUnreachable("Deadline")
+
+    def visit(self) -> None:
+        self.check()
+        self.visited += 1
+        if self.visited > WALK_ENTRIES:
+            raise _Wide
+
+    def add(self, found: Found) -> None:
+        self.check()
+        if len(self.found) == self.max_files:
+            raise _Many
+        self.found.append(found)
+
+
+def _listed(directory: str, walk: _Walk) -> Iterator[os.DirEntry[str]]:
+    """Stream entries inside the walk's pool job, accounting for names before filtering or stat'ing."""
+    walk.check()
+    with os.scandir(directory) as entries:
+        for entry in entries:
+            walk.visit()
+            yield entry
+
+
+def _nonempty(directory: str) -> bool:
+    """The empty-mount probe needs only one entry and no metadata."""
     try:
         with os.scandir(directory) as entries:
-            return [(entry.name, entry.stat(follow_symlinks=False)) for entry in entries]
+            return next(entries, None) is not None
     except PermissionError:
-        return None
+        return False
 
 
 def _kind(directory: str, name: str, found: os.stat_result) -> str:
@@ -450,73 +504,103 @@ def _fixed(path: str) -> tuple[list[str], list[str]]:
     return segments[:at], segments[at:]
 
 
-async def _walk(root: str, path: str, end: float | None) -> list[Found]:
-    """The path's candidates: every regular file it names and everything that refuses the plan."""
+async def _walk(root: str, path: str, end: float | None, max_files: int) -> list[Found]:
+    """One bounded, cooperative pool job for the entire expansion, including unmatched entries."""
+    walk = _Walk(max_files, end)
+    try:
+        return await call(_walked, root, path, walk, end=end, root=root)
+    finally:
+        walk.cancelled.set()  # a syscall may still wait, but enumeration stops as soon as it returns
+
+
+def _walked(root: str, path: str, walk: _Walk) -> list[Found]:
+    walk.due = time.monotonic() + STAT_S  # queue time is still call()'s separate Busy limit
     fixed, rest = _fixed(path)
     here = root
     for i, segment in enumerate(fixed):
-        found = await call(_entry, here, segment, end=end, root=root)
+        walk.visit()
+        found = _entry(here, segment)
+        walk.check()
         if found is None or not (stat.S_ISDIR(found.st_mode) or stat.S_ISLNK(found.st_mode)):
             return []
         if stat.S_ISLNK(found.st_mode):
-            return [Found("/".join(fixed[: i + 1]), "link")]
+            walk.add(Found("/".join(fixed[: i + 1]), "link"))
+            return walk.found
         here = os.path.join(here, segment)
     base = "/".join(fixed)
     if not rest:
-        return await _below(root, base, 0, end)
-    return await _matched(root, base, rest, end)
+        _below(root, base, 0, walk)
+    else:
+        _matched(root, base, rest, walk)
+    walk.check()
+    return walk.found
 
 
-async def _matched(root: str, base: str, rest: list[str], end: float | None) -> list[Found]:
+def _matched(root: str, base: str, rest: list[str], walk: _Walk) -> None:
     """The candidates of ``rest`` (a name or a glob, then literal names) under ``base``. A matched directory
     whose name is outside the alphabet is a candidate that refuses the plan, never entered: a file
     below it would be pinned under a path DuckDB reads as a glob."""
     here, (segment, *after) = os.path.join(root, base), rest
     if "*" not in segment:
-        found = await call(_entry, here, segment, end=end, root=root)
+        walk.visit()
+        found = _entry(here, segment)
         names = [] if found is None else [(segment, found)]
     else:
-        listed = await call(_listed, here, end=end, root=root)
-        if listed is None:
-            return [Found(base, "unreadable")]
-        names = [
-            (name, found) for name, found in listed if not name.startswith(".") and _globbed(segment, name)
-        ]
-    candidates = []
-    for name, found in names:
-        relative = f"{base}/{name}" if base else name
-        if not after:
-            candidates.append(Found(relative, _kind(here, name, found), found))
-        elif stat.S_ISLNK(found.st_mode):
-            candidates.append(Found(relative, "link"))
-        elif stat.S_ISDIR(found.st_mode) and not _NAME.fullmatch(name):
-            candidates.append(Found(relative, "name"))
-        elif stat.S_ISDIR(found.st_mode):
-            candidates += await _matched(root, relative, after, end)
-    return candidates
+        names = (
+            (entry.name, entry.stat(follow_symlinks=False))
+            for entry in _listed(here, walk)
+            if not entry.name.startswith(".") and _globbed(segment, entry.name)
+        )
+    try:
+        for name, found in names:
+            walk.check()
+            relative = f"{base}/{name}" if base else name
+            if not after:
+                walk.add(Found(relative, _kind(here, name, found), found))
+            elif stat.S_ISLNK(found.st_mode):
+                walk.add(Found(relative, "link"))
+            elif stat.S_ISDIR(found.st_mode) and not _NAME.fullmatch(name):
+                walk.add(Found(relative, "name"))
+            elif stat.S_ISDIR(found.st_mode):
+                _matched(root, relative, after, walk)
+    except PermissionError:
+        walk.add(Found(base, "unreadable"))
+    finally:
+        if close := getattr(names, "close", None):
+            close()  # a limit's exception can retain this frame; do not retain its scandir descriptor
 
 
-async def _below(root: str, base: str, depth: int, end: float | None) -> list[Found]:
+def _below(root: str, base: str, depth: int, walk: _Walk) -> None:
     """A directory read: every file below ``base`` whose name starts with neither ``.`` nor ``_``, in no
     directory whose name does; a directory deeper than ``DEPTH`` is refused."""
-    listed = await call(_listed, os.path.join(root, base), end=end, root=root)
-    if listed is None:
-        return [Found(base, "unreadable")]
-    candidates = []
-    for name, found in listed:
-        if name.startswith((".", "_")):
-            continue
-        relative = f"{base}/{name}" if base else name
-        if stat.S_ISDIR(found.st_mode) and _NAME.fullmatch(name):
-            if depth == DEPTH:
-                raise _Deep
-            candidates += await _below(root, relative, depth + 1, end)
-        else:
-            candidates.append(Found(relative, _kind(os.path.join(root, base), name, found), found))
-    return candidates
+    here = os.path.join(root, base)
+    try:
+        for entry in _listed(here, walk):
+            name = entry.name
+            if name.startswith((".", "_")):
+                continue
+            found = entry.stat(follow_symlinks=False)
+            walk.check()
+            relative = f"{base}/{name}" if base else name
+            if stat.S_ISDIR(found.st_mode) and _NAME.fullmatch(name):
+                if depth == DEPTH:
+                    raise _Deep
+                _below(root, relative, depth + 1, walk)
+            else:
+                walk.add(Found(relative, _kind(here, name, found), found))
+    except PermissionError:
+        walk.add(Found(base, "unreadable"))
 
 
 class _Deep(Exception):
+    pass
+
+
+class _Wide(Exception):
+    pass
+
+
+class _Many(Exception):
     pass
 
 
@@ -561,16 +645,21 @@ async def expand(
     link, what is not a regular file or a name outside the alphabet is never skipped."""
     target_id = target.target_id
     try:
-        found = sorted(await _walk(target.root or "", path, end), key=lambda f: f.path.encode())
+        found = sorted(await _walk(target.root or "", path, end, max_files), key=lambda f: f.path.encode())
     except _Deep:
         raise ValueError(f"{who}: the path holds directories more than {DEPTH} deep") from None
+    except _Wide:
+        raise ValueError(
+            f"{who}: the path visits more than {WALK_ENTRIES:,} directory entries, including skipped names:"
+            " narrow the export path"
+        ) from None
+    except _Many:
+        raise ValueError(
+            f"{who}: the path matches at least {max_files + 1:,} files: a side reads at most {max_files:,}"
+            " (files.max_files)"
+        ) from None
     if not found:
         raise NotReady("export_absent", f"{who}: no file matches {path} under target {target_id}")
-    if len(found) > max_files:
-        raise ValueError(
-            f"{who}: the path matches {len(found):,} files: a side reads at most {max_files:,}"
-            " (files.max_files)"
-        )
     for n, candidate in enumerate(found, 1):
         if candidate.kind != "file":
             why = _KIND_TEXT[candidate.kind].format(uid=os.getuid())
@@ -1244,9 +1333,17 @@ async def verify(
     try:
         if await call(_rooted, root, root=root) in ("absent", "link"):
             raise TargetUnreachable("OSError")
-        found = sorted(await _walk(root, path, None), key=lambda f: f.path.encode())
-        if not found and not planning and not await call(_listed, root, root=root):
+        found = sorted(await _walk(root, path, None, of), key=lambda f: f.path.encode())
+        if not found and not planning and not await call(_nonempty, root, root=root):
             raise TargetUnreachable("Empty")
+    except _Many:
+        if planning:
+            raise _changed(who, of, of) from None
+        raise FilesChanged(
+            f"{who}: at least {of + 1:,} files match now, {of:,} when the run was created"
+        ) from None
+    except _Wide:
+        raise TargetUnreachable("EnumerationLimit") from None
     except _Deep:
         found = []
     except OSError:  # a listing or a stat the mount answered with an error

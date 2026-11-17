@@ -22,7 +22,7 @@ from scipy.optimize import linear_sum_assignment
 
 from deltasleuth.core.jsonio import to_serialisable
 from deltasleuth.core.types import JSON
-from deltasleuth.profiler.model import ROOT, EvidenceRow, Path, render, rounded
+from deltasleuth.profiler.model import ROOT, EvidenceRow, Path, ProfilerError, render, rounded
 from deltasleuth.profiler.profile import CONTAINER_KINDS, LEAF_KINDS, OPAQUE, SideProfile
 from deltasleuth.profiler.values import light_token, name_tokens
 
@@ -30,12 +30,37 @@ TAU = 0.5
 VALUE_WEIGHT = 0.8
 NAME_WEIGHT = 0.2
 CHANCE_SHIFTS = 5
+# Bound the score grid and the square private-dummy assignment before allocating either. The
+# shared allowance counts document/member pairs and token visits, including cached-set copies.
+MAX_ASSIGNMENT_CELLS = 1_000_000  # at most 8 MiB for one float64 dummy matrix
+MAX_ALIGNMENT_LEAF_PAIRS = 250_000  # cached leaf scores, across all candidate container pairs
+MAX_ALIGNMENT_WORK = 20_000_000
+_ALIGNMENT_LIMIT = (
+    "profile alignment exceeds its work limit; provide narrower samples or split them into smaller specs"
+)
 _MATCH_EPS = 1e-9  # a pair scoring exactly tau is matched ("below 0.5 stays unmatched")
 _FORBIDDEN = -1e6
 _EMPTY: frozenset[str] = frozenset()
 _NAME_ONLY = "aligned by name only: no values observed on either side"
 
 TokenSets = dict[int, frozenset[str]]
+
+
+class _WorkBudget:
+    def __init__(self) -> None:
+        self.remaining = MAX_ALIGNMENT_WORK
+
+    def charge(self, work: int) -> None:
+        if work > self.remaining:
+            raise ProfilerError(_ALIGNMENT_LIMIT)
+        self.remaining -= work
+
+
+def _assignment_cells(n: int, m: int) -> int:
+    cells = (n + m) ** 2 if n and m else 0
+    if cells > MAX_ASSIGNMENT_CELLS:
+        raise ProfilerError(_ALIGNMENT_LIMIT)
+    return cells
 
 
 @dataclass
@@ -58,7 +83,9 @@ def _token(value: JSON, kind: str) -> str | None:
 class _Tokens:
     """One side's light-token sets per path and paired document; a container pools its leaves."""
 
-    def __init__(self, prof: SideProfile, docs: Sequence[int]) -> None:
+    def __init__(self, prof: SideProfile, docs: Sequence[int], budget: _WorkBudget) -> None:
+        self.budget = budget
+        self.budget.charge(len(docs))
         self.prof, self.docs = prof, frozenset(docs)
         self.sets = cache(self._sets)
         self.valueless = cache(self._valueless)
@@ -66,43 +93,68 @@ class _Tokens:
     def _sets(self, path: Path) -> TokenSets:
         st = self.prof.stats[path]
         if st.kind in LEAF_KINDS:
-            sets = {
-                doc: frozenset(t for v in values if (t := _token(v, st.kind)) is not None)
-                for doc, values in st.values.items()
-                if doc in self.docs
-            }
-            return {doc: tokens for doc, tokens in sets.items() if tokens}
+            self.budget.charge(len(st.values))
+            sets = {}
+            for doc, values in st.values.items():
+                if doc in self.docs:
+                    self.budget.charge(len(values))
+                    tokens = frozenset(t for v in values if (t := _token(v, st.kind)) is not None)
+                    if tokens:
+                        sets[doc] = tokens
+            return sets
+        self.budget.charge(len(self.prof.stats))  # leaves_under scans the profile
         pooled: dict[int, set[str]] = {}
         for leaf in self.prof.leaves_under(path):
             for doc, tokens in self.sets(leaf).items():
+                self.budget.charge(len(tokens))
                 pooled.setdefault(doc, set()).update(tokens)
+        self.budget.charge(len(pooled) + sum(map(len, pooled.values())))
         return {doc: frozenset(tokens) for doc, tokens in pooled.items()}
 
     def _valueless(self, path: Path) -> bool:
         """Whether ``path`` is null or empty in every sample of this side, paired or not."""
         st = self.prof.stats[path]
         if st.kind in LEAF_KINDS:
-            return all(_token(v, st.kind) is None for v in st.all_values())
+            for values in st.values.values():
+                for value in values:
+                    self.budget.charge(1)
+                    if _token(value, st.kind) is not None:
+                        return False
+            return True
+        self.budget.charge(len(self.prof.stats))
         return all(self.valueless(leaf) for leaf in self.prof.leaves_under(path))
 
     def leaf_sets(self) -> list[TokenSets]:
+        self.budget.charge(len(self.prof.stats))
         return [self.sets(p) for p, st in self.prof.stats.items() if st.kind in LEAF_KINDS]
 
 
-def _idf(docs: Sequence[int], *sides: _Tokens) -> dict[str, float]:
+def _idf(docs: Sequence[int], budget: _WorkBudget, *sides: _Tokens) -> dict[str, float]:
     """Inverse document frequency of every token either side holds in a paired document."""
+    budget.charge(len(docs))
     per_doc: dict[int, set[str]] = {doc: set() for doc in docs}
     for side in sides:
         for sets in side.leaf_sets():
             for doc, tokens in sets.items():
+                budget.charge(len(tokens))
                 per_doc[doc] |= tokens
+    budget.charge(sum(map(len, per_doc.values())))
     df = Counter(t for tokens in per_doc.values() for t in tokens)
+    budget.charge(len(df))
     return {t: math.log(1.0 + len(docs) / c) for t, c in df.items()}
 
 
-def weighted_jaccard(a: frozenset[str], b: frozenset[str], idf: dict[str, float]) -> float:
+def weighted_jaccard(
+    a: frozenset[str], b: frozenset[str], idf: dict[str, float], budget: _WorkBudget
+) -> float:
+    # Intersection can visit and retain at most the smaller set. Sum-of-input sizes bounds both
+    # before it allocates; the remaining charge covers the union/copy and both summations.
+    budget.charge(len(a) + len(b))
     inter = a & b
-    return sum(idf[t] for t in inter) / sum(idf[t] for t in a | b) if inter else 0.0
+    if not inter:
+        return 0.0
+    budget.charge(len(inter) + 2 * (len(a) + len(b)))
+    return sum(idf[t] for t in inter) / sum(idf[t] for t in a | b)
 
 
 def path_words(path: Path, container: Path) -> str:
@@ -123,6 +175,7 @@ def assign_with_dummies(scores: np.ndarray, tau: float = TAU) -> list[tuple[int,
     ``score - tau``, so two real paths pair only when that beats leaving both unmatched.
     """
     n, m = scores.shape
+    _assignment_cells(n, m)
     if n == 0 or m == 0:
         return []
     benefit = np.full((n + m, n + m), _FORBIDDEN)
@@ -162,9 +215,12 @@ class _Aligner:
     def __init__(self, pa: SideProfile, pb: SideProfile) -> None:
         self.pa, self.pb = pa, pb
         self.docs = tuple(sorted(pa.doc_ids & pb.doc_ids))
-        self.ta, self.tb = _Tokens(pa, self.docs), _Tokens(pb, self.docs)
-        self.idf = _idf(self.docs, self.ta, self.tb)
+        self.budget = _WorkBudget()
+        self.pair_work = 1 + len(self.docs) * (1 + min(CHANCE_SHIFTS, max(0, len(self.docs) - 1)))
+        self.ta, self.tb = _Tokens(pa, self.docs, self.budget), _Tokens(pb, self.docs, self.budget)
+        self.idf = _idf(self.docs, self.budget, self.ta, self.tb)
         self.leaf_value = cache(self._leaf_value)
+        self.leaf_pairs = 0
         self.result = Alignment(self.docs)
 
     def _mean_jaccard(self, ta: TokenSets, tb: TokenSets, shift: int = 0) -> tuple[float, int]:
@@ -172,7 +228,7 @@ class _Aligner:
         for i, doc in enumerate(self.docs):
             a, b = ta.get(doc, _EMPTY), tb.get(self.docs[(i + shift) % len(self.docs)], _EMPTY)
             if a or b:
-                total += weighted_jaccard(a, b, self.idf)
+                total += weighted_jaccard(a, b, self.idf, self.budget)
                 n += 1
         return (total / n if n else 0.0), n
 
@@ -186,6 +242,9 @@ class _Aligner:
         return max(0.0, (raw - chance) / (1.0 - chance)), chance
 
     def _leaf_value(self, leaf_a: Path, leaf_b: Path) -> float:
+        if self.leaf_pairs >= MAX_ALIGNMENT_LEAF_PAIRS:
+            raise ProfilerError(_ALIGNMENT_LIMIT)
+        self.leaf_pairs += 1  # only cache misses reach this method
         if self.pa.kind(leaf_a) != self.pb.kind(leaf_b):
             return 0.0
         ta, tb = self.ta.sets(leaf_a), self.tb.sets(leaf_b)
@@ -200,6 +259,11 @@ class _Aligner:
         leaves_a, leaves_b = self.pa.leaves_under(container_a), self.pb.leaves_under(container_b)
         if not leaves_a or not leaves_b:
             return 0.0
+        if len(leaves_a) * len(leaves_b) > MAX_ALIGNMENT_LEAF_PAIRS:
+            raise ProfilerError(_ALIGNMENT_LIMIT)
+        # The cache avoids recomputing a pair, but each container still visits both Cartesian
+        # products. Charge conservatively before the cache or the best-score lists grow.
+        self.budget.charge(len(leaves_a) * len(leaves_b) * (2 + self.pair_work))
         best_a = [max(self.leaf_value(la, lb) for lb in leaves_b) for la in leaves_a]
         best_b = [max(self.leaf_value(la, lb) for la in leaves_a) for lb in leaves_b]
         return (sum(best_a) / len(best_a) + sum(best_b) / len(best_b)) / 2
@@ -229,6 +293,8 @@ class _Aligner:
 
     def align_scope(self, ca: Path, cb: Path, kinds: Sequence[str]) -> list[tuple[Path, Path]]:
         items_a, items_b = self.pa.alignable(ca, kinds), self.pb.alignable(cb, kinds)
+        n, m = len(items_a), len(items_b)
+        self.budget.charge(_assignment_cells(n, m) + n * m * self.pair_work)
         grid = [[self._score(a, b, ca, cb) for b in items_b] for a in items_a]
         totals = np.array([[s.total for s in row] for row in grid]).reshape(len(items_a), len(items_b))
         pairs = assign_with_dummies(totals)

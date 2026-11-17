@@ -25,6 +25,7 @@ from typing import Any
 from deltasleuth.core.types import JSON, Counted, KeyedMap
 
 DEFAULT_MAX_BYTES = 64 * 1024 * 1024  # a larger body is INCOMPLETE(resource_limit)
+MAX_NUMBER_BYTES = DEFAULT_MAX_BYTES  # total fixed-point digits/punctuation, before expansion
 DEFAULT_MAX_DEPTH = 256
 MAX_EXPONENT = 4000  # |adjusted exponent| above this is rejected (avoids huge expansions)
 
@@ -101,12 +102,14 @@ def parse_json(
     *,
     max_bytes: int = DEFAULT_MAX_BYTES,
     max_depth: int = DEFAULT_MAX_DEPTH,
+    check_number_expansion: bool = True,
 ) -> tuple[JSON, bool]:
     """Parse ``body``; return ``(value, duplicate_member_found)``.
 
     Raises ``JSONParseError`` for invalid JSON or non-UTF-8 bytes (``LoneSurrogateError`` for a
     string that is not Unicode text) and ``ResourceLimitError`` for oversized input. Numbers
-    are ``Decimal``; ``NaN``/``Infinity`` are rejected.
+    are ``Decimal``; ``NaN``/``Infinity`` are rejected. Only captured-sample envelopes disable
+    ``check_number_expansion``: their body is budgeted separately to preserve resource observations.
     """
     try:
         raw = body.encode("utf-8") if isinstance(body, str) else body
@@ -149,6 +152,8 @@ def parse_json(
     _depth(value, max_depth)
     if _SURROGATE_ESCAPE.search(raw) and _has_lone_surrogate(value):
         raise LoneSurrogateError("a string holds a lone UTF-16 surrogate escape (not Unicode text)")
+    if check_number_expansion:
+        check_number_budget(value)
     return value, duplicate
 
 
@@ -196,10 +201,59 @@ def to_cel_value(value: JSON, inexact: Callable[[Decimal], float] = float) -> An
     raise TypeError(f"not a JSON value: {type(value).__name__}")
 
 
-def number_text(d: Decimal) -> str:
-    """Canonical text of a number: exact (no context rounding), no exponent, ``-0`` -> ``0``."""
+def number_size(d: Decimal) -> int:
+    """Fixed-point output length without expanding an exponent or rounding the coefficient."""
     if not d.is_finite():
         raise ValueError(f"not a finite JSON number: {d}")
+    if not d:
+        return 1  # zero with an arbitrary exponent is still one byte
+    if abs(d.adjusted()) > MAX_EXPONENT:
+        raise ResourceLimitError("number magnitude out of range")
+    sign, digits, exp = d.as_tuple()
+    n, exponent = len(digits), int(exp)
+    while digits[n - 1] == 0:
+        n -= 1
+        exponent += 1
+    size = sign + (n + exponent if exponent >= 0 else max(n + 1, 2 - exponent))
+    if size > MAX_NUMBER_BYTES:
+        raise ResourceLimitError("number rendering exceeds the expansion limit")
+    return size
+
+
+def check_number_budget(value: Any, *, max_bytes: int | None = None) -> int:
+    """Bound aggregate numeric expansion before rendering any leaves.
+
+    This counts number bytes, not the whole JSON encoding; callers retain their body-byte checks.
+    Repeated references count every time they appear in the output. Iterators keep traversal space
+    proportional to depth, rather than making another list of a wide document's children.
+    """
+    limit = MAX_NUMBER_BYTES if max_bytes is None else min(max_bytes, MAX_NUMBER_BYTES)
+    used, stack = 0, [iter((value,))]
+    while stack:
+        for node in stack[-1]:
+            if isinstance(node, bool):
+                continue
+            if isinstance(node, Decimal | int):
+                used += number_size(node if isinstance(node, Decimal) else Decimal(node))
+                if used > limit:
+                    raise ResourceLimitError("numeric rendering exceeds the aggregate expansion limit")
+            elif isinstance(node, Counted):
+                stack.append(iter((node.value, node.n)))
+                break
+            elif isinstance(node, dict):
+                stack.append(iter(node.values()))
+                break
+            elif isinstance(node, list | tuple):
+                stack.append(iter(node))
+                break
+        else:
+            stack.pop()
+    return used
+
+
+def number_text(d: Decimal) -> str:
+    """Canonical text of a number: exact (no context rounding), no exponent, ``-0`` -> ``0``."""
+    number_size(d)  # reject before constructing coefficient text or repeated zeros
     sign, digits, exp = d.as_tuple()
     ds = "".join(map(str, digits)).lstrip("0")
     if not ds:
@@ -219,17 +273,22 @@ def number_text(d: Decimal) -> str:
 
 def to_serialisable(value: Any, _num: Any = None) -> Any:
     """Plain-JSON rendering of engine values. Decimals become ``_num(text)`` if given, else str."""
+    check_number_budget(value)
+    return _serialisable(value, _num)
+
+
+def _serialisable(value: Any, _num: Any) -> Any:
     conv = _num or number_text
     if isinstance(value, Decimal):
         return conv(value) if _num is None else _num(number_text(value))
     if isinstance(value, Counted):
-        return {"value": to_serialisable(value.value, _num), "count": value.n}
+        return {"value": _serialisable(value.value, _num), "count": value.n}
     if isinstance(value, KeyedMap):
-        return {str(k): [to_serialisable(m, _num) for m in ms] for k, ms in sorted(value.items())}
+        return {str(k): [_serialisable(m, _num) for m in ms] for k, ms in sorted(value.items())}
     if isinstance(value, dict):
-        return {str(k): to_serialisable(v, _num) for k, v in value.items()}
+        return {str(k): _serialisable(v, _num) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
-        return [to_serialisable(v, _num) for v in value]
+        return [_serialisable(v, _num) for v in value]
     return value
 
 
@@ -251,15 +310,18 @@ def plain(value: Any) -> Any:
 _PLACEHOLDER = re.compile(r'"\\u0000([0-9a-f]{16}):(-?[0-9]+(?:\.[0-9]+)?)\\u0000"')
 
 
-def dumps(value: Any, *, indent: int | None = None, sort_keys: bool = False) -> str:
+def dumps(
+    value: Any, *, indent: int | None = None, sort_keys: bool = False, max_number_bytes: int | None = None
+) -> str:
     """Serialise any engine value to JSON text with exact numbers (no float rounding)."""
+    check_number_budget(value, max_bytes=max_number_bytes)
     nonce = secrets.token_hex(8)
 
     def placeholder(text: str) -> str:
         return f"\x00{nonce}:{text}\x00"
 
     text = json.dumps(
-        to_serialisable(value, placeholder),
+        _serialisable(value, placeholder),
         indent=indent,
         sort_keys=sort_keys,
         ensure_ascii=False,

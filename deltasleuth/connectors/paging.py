@@ -119,6 +119,7 @@ class PageWalk:
         self._items: list[Any] = []  # page 1's array (inside ``_doc``); later items join it
         self._pages = 0  # pages taken, an empty end page included
         self._merged = False
+        self._number_bytes = 0
         self._position = 0 if cfg.kind == "offset" else 1
         self._short = False  # the last non-empty window held fewer items than ``size``
         self._end_check = False  # past maxPages: the next page may only confirm the end
@@ -128,6 +129,7 @@ class PageWalk:
         self.eof = True
         self.unstable = False
         self.detail: str | None = None
+        self.resource_limited = False
         self.ended_on_empty_page = False
         self.page: list[Any] = []  # the items of the page just taken, none when it was refused
 
@@ -137,6 +139,7 @@ class PageWalk:
         try:
             doc, duplicate = jsonio.parse_json(body)
         except (jsonio.JSONParseError, jsonio.ResourceLimitError) as exc:
+            self.resource_limited = isinstance(exc, jsonio.ResourceLimitError)
             if not self._merge:  # no observe() judges the pages of a listing
                 self.stop(f"page 1 could not be parsed ({type(exc).__name__})")
             return  # observe() classifies the unreadable body
@@ -145,6 +148,7 @@ class PageWalk:
             self.stop("pagination items_path does not select one array on the first page; not paged")
             return
         self._doc, self._items, self._pages, self._seen = doc, items, 1, _identities(items)
+        self._number_bytes = jsonio.check_number_budget(doc)
         self.page = items
         self._advance(doc, items, headers, url)
         if duplicate and (self.next or not self._merge):  # merging would drop the duplicate names
@@ -156,6 +160,7 @@ class PageWalk:
         try:
             doc, duplicate = jsonio.parse_json(body)
         except (jsonio.JSONParseError, jsonio.ResourceLimitError) as exc:
+            self.resource_limited = isinstance(exc, jsonio.ResourceLimitError)
             self.stop(f"page {page_no} could not be parsed ({type(exc).__name__}); paging stopped")
             return
         items = self._items_of(doc)
@@ -166,6 +171,16 @@ class PageWalk:
         if items and self._end_check:
             self.stop(f"max_pages ({self._max_pages}) reached before the last page")
             return
+        if self._merge:
+            try:
+                added = jsonio.check_number_budget(
+                    items, max_bytes=jsonio.MAX_NUMBER_BYTES - self._number_bytes
+                )
+            except jsonio.ResourceLimitError:
+                self.resource_limited = True
+                self.stop(f"page {page_no} exceeds the aggregate numeric expansion limit")
+                return
+            self._number_bytes += added
         identities = _identities(items)
         if items and self._cfg.kind in _WINDOW_KINDS and not self._window_advances(page_no, identities):
             return
@@ -186,8 +201,13 @@ class PageWalk:
     def stop(self, detail: str) -> None:
         self.eof, self.detail, self.next = False, detail, None
 
-    def body(self) -> bytes:
-        return jsonio.dumps(self._doc).encode("utf-8") if self._merged else self._first
+    def body(self, *, max_number_bytes: int | None = None) -> bytes:
+        if self.resource_limited:
+            raise jsonio.ResourceLimitError("a page exceeds a numeric expansion limit")
+        return (
+            jsonio.dumps(self._doc, max_number_bytes=max_number_bytes).encode("utf-8")
+            if self._merged else self._first
+        )
 
     def _items_of(self, doc: Any) -> list[Any] | None:
         found = _select(self._cfg.items_path or "", doc)

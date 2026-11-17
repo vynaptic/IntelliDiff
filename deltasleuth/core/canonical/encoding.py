@@ -15,7 +15,7 @@ from collections import Counter
 from decimal import Decimal
 from typing import Any
 
-from deltasleuth.core.jsonio import number_text
+from deltasleuth.core.jsonio import check_number_budget, number_text
 from deltasleuth.core.types import JSON, Counted, KeyedMap
 
 _TAG_KEYED = "\u001fkeyed"
@@ -71,11 +71,13 @@ def _names(obj: dict, nfc: bool) -> list[tuple[str, str]]:
 
 def canonical_json(value: JSON) -> str:
     """Canonical text for hashing and set-member identity (NFC strings)."""
+    check_number_budget(value)
     return _encode(value, nfc=True)
 
 
 def exact_json(value: JSON) -> str:
     """Canonical text with byte-exact strings (the raw hash)."""
+    check_number_budget(value)
     return _encode(value, nfc=False)
 
 

@@ -48,6 +48,7 @@ from deltasleuth.connectors.base import ConnectorConfigError, UnsafeTargetError
 from deltasleuth.context import Context
 from deltasleuth.core.spec import SpecError, TargetsError
 from deltasleuth.core.spec.errors import pointer
+from deltasleuth.core.spec.expressions import KeyPatternLimitError
 from deltasleuth.evidence.store import EvidenceKeyError
 from deltasleuth.profiler import ProfilerError
 from deltasleuth.reports.accuracy import DrawTimeout
@@ -439,6 +440,7 @@ _HANDLERS = {
     TargetsError: _invalid_target,
     targets.Refused: _target_refused,
     ProfilerError: _unprocessable,
+    KeyPatternLimitError: _unprocessable,
     UnsafeTargetError: _unprocessable,  # the guard's refusal of a service's address: its kind and consent
     ConnectorConfigError: _unprocessable,  # a target or a template that cannot be called: names, no value
     ApprovalRequired: _conflict,

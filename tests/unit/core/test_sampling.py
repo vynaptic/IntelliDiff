@@ -587,6 +587,107 @@ def test_a_draw_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
         draw(contrast, frame(8))  # the heap's keys counted once
 
 
+@pytest.mark.parametrize("kind", ["rate", "unsized", "memoised"])
+def test_distinct_labels_are_bounded_even_when_no_key_is_selected(
+    monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    monkeypatch.setattr(sampling, "_LABELS", 24, raising=False)
+    dimensions = [dimension(f"d{i}", bucket("Y", values=(True,)), bucket("N")) for i in range(5)]
+    chosen = sample(*dimensions, method="bottom_k" if kind == "unsized" else "rate", rate="0.0000001",
+                    signoff="'d0=' + strata.d0" if kind == "memoised" else None)  # fmt: skip
+    keys = [(f"PRIVATE{i}", {f"d{bit}": bool(i & (1 << bit)) for bit in range(5)}) for i in range(32)]
+    errors = []
+    for batch in (1, 7, 32):
+        selector = Selector(chosen, SALT, NOW)
+        with pytest.raises(DrawError, match="sampling label budget") as failed:
+            for start in range(0, len(keys), batch):
+                selector.add(keys[start : start + batch], first=start + 1)
+        errors.append((str(failed.value), selector.frame_keys))
+        assert "PRIVATE" not in str(failed.value)
+        assert len(selector._strings) <= 24 and selector._chosen_count == 0
+        for action in (selector.result, lambda selector=selector: selector.add(keys[:1])):
+            with pytest.raises(DrawError, match="sampling label budget"):
+                action()
+    assert errors[0] == errors[1] == errors[2]
+
+
+def test_label_bytes_are_bounded_independently_of_label_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sampling, "_LABEL_BYTES", 64, raising=False)
+    chosen = sample(dimension("a", bucket("x" * 40)), dimension("b", bucket("y" * 40)),
+                    method="rate", rate="0.0000001")  # fmt: skip
+    selector = Selector(chosen, SALT, NOW)
+    with pytest.raises(DrawError, match="sampling label budget"):
+        selector.add(frame(1))
+    assert sum(len(label.encode()) for label in selector._strings) <= 64
+
+
+def test_uncached_foreign_labels_share_the_label_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sampling, "_LABELS", 24)
+    chosen = sample(dimension("a", bucket("home"), *(bucket(f"other{i}") for i in range(32))),
+                    method="rate", rate="0.0000001", signoff="row.pick")  # fmt: skip
+    selector = Selector(chosen, SALT, NOW)
+    with pytest.raises(DrawError, match="sampling label budget"):
+        selector.add(frame(32, pick=lambda i: f"a=other{i}"))
+    assert len(selector._labels_named["foreign"]) < 24
+
+
+def test_signoff_memo_is_bounded_without_changing_selection(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sampling, "_MEMO", 4)
+    dimensions = [dimension(f"d{i}", bucket("Y", values=(True,)), bucket("N")) for i in range(3)]
+    keys = [(f"K{i}", {f"d{bit}": bool(i & (1 << bit)) for bit in range(3)}) for i in range(64)]
+    chosen = sample(*dimensions, method="rate", rate="1", signoff="'d0=' + strata.d0")
+    selector = Selector(chosen, SALT, NOW)
+    selector.add(keys)
+    assert selector._signoffs is not None and len(selector._signoffs) <= 4
+    assert selector.result() == draw(chosen, keys, batch=3)
+
+
+def test_signoff_memo_does_not_retain_invalid_expression_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(predicates, "label", lambda *args: "private" * 20_000)
+    chosen = sample(dimension("a", bucket("all")), method="rate", rate="0.0000001", signoff="'wrong'")
+    selector = Selector(chosen, SALT, NOW)
+    selector.add(frame(100))
+    assert not selector._signoffs
+    with pytest.raises(DrawError, match=r"100 key\(s\).*label naming none"):
+        selector.result()
+
+
+def test_large_scalar_values_are_compared_without_being_held_in_the_memo() -> None:
+    chosen = sample(dimension("value", bucket("first", values=("0:" + "x" * 40_000,), target_size=1),
+                              bucket("other", target_size=3)))  # fmt: skip
+    selector = Selector(chosen, SALT, NOW)
+    tracemalloc.start()
+    try:
+        for i in range(100):
+            selector.add([(f"K{i}", {"value": f"{i}:" + "x" * 40_000})])
+        held = tracemalloc.get_traced_memory()[0]
+    finally:
+        tracemalloc.stop()
+    assert held < 1_000_000
+    result = selector.result()
+    assert result.frame_keys == 100 and len(result.keys) == 4
+    assert [s["frame_keys"] for s in result.strata] == [1, 99]
+
+
+def test_real_label_budget_stops_a_combinatorial_frame_with_bounded_memory() -> None:
+    dimensions = [dimension(f"d{i}", bucket("Y", values=(True,)), bucket("N")) for i in range(24)]
+    selector = Selector(sample(*dimensions, method="rate", rate="0.0000001"), SALT, NOW)
+    tracemalloc.start()
+    try:
+        with pytest.raises(DrawError, match="sampling label budget"):
+            for start in range(0, 20_000, 128):
+                selector.add([
+                    (f"K{i}", {f"d{bit}": bool(i & (1 << bit)) for bit in range(24)})
+                    for i in range(start, start + 128)
+                ])
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert peak < 16_000_000 and selector._chosen_count == 0
+    assert len(selector._strings) <= sampling._LABELS
+    assert selector._label_bytes <= sampling._LABEL_BYTES
+
+
 def test_a_rate_sample_without_strata_is_contrast_only() -> None:
     result = draw(sample(method="rate", rate="0.5"), frame(200))
     assert result.strata == [] and result.keys and not any(d.member for d in result.keys)

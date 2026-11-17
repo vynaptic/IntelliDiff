@@ -427,13 +427,25 @@ def test_each_refusal_has_its_status_and_message(
 # -- preview and zones ---------------------------------------------------------------------------------
 
 
-def test_a_preview_gives_ten_times_and_the_notes_and_writes_nothing(open_client: OpenClient) -> None:
+@pytest.mark.parametrize(
+    ("now", "back_first"),
+    [(datetime(2026, 9, 1, tzinfo=UTC), True), (datetime(2026, 11, 1, tzinfo=UTC), False)],
+)
+def test_a_preview_gives_ten_times_and_the_notes_and_writes_nothing(
+    open_client: OpenClient, monkeypatch: pytest.MonkeyPatch, now: datetime, back_first: bool
+) -> None:
+    # Keep the real read/count, but fix its clock so both seasonal orders run on every calendar date.
+    count = repo.count_schedules
+
+    async def counted(conn: repo.Conn, *, lock: bool = False) -> repo.Row:
+        return await count(conn, lock=lock) | {"now": now}
+
+    monkeypatch.setattr(repo, "count_schedules", counted)
     with open_client() as client:
         before = sql(client, "SELECT count(*) AS n FROM ds.audit_log")[0]["n"]
         found = client.post(
             "/v1/schedules/preview", json={"cron": " 30  1 * * * ", "time_zone": "Europe/London"}
         )
-        now = sql(client, "SELECT now() AS at")[0]["at"]
         written = sql(
             client,
             "SELECT (SELECT count(*) FROM ds.schedules) AS schedules, count(*) AS rows FROM ds.audit_log",
@@ -446,10 +458,11 @@ def test_a_preview_gives_ten_times_and_the_notes_and_writes_nothing(open_client:
         for at in times
     ]
     assert answer["notes"] == cron.notes("30 1 * * *", "Europe/London", now) and len(answer["notes"]) == 2
-    assert answer["notes"][0].endswith(
+    back, forward = (0, 1) if back_first else (1, 0)
+    assert answer["notes"][back].endswith(
         ": 01:30 happens twice in Europe/London (clocks go back): the schedule fires at the first (00:30 UTC)"
     )
-    assert answer["notes"][1].endswith(
+    assert answer["notes"][forward].endswith(
         ": 01:30 does not exist in Europe/London (clocks go forward): that firing happens at 02:30 (01:30"
         " UTC)"
     )

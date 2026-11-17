@@ -236,10 +236,10 @@ def report(*args: Any) -> Result:
     return CliRunner().invoke(bench.app, ["report", *map(str, args)])
 
 
-def scratch_repo(root: Path) -> None:
+def scratch_repo(root: Path, object_format: str = "sha1") -> None:
     root.mkdir()
     for args in (
-        ["init", "-q", "-b", "main"],
+        ["init", "-q", "-b", "main", f"--object-format={object_format}"],
         ["config", "user.email", "o@x.test"],
         ["config", "user.name", "O"],
     ):
@@ -577,6 +577,58 @@ def test_report_warns_changed_code_and_mixed_hosts(tmp_path: Path, monkeypatch: 
     (root / "docs" / "z.md").write_text("docs only\n")
     commit(root)
     assert report(current).stderr == ""  # a change outside the product's code
+
+
+def test_report_refuses_git_options_without_touching_the_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "repo"
+    scratch_repo(root)
+    monkeypatch.setattr(release, "ROOT", root)
+    victim = tmp_path / "keep.txt"
+    victim.write_text("must survive\n")
+    path = saved(tmp_path, "option", result({10_000: [repetition()]}, sha=f"--output={victim}"))
+    done = report(path)
+    assert victim.read_text() == "must survive\n"
+    assert (done.exit_code, done.stderr) == (
+        2, f"error: {path} has no full hexadecimal commit ID (40 or 64 characters)\n"
+    )
+
+
+@pytest.mark.parametrize("commit", [None, [], {}, {"sha": None}, {"sha": 7}, {"sha": []},
+                                    {"sha": "HEAD"}, {"sha": "a" * 39}, {"sha": "g" * 40}])
+def test_report_rejects_invalid_commit_ids_before_running_git(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, commit: Any
+) -> None:
+    made = result({10_000: [repetition()]})
+    made["commit"] = commit
+    path = saved(tmp_path, "bad-commit", made)
+
+    def unexpected(*args: Any, **kwargs: Any) -> None:
+        pytest.fail("an invalid result reached a subprocess")
+
+    monkeypatch.setattr(bench, "_run", unexpected)
+    done = report(path)
+    assert (done.exit_code, done.stderr) == (
+        2, f"error: {path} has no full hexadecimal commit ID (40 or 64 characters)\n"
+    )
+
+
+def test_report_accepts_a_full_sha256_commit_and_warns_if_it_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "repo"
+    scratch_repo(root, "sha256")
+    monkeypatch.setattr(release, "ROOT", root)
+    sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True,
+                         capture_output=True, text=True).stdout.strip()  # fmt: skip
+    assert len(sha) == 64
+    path = saved(tmp_path, "sha256", result({10_000: [repetition()]}, sha=sha))
+    done = report(path)
+    assert (done.exit_code, done.stderr) == (0, "")
+    missing = saved(tmp_path, "missing", result({10_000: [repetition()]}, sha="0" * 64))
+    done = report(missing)
+    assert done.exit_code == 0 and "was measured at 000000000000" in done.stderr
 
 
 def test_caveat_block_verbatim(tmp_path: Path) -> None:

@@ -9,6 +9,7 @@ from typing import Any
 from deltasleuth.core.spec.assemble import build_compiled_spec
 from deltasleuth.core.spec.documents import read_document
 from deltasleuth.core.spec.errors import SpecError, SpecIssue, sort_issues
+from deltasleuth.core.spec.expressions import KeyPatternLimitError, key_pattern_budget
 from deltasleuth.core.spec.rules import check_rules
 from deltasleuth.core.spec.schemas import spec_schema_issues
 from deltasleuth.core.spec.targets import TargetRegistry
@@ -28,7 +29,12 @@ def validate_spec(doc: Any, *, targets: TargetRegistry | None = None) -> list[Sp
     """
     if not isinstance(doc, dict):
         return [SpecIssue("", "the spec document must be a mapping", "document_not_mapping")]
-    issues = spec_schema_issues(doc) + check_rules(doc, targets=targets)
+    issues = spec_schema_issues(doc)
+    try:
+        with key_pattern_budget():
+            issues += check_rules(doc, targets=targets)
+    except KeyPatternLimitError as exc:
+        issues.append(SpecIssue("/key/pattern", str(exc), "key_pattern_limit"))
     return sort_issues(issues)
 
 

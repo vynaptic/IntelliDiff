@@ -203,9 +203,12 @@ async def test_a_scan_stopped_before_the_end_is_not_signed_off(
         async with h.ctx.pool.connection() as conn:
             problems = await approvals.signoff_problems(conn, run, 1, await h.ctx.spec(conn, spec_id))
     assert run["status"] == ("cancelled" if stop == "cancel" else "completed_with_issues")
+    read = 10 if stop == "cancel" else 0
+    expected = [] if read else [f"cycle 1 of run {run_id} compared no key"]
     assert problems == [
-        f"cycle 1 of run {run_id} scanned only part of its tables (rows_a 10, rows_b 10 read; the scan"
-        " stopped before the end)"
+        *expected,
+        f"cycle 1 of run {run_id} scanned only part of its tables (rows_a {read}, rows_b {read} read;"
+        " the scan stopped before the end)"
     ]
 
 

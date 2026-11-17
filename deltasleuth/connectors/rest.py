@@ -256,7 +256,6 @@ class RestConnector:
             walk.add(page.body or b"", page.headers, request.url)
         if walk.ended_on_empty_page:
             pages -= 1
-        body = walk.body()
         common = {
             "http_status": result.status,
             "latency_ms": round(latency, 3),
@@ -264,6 +263,11 @@ class RestConnector:
             "attempts": attempts,
             "pages": pages,
         }
+        try:
+            body = walk.body(max_number_bytes=self._max_body)
+        except jsonio.ResourceLimitError:
+            detail = f"body of {pages} pages exceeds {self._max_body} bytes or a numeric expansion limit"
+            return observation(**common, body=None, error_class="resource_limit", error_detail=detail)
         if len(body) > self._max_body:
             # Exact re-serialisation can outgrow the pages (1E+99 merges as 100 digits); the
             # evidence store refuses such a body, so it is not evidence either.

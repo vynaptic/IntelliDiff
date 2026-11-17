@@ -245,7 +245,9 @@ async def _digested(side: Plan, batches: AsyncIterator[Rows]) -> AsyncIterator[R
         for row in batch:
             try:
                 found = render.digest(side, row[n], render.parsed(side, row[n + 1]))
-            except ValueError:  # it does not convert, or passes a parse limit: its per-key read says which
+            except jsonio.ResourceLimitError:
+                found = render.RESOURCE_LIMIT
+            except ValueError:  # it does not convert: its per-key read says why
                 found = render.UNCONVERTIBLE
             out.append((*row[:n], found))
         return out

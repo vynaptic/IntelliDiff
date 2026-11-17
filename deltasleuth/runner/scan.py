@@ -15,9 +15,10 @@ another run's sort.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
@@ -74,7 +75,7 @@ def _opened_after(sealer: Sealer, cycle: int, after: dict[str, str] | None) -> l
 
 
 class _Stream:
-    """One side's rows in fetched batches: the head row's key, and the digests of one key's rows at once.
+    """One side's fetched rows: the head key, a group's count and its sole digest when it has one row.
 
     A row's digest is its engine's (``connectors.tables.render.digest``): the database's hash of its plain
     columns, extended with the columns the worker converts. A row without
@@ -99,6 +100,8 @@ class _Stream:
         self._i, self._eof = 0, False
         self._head: Key | None = None  # the key of row ``_i``, once it passed the guard
         self._floor, self._bound = after, True  # the key before it: the resume bound, then each row's
+        self.check: Callable[[], Awaitable[None]] | None = None
+        self.group_rows = 0
 
     async def open(self) -> None:
         """Send the scan's statement, which pins the side: its batches are fetched from then on."""
@@ -111,6 +114,8 @@ class _Stream:
         collation did, a mis-sorted side fails the run and never mis-pairs a key."""
         if self._head is None and not self._eof:
             while self._i == len(self._rows):
+                if self.check is not None:
+                    await self.check()
                 fetched = await anext(self._batches, None)
                 if fetched is None:
                     self._eof = True
@@ -123,15 +128,22 @@ class _Stream:
             self._bound = False
         return self._head
 
-    async def take(self, key: Key) -> list[bytes]:
-        """The digests of the rows of ``key`` (none when the head is another key). Both sides sort as
-        the merge compares, by the keys' UTF-8 bytes (``scan_sql``), so a key never comes back."""
-        digests = []
+    async def take(self, key: Key, *, limit: int | None = None) -> tuple[int, bytes | None]:
+        """Count ``key``'s rows and keep only a singleton's digest, in constant space across batches.
+        ``limit`` is used only for the final maxKeys candidate: two rows prove a duplicate, so that
+        terminal cut need not drain its group and never saves a partial group's resume cursor."""
+        self.group_rows = 0
+        single = None
         while await self.head() == key:
             digest = self._rows[self._i][self._parts]
-            digests.append(digest if len(digest) == 32 else digest + self._marked)
+            self.group_rows += 1
+            single = (
+                (digest if len(digest) == 32 else digest + self._marked) if self.group_rows == 1 else None
+            )
             self._i, self._head = self._i + 1, None
-        return digests
+            if self.group_rows == limit:
+                break
+        return self.group_rows, single
 
     async def null_keys(self) -> int:
         """Rows of the population whose key is NULL or unmatched by its key map, in the same snapshot."""
@@ -151,9 +163,14 @@ async def _snapshot(side: str, target: Target, plan: Plan, after: Key | None) ->
         yield _Stream(side, plan, engine, session, after, relation)
 
 
+class _Stopped(Exception):
+    def __init__(self, reason: str | None) -> None:
+        self.reason = reason
+
+
 async def scan(ctx: Context, run_id: str) -> str | None:
     """Scan the run's tables from its last checkpoint to the end, or until the run stops running; the stop
-    condition (``until``, ``maxDuration``) that ends the run, judged at each checkpoint. A file side counts
+    condition (``until``, ``maxDuration``) that ends the run, judged at each fetched batch. A file side counts
     the keys several of its rows hold (``repeated_x``), must have read exactly the rows its plan counted
     once read to its end (``RowsMoved``), and records when its files' closing hash agreed (``verified_x``).
 
@@ -203,36 +220,63 @@ async def scan(ctx: Context, run_id: str) -> str | None:
                 state.setdefault(f"repeated_{s.value}", 0)
             if "engine" in tables[s.value]:  # a PostgreSQL pair's state is what it was
                 state[f"server_{s.value}"] = stream.server()
-        merged = 0
-        while True:
-            heads = [h for h in (await a.head(), await b.head()) if h is not None]
-            if not heads:
-                break
-            key = min(heads)
-            rows = {"a": await a.take(key), "b": await b.take(key)}
-            text = encode_key(key)
-            for side, hashes in rows.items():
-                state[f"rows_{side}"] += len(hashes)
-                if len(hashes) > 1 and "pinned" in tables[side]:  # a file guarantees no uniqueness
-                    state[f"repeated_{side}"] += 1
-            if not text or len(text.encode()) > MAX_KEY_BYTES:  # no run key can hold it
-                for side, hashes in rows.items():
-                    state[f"skipped_{side}"] += len(hashes)
-            elif len(rows["a"]) == len(rows["b"]) == 1 and rows["a"] == rows["b"] and text not in before:
-                state["matched"] += 1
-            else:  # changed, one-sided, or repeated on a side
-                found[text] = mask_key(text, spec, ctx.tokeniser)
-            state["after"], merged = list(key), merged + 1
-            if conditions.max_keys is not None and state["candidates"] + len(found) >= conditions.max_keys:
-                stop = STOP_PREFIX + "maxKeys"
-                await _save(ctx, sealer, run_id, cycle, state, found, saved, done=True, stop_reason=stop)
-                return None
-            if merged % BATCH == 0:
+        merged = checkpointed = 0
+
+        async def check() -> None:
+            nonlocal saved, checkpointed
+            await asyncio.sleep(0)  # even an engine whose next batch is already buffered yields control
+            reason = conditions.expired(run["started_at"], datetime.now(UTC))
+            if merged != checkpointed and (reason or max(a.group_rows, b.group_rows) >= BATCH):
+                # A long group's counters and key are local to take(), never part of this checkpoint.
                 if not await _save(ctx, sealer, run_id, cycle, state, found, saved):
+                    raise _Stopped(None)
+                saved, checkpointed = saved + 1, merged
+            if reason:
+                raise _Stopped(reason)
+
+        a.check = b.check = check
+        try:
+            while True:
+                heads = [h for h in (await a.head(), await b.head()) if h is not None]
+                if not heads:
+                    break
+                key = min(heads)
+                text = encode_key(key)
+                usable = bool(text) and len(text.encode()) <= MAX_KEY_BYTES
+                final = usable and conditions.max_keys == state["candidates"] + len(found) + 1
+                rows = {
+                    "a": await a.take(key, limit=2 if final else None),
+                    "b": await b.take(key, limit=2 if final else None),
+                }
+                for side, (count, _) in rows.items():
+                    state[f"rows_{side}"] += count
+                    if count > 1 and "pinned" in tables[side]:  # a file guarantees no uniqueness
+                        state[f"repeated_{side}"] += 1
+                if not usable:
+                    for side, (count, _) in rows.items():
+                        state[f"skipped_{side}"] += count
+                elif rows["a"][0] == rows["b"][0] == 1 and rows["a"] == rows["b"] and text not in before:
+                    state["matched"] += 1
+                else:  # changed, one-sided, or repeated on a side
+                    found[text] = mask_key(text, spec, ctx.tokeniser)
+                state["after"], merged = list(key), merged + 1
+                if (
+                    conditions.max_keys is not None
+                    and state["candidates"] + len(found) >= conditions.max_keys
+                ):
+                    stop = STOP_PREFIX + "maxKeys"
+                    await _save(ctx, sealer, run_id, cycle, state, found, saved, done=True, stop_reason=stop)
                     return None
-                saved += 1
-                if reason := conditions.expired(run["started_at"], datetime.now(UTC)):
-                    return reason
+                if merged % BATCH == 0:
+                    if not await _save(ctx, sealer, run_id, cycle, state, found, saved):
+                        return None
+                    saved, checkpointed = saved + 1, merged
+                    if reason := conditions.expired(run["started_at"], datetime.now(UTC)):
+                        return reason
+        except _Stopped as stopped:
+            return stopped.reason
+        finally:
+            a.check = b.check = None
         for side, stream in (("a", a), ("b", b)):  # rows_x counts every row read, skipped_x among them
             nulls = await stream.null_keys()
             state[f"rows_{side}"] += nulls

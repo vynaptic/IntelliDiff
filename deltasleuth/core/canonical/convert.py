@@ -36,6 +36,8 @@ def convert(value: JSON, spec: Mapping[str, Any]) -> JSON:
     kind = spec["as"]
     try:
         return _CONVERTERS[kind](value, spec)
+    except jsonio.ResourceLimitError:
+        raise
     except (ValueError, ArithmeticError, TypeError):  # decimal.InvalidOperation is an ArithmeticError
         raise ConversionError(f"does not convert to {kind}") from None
 
@@ -86,6 +88,7 @@ def _decimal(value: JSON, spec: Mapping[str, Any]) -> Decimal:
     number = value if isinstance(value, Decimal) else Decimal(value.strip())
     if not number.is_finite():
         raise ValueError
+    jsonio.number_size(number)
     return number
 
 

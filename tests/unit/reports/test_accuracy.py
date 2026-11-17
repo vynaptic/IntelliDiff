@@ -994,6 +994,8 @@ async def test_what_an_upload_refuses_changes_nothing(ctx: Context) -> None:
          "the labelled sheet is not UTF-8 text (a spreadsheet's plain 'CSV' export writes Windows-1252): save"
          " it as 'CSV UTF-8' and upload it again"),
         (b"", "the labelled sheet cannot be read as a CSV sheet: the labelled sheet is empty"),
+        ((",".join(header) + "\n" + "1\n" * 1001).encode(),
+         "the labelled sheet cannot be read as a CSV sheet: the labelled sheet has more than 1,000 rows"),
         (sheet(columns=[*header, "label"]), "the labelled sheet names column(s) label more than once"),
         (sheet().replace(b",notes\r\n", b",notes,'basis,'label\r\n", 1),  # a header cell is unescaped too
          "the labelled sheet names column(s) label, basis more than once"),

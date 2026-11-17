@@ -143,9 +143,13 @@ def _capture(fields: Mapping[str, Any], where: str, default_observed_at: str) ->
     }
 
 
-def _parse_object(data: bytes, where: str, allowed: set[str]) -> dict[str, Any]:
+def _parse_object(
+    data: bytes, where: str, allowed: set[str], *, capture_envelope: bool = False
+) -> dict[str, Any]:
     try:
-        value, duplicate = jsonio.parse_json(data)
+        # An oversized *body* is an observation, not a malformed capture. Its expansion is
+        # checked separately below; all wire, depth, Unicode and magnitude checks still apply.
+        value, duplicate = jsonio.parse_json(data, check_number_expansion=not capture_envelope)
     except (jsonio.JSONParseError, jsonio.ResourceLimitError) as exc:
         raise SampleError(f"{where}: not valid JSON ({type(exc).__name__})") from None
     if duplicate:  # re-serialising would silently drop the duplicates observe() must see
@@ -157,13 +161,13 @@ def _parse_object(data: bytes, where: str, allowed: set[str]) -> dict[str, Any]:
     return value
 
 
-def _record_body(record: Mapping[str, Any], where: str) -> bytes:
+def _record_body(record: Mapping[str, Any], where: str, max_bytes: int) -> bytes:
     present = [name for name in _BODY_FIELDS if name in record]
     if len(present) != 1:
         raise SampleError(f"{where}: exactly one of body, body_text or body_b64 is required")
     name, value = present[0], record[present[0]]
     if name == "body":
-        return jsonio.dumps(value).encode("utf-8")
+        return jsonio.dumps(value, max_number_bytes=max_bytes).encode("utf-8")
     if not isinstance(value, str):
         raise SampleError(f"{where}: {name} must be a string")
     if name == "body_text":
@@ -324,15 +328,19 @@ class FileSampleSource:
                         self._add(sample.observation.key, sample.observation.side, lambda s=sample: s, where)
 
     def _record(self, line: bytes, where: str, observed_at: str) -> Sample:
-        record = _parse_object(line, where, _RECORD_FIELDS)
+        record = _parse_object(line, where, _RECORD_FIELDS, capture_envelope=True)
         key, side = record.get("key"), record.get("side")
         if not isinstance(key, str) or not key:
             raise SampleError(f"{where}: key must be a non-empty string")
         if side not in ("a", "b"):
             raise SampleError(f"{where}: side must be 'a' or 'b'")
-        body = _record_body(record, where)
+        jsonio.check_number_budget({name: value for name, value in record.items() if name != "body"})
+        try:
+            body = _record_body(record, where, self._max_body)
+        except jsonio.ResourceLimitError:
+            body = None
         capture = _capture(record, where, observed_at)
-        kept = body if len(body) <= self._max_body else None  # re-serialising can grow it (1E+99)
+        kept = body if body is not None and len(body) <= self._max_body else None
         return Sample(_observation(key, Side(side), kept, capture, self._max_body), "pages" in record)
 
 

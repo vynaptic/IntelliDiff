@@ -17,7 +17,7 @@ import csv
 import io
 import json
 import re
-from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping, Sequence
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -138,10 +138,19 @@ def read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
     return parse_csv(path.read_bytes(), path.name)
 
 
-def parse_csv(data: bytes, name: str = "the upload") -> tuple[list[str], list[dict[str, str]]]:
+def parse_csv(
+    data: bytes,
+    name: str = "the upload",
+    *,
+    max_columns: int | None = None,
+    max_rows: int | None = None,
+    max_cells: int | None = None,
+    check_header: Callable[[list[str]], None] | None = None,
+) -> tuple[list[str], list[dict[str, str]]]:
     """``read_csv`` of an uploaded file's bytes, ``name`` naming it in errors: UTF-8 (a BOM dropped),
     newlines read as a text file reads them, a cell as long as the file allows. UnicodeDecodeError for
-    other text; ValueError for what the CSV reader refuses."""
+    other text; ValueError for what the CSV reader refuses. Optional sheet limits and ``check_header``
+    run before row dictionaries or padding are built; ``max_cells`` includes empty padded cells."""
     text = io.TextIOWrapper(io.BytesIO(data), encoding="utf-8-sig").read()
     reader = csv.reader(io.StringIO(text, newline=""))
     limit = csv.field_size_limit(max(csv.field_size_limit(), len(text)))  # the reader's own is 131,072
@@ -149,12 +158,20 @@ def parse_csv(data: bytes, name: str = "the upload") -> tuple[list[str], list[di
         header = [_unescape(column) for column in next(reader, None) or []]
         if not header:
             raise ValueError(f"{name} is empty")
+        if max_columns is not None and len(header) > max_columns:
+            raise ValueError(f"{name} has more than {max_columns:,} columns")
+        if check_header is not None:
+            check_header(header)
         rows = []
         for line_no, cells in enumerate(reader, start=2):
             if not any(cell.strip() for cell in cells):
                 continue
             if len(cells) > len(header):
                 raise ValueError(f"{name} line {line_no}: more cells than header columns")
+            if max_rows is not None and len(rows) >= max_rows:
+                raise ValueError(f"{name} has more than {max_rows:,} rows")
+            if max_cells is not None and (len(rows) + 1) * len(header) > max_cells:
+                raise ValueError(f"{name} has more than {max_cells:,} cells")
             padded = cells + [""] * (len(header) - len(cells))
             rows.append({column: _unescape(cell) for column, cell in zip(header, padded, strict=True)})
     except csv.Error as exc:

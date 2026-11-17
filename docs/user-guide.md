@@ -139,6 +139,10 @@ The spec above holds the parts a spec author changes most. [mocks/customer/spec.
 | `security` | `tokenize` shows a value as a stand-in of its class. `clear` lists the paths whose values may be shown as they are. | A path in neither list is tokenised. Classes: `name`, `phone`, `email`, `address`, `account_number`, `device_id`, `date_of_birth`, `tax_id`, `identifier`, `free_text`, `free_number`. |
 
 ## Runs
+A document's exact numeric text has a 64 MiB aggregate expansion budget, including mapped values and
+merged pages. Nonzero numbers have an adjusted exponent between -4,000 and 4,000; zero remains zero at
+any exponent. Exceeding a numeric or body limit produces `INCOMPLETE(resource_limit)`, never a match.
+
 A run reads a set of keys from both sides, once (batch) or in repeated cycles (soak), and stores one result for each key. These steps use the second practice pair, [mocks/linker/spec.yaml](../mocks/linker/spec.yaml). It compares which entities each side links to an entity, each link with a `flagged` mark. Its 61 keys look like `ORG-000001`.
 
 1. Make a list of three keys, a slow copy of the spec, and a copy that repeats every 30 seconds for two cycles. Copy the three files into the container.
@@ -211,11 +215,21 @@ ds run /var/lib/deltasleuth/p0/practice/customers.yaml
 | A type map: the sides store a column in two types | `typeMap: {created_at: {as: timestamp, naiveTimezone: Europe/London}}` in side a beside `table`, `typeMap: {created_at: {as: timestamp}}` in side b, and `created_at` in both `columns` |
 | A cap on the scan: stop at the fifth key to compare | `execution: {stop: {maxKeys: 5}}` at the top level |
 
+`maxKeys` counts keys that need comparison. At its final key, two rows on either side prove a duplicate
+and end the scan without reading the remaining copies. Its row counts include only rows consumed.
+Time limits are checked between fetched batches, including within duplicate groups; a stopped group's
+partial rows are excluded from the checkpoint so a resume reads that key again.
+
 **A pre-check** counts and adds up two tables before any row is compared. Run `ds precheck run examples/tables/spec.yaml`, or use the screen "Pre-checks". You should see the pair with its verdict: `1  crm-customers-vs-platform-users  rows differ: side a 989, side b 990 (1 fewer on side a)`. **The schema guard** holds a run when a table it reads changed since the last run of its spec, for example in a column's type. The run reads `paused`, and "Resume (accept the changes)" or "cancel" on its page decides. Step B of the demo shows it.
 
 **MySQL and Oracle.** A side can be a MySQL or Oracle table, and the spec stays a table spec. Model the target on `billing-mysql` or `ledger-oracle` in [targets.example.yaml](../deploy/config/targets.example.yaml), with its password and certificate in secret files. `ds target check <target id>` must print a line that ends `session ok`; it reports what a server lacks before a run is tried. Observed on MySQL 8.4 and Oracle 23 (MySQL 8.0 and Oracle 19c are supported but were not observed: run the kits in `examples/tables/mysql` and `examples/tables/oracle` first). Oracle is reached over plain TCP or TCPS. MariaDB and SQL Server are not supported.
 
 **Files.** A side can be a folder of CSV or Parquet files, read in place.
+
+Each path expansion visits at most 200,000 directory entries, including unmatched and hidden names,
+and takes at most 30 seconds. Narrow the export path if either limit is reached. Matching stops as soon
+as `files.max_files` is exceeded (1,000 by default, configurable up to 20,000). Later checks use the same
+entry and time bounds; an entry-limit refusal pauses the run without claiming its files changed.
 
 1. Write the practice export: a CSV file and a Parquet file with planted differences.
    ```bash
@@ -259,6 +273,11 @@ ds run /var/lib/deltasleuth/p0/practice/customers.yaml
 - **Sampling** serves a pair with too many keys to compare them all. A `key.source` of `kind: hash_sample` with `method: bottom_k` draws a random sample of a fixed size, and the run's page shows each stratum's bound and verdict under "Sample". `ds samples size --tier standard` prints the size: 2,995 cleanly compared keys without a discrepancy show a rate of at most 0.1% at 95% confidence (`--tier high`: 29,956 keys for 0.01%). Fix the size before any key is compared, and never extend it. `ds samples` lists every draw.
 - **Labelled accuracy** checks the comparison itself against a source of truth. Under "Labelled accuracy" on the run's page, an operator names the truth source, presses "Draw", downloads the sheet, labels every item and uploads it. `ds labellings` lists the results.
 - Single sign-on is three things: the client secret in `deploy/secrets/oidc_client_secret`, the ten lines that start at `#   oidc:` in the `auth:` block of `deploy/config/deltasleuth.yaml` with the `# ` at their start removed and your provider's values in them, and the secret's name in `deploy/docker-compose.site.yml`. `ds auth check` checks them, and `docker compose --profile mocks up -d` applies them.
+
+Reviewer CSV sheets accept at most 256 columns and 1,000,000 padded cells. Stored adjudication and
+accuracy uploads also keep their draw limits of 500 and 1,000 rows. A sampling frame may retain at most
+16,384 distinct bucket/combined labels totalling 1 MiB of UTF-8 text; exceeding either budget pauses the
+draw without storing a partial sample. Reduce strata or compare the population as a census.
 
 ## Schedules and notifications
 A schedule starts runs of a stored spec by itself, at cron times in a time zone.

@@ -1698,6 +1698,10 @@ def _load(path: Path) -> dict[str, Any]:
         result = None
     if not isinstance(result, dict) or result.get("format") != FORMAT:
         fail(f"{path} is not a {FORMAT} result")
+    commit = result.get("commit")
+    sha = commit.get("sha") if isinstance(commit, dict) else None
+    if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40}(?:[0-9a-fA-F]{24})?", sha):
+        fail(f"{path} has no full hexadecimal commit ID (40 or 64 characters)")
     return result
 
 

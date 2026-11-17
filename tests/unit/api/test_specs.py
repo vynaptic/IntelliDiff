@@ -442,12 +442,13 @@ def test_form_text_falls_back_to_json(client: TestClient, spec_yaml: str) -> Non
     assert plain.startswith("apiVersion: deltasleuth/v1\n") and "{\n" not in plain
     # The JSON text is a form's text like the YAML: saved, it is the stored version.
     assert client.post("/v1/specs", json=form).json()["spec_id"] == spec_id
-    # U+0085, which the reader takes for a line break in either text: the JSON holds it as an escape, so
-    # the form saved unchanged is the stored version, the character still there (not a space).
+    # U+0085 is a line break when written raw. Either safe text format must escape it and preserve
+    # the form saved unchanged as the stored version, with the character still there (not a space).
     doc["metadata"] |= {"version": "1.1.0", "owner": "payments\x85team"}
     nel = client.post("/v1/specs", json=doc).json()["spec_id"]
     form = client.get(f"/v1/specs/{nel}", params={"form": 1}).json()["form"]
-    assert '"owner": "payments\\u0085team"' in form["text"] and "\x85" not in form["text"]
+    assert parse_yaml_text(form["text"])["metadata"]["owner"] == "payments\x85team"
+    assert "\x85" not in form["text"]
     again = client.post("/v1/specs", json=form)
     assert (again.status_code, again.json()["spec_id"]) == (201, nel) and nel != spec_id
     assert client.get(f"/v1/specs/{nel}").json()["body"]["metadata"]["owner"] == "payments\x85team"

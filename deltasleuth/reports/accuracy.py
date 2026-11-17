@@ -693,7 +693,9 @@ async def store_labels(ctx: Context, labelling_id: str, data: bytes, *, who: Pri
         await _unfrozen(conn, run_id, cycle, "labelling")
         if found["labelled_at"] is not None:
             raise _already(labelling_id)
-    rows = _read_sheet(data, "the labelled sheet", required=_REQUIRED, again="upload it again")
+    rows = _read_sheet(
+        data, "the labelled sheet", required=_REQUIRED, again="upload it again", max_rows=MAX_ITEMS
+    )
     sheet, accuracy = score_rows(rows, found["sheet"], found["selection"], _truth(found))
     hashes = {
         "sheet_sha256": sha256_hex(sheet),

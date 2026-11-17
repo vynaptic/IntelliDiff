@@ -23,6 +23,13 @@ from typing import Any
 import yaml
 
 from deltasleuth.core.canonical.normalisers import NORMALIZER_VERSION
+from deltasleuth.core.spec.expressions import (
+    KeyPatternLimitError,
+    compile_key_pattern,
+    key_pattern_budget,
+    regex_error,
+)
+from deltasleuth.core.spec.keys import key_matches
 from deltasleuth.core.types import JSON, Side
 from deltasleuth.profiler.align import Alignment, align
 from deltasleuth.profiler.keys import MAX_NESTED_MULTISETS, ArrayDecision, suggest_arrays
@@ -50,6 +57,7 @@ _KEY_CLASSES = {"U": "[A-Z]", "L": "[a-z]", "D": "[0-9]"}
 # Escapes valid both in Python and in ECMA-262 unicode mode, where "\-" outside a class is an error.
 _SYNTAX_CHARS = frozenset("\\^$.|?*+()[]{}/")
 _CLASS_SPECIAL = frozenset("\\]^-[")
+_YAML_BREAKS = re.compile("[\u0085\u2028\u2029]")
 
 Pair = tuple[str, JSON | None, JSON | None]
 
@@ -65,10 +73,8 @@ def _check_args(
     if not owner.strip() or len(owner) > 200:
         raise ProfilerError("owner must be 1-200 characters")
     if key_pattern is not None:
-        try:
-            re.compile(key_pattern)
-        except re.error as exc:
-            raise ProfilerError(f"key_pattern does not compile: {exc.msg}") from exc
+        if problem := regex_error(key_pattern):
+            raise ProfilerError(f"key_pattern does not compile: {problem}")
 
 
 def _exact_numbers(value: JSON) -> JSON:
@@ -135,7 +141,8 @@ class _Dumper(yaml.SafeDumper):
 _Dumper.add_representer(
     str,
     lambda dumper, text: dumper.represent_scalar(
-        "tag:yaml.org,2002:str", text, style="|" if "\n" in text else None
+        "tag:yaml.org,2002:str", text,
+        style='"' if _YAML_BREAKS.search(text) else "|" if "\n" in text else None,
     ),
 )
 _Dumper.add_representer(
@@ -155,7 +162,9 @@ def _flowify(value: Any) -> Any:
 
 
 def _comment(lines: Sequence[str]) -> str:
-    wrapped = (w for line in lines for w in textwrap.wrap(line, 96, subsequent_indent="    ") or [""])
+    # textwrap handles ASCII newlines, but YAML also ends comments at these Unicode breaks.
+    safe = (_YAML_BREAKS.sub(lambda found: f"\\u{ord(found[0]):04x}", line) for line in lines)
+    wrapped = (w for line in safe for w in textwrap.wrap(line, 96, subsequent_indent="    ") or [""])
     return "\n".join(f"# {w}".rstrip() for w in wrapped)
 
 
@@ -239,7 +248,12 @@ def _key_block(
 ) -> tuple[dict[str, Any], EvidenceRow, list[str]]:
     keys = sorted(dict.fromkeys(k for k, _, _ in pairs))
     pattern = key_pattern if key_pattern is not None else infer_key_pattern(keys)
-    matching = [k for k in keys if re.search(pattern, k)]
+    try:
+        with key_pattern_budget():
+            compiled = compile_key_pattern(pattern)
+            matching = [k for k in keys if key_matches(compiled, k)]
+    except KeyPatternLimitError as exc:
+        raise ProfilerError(str(exc)) from None
     if not matching:
         raise ProfilerError("no sampled key matches key_pattern")
     notes = (

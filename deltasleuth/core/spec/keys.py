@@ -11,7 +11,7 @@ import re
 import unicodedata
 from collections.abc import Callable, Sequence
 
-from deltasleuth.core.spec.expressions import compile_key_pattern
+from deltasleuth.core.spec.expressions import KeyPattern, compile_key_pattern
 
 _LINE_TERMINATOR = re.compile(r"[\n\r\u2028\u2029]")
 _ESCAPED = re.compile(r"(?:[^\\]|\\[\\|])*")  # a multi-part key as given: every \ is of a \\ or a \|
@@ -35,14 +35,17 @@ def normalise_key(raw: str | int, chain: Sequence[str]) -> str:
     return key
 
 
-def key_matches(pattern: str | re.Pattern[str], key: str) -> bool:
+def key_matches(pattern: str | re.Pattern[str] | KeyPattern, key: str) -> bool:
     """True when a normalised key may be requested: not empty/``.``/``..``, one line, and matches.
 
     A key is templated into request paths; Python's ``$`` would also accept a trailing newline.
     """
     if key in ("", ".", "..") or _LINE_TERMINATOR.search(key):
         return False
-    compiled = compile_key_pattern(pattern) if isinstance(pattern, str) else pattern
+    if isinstance(pattern, re.Pattern):
+        compiled = compile_key_pattern(pattern.pattern, pattern.flags)
+    else:
+        compiled = compile_key_pattern(pattern) if isinstance(pattern, str) else pattern
     return compiled.search(key) is not None
 
 
@@ -79,7 +82,7 @@ def fit_parts(raw: str | int, chain: Sequence[str], n: int) -> str | None:
     return None if parts is None else join_parts([normalise_key(part, chain) for part in parts])
 
 
-def parts_match(pattern: str | re.Pattern[str], key: str, n: int) -> bool:
+def parts_match(pattern: str | re.Pattern[str] | KeyPattern, key: str, n: int) -> bool:
     """``key_matches`` of a key of one part, or of every one of its ``n`` parts."""
     if n == 1:
         return key_matches(pattern, key)

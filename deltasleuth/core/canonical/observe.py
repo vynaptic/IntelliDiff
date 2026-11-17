@@ -63,6 +63,8 @@ def observe(
         return paging
     try:
         canonical = canonicalise(doc, side_cfg, spec, key=obs.key)
+    except ResourceLimitError:
+        return SideState.incomplete("resource_limit", "canonical document exceeds a rendering limit")
     except CanonicalError as exc:
         # Published detail: the node's pattern as outputs publish it, data member names as [*].
         return SideState.incomplete("unparseable", exc.describe(lambda p: mask_path_pattern(p, spec)))

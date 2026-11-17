@@ -38,7 +38,7 @@ from deltasleuth.context import Context
 from deltasleuth.core import jsonio
 from deltasleuth.core.canonical.encoding import sha256_hex
 from deltasleuth.core.types import Verdict
-from deltasleuth.reports.csv import parse_csv, read_csv, render_csv
+from deltasleuth.reports.csv import parse_csv, render_csv
 from deltasleuth.reports.data import load_run, rank, read_json, write_json
 from deltasleuth.store import repo
 from deltasleuth.store.repo import Row
@@ -57,6 +57,8 @@ _REQUIRED = ("key", "engine_outcome", "engine_verdict", "reviewer_verdict")  # a
 _ROOT_CAUSE = "root cause "
 MAX_LIMIT = 500  # the largest stored draw (ds.adjudications.sample_limit)
 MAX_UPLOAD = 1 << 20  # a reviewed sheet's upload, in bytes
+_MAX_SHEET_COLUMNS = 256  # room for spreadsheet annotations, without quadratic short-row expansion
+_MAX_SHEET_CELLS = 1_000_000  # includes blank cells a short row is padded with; also bounds local sheets
 
 
 class AdjudicationError(ValueError):
@@ -206,7 +208,7 @@ def _sheet_row(r: Row, why: str) -> dict[str, Any]:
 def has_reviewer_input(sheet: Path) -> bool:
     """Any reviewer verdict or note; a sheet that cannot be read counts as reviewed."""
     try:
-        _, rows = read_csv(sheet)
+        rows = _read_sheet(sheet.read_bytes(), sheet.name, required=())
     except ValueError:
         return True
     return any(
@@ -258,25 +260,37 @@ def _lines(numbers: Sequence[int]) -> str:
 
 
 def _read_sheet(
-    data: bytes, name: str, *, required: Sequence[str] = _REQUIRED, again: str = "score it again"
+    data: bytes,
+    name: str,
+    *,
+    required: Sequence[str] = _REQUIRED,
+    again: str = "score it again",
+    max_rows: int | None = None,
 ) -> list[dict[str, str]]:
     """The rows of a reviewer sheet's bytes (``name`` names it in errors), which holds the ``required``
     columns and names no column twice (a row would keep the last one's cell, not the one reviewed);
     ``again`` says what follows saving it as UTF-8."""
+    def check_header(header: list[str]) -> None:
+        counts = Counter(header)
+        if twice := [c for c, n in counts.items() if c and n > 1]:  # unnamed cells: unread
+            raise AdjudicationError(f"{name} names column(s) {', '.join(twice)} more than once")
+        if missing := [c for c in required if c not in counts]:
+            raise AdjudicationError(f"{name} lacks column(s) {', '.join(missing)}")
+
     try:
-        header, rows = parse_csv(data, name)
+        _, rows = parse_csv(
+            data, name, max_columns=_MAX_SHEET_COLUMNS, max_rows=max_rows,
+            max_cells=_MAX_SHEET_CELLS, check_header=check_header,
+        )
     except UnicodeDecodeError:  # never guessed: a mis-decoded sheet could garble the notes
         raise AdjudicationError(
             f"{name} is not UTF-8 text (a spreadsheet's plain 'CSV' export writes Windows-1252): "
             f"save it as 'CSV UTF-8' and {again}"
         ) from None
+    except AdjudicationError:
+        raise
     except ValueError as exc:
         raise AdjudicationError(f"{name} cannot be read as a CSV sheet: {exc}") from None
-    if twice := [c for c in dict.fromkeys(header) if c and header.count(c) > 1]:  # unnamed cells: unread
-        raise AdjudicationError(f"{name} names column(s) {', '.join(twice)} more than once")
-    missing = [c for c in required if c not in header]
-    if missing:
-        raise AdjudicationError(f"{name} lacks column(s) {', '.join(missing)}")
     return rows
 
 
@@ -432,7 +446,7 @@ async def store_score(ctx: Context, adjudication_id: str, data: bytes, *, who: P
         await _unfrozen(conn, run_id, cycle)
         if found["scored_at"] is not None:
             raise _already(adjudication_id)
-    rows = _read_sheet(data, "the reviewed sheet")
+    rows = _read_sheet(data, "the reviewed sheet", max_rows=MAX_LIMIT)
     records = (await load_run(ctx, run_id, cycle)).results
     report = score_rows(rows, {"run_id": run_id, "keys": found["selection"]["keys"]}, records)
     unnoted = [{k: v for k, v in d.items() if k != "reviewer_notes"} for d in report["disagreements"]]

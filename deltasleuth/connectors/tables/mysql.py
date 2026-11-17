@@ -528,10 +528,16 @@ class _Session:
             if self._busy or self._stream is not None:
                 with contextlib.suppress(Exception):
                     await asyncio.wait_for(asyncio.to_thread(self._kill), CONNECT_S)
-            self._ended()
             _shut(handle)
             handle.close()
-            self._thread.submit(self._conn.close)  # once the statement the shutdown woke has ended
+
+            def closed() -> None:
+                # execute() may still be assigning its result to the cursor. Abandon it only once the
+                # shutdown-woken call has returned, on the same thread, before closing the connection.
+                self._ended()
+                self._conn.close()  # type: ignore[union-attr]
+
+            self._thread.submit(closed)
         self._thread.shutdown(wait=False)
 
 

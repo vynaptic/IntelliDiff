@@ -402,6 +402,8 @@ def digested(d: Dialect, side: Plan) -> Callable[[Rows], Rows]:
                     digest = render.digest(side, plain, render.document(side, names, row[start:end]))
                 else:
                     digest = plain
+            except jsonio.ResourceLimitError:
+                digest = render.RESOURCE_LIMIT
             except ValueError:  # it does not convert: its per-key read says why
                 digest = render.UNCONVERTIBLE
             out.append((*row[:n], digest))
