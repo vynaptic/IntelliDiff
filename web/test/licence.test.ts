@@ -68,7 +68,7 @@ test('an open build needs no licence: its screens say so, disable nothing and sh
   assert.match(screen, /const open = l\?\.state === 'open';/);
   assert.match(screen, /\{l\.pairs && !open && \(/);
   assert.match(screen, /\{\(!open \|\| l\.installed\.length > 0\) && \(/);
-  assert.match(source('ui.tsx'), /\bopen: 'ok'/); // its badge is no warning's
+  assert.match(source('labels.ts'), /\bopen: 'ok'/); // its badge is no warning's
   // A run an open build made carries no licence record, so no label and a plain report name.
   const run = { run_id: 'R-01JB8Q7ZK3M9W2XR5T4VNH6D0C', licence: null } as Run;
   assert.equal(reportFile(run, 'report.pdf'), 'R-01JB8Q7ZK3M9W2XR5T4VNH6D0C-report.pdf');

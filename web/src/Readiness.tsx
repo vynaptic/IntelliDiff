@@ -13,11 +13,11 @@ import {
 } from './api';
 import { href, message, useLoad, usePaged, usePoll } from './lib';
 import {
-  ADD_UP, DAYS, GATES, MARKS, STATES, briefChart, briefDownloads, briefFigures, briefNotes, downloads, filtersOf,
-  programmeLine, ratio, reads, readySteps, scoreLine, sparkTitle, sparkline, stateShape, stateTone, statesLine,
+  ADD_UP, DAYS, GATES, MARKS, STATES, STATUSES, briefChart, briefDownloads, briefFigures, briefNotes, downloads, filtersOf,
+  programmeLine, ratio, reads, readySteps, scoreLine, sharedText, sparkTitle, sparkline, stateShape, stateTone, statesLine,
   statusShape, statusTone, stepPath, stepTitle, trendChart, worded, type Download, type Strip,
 } from './ready';
-import { Badge, Err, Table, save, when, type Col } from './ui';
+import { Badge, Err, MoreRows, Table, save, when, type Col } from './ui';
 
 const POLL_MS = 60_000;
 const GROUPS = ['parity', 'governance', 'evidence'] as const;
@@ -47,6 +47,15 @@ const Meta = ({ pair, children }: { pair: ReadyPair & { config_sha256: string };
     {pair.entity && `entity ${pair.entity} · `}
     readiness settings <span className="mono">{pair.config_sha256.slice(0, 12)}</span>
     {children}
+  </p>
+);
+
+/** What each shape of a gate's cell says, in words: the cells themselves carry their text on hover only. */
+const Legend = () => (
+  <p className="muted">
+    Gates, one shape each:
+    {STATUSES.map((status) => <span key={status}> <span className={statusTone(status)}>{statusShape(status)}</span> {worded(status)},</span>)}
+    {' '}dimmed where not required. Point at a shape for its gate and what it observed.
   </p>
 );
 
@@ -181,6 +190,7 @@ export function ReadinessScreen({ query }: { query: URLSearchParams }) {
             </label>
             {downloads(d.volumes).map((report) => <button key={report.file} onClick={() => download(report)}>{report.label}</button>)}
           </p>
+          {d.items.length > 0 && <Legend />}
           {d.programmes.map((p) => {
             const pairs = d.items.filter((i) => i.programme === p.programme);
             return (
@@ -293,6 +303,7 @@ export function ReadinessPair({ name }: { name: string }) {
   const [check, setCheck] = useState<{ precheck?: Precheck | null; error?: string }>({});
   usePoll(found.reload, POLL_MS, true);
   const d = found.data;
+  const shared = d && sharedText(d.gates); // what every gate repeats is said once, above their tables
   const points = [...trend.items].sort((a, b) => a.ended_at.localeCompare(b.ended_at) || a.cycle - b.cycle); // pages go back in time
 
   const precheck = () =>
@@ -332,10 +343,11 @@ export function ReadinessPair({ name }: { name: string }) {
             <span className="muted">Computed now from the stored evidence; the sign-off decides.</span>
           </p>
           {check.precheck !== undefined && <Checked precheck={check.precheck} />}
+          {shared && <p>Every gate observed the same: <span className="pre">{shared}</span></p>}
           {GROUPS.map((group) => (
             <section key={group}>
               <h2>{group[0].toUpperCase() + group.slice(1)} gates</h2>
-              <Table rows={d.gates.filter((g) => g.group === group)} cols={GATE_COLS} rowId={(g) => `gate-${g.gate}`} />
+              <Table rows={d.gates.filter((g) => g.group === group)} cols={shared ? GATE_COLS.slice(0, 3) : GATE_COLS} rowId={(g) => `gate-${g.gate}`} />
             </section>
           ))}
           <h2>Convergence</h2>
@@ -402,7 +414,7 @@ export function ReadinessPair({ name }: { name: string }) {
           <h2>Transitions</h2>
           <Err error={moves.error} />
           <Table rows={moves.items} cols={MOVE_COLS} rowId={(t) => `seq-${t.seq}`} />
-          {moves.more && <button onClick={moves.more}>More</button>}
+          <MoreRows shown={moves.items.length} more={moves.more} />
         </>
       )}
     </>

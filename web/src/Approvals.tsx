@@ -5,12 +5,13 @@
  *  labelling it attests, counters, rules and root causes. The server still decides. */
 import { useState } from 'react';
 import { api, type Approval, type ApprovalDetail, type Attests, type LedgerDraw, type Revoked, type Stratum } from './api';
+import { useDialogs } from './Dialogs';
 import { DocDiff } from './DocDiff';
 import { bodyChanges, checklist, decisionBody, isReauth, reauthUrl, revokedLine, ssoOnly, type Check } from './four-eyes';
 import { href, message, useLoad, usePaged, useWho } from './lib';
 import { attestedLine, censusLine, censusWarnings } from './packs';
 import { attestedLines, ledgerLine, percent, strataLine } from './samples';
-import { Badge, Err, Named, Stats, Table, cell, when, type Col } from './ui';
+import { Badge, Err, MoreRows, Named, Stats, Table, cell, when, type Col } from './ui';
 
 const STATUSES = ['requested', 'approved', 'rejected', 'revoked'];
 
@@ -74,8 +75,8 @@ function List({ status }: { status: string }) {
         </label>
       </p>
       <Err error={rows.error} />
-      <Table rows={rows.items} cols={LIST_COLS} rowId={(a) => a.approval_id} />
-      {rows.more && <button onClick={rows.more}>More</button>}
+      <Table rows={rows.items} cols={LIST_COLS} rowId={(a) => a.approval_id} loading={rows.loading} empty={status ? 'No request has this status.' : 'No approval has been requested yet.'} />
+      <MoreRows shown={rows.items.length} more={rows.more} />
     </>
   );
 }
@@ -204,8 +205,8 @@ function Decide({ a, reload }: { a: ApprovalDetail; reload: () => void }) {
         <textarea rows={3} maxLength={1000} value={note} onChange={(e) => setNote(e.target.value)} />
       </label>
       <p className="inline">
-        <button onClick={() => decide('approve')} disabled={!a.you.can_decide}>Approve</button>
-        <button onClick={() => decide('reject')} disabled={!approver}>Reject</button>
+        <button className="primary" onClick={() => decide('approve')} disabled={!a.you.can_decide}>Approve</button>
+        <button className="danger" onClick={() => decide('reject')} disabled={!approver}>Reject</button>
         {a.you.reason && <span className="muted">{a.you.reason}</span>}
       </p>
       {reauth && (
@@ -223,11 +224,12 @@ function Revoke({ a, done }: { a: ApprovalDetail; done: (answer: Revoked) => voi
   const { can, me } = useWho();
   const [reason, setReason] = useState('');
   const [error, setError] = useState<string>();
+  const { confirm } = useDialogs();
   if (!(can('rule_approver') && me?.kind === 'user')) return null;
-  const rests = a.kind === 'spec' ? ': its running runs pause, its queued one-shot runs stop and its sign-offs are revoked' : '';
+  const rests = a.kind === 'spec' ? 'Its running runs pause, its queued one-shot runs stop and its sign-offs are revoked.' : undefined;
 
   async function revoke() {
-    if (!confirm(`Revoke ${a.approval_id}${rests}?`)) return;
+    if (!(await confirm({ title: `Revoke approval ${a.approval_id}?`, body: rests, action: 'Revoke approval', danger: true }))) return;
     setError(undefined);
     try {
       done(await api.revoke(a.approval_id, reason));
@@ -243,7 +245,7 @@ function Revoke({ a, done }: { a: ApprovalDetail; done: (answer: Revoked) => voi
         <label>
           Reason <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={200} size={40} />
         </label>
-        <button onClick={revoke} disabled={!reason}>Revoke</button>
+        <button className="danger" onClick={revoke} disabled={!reason}>Revoke</button>
       </p>
       <Err error={error} />
     </section>

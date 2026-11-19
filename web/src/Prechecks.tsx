@@ -58,7 +58,7 @@ function PrecheckForm({ specId }: { specId?: string }) {
             {LEVELS.map((level) => <option key={level}>{level}</option>)}
           </select>
         </label>
-        <button>Pre-check</button>
+        <button className="primary">Start pre-check</button>
       </div>
       <Err error={error ?? specs.error} />
     </form>
@@ -116,7 +116,7 @@ function CatalogueForm() {
             {CATALOGUE_LEVELS.map((level) => <option key={level}>{level}</option>)}
           </select>
         </label>
-        <button>Pre-check</button>
+        <button className="primary">Start pre-check</button>
       </div>
       <Err error={error ?? targets.error} />
     </form>
@@ -153,7 +153,7 @@ export function PrechecksScreen({ query }: { query: URLSearchParams }) {
         <>
           <p role="note">{d.not}</p>
           {d.banners.map((line) => <p key={line} className="banner" role="note">{line}</p>)}
-          <Table rows={d.items} cols={cols} rowId={(p) => p.precheck_id} />
+          <Table rows={d.items} cols={cols} rowId={(p) => p.precheck_id} empty="No pre-check yet." />
           {d.next_cursor && <button onClick={() => setPages(pages + 1)}>More</button>}
         </>
       )}
@@ -294,7 +294,7 @@ export function PrecheckScreen({ id, pair }: { id: string; pair?: string }) {
                 {name}
               </button>
             ))}
-            {can('operator') && d.finished_at === null && <button onClick={() => act(api.cancelPrecheck(id))}>Cancel</button>}
+            {can('operator') && d.finished_at === null && <button className="danger" onClick={() => act(api.cancelPrecheck(id))}>Cancel pre-check</button>}
           </p>
           <Table rows={d.items} cols={cols} rowId={(p) => `pair-${p.n}`} />
           {pair && <PairPanel key={pair} id={id} n={Number(pair)} />}

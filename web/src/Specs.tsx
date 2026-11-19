@@ -7,16 +7,18 @@ import { useState, type FormEvent } from 'react';
 import { ApiError, api, parseExact, type Draft, type Issue, type Pair, type Saved, type Spec } from './api';
 import { Builder } from './Builder';
 import { STARTER } from './building';
+import { useDialogs } from './Dialogs';
+import { label } from './labels';
 import { href, message, useLoad, useWho } from './lib';
 import { bySpec, dueLine, listed, specLabel } from './scheduling';
-import { Badge, Err, ISSUE_COLS, Named, Table, cell, when, type Col } from './ui';
+import { Badge, Err, ISSUE_COLS, Named, Table, When, cell, when, type Col } from './ui';
 
 const SPEC_COLS: Col<Spec>[] = [
   ['Id', (s) => s.spec_id],
   ['Name', (s) => <a href={href(['specs', s.spec_id])}>{s.name}</a>],
   ['Version', (s) => s.version],
   ['Hash', (s) => <span className="mono">{s.content_hash.slice(0, 12)}</span>],
-  ['Created', (s) => when(s.created_at)],
+  ['Created', (s) => <When at={s.created_at} />],
   ['Approval', (s) => s.approval && (
     <>
       <a className="mono" href={href(['approvals', s.approval.approval_id])}>{s.approval.approval_id}</a>{' '}
@@ -42,10 +44,16 @@ export function Specs() {
   const [status, setStatus] = useState<string>();
   const [error, setError] = useState<string>();
   const { can, me } = useWho();
+  const { prompt } = useDialogs();
   const sso = me?.mode === 'oidc';
 
   async function request(s: Spec) {
-    const note = prompt(`Ask for a four-eyes approval of ${s.name} ${s.version} (spec #${s.spec_id}). A note for the approver (optional):`);
+    const note = await prompt({
+      title: `Request a four-eyes approval of ${s.name} ${s.version}`,
+      body: `Spec #${s.spec_id}. Someone who did not write it approves its content.`,
+      input: { label: 'Note for the approver (optional)' },
+      action: 'Request approval',
+    });
     if (note === null) return;
     setError(undefined);
     try {
@@ -95,9 +103,15 @@ export function Specs() {
   return (
     <>
       <h1>Specs</h1>
-      {can('spec_author') && <p><a href="#/specs/new">New comparison</a></p>}
+      {can('spec_author') && <p><a className="button primary" href="#/specs/new">New comparison</a></p>}
       <Err error={error ?? specs.error ?? schedules.error} />
-      <Table rows={specs.data?.items ?? []} cols={cols} rowId={(s) => String(s.spec_id)} />
+      <Table
+        rows={specs.data?.items ?? []}
+        cols={cols}
+        rowId={(s) => String(s.spec_id)}
+        loading={specs.loading}
+        empty={can('spec_author') ? 'No spec stored yet. Start with "New comparison", or upload one below.' : 'No spec stored yet.'}
+      />
       {can('spec_author') && (
         <>
           <section className="panel">
@@ -106,7 +120,7 @@ export function Specs() {
             <textarea rows={16} value={yaml} onChange={(e) => setYaml(e.target.value)} spellCheck={false} />
             <p className="inline">
               <button onClick={() => check('validate')} disabled={!yaml}>Validate</button>
-              <button onClick={() => check('save')} disabled={!yaml}>Save</button>
+              <button className="primary" onClick={() => check('save')} disabled={!yaml}>Save</button>
               <span>{status}</span>
             </p>
             {issues && <Table rows={issues} cols={ISSUE_COLS} />}
@@ -204,7 +218,7 @@ function Profile({ onDraft }: { onDraft: (draft: Draft) => void }) {
         <input type="file" name="samples" accept=".json,.jsonl" required />
         {['spec_name', 'target_a', 'target_b', 'key_name'].map((name) => (
           <label key={name}>
-            {name}{' '}
+            {label(name)}{' '}
             <input name={name} required list={name.startsWith('target') ? 'targets' : undefined} />
           </label>
         ))}
@@ -219,7 +233,7 @@ function Profile({ onDraft }: { onDraft: (draft: Draft) => void }) {
           <ul>{draft.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>
           {(['a', 'b'] as const).map((side) => (
             <p key={side}>
-              unmatched[{side}]: {draft.unmatched[side].length ? <code>{draft.unmatched[side].join(', ')}</code> : 'none'}
+              Unmatched paths on side {side.toUpperCase()}: {draft.unmatched[side].length ? <code>{draft.unmatched[side].join(', ')}</code> : 'none'}
             </p>
           ))}
           <Table rows={evidence} cols={cols} />

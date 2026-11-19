@@ -1,5 +1,5 @@
 /** DeltaSleuth UI: a hash-routed single page over API v1. */
-import { StrictMode, useEffect, useState, type FormEvent } from 'react';
+import { StrictMode, useEffect, useRef, useState, type FormEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Admin } from './Admin';
 import { Approvals } from './Approvals';
@@ -7,9 +7,11 @@ import {
   ApiError, LOGIN_EVENT, api, watchUse, type Health, type Licence, type Me, type Mode, type Notifications,
 } from './api';
 import { forget } from './building';
+import { DialogHost } from './Dialogs';
 import { KeyScreen } from './Key';
 import { LicenceScreen } from './Licence';
 import { Licensed, Who, message, useRoute } from './lib';
+import { currentOf, navOf, titleOf } from './nav';
 import { NotificationsScreen } from './Notifications';
 import { PrecheckScreen, PrechecksScreen } from './Prechecks';
 import { bannerLines } from './notify';
@@ -72,14 +74,14 @@ function SignIn({ mode, query, onSignedIn }: { mode: Mode; query: URLSearchParam
           )}
         </p>
       )}
-      {mode === 'oidc' && <button onClick={sso} autoFocus>Sign in with single sign-on</button>}
+      {mode === 'oidc' && <button className="primary" onClick={sso} autoFocus>Sign in with single sign-on</button>}
       {mode === 'tokens' && (
         <>
           <form onSubmit={submit}>
             <label>
               API token <input name="token" type="password" autoComplete="current-password" required autoFocus />
             </label>
-            <button>Sign in</button>
+            <button className="primary">Sign in</button>
             <Err error={error} />
             {hint && <p className="muted">{hint}</p>}
           </form>
@@ -120,6 +122,19 @@ function App() {
     return () => removeEventListener(LOGIN_EVENT, onLogin);
   }, []);
 
+  // The browser tab names the screen, and a new screen starts at its top; a filter or a tab of the same screen
+  // (the address's query) keeps the place.
+  const signedOut = me === null || screen === 'signin';
+  const path = parts.join('/');
+  useEffect(() => {
+    document.title = titleOf(signedOut ? ['signin'] : parts);
+  }, [path, signedOut]);
+  const first = useRef(true);
+  useEffect(() => {
+    if (!first.current) scrollTo(0, 0);
+    first.current = false;
+  }, [path]);
+
   useEffect(() => {
     if (me) api.licence().then(setLicence, () => setLicence(undefined)); // no banner if it fails
     if (me) api.notifications().then(setNotify, () => setNotify(undefined)); // likewise
@@ -152,8 +167,12 @@ function App() {
 
   const can = (role: string) => !!me?.roles.includes(role);
   const admin = can('admin') && me?.kind !== 'token'; // a token never holds admin
+  // An open build needs no licence: its screen leaves the bar for the page's foot.
+  const licensed = !!licence && licence.state !== 'open';
+  const nav = navOf({ sso: me?.mode === 'oidc', admin, notifications: !!notify?.enabled, licensed });
+  const current = currentOf(parts);
   const page =
-    !health || me === undefined ? null : me === null || screen === 'signin' ? (
+    !health || me === undefined ? null : signedOut ? (
       <SignIn mode={health.auth} query={query} onSignedIn={signedIn} />
     ) : screen === 'specs' && id ? (
       <SpecScreen key={id} id={id} />
@@ -211,20 +230,19 @@ function App() {
               <a href="#/notifications">{line}</a>
             </p>
           ))}
-        <nav>
+        <nav className="top" aria-label="Screens">
           <b>DeltaSleuth</b>
           {me && (
             <>
-              <a href="#/runs">Runs</a>
-              <a href="#/readiness">Readiness</a>
-              <a href="#/specs">Specs</a>
-              <a href="#/targets">Targets</a>
-              <a href="#/schedules">Schedules</a>
-              <a href="#/prechecks">Pre-checks</a>
-              {me.mode === 'oidc' && <a href="#/approvals">Approvals</a>}
-              {admin && <a href="#/admin">Admin</a>}
-              <a href="#/licence">Licence</a>
-              {notify?.enabled && <a href="#/notifications">Notifications</a>}
+              {nav.map((group) => (
+                <span className="group" key={group[0].screen}>
+                  {group.map((link) => (
+                    <a key={link.screen} href={`#/${link.screen}`} aria-current={link.screen === current ? 'page' : undefined}>
+                      {link.label}
+                    </a>
+                  ))}
+                </span>
+              ))}
               <span className="who">
                 <Named name={me.name} actor={me.actor} />
               </span>
@@ -236,6 +254,11 @@ function App() {
           <Err error={error} />
           {page}
         </main>
+        {me && licence && !licensed && (
+          <footer className="muted">
+            <a href="#/licence">Licence</a>: this build needs none.
+          </footer>
+        )}
       </Licensed.Provider>
     </Who.Provider>
   );
@@ -244,6 +267,8 @@ function App() {
 watchUse(window);
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <DialogHost>
+      <App />
+    </DialogHost>
   </StrictMode>,
 );

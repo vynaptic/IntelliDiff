@@ -5,12 +5,13 @@
  *  worker fires, and every firing's text, banner, warning and note is the API's. The server still decides. */
 import { useState, type FormEvent } from 'react';
 import { api, type Firing, type Preview, type SavedSchedule, type Schedule, type ScheduleDetail } from './api';
+import { useDialogs } from './Dialogs';
 import { href, message, useLoad, usePaged, usePoll, useWho } from './lib';
 import {
   AUTH_MODES, HOURS, NOT_A_FORECAST, PRESETS, WEEKDAYS, blank, bodyOf, cronOf, defaultZone, draftOf, dueLine, gateLine,
   listed, movedTo, specLabel, type Draft,
 } from './scheduling';
-import { Badge, Err, Named, Table, when, type Col } from './ui';
+import { Badge, Err, MoreRows, Named, Table, when, type Col } from './ui';
 
 const POLL_MS = 60_000;
 
@@ -150,7 +151,7 @@ function ScheduleForm({ from, specId, onSaved }: { from?: Schedule; specId?: str
           Ends <input value={d.ends_at} onChange={(e) => set({ ends_at: e.target.value })} size={28} placeholder="never, or 2026-12-31T00:00Z" />
         </label>
         <button type="button" onClick={look}>Preview</button>
-        <button>{from ? 'Save' : 'Add'}</button>
+        <button className="primary">{from ? 'Save schedule' : 'Add schedule'}</button>
       </div>
       <Err error={error} />
       {preview && (
@@ -191,9 +192,17 @@ export function SchedulesScreen({ query }: { query: URLSearchParams }) {
       <Err error={found.error} />
       {d && (
         <>
-          <ul className="muted">{d.not.map((line) => <li key={line}>{line}</li>)}</ul>
+          <details className="note">
+            <summary>What a schedule does not tell you</summary>
+            <ul className="muted">{d.not.map((line) => <li key={line}>{line}</li>)}</ul>
+          </details>
           {d.banners.map((line) => <p key={line} className="banner" role="note">{line}</p>)}
-          <Table rows={d.items} cols={cols} rowId={(s) => s.schedule_id} />
+          <Table
+            rows={d.items}
+            cols={cols}
+            rowId={(s) => s.schedule_id}
+            empty={can('operator') ? 'No schedule yet. Add one with the form below.' : 'No schedule yet.'}
+          />
           {d.next_cursor && <button onClick={() => setPages(pages + 1)}>More</button>}
         </>
       )}
@@ -230,14 +239,15 @@ function Firings({ id, version }: { id: string; version: string }) {
     <>
       <h2>Firings</h2>
       <Err error={firings.error} />
-      <Table rows={firings.items} cols={FIRING_COLS} rowId={(f) => `seq-${f.seq}`} />
-      {firings.more && <button onClick={firings.more}>More</button>}
+      <Table rows={firings.items} cols={FIRING_COLS} rowId={(f) => `seq-${f.seq}`} loading={firings.loading} empty="It has not fired yet." />
+      <MoreRows shown={firings.items.length} more={firings.more} />
     </>
   );
 }
 
 export function ScheduleScreen({ id }: { id: string }) {
   const { can } = useWho();
+  const { confirm } = useDialogs();
   const found = useLoad(() => api.schedule(id), [id]);
   const [editing, setEditing] = useState<ScheduleDetail>(); // as it was loaded when Edit was pressed
   const [warnings, setWarnings] = useState<string[]>();
@@ -286,8 +296,14 @@ export function ScheduleScreen({ id }: { id: string }) {
               {d.state === 'active' && <button onClick={() => act(api.pauseSchedule(d.schedule_id))}>Pause</button>}
               {d.state === 'paused' && <button onClick={() => act(api.resumeSchedule(d.schedule_id))}>Resume</button>}
               <button
-                onClick={() => confirm(`Delete schedule ${d.name}? A time due now is recorded as missed; its runs and firings still name it.`) &&
-                  act(api.deleteSchedule(d.schedule_id))}
+                className="danger"
+                onClick={async () =>
+                  (await confirm({
+                    title: `Delete schedule ${d.name}?`,
+                    body: 'A time due now is recorded as missed; its runs and firings still name it.',
+                    action: 'Delete schedule',
+                    danger: true,
+                  })) && act(api.deleteSchedule(d.schedule_id))}
               >
                 Delete
               </button>

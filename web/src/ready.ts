@@ -32,6 +32,12 @@ export const worded = (code: string) => code.replace('signoff', 'sign-off').repl
 
 export const stateShape = (state: ReadyState) => STATE_SHAPE[state];
 export const statusShape = (status: GateStatus) => STATUS_SHAPE[status];
+/** Every status a gate can have, for the legend of the shapes. */
+export const STATUSES = Object.keys(STATUS_SHAPE) as GateStatus[];
+
+/** The text that every one of several gates repeats, to be said once; nothing when their texts differ. */
+export const sharedText = (gates: { text: string }[]): string | undefined =>
+  gates.length > 1 && gates.every((g) => g.text === gates[0].text) ? gates[0].text : undefined;
 export const statusTone = (status: GateStatus) => STATUS_TONE[status];
 export const stateTone = (state: ReadyState) => (state === 'not_ready' ? 'bad' : isReady(state) ? 'ok' : 'warn');
 

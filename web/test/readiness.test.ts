@@ -9,7 +9,7 @@ import { api, type BriefCycle, type BriefPoint, type GateStatus, type ReadyState
 import {
   ADD_UP, GATES, STATES, briefChart, briefDownloads, briefFigures, briefNotes, downloads, filtersOf, isReady,
   programmeLine, ratio, reads, readySteps, runLine, scoreLine, sparkTitle, sparkline, stateShape, statesLine,
-  statusShape, stepPath, stepTitle, trendChart, worded,
+  STATUSES, sharedText, statusShape, stepPath, stepTitle, trendChart, worded,
 } from '../src/ready.ts';
 
 const point = (cycle: number, value: number | null, allowed: number | null, failed: string[] = [], sampled = false): TrendPoint => ({
@@ -287,4 +287,17 @@ test('the screens read /v1/readiness and write nothing', async () => {
     ['GET', '/v1/readiness/reports/causes.csv?pair=customer-profile'],
     ['GET', '/v1/specs/12'],
   ]);
+});
+
+test('the legend names every status a gate can have, each by its own shape', () => {
+  assert.deepEqual([...STATUSES].sort(), ['met', 'not_applicable', 'not_met', 'unavailable', 'unknown']);
+  assert.equal(new Set(STATUSES.map(statusShape)).size, STATUSES.length);
+});
+
+test('a text every gate repeats is said once; gates that say different things each keep theirs', () => {
+  const same = [{ text: '1 cycle(s) ended, none evidence' }, { text: '1 cycle(s) ended, none evidence' }];
+  assert.equal(sharedText(same), '1 cycle(s) ended, none evidence');
+  assert.equal(sharedText([...same, { text: 'approved' }]), undefined);
+  assert.equal(sharedText([{ text: 'alone' }]), undefined); // one gate repeats nothing
+  assert.equal(sharedText([]), undefined);
 });

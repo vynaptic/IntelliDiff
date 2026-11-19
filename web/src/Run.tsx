@@ -1,10 +1,11 @@
-/** A run: progress (polled while it is live), what its spec approval and its licence say, the schedule that
- *  started it, what the schema guard says of its tables (a banner while it holds the run paused), where its
- *  pair stands on the readiness ladder, root causes with an AI draft about one of them or about the run, results,
- *  findings, reports, soak changes, until when its evidence is kept, a sampled run's draw, each ended cycle's
- *  sign-off, its census, adjudications and evidence packs, and its labelled accuracy. The filters live in the
- *  URL, so root-cause links and citation chips are plain links. A purged cycle shows a banner instead of its
- *  tables, which would answer 410. */
+/** A run. Its head: progress (polled while it is live), its keys by outcome as a bar, what its spec approval and
+ *  its licence say, the schedule that started it, what the schema guard says of its tables (a banner while it
+ *  holds the run paused), where its pair stands on the readiness ladder, its controls and its reports. Under it,
+ *  one tab at a time: the keys that do not match, by outcome; root causes with an AI draft about one of them or
+ *  about the run; findings; all keys; soak changes; a sampled run's draw, each ended cycle's sign-off, its census,
+ *  adjudications and evidence packs; and its labelled accuracy. The tab and the filters live in the URL, so
+ *  root-cause links and citation chips are plain links. A purged cycle shows a banner instead of its tables,
+ *  which would answer 410. */
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import {
   ApiError,
@@ -30,18 +31,23 @@ import {
 import { DRAW_HINT, needsAcknowledgement, stated, takesLabelling, takesLabels } from './accuracy';
 import { approvalLabel, signoffLabel, ssoOnly } from './four-eyes';
 import { Chat, CitedText } from './Chat';
+import { useDialogs } from './Dialogs';
 import { FACTS, NOT_EVIDENCE, NO_DRAFT, answerOf, citedKeys, draftTitle, firstOnly, off, refused, runFacts } from './explain';
+import { label, tone } from './labels';
 import { LICENCE_PAUSE, pausedLine, refusal, reportFile } from './licensing';
 import { href, message, useLicence, useLoad, usePaged, usePoll, useWho } from './lib';
+import { DIFFERING, barOf, notMatching, segments, tabOf, tabsOf, type Tab } from './outcomes';
 import { censusLine, censusNote, censusWarnings, fileSide, packsSsoOnly, scoreLine, signedOff, unfrozen } from './packs';
 import { runLine } from './ready';
 import { controlLabel, guardBanner, guardLines } from './prechecking';
 import { chatClosed, isPurged, purgedBanner, retainedLine } from './retention';
 import { CLOSE_TITLE, blockedLines, certainFailures, drawLine, drawState, etaLine, frameLine, ledgerLine, percent } from './samples';
-import { Badge, Err, Named, Stats, Table, cell, save, when, type Col } from './ui';
+import { Badge, Copy, Err, Menu, MoreRows, Named, OutcomeBar, Stats, Table, Tabs, When, cell, save, when, type Col } from './ui';
 
 const TERMINAL = ['cancelled', 'completed', 'completed_with_issues', 'failed'];
 const ACTIONS: Record<string, string[]> = { queued: ['cancel'], running: ['pause', 'cancel'], paused: ['resume', 'cancel'] };
+const CONTROLS: Record<string, string> = { pause: 'Pause run', resume: 'Resume run', cancel: 'Cancel run' };
+const CONTROL_TONE: Record<string, string> = { resume: 'primary', cancel: 'danger' };
 // reports.FORMATS, as GET /v1/runs/{id}/reports/{name} serves them
 const REPORTS = ['report.pdf', 'discrepancies.csv', 'retry.csv', 'coverage.csv', 'normalization.csv', 'root_causes.csv',
   'suppressed.csv', 'graph.csv', 'readiness.csv'];
@@ -74,29 +80,68 @@ export function RunScreen({ runId, query }: { runId: string; query: URLSearchPar
   return (
     <>
       <h1>
-        Run {runId} <Badge v={r?.status} />
+        {r ? `${r.spec_name} ${r.spec_version}` : `Run ${runId}`} <Badge v={r?.status} />
       </h1>
       <Err error={run.error} />
+      {run.loading && <p className="muted" role="status">Loading…</p>}
       {r && (
         <>
           <Header run={r} cycle={f.cycle} viewed={viewed} reload={run.reload} />
-          <FilterForm run={r} f={f} />
-          {isPurged(r, viewed) ? (
-            <p className="banner" role="status">{purgedBanner(viewed)}</p>
-          ) : (
-            <>
-              <RootCauses runId={runId} f={f} version={version} keyLink={keyLink} run={r} ai={ai} />
-              <Results runId={runId} f={f} version={version} keyLink={keyLink} />
-              <Findings runId={runId} f={f} version={version} keyLink={keyLink} />
-            </>
-          )}
-          {r.mode === 'soak' && <Changes runId={runId} version={version} />}
-          {r.sample && <Sample run={r} />}
-          <Signoffs run={r} reload={run.reload} />
-          <Evidence run={r} reload={run.reload} />
-          <Accuracy run={r} reload={run.reload} />
+          <Parts run={r} f={f} version={version} viewed={viewed} keyLink={keyLink} ai={ai} reload={run.reload} />
           <Chat runId={runId} closed={chatClosed(r)} ai={ai} />
         </>
+      )}
+    </>
+  );
+}
+
+const DATA_TABS: Tab[] = ['differences', 'causes', 'findings', 'keys']; // what a purge removes
+
+type PartsProps = { run: RunDetail; f: Filters; version: string; viewed: number; keyLink: KeyLink; ai?: boolean; reload: () => void };
+
+/** The run's tabs and the one the address opens. The count beside the first is the current cycle's. */
+function Parts({ run, f, version, viewed, keyLink, ai, reload }: PartsProps) {
+  const runId = run.run_id;
+  const tab = tabOf(f, run.mode);
+  const outcomes = viewed === run.cycle ? run.progress?.outcomes : undefined;
+  const counted = segments(outcomes).length > 0; // no count before the cycle's first key has an outcome
+  const counts: Partial<Record<Tab, number>> = counted ? { differences: notMatching(outcomes) } : {};
+  const table = { runId, f, version, keyLink, cycles: run.mode === 'soak' ? run.cycle : 0 };
+  return (
+    <>
+      <Tabs
+        name="Parts of this run"
+        current={tab}
+        items={tabsOf(run.mode).map(([id, text]) => [
+          href(['runs', runId], { cycle: f.cycle, tab: id }),
+          <>{text}{counts[id] !== undefined && <span className="count"> {num(counts[id])}</span>}</>,
+          id,
+        ])}
+      />
+      {DATA_TABS.includes(tab) && isPurged(run, viewed) ? (
+        <p className="banner" role="status">{purgedBanner(viewed)}</p>
+      ) : tab === 'differences' ? (
+        <Differences {...table} />
+      ) : tab === 'causes' ? (
+        <RootCauses {...table} run={run} ai={ai} />
+      ) : tab === 'findings' ? (
+        <Findings {...table} />
+      ) : tab === 'keys' ? (
+        <Results {...table} />
+      ) : null}
+      {tab === 'changes' && <Changes runId={runId} version={version} />}
+      {tab === 'evidence' && (
+        <>
+          {!run.sample && !run.cycles.length && !run.retention.cycles.length && !run.retention.purged.length && (
+            <p className="muted">Nothing yet: sign-off and evidence start once a cycle of this run has ended.</p>
+          )}
+          {run.sample && <Sample run={run} />}
+          <Signoffs run={run} reload={reload} />
+          <Evidence run={run} reload={reload} />
+        </>
+      )}
+      {tab === 'accuracy' && (
+        run.cycles.length ? <Accuracy run={run} reload={reload} /> : <p className="muted">Nothing yet: a cycle is labelled once it has ended.</p>
       )}
     </>
   );
@@ -121,6 +166,7 @@ type HeaderProps = { run: RunDetail; cycle?: string; viewed: number; reload: () 
 function Header({ run, cycle, viewed, reload }: HeaderProps) {
   const [error, setError] = useState<string>();
   const { can } = useWho();
+  const { confirm } = useDialogs();
   const licence = useLicence();
   // A run paused for the licence resumes once it allows runs (and seats its name: the server says).
   const refused = run.stop_reason === LICENCE_PAUSE ? refusal(licence, 'runs') : undefined;
@@ -128,6 +174,17 @@ function Header({ run, cycle, viewed, reload }: HeaderProps) {
     setError(undefined);
     done.catch((e) => setError(message(e)));
   };
+  async function control(action: string) {
+    const stop = action === 'cancel' && {
+      title: `Cancel run ${run.run_id}?`,
+      body: 'It stops for good: a cancelled run cannot be resumed.',
+      action: 'Cancel run',
+      dismiss: 'Keep run',
+      danger: true,
+    };
+    if (stop && !(await confirm(stop))) return;
+    act(api.control(run.run_id, action).then(reload));
+  }
   const { keys = {}, outcomes = {} } = run.progress ?? {};
   const total = Object.values(keys).reduce((a, b) => a + b, 0);
   const finished = (keys.done ?? 0) + (keys.cancelled ?? 0);
@@ -136,10 +193,12 @@ function Header({ run, cycle, viewed, reload }: HeaderProps) {
   return (
     <section>
       <p className="muted">
-        <a href={href(['specs', run.spec_id])}>{run.spec_name}</a>
-        {` ${run.spec_version} · ${run.mode} · cycle ${run.cycle} · created ${when(run.created_at)}`}
+        Run <span className="mono">{run.run_id}</span> <Copy text={run.run_id}>Copy id</Copy> ·{' '}
+        <a href={href(['specs', run.spec_id])}>spec #{run.spec_id}</a>
+        {` · ${label(run.mode)} · cycle ${run.cycle} · created `}
+        <When at={run.created_at} />
         {run.created_by && <> by <Named name={run.created_by_name} actor={run.created_by} /></>}
-        {run.finished_at && ` · finished ${when(run.finished_at)}`}
+        {run.finished_at && <> · finished <When at={run.finished_at} /></>}
         {run.stop_reason && ` · stopped: ${run.stop_reason}`}
       </p>
       {!isPurged(run, viewed) && <p className="muted">{retainedLine(run, viewed)}</p>}
@@ -160,18 +219,21 @@ function Header({ run, cycle, viewed, reload }: HeaderProps) {
         {can('operator') && ACTIONS[run.status]?.map((a) => (
           <button
             key={a}
+            className={CONTROL_TONE[a]}
             disabled={a === 'resume' && !!refused}
             title={a === 'resume' ? refused : undefined}
-            onClick={() => act(api.control(run.run_id, a).then(reload))}
+            onClick={() => control(a)}
           >
-            {controlLabel(a, run.schema)}
+            {a === 'resume' && run.schema.accepts ? controlLabel(a, run.schema) : CONTROLS[a]}
           </button>
         ))}
-        {REPORTS.map((name) => (
-          <button key={name} onClick={() => act(api.report(run.run_id, name, cycle).then((b) => save(b, reportFile(run, name))))}>
-            {name}
-          </button>
-        ))}
+        <Menu label="Download">
+          {REPORTS.map((name) => (
+            <button key={name} onClick={() => act(api.report(run.run_id, name, cycle).then((b) => save(b, reportFile(run, name))))}>
+              {name}
+            </button>
+          ))}
+        </Menu>
       </p>
       <Err error={error} />
       {run.scan && <p>{current}{scanLine(run, run.scan)}</p>}
@@ -183,16 +245,18 @@ function Header({ run, cycle, viewed, reload }: HeaderProps) {
           {Object.entries(keys).map(([state, n]) => `${state} ${n}`).join(' · ')}
         </p>
       )}
-      <p className="inline">
-        {Object.entries(outcomes).map(([o, n]) => (
-          <a key={o} href={href(['runs', run.run_id], { cycle, outcome: o })}>
-            <Badge v={o} /> {n}
+      <OutcomeBar byOutcome={barOf(run)} href={(o) => href(['runs', run.run_id], { cycle, tab: 'keys', outcome: o })} />
+      <p className="outcomes">
+        {segments(barOf(run) ?? outcomes).map((s) => (
+          <a key={s.outcome} href={href(['runs', run.run_id], { cycle, tab: 'keys', outcome: s.outcome })} title={s.outcome}>
+            <span className={`dot ${tone(s.outcome) || 'none'}`} aria-hidden="true" />
+            {num(s.n)} {label(s.outcome)}
           </a>
         ))}
       </p>
       <details>
         <summary>What the outcomes mean</summary>
-        <ul>{OUTCOMES.map((o) => <li key={o}><Badge v={o} /> {LEGEND[o]}</li>)}</ul>
+        <ul>{OUTCOMES.map((o) => <li key={o}><Badge v={o} /> {LEGEND[o]} <code className="muted">{o}</code></li>)}</ul>
       </details>
       <details>
         <summary>Counters</summary>
@@ -235,40 +299,49 @@ function graphLine(g: Graph): string {
   );
 }
 
-function FilterForm({ run, f }: { run: Run; f: Filters }) {
+/** A tab's filters, kept in the URL with the cycle and the tab: a select applies at once, the text fields on
+ *  Filter. `selects` and `texts` name the query's parameters. */
+function FilterBar({ runId, f, tab, cycles, selects, texts = [] }: {
+  runId: string;
+  f: Filters;
+  tab: Tab;
+  cycles: number; // a soak run's cycles so far; 0 for a run without a choice of cycle
+  selects: [name: string, text: string, options: string[]][];
+  texts?: string[];
+}) {
+  const at = (values: Filters) => href(['runs', runId], { ...values, tab });
   function apply(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const values = Object.fromEntries([...new FormData(e.currentTarget)].map(([k, v]) => [k, String(v)]));
-    location.hash = href(['runs', run.run_id], values);
+    location.hash = at(Object.fromEntries([...new FormData(e.currentTarget)].map(([k, v]) => [k, String(v).trim()])));
   }
   const submit = (e: { currentTarget: HTMLSelectElement }) => e.currentTarget.form?.requestSubmit();
-  const select = (name: string, label: string, options: (string | number)[]) => (
-    <label>
-      {label}{' '}
+  const select = (name: string, text: string, options: string[], any = 'any') => (
+    <label key={name}>
+      {text}{' '}
       <select name={name} defaultValue={f[name] ?? ''} onChange={submit}>
-        <option value="">any</option>
-        {options.map((o) => <option key={o}>{o}</option>)}
+        <option value="">{any}</option>
+        {options.map((o) => <option key={o} value={o}>{label(o)}</option>)}
       </select>
     </label>
   );
+  if (!cycles && !selects.length && !texts.length) return null;
   return (
     <form className="panel inline" key={JSON.stringify(f)} onSubmit={apply}>
-      {run.mode === 'soak' && select('cycle', 'Cycle', Array.from({ length: run.cycle }, (_, i) => i + 1))}
-      {select('outcome', 'Outcome', OUTCOMES)}
-      {select('severity', 'Severity', SEVERITIES)}
-      {['key', 'taxonomy_code', 'path_pattern', 'root_cause_id'].map((name) => (
+      {cycles > 0 && select('cycle', 'Cycle', Array.from({ length: cycles }, (_, i) => String(i + 1)), 'current')}
+      {selects.map(([name, text, options]) => select(name, text, options))}
+      {texts.map((name) => (
         <label key={name}>
-          {name}{' '}
+          {label(name)}{' '}
           <input name={name} defaultValue={f[name]} size={14} />
         </label>
       ))}
-      <button>Filter</button>
-      <a href={href(['runs', run.run_id])}>clear</a>
+      {texts.length > 0 && <button>Filter</button>}
+      {selects.length + texts.length > 0 && <a href={at({ cycle: f.cycle })}>Clear filters</a>}
     </form>
   );
 }
 
-type TableProps = { runId: string; f: Filters; version: string; keyLink: KeyLink };
+type TableProps = { runId: string; f: Filters; version: string; keyLink: KeyLink; cycles: number };
 
 type Subject = string | null; // a root cause's id; null: the run
 type Draft = { subject: Subject; cycle: number; session: Session };
@@ -276,7 +349,7 @@ type Draft = { subject: Subject; cycle: number; session: Session };
 /** The root causes, with `Explain` on each and `Summarise this run`: an AI draft answering a fixed question,
  *  shown under the table beside the engine's stored facts. One draft is open per run and cycle, and the
  *  browser tab keeps which. */
-function RootCauses({ runId, f, version, keyLink, run, ai }: TableProps & { run: RunDetail; ai?: boolean }) {
+function RootCauses({ runId, f, version, keyLink, cycles, run, ai }: TableProps & { run: RunDetail; ai?: boolean }) {
   const causes = useLoad(() => api.rootCauses(runId, f.cycle), [runId, f.cycle, version]);
   const scope = `ds.explain:${runId}:${run.cycle}`;
   const [draft, setDraft] = useState<Draft>();
@@ -321,17 +394,20 @@ function RootCauses({ runId, f, version, keyLink, run, ai }: TableProps & { run:
     </button>
   );
   const cols: Col<RootCause>[] = [
-    ['Root cause', (c) => <a href={href(['runs', runId], { ...f, root_cause_id: c.root_cause_id })}>{c.root_cause_id}</a>],
+    ['Root cause', (c) => (
+      <a href={href(['runs', runId], { cycle: f.cycle, tab: 'findings', root_cause_id: c.root_cause_id })}>{c.root_cause_id}</a>
+    )],
     ['Severity', (c) => <Badge v={c.max_severity} />],
-    ['Taxonomy', (c) => c.taxonomy_code],
+    ['Taxonomy', (c) => <span title={c.taxonomy_code ?? undefined}>{label(c.taxonomy_code ?? '')}</span>],
     ['Path', (c) => <code>{c.path_pattern}</code>],
-    ['Change', (c) => `${c.change_type} (${c.direction})`],
+    ['Change', (c) => <span title={`${c.change_type} (${c.direction})`}>{label(c.change_type)} ({label(c.direction)})</span>],
     ['Keys', (c) => c.affected_keys],
     ['Findings', (c) => c.finding_count],
     ['Sample keys', (c) => c.sample_keys.map((k) => <span key={k}>{keyLink(k)} </span>)],
   ];
   return (
     <section>
+      <FilterBar runId={runId} f={f} tab="causes" cycles={cycles} selects={[]} />
       <div className="inline">
         <h2>Root causes</h2>
         {button(null, 'Summarise this run')}
@@ -339,7 +415,13 @@ function RootCauses({ runId, f, version, keyLink, run, ai }: TableProps & { run:
       {reason && <p className="muted">{reason}</p>}
       <Err error={error} />
       <Err error={causes.error} />
-      <Table rows={rows ?? []} cols={[...cols, ['', (c) => button(c.root_cause_id, 'Explain')]]} rowId={(c) => c.root_cause_id} />
+      <Table
+        rows={rows ?? []}
+        cols={[...cols, ['', (c) => button(c.root_cause_id, 'Explain')]]}
+        rowId={(c) => c.root_cause_id}
+        loading={causes.loading}
+        empty="No root cause in this cycle."
+      />
       {draft && rows && draft.cycle === run.cycle && viewed === run.cycle && (
         <Drafted run={run} rows={rows} cols={cols} draft={draft}>
           {button(draft.subject, 'Ask again')} <button onClick={close}>Close</button>
@@ -386,23 +468,63 @@ function Drafted({ run, rows, cols, draft, children }: DraftedProps) {
   );
 }
 
-function Results({ runId, f, version, keyLink }: TableProps) {
-  const q = { cycle: f.cycle, outcome: f.outcome };
-  const results = usePaged((cursor) => api.results(runId, { ...q, cursor }), [runId, JSON.stringify(q), version]);
-  const cols: Col<Result>[] = [
-    ['Key', (r) => keyLink(r.key_masked)],
-    ['Outcome', (r) => <Badge v={r.outcome} />],
-    ['Why', (r) => r.inconclusive_reason ?? r.drift_reason],
-    ['Confirmation', (r) => r.confirmation],
-    ['A', (r) => [r.side_a_state, r.side_a_reason].filter(Boolean).join(': ')],
-    ['B', (r) => [r.side_b_state, r.side_b_reason].filter(Boolean).join(': ')],
-  ];
+const sideLine = (state: string, reason: string | null) => [state, reason].flatMap((v) => (v ? [label(v)] : [])).join(': ');
+
+const resultCols = (keyLink: KeyLink): Col<Result>[] => [
+  ['Key', (r) => keyLink(r.key_masked)],
+  ['Outcome', (r) => <Badge v={r.outcome} />],
+  ['Why', (r) => label(r.inconclusive_reason ?? r.drift_reason ?? '')],
+  ['Confirmation', (r) => label(r.confirmation)],
+  ['A', (r) => sideLine(r.side_a_state, r.side_a_reason)],
+  ['B', (r) => sideLine(r.side_b_state, r.side_b_reason)],
+];
+
+/** The keys of every outcome but a match, by outcome, worst first: each outcome's first page, with a link to
+ *  all of its keys under "All results". */
+function Differences({ runId, f, version, keyLink, cycles }: TableProps) {
+  const found = useLoad(
+    () => Promise.all(DIFFERING.map(async (outcome) => ({ outcome, page: await api.results(runId, { cycle: f.cycle, outcome }) }))),
+    [runId, f.cycle, version],
+  );
+  const groups = found.data?.filter((g) => g.page.items.length > 0);
+  const cols = resultCols(keyLink).filter(([head]) => head !== 'Outcome');
   return (
     <section>
-      <h2>Results</h2>
+      <FilterBar runId={runId} f={f} tab="differences" cycles={cycles} selects={[]} />
+      <Err error={found.error} />
+      {found.loading && <p className="muted" role="status">Loading…</p>}
+      {groups?.length === 0 && <p className="muted">No key of this cycle has an outcome other than a match so far.</p>}
+      {groups?.map(({ outcome, page }) => (
+        <div key={outcome}>
+          <h2><Badge v={outcome} /></h2>
+          <p className="muted">{LEGEND[outcome]}</p>
+          <Table rows={page.items} cols={cols} />
+          {page.next_cursor && (
+            <p className="muted">
+              The first {num(page.items.length)} are shown.{' '}
+              <a href={href(['runs', runId], { cycle: f.cycle, tab: 'keys', outcome })}>All keys with this outcome</a>
+            </p>
+          )}
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function Results({ runId, f, version, keyLink, cycles }: TableProps) {
+  const q = { cycle: f.cycle, outcome: f.outcome };
+  const results = usePaged((cursor) => api.results(runId, { ...q, cursor }), [runId, JSON.stringify(q), version]);
+  return (
+    <section>
+      <FilterBar runId={runId} f={f} tab="keys" cycles={cycles} selects={[['outcome', 'Outcome', OUTCOMES]]} />
       <Err error={results.error} />
-      <Table rows={results.items} cols={cols} />
-      {results.more && <button onClick={results.more}>More</button>}
+      <Table
+        rows={results.items}
+        cols={resultCols(keyLink)}
+        loading={results.loading}
+        empty={f.outcome ? 'No key of this cycle has this outcome.' : 'No key of this cycle has a result yet.'}
+      />
+      <MoreRows shown={results.items.length} more={results.more} />
     </section>
   );
 }
@@ -410,9 +532,9 @@ function Results({ runId, f, version, keyLink }: TableProps) {
 const FINDING_COLS: Col<Finding>[] = [
   ['Finding', (x) => <span className="mono muted">{x.finding_id}</span>],
   ['Pointer', (x) => <code>{x.json_pointer || '/'}</code>],
-  ['Change', (x) => x.change_type],
+  ['Change', (x) => <span title={x.change_type}>{label(x.change_type)}</span>],
   ['Severity', (x) => <Badge v={x.severity} />],
-  ['Taxonomy', (x) => x.taxonomy_code],
+  ['Taxonomy', (x) => <span title={x.taxonomy_code ?? undefined}>{label(x.taxonomy_code ?? '')}</span>],
   ['A', (x) => <code>{cell(x.value_a)}</code>],
   ['B', (x) => <code>{cell(x.value_b)}</code>],
   ['Class', (x) => x.value_class],
@@ -422,16 +544,30 @@ const FINDING_COLS: Col<Finding>[] = [
 export const findingCols = (keyLink?: KeyLink): Col<Finding>[] =>
   keyLink ? [['Key', (x) => keyLink(x.key_masked ?? '')], ...FINDING_COLS] : FINDING_COLS;
 
-function Findings({ runId, f, version, keyLink }: TableProps) {
+function Findings({ runId, f, version, keyLink, cycles }: TableProps) {
   const { cycle, key, root_cause_id, taxonomy_code, path_pattern, severity } = f;
   const q = { cycle, key, root_cause_id, taxonomy_code, path_pattern, severity };
   const findings = usePaged((cursor) => api.findings(runId, { ...q, cursor }), [runId, JSON.stringify(q), version]);
+  const filtered = [key, root_cause_id, taxonomy_code, path_pattern, severity].some(Boolean);
   return (
     <section>
-      <h2>Findings</h2>
+      <FilterBar
+        runId={runId}
+        f={f}
+        tab="findings"
+        cycles={cycles}
+        selects={[['severity', 'Severity', SEVERITIES]]}
+        texts={['key', 'taxonomy_code', 'path_pattern', 'root_cause_id']}
+      />
       <Err error={findings.error} />
-      <Table rows={findings.items} cols={findingCols(keyLink)} rowId={(x) => x.finding_id} />
-      {findings.more && <button onClick={findings.more}>More</button>}
+      <Table
+        rows={findings.items}
+        cols={findingCols(keyLink)}
+        rowId={(x) => x.finding_id}
+        loading={findings.loading}
+        empty={filtered ? 'No finding of this cycle passes these filters.' : 'No finding in this cycle.'}
+      />
+      <MoreRows shown={findings.items.length} more={findings.more} />
     </section>
   );
 }
@@ -448,7 +584,7 @@ function Changes({ runId, version }: { runId: string; version: string }) {
     <section>
       <h2>Outcome changes across cycles</h2>
       <Err error={changes.error} />
-      <Table rows={changes.data?.items ?? []} cols={cols} />
+      <Table rows={changes.data?.items ?? []} cols={cols} loading={changes.loading} empty="No key changed its outcome between two cycles." />
     </section>
   );
 }
@@ -478,6 +614,7 @@ const STRATUM_COLS: Col<Stratum>[] = [
  *  operator signed in under SSO, the close of the name's draws that did not pass, with a note of the fix. */
 function Sample({ run }: { run: RunDetail }) {
   const { can, me } = useWho();
+  const { prompt } = useDialogs();
   const [error, setError] = useState<string>();
   const [done, setDone] = useState<string>();
   const sample = run.sample!;
@@ -488,7 +625,12 @@ function Sample({ run }: { run: RunDetail }) {
   const closer = me?.mode === 'oidc' && me?.kind === 'user' && can('operator');
 
   async function close() {
-    const note = prompt(`${CLOSE_TITLE} of ${run.spec_name}: what was fixed? (no customer keys)`);
+    const note = await prompt({
+      title: `${CLOSE_TITLE} of ${run.spec_name}`,
+      body: 'The note is kept with the draws it closes. Name no customer key in it.',
+      input: { label: 'What was fixed', required: true },
+      action: 'Record and close',
+    });
     if (!note) return;
     setError(undefined);
     try {
@@ -543,6 +685,7 @@ function Sample({ run }: { run: RunDetail }) {
 /** Each ended cycle's sign-off requests and what they say; under SSO an operator asks for a cycle's here. */
 function Signoffs({ run, reload }: { run: RunDetail; reload: () => void }) {
   const { can, me } = useWho();
+  const { prompt } = useDialogs();
   const [error, setError] = useState<string>();
   const refused = refusal(useLicence(), 'signoff');
   const { cycles, purged } = run.retention;
@@ -553,7 +696,11 @@ function Signoffs({ run, reload }: { run: RunDetail; reload: () => void }) {
     !isPurged(run, cycle) && !of(cycle).some((s) => s.status === 'requested' || s.status === 'approved');
 
   async function request(cycle: number) {
-    const note = prompt(`Ask for a sign-off of cycle ${cycle}. A note for the approver (optional):`);
+    const note = await prompt({
+      title: `Request a sign-off of cycle ${cycle}`,
+      input: { label: 'Note for the approver (optional)' },
+      action: 'Request sign-off',
+    });
     if (note === null) return;
     setError(undefined);
     try {
@@ -595,6 +742,7 @@ function Signoffs({ run, reload }: { run: RunDetail; reload: () => void }) {
  *  attests it; a signed-in person issues the signed-off cycle's pack, which anyone who reads the run downloads. */
 function Evidence({ run, reload }: { run: RunDetail; reload: () => void }) {
   const { can, me } = useWho();
+  const { confirm, prompt } = useDialogs();
   const [error, setError] = useState<string>();
   const [done, setDone] = useState<string>();
   const refused = refusal(useLicence(), 'packs');
@@ -614,7 +762,11 @@ function Evidence({ run, reload }: { run: RunDetail; reload: () => void }) {
   }
   const draw = (cycle: number) =>
     act(async () => {
-      const limit = prompt(`Draw a reviewer sheet of cycle ${cycle}: how many per-key results (1 to 500)?`, '50');
+      const limit = await prompt({
+        title: `Draw a reviewer sheet of cycle ${cycle}`,
+        input: { label: 'Per-key results to draw (1 to 500)', initial: '50', required: true, number: { min: 1, max: 500 } },
+        action: 'Draw sheet',
+      });
       if (limit === null) return;
       const drawn = await api.draw(run.run_id, cycle, Number(limit));
       return `Drew ${drawn.adjudication_id}: ${drawn.keys.length} key(s) to review. Download the sheet, fill in reviewer_verdict, then upload it.`;
@@ -626,7 +778,8 @@ function Evidence({ run, reload }: { run: RunDetail; reload: () => void }) {
   };
   const issue = (cycle: number) =>
     act(async () => {
-      if (!confirm(`Issue the evidence pack of cycle ${cycle}, signed with this installation's key?`)) return;
+      const issuing = { title: `Issue the evidence pack of cycle ${cycle}?`, body: "It is signed with this installation's key.", action: 'Issue evidence pack' };
+      if (!(await confirm(issuing))) return;
       const issued = await api.issuePack(run.run_id, cycle);
       return `Issued ${issued.pack_id}, signed by the key with fingerprint ${issued.key_fingerprint}.`;
     });
@@ -783,7 +936,11 @@ function Labellings({ run, cycle: c, reload }: { run: RunDetail; cycle: CycleEvi
           ))}
           <label>Truth source <input name="source" size={28} maxLength={64} required /></label>
           <label>As of <input name="as_of" type="date" required /></label>
-          {unlocatable && <label><input name="acknowledge" type="checkbox" /> acknowledge_unlocatable</label>}
+          {unlocatable && (
+            <label title="acknowledge_unlocatable">
+              <input name="acknowledge" type="checkbox" /> I acknowledge that labellers cannot find these records by key
+            </label>
+          )}
           <button>Draw</button>
           <span className="muted">{DRAW_HINT}</span>
         </form>

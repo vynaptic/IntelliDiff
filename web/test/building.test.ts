@@ -290,7 +290,7 @@ test('the credential a command carried goes to the target the side names, which 
   const targets = source('Targets.tsx');
   assert.match(targets, /useState\(\(\) => handed && reached\(handed\.origin, memory\.handed\?\.target\)\);/);
   assert.match(targets, /useState<Endpoint>\(\(\) => \(handed \? handing\(handed, stored\) : blankEndpoint\(\)\)\);/);
-  assert.match(targets, /const mine = handed && reached\(handed\.origin, t\);\n.*\n\s+if \(dropped && !confirm\(.*\)\) return;\n\s+setE\(mine \? handing\(handed, mine\) : /);
+  assert.match(targets, /const mine = handed && reached\(handed\.origin, t\);\n(.*\n){5}\s+if \(dropped && !\(await confirm\(dropped\)\)\) return;\n\s+setE\(mine \? handing\(handed, mine\) : /);
 });
 
 test('a credential and a sample key stay in memory only, and go when the person signed in changes', () => {

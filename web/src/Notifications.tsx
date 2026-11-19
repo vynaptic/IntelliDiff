@@ -4,14 +4,17 @@
  *  screen creates one. The server still decides. */
 import { useState, type FormEvent } from 'react';
 import { ApiError, api, type Delivery, type Mute, type NotifyChannel, type NotifyRule } from './api';
+import { useDialogs } from './Dialogs';
+import { label } from './labels';
 import { message, useLoad, usePaged, useWho } from './lib';
 import { MUTE_NOTE, RULES_NOTE, canMute, cursorLine, external, ruleLine, testLine } from './notify';
-import { Badge, Err, Named, Table, when, type Col } from './ui';
+import { Badge, Err, MoreRows, Named, Table, when, type Col } from './ui';
 
 const STATES = ['pending', 'sent', 'dead', 'suppressed'];
 
 export function NotificationsScreen() {
   const { me, can } = useWho();
+  const { confirm } = useDialogs();
   const found = useLoad(api.notifications, []);
   const [filter, setFilter] = useState({ channel: '', state: '' });
   const deliveries = usePaged((cursor) => api.deliveries({ ...filter, cursor }), [filter.channel, filter.state]);
@@ -64,7 +67,8 @@ export function NotificationsScreen() {
       <span className="inline">
         <button onClick={() => act(api.testChannel(c.name).then((t) => testLine(c, t)))}>Send test</button>
         <button
-          onClick={() => confirm(`Send the failed deliveries of the last 72 hours to ${c.name} again?`) &&
+          onClick={async () =>
+            (await confirm({ title: `Send failed deliveries to ${c.name} again?`, body: 'Those of the last 72 hours become pending again.', action: 'Send again' })) &&
             act(api.retryChannel(c.name).then((r) => `${r.count} failed deliveries of ${c.name} are pending again.`))}
         >
           Send failed again
@@ -138,8 +142,11 @@ export function NotificationsScreen() {
                   Hours <input name="hours" type="number" min={1} max={168} required size={5} defaultValue={4} />
                 </label>
               </div>
-              <textarea name="reason" required maxLength={1000} rows={2} placeholder="Why" />
-              <button>Mute</button>
+              <label>
+                Reason
+                <textarea name="reason" required maxLength={1000} rows={2} />
+              </label>
+              <button className="primary">Mute</button>
               {reauth && (
                 <p className="inline">
                   <span className="warn">Sign in again to mute.</span>
@@ -155,18 +162,18 @@ export function NotificationsScreen() {
           )}
           <h2>Deliveries</h2>
           <p className="inline">
-            <select value={filter.channel} onChange={(e) => setFilter({ ...filter, channel: e.target.value })}>
+            <select aria-label="Channel" value={filter.channel} onChange={(e) => setFilter({ ...filter, channel: e.target.value })}>
               <option value="">every channel</option>
               {n.channels.map((c) => <option key={c.name}>{c.name}</option>)}
             </select>
-            <select value={filter.state} onChange={(e) => setFilter({ ...filter, state: e.target.value })}>
+            <select aria-label="State" value={filter.state} onChange={(e) => setFilter({ ...filter, state: e.target.value })}>
               <option value="">every state</option>
-              {STATES.map((s) => <option key={s}>{s}</option>)}
+              {STATES.map((s) => <option key={s} value={s}>{label(s)}</option>)}
             </select>
           </p>
           <Err error={deliveries.error} />
-          <Table rows={deliveries.items} cols={sent} rowId={(d) => d.delivery_id} />
-          {deliveries.more && <button onClick={deliveries.more}>More</button>}
+          <Table rows={deliveries.items} cols={sent} rowId={(d) => d.delivery_id} loading={deliveries.loading} empty="No delivery passes these filters." />
+          <MoreRows shown={deliveries.items.length} more={deliveries.more} />
         </>
       )}
     </>

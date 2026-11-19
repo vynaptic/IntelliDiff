@@ -1,17 +1,29 @@
-/** Runs: the list, newest first, and a form to start a batch or soak run. */
+/** Runs: the list, newest first, each with its keys by outcome as a bar and its result in a line, and a form to
+ *  start a batch or soak run. */
 import { useState, type FormEvent } from 'react';
 import { api, type Run } from './api';
+import { shortId } from './format';
+import { label } from './labels';
 import { refusal } from './licensing';
 import { href, message, useLicence, useLoad, usePaged, useWho } from './lib';
-import { Badge, Err, Table, when, type Col } from './ui';
+import { resultLine } from './outcomes';
+import { Badge, Err, MoreRows, OutcomeBar, Table, When, type Col } from './ui';
+
+const byOutcome = (r: Run) => r.counters.by_outcome as Record<string, number> | undefined;
 
 const COLS: Col<Run>[] = [
-  ['Run', (r) => <a href={href(['runs', r.run_id])}>{r.run_id}</a>],
+  ['Run', (r) => <a className="mono" href={href(['runs', r.run_id])} title={r.run_id}>{shortId(r.run_id)}</a>],
   ['Spec', (r) => `${r.spec_name} ${r.spec_version}`],
-  ['Mode', (r) => r.mode],
+  ['Mode', (r) => label(r.mode)],
   ['Status', (r) => <Badge v={r.status} />],
+  ['Result', (r) => (
+    <>
+      <OutcomeBar byOutcome={byOutcome(r)} small />
+      {resultLine(r.counters)}
+    </>
+  )],
   ['Cycle', (r) => r.cycle],
-  ['Created', (r) => when(r.created_at)],
+  ['Created', (r) => <When at={r.created_at} />],
 ];
 
 export function Runs() {
@@ -23,8 +35,14 @@ export function Runs() {
       <p className="muted">Open a run to see its differences and ask AI about them.</p>
       {can('operator') && <NewRun />}
       <Err error={runs.error} />
-      <Table rows={runs.items} cols={COLS} rowId={(r) => r.run_id} />
-      {runs.more && <button onClick={runs.more}>More</button>}
+      <Table
+        rows={runs.items}
+        cols={COLS}
+        rowId={(r) => r.run_id}
+        loading={runs.loading}
+        empty={can('operator') ? 'No runs yet. A run needs a stored spec: create one under "Specs", then start a run with the form above.' : 'No runs yet.'}
+      />
+      <MoreRows shown={runs.items.length} more={runs.more} />
     </>
   );
 }
@@ -67,8 +85,8 @@ function NewRun() {
         <label>
           Mode{' '}
           <select value={mode} onChange={(e) => setMode(e.target.value)}>
-            <option>batch</option>
-            <option>soak</option>
+            <option value="batch">Batch</option>
+            <option value="soak">Soak</option>
           </select>
         </label>
         {mode === 'soak' && (
@@ -82,7 +100,7 @@ function NewRun() {
         <textarea name="keys" rows={4} />
       </label>
       <p className="muted">A multi-part key: its parts joined by |</p>
-      <button disabled={!!refused} title={refused}>Start</button>
+      <button className="primary" disabled={!!refused} title={refused}>Start run</button>
       <Err error={error ?? specs.error} />
     </form>
   );

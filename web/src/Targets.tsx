@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react';
 import { ApiError, api, type AuthKind, type Issue, type Target } from './api';
 import { AUTH, MORE_HEADERS, blankEndpoint, endpointBody, endpointOf, handing, memory, reached, type Endpoint } from './building';
+import { useDialogs } from './Dialogs';
 import { message, useLoad, useWho } from './lib';
 import { Err, ISSUE_COLS, Table, type Col } from './ui';
 
@@ -29,6 +30,7 @@ const DECLARED: Col<Target>[] = [
 export function Targets() {
   const targets = useLoad(api.targets, []);
   const { can } = useWho();
+  const { confirm } = useDialogs();
   // What the builder read from a curl command fills the form, with where to go back to: laid over the target its
   // side names where the command reached that one (`Change <id>`), else a new endpoint.
   const [handed, setHanded] = useState(() => memory.handed?.found);
@@ -50,10 +52,14 @@ export function Targets() {
 
   /** The form on `t`, or empty. A credential a command carried stays with a target the command reached; before
    *  another target's form drops it, the person is asked. */
-  function open(t?: Target) {
+  async function open(t?: Target) {
     const mine = handed && reached(handed.origin, t);
-    const dropped = t && handed && !mine && `It was sent to ${handed.origin}, not to this endpoint.`;
-    if (dropped && !confirm(`Change ${t.target_id} without the credential the command carried? ${dropped}`)) return;
+    const dropped = t && handed && !mine && {
+      title: `Change ${t.target_id} without the credential?`,
+      body: `The credential the command carried was sent to ${handed.origin}, not to this endpoint, so it is dropped.`,
+      action: `Change ${t.target_id}`,
+    };
+    if (dropped && !(await confirm(dropped))) return;
     setE(mine ? handing(handed, mine) : t ? endpointOf(t) : blankEndpoint());
     setStored(t);
     if (!mine) setHanded(undefined);
@@ -76,16 +82,22 @@ export function Targets() {
   }
 
   const id = e.id.trim();
-  const remove = (t: Target) =>
-    confirm(`Remove ${t.target_id}? Stored specs and schedules that name ${t.target_id} stop running.`) &&
-    act(api.removeTarget(t.target_id), t.target_id, `Removed endpoint ${t.target_id}.`);
+  const remove = async (t: Target) =>
+    (await confirm({
+      title: `Remove ${t.target_id}?`,
+      body: `Stored specs and schedules that name ${t.target_id} stop running.`,
+      action: 'Remove endpoint',
+      danger: true,
+    })) && act(api.removeTarget(t.target_id), t.target_id, `Removed endpoint ${t.target_id}.`);
   const changes: Col<Target> = ['', (t) => t.declared_in === 'product' && (
     <span className="inline">
       <button onClick={() => open(t)}>Change</button>
-      <button onClick={() => remove(t)}>Remove</button>
+      <button className="danger" onClick={() => remove(t)}>Remove</button>
     </span>
   )];
   const declares = !!role && can(role);
+  // What an endpoint was declared with is told of the product's list only: a file's targets would leave it empty.
+  const listed = !!targets.data?.items.some((t) => t.declared_in === 'product');
   // A credential's box: masked, never offered to the browser's own stores and inside no form that submits.
   const credential = (value: string, kept: boolean | undefined, onChange: (value: string) => void) => (
     <input type="password" autoComplete="off" size={32} value={value} onChange={(ev) => onChange(ev.target.value)}
@@ -97,7 +109,13 @@ export function Targets() {
       <h1>Targets</h1>
       <p className="muted">A target is an endpoint a comparison reads: a service's address, how it authenticates and its request budget.</p>
       <Err error={targets.error} />
-      <Table rows={targets.data?.items ?? []} cols={declares ? [...COLS, ...DECLARED, changes] : COLS} rowId={(t) => t.target_id} />
+      <Table
+        rows={targets.data?.items ?? []}
+        cols={declares && listed ? [...COLS, ...DECLARED, changes] : COLS}
+        rowId={(t) => t.target_id}
+        loading={targets.loading}
+        empty={declares ? 'No target yet. Declare an endpoint with the form below.' : 'No target yet.'}
+      />
       {role && !declares && <p className="muted">Endpoints are declared by the {role} role, or in the targets file.</p>}
       {declares && (
         <section className="panel">
@@ -171,7 +189,7 @@ export function Targets() {
               At once{' '}
               <input type="number" min={1} size={6} value={e.max_concurrency} onChange={(ev) => set({ max_concurrency: ev.target.value })} placeholder="4" />
             </label>
-            <button onClick={() => act(api.declareTarget(id, endpointBody(e)), id, `Saved endpoint ${id}.`)} disabled={!id || !e.base_url.trim()}>
+            <button className="primary" onClick={() => act(api.declareTarget(id, endpointBody(e)), id, `Saved endpoint ${id}.`)} disabled={!id || !e.base_url.trim()}>
               Save endpoint
             </button>
             {stored && <button onClick={() => open()}>Cancel</button>}

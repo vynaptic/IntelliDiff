@@ -1,6 +1,6 @@
 /** The chat drawer about a run or one of its keys. Answers render as plain text with citation chips.
  *  `closed` says why it takes no question: once the run's evidence is purged, the API answers 410.
- *  `ai` is /v1/health's, loaded by the screen: false shows that the AI is off, unknown leaves the chat on. */
+ *  `ai` is /v1/health's, loaded by the screen: false shows no chat, unknown leaves the chat on. */
 import { useEffect, useState, type FormEvent } from 'react';
 import { api, type Message } from './api';
 import { CITATION } from './explain';
@@ -78,8 +78,7 @@ export function Chat({ runId, keyMasked, closed, ai }: { runId: string; keyMaske
     setMessages([]);
   }
 
-  if (ai === false)
-    return <span className="chat-toggle muted" title="No LLM profile is configured">AI is off</span>;
+  if (ai === false) return null; // the Root causes tab says that the AI is off, and why
   if (!open)
     return (
       <button className="chat-toggle" onClick={() => setOpen(true)}>

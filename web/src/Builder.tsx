@@ -12,7 +12,7 @@ import {
 import { Detail } from './Key';
 import { refusal } from './licensing';
 import { href, message, useLicence, useLoad, useWho } from './lib';
-import { Badge, Err, ISSUE_COLS, Table } from './ui';
+import { Badge, Err, ISSUE_COLS, Side, Table } from './ui';
 
 const issuesOf = (e: unknown) => (e instanceof ApiError ? (e.body as { issues?: Issue[] } | null)?.issues : undefined);
 
@@ -87,7 +87,7 @@ export function Builder({ id, form, standIns = false }: { id: string; form: Spec
           const rows = d[side];
           return (
             <section className="panel" key={side}>
-              <h2>Side {side.toUpperCase()}</h2>
+              <h2>Side <Side side={side} /></h2>
               {rows ? (
                 <SideRows
                   rows={rows}
@@ -112,7 +112,7 @@ export function Builder({ id, form, standIns = false }: { id: string; form: Spec
         <textarea rows={22} value={d.text} onChange={(e) => setD({ ...d, text: e.target.value })} spellCheck={false} />
         <p className="inline">
           <button onClick={() => check('validate')} disabled={busy}>Validate</button>
-          <button onClick={() => check('save')} disabled={busy}>Save as a new version</button>
+          <button className="primary" onClick={() => check('save')} disabled={busy}>Save as a new version</button>
           <button onClick={() => check('compare')} disabled={busy || !key || !!refused} title={refused}>
             Save and compare this key
           </button>

@@ -28,7 +28,7 @@ export function useRoute(): { parts: string[]; query: URLSearchParams } {
   return { parts: path.split('/').filter(Boolean).map(decodeURIComponent), query: new URLSearchParams(query) };
 }
 
-/** The latest result of `load`, run again when `deps` change or on `reload()`. */
+/** The latest result of `load`, run again when `deps` change or on `reload()`; `loading` until the first answer. */
 export function useLoad<T>(load: () => Promise<T>, deps: unknown[]) {
   const [state, setState] = useState<{ data?: T; error?: string }>({});
   const [tick, setTick] = useState(0);
@@ -42,7 +42,7 @@ export function useLoad<T>(load: () => Promise<T>, deps: unknown[]) {
       live = false;
     };
   }, [...deps, tick]);
-  return { ...state, reload: useCallback(() => setTick((t) => t + 1), []) };
+  return { ...state, loading: !state.data && !state.error, reload: useCallback(() => setTick((t) => t + 1), []) };
 }
 
 /** Pages of `load` accumulated by `more()`, restarted when `deps` change. */
@@ -59,7 +59,8 @@ export function usePaged<T>(load: (cursor?: string) => Promise<Page<T>>, deps: u
   };
   useEffect(() => fetchPage(), deps);
   const { next } = state;
-  return { ...state, more: next && state.query === query ? () => fetchPage(next) : undefined };
+  const loading = state.query !== query && !state.error; // no page of this query has come yet
+  return { ...state, loading, more: next && state.query === query ? () => fetchPage(next) : undefined };
 }
 
 export function usePoll(tick: () => void, ms: number, active: boolean): void {

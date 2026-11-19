@@ -103,12 +103,12 @@ test('no screen builds a text, shows a tick or paints a verdict: they print the 
     assert.equal(screens.includes(printed), true, printed);
   // Operators make and cancel one and start a comparison; the link stands after Schedules, for every role.
   assert.match(screens, /can\('operator'\) && <PrecheckForm/);
-  assert.match(screens, /can\('operator'\) && d\.finished_at === null && <button onClick=\{\(\) => act\(api\.cancelPrecheck\(id\)\)\}>Cancel/);
+  assert.match(screens, /can\('operator'\) && d\.finished_at === null && <button className="danger" onClick=\{\(\) => act\(api\.cancelPrecheck\(id\)\)\}>Cancel/);
   assert.match(screens, /can\('operator'\) && p\.spec_id !== null && \(\n\s*<button onClick=\{\(\) => compare\(p\)\}.*>Run a comparison</);
   // Spec authors pair two schemas' tables by name and draft a spec of such a pair.
   assert.match(screens, /can\('spec_author'\) && <CatalogueForm \/>/);
   assert.match(screens, /can\('spec_author'\) && draftable\(p\) && <button onClick=\{draft\}>Draft a spec<\/button>/);
-  assert.match(source('main.tsx'), /<a href="#\/schedules">Schedules<\/a>\n\s*<a href="#\/prechecks">Pre-checks<\/a>/);
+  assert.match(source('nav.ts'), /\['schedules', 'prechecks'\],/); // a group no role is asked for
   assert.equal(/prechecks|pre-check/i.test(source('Readiness.tsx') + source('ready.ts')), false); // never there
   assert.match(source('Specs.tsx'), /can\('operator'\)\) cols\.push\(\['Table pre-check', \(s\) => <a href=\{href\(\['prechecks'\], \{ spec_id: s\.spec_id \}\)\}>Pre-check…<\/a>\]\)/);
 });

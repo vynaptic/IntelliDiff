@@ -163,7 +163,7 @@ test('a 410 of purged evidence rejects with the server message (what the screens
 
 test("the draft form shows each side's unmatched paths, as POST /v1/profile answers them", () => {
   const form = readFileSync(new URL('../src/Specs.tsx', import.meta.url), 'utf8');
-  assert.ok(form.includes("unmatched[{side}]: {draft.unmatched[side].length ? <code>{draft.unmatched[side].join(', ')}</code> : 'none'}"));
+  assert.ok(form.includes("Unmatched paths on side {side.toUpperCase()}: {draft.unmatched[side].length ? <code>{draft.unmatched[side].join(', ')}</code> : 'none'}"));
   assert.match(form, /\(\['a', 'b'\] as const\)\.map\(\(side\) => \(/);
 });
 

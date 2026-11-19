@@ -3,8 +3,10 @@
  *  server still decides. */
 import { useState, type FormEvent } from 'react';
 import { ApiError, api, type AuditRow, type Disabled, type NewToken, type SignedIn, type Token, type User } from './api';
+import { useDialogs } from './Dialogs';
+import { label } from './labels';
 import { href, message, useLoad, usePaged, useWho } from './lib';
-import { Badge, Err, Named, Table, cell, when, type Col } from './ui';
+import { Badge, Err, MoreRows, Named, Table, Tabs, cell, when, type Col } from './ui';
 
 const TABS = [['tokens', 'Tokens'], ['users', 'Users'], ['sessions', 'Sessions'], ['audit', 'Audit']];
 const TOKEN_ROLES = ['viewer', 'operator', 'spec_author'];
@@ -13,11 +15,7 @@ export function Admin({ tab = 'tokens', query }: { tab?: string; query: URLSearc
   return (
     <>
       <h1>Admin</h1>
-      <p className="inline tabs">
-        {TABS.map(([t, label]) => (
-          <a key={t} href={href(['admin', t])} aria-current={t === tab ? 'page' : undefined}>{label}</a>
-        ))}
-      </p>
+      <Tabs name="Parts of administration" current={tab} items={TABS.map(([t, text]) => [href(['admin', t]), text, t])} />
       {tab === 'users' ? <Users /> : tab === 'sessions' ? <Sessions /> : tab === 'audit' ? <Audit query={query} /> : <Tokens />}
     </>
   );
@@ -37,6 +35,7 @@ function Tokens() {
   const [reauth, setReauth] = useState(false);
   const [error, setError] = useState<string>();
   const act = acting(setError, tokens.reload);
+  const { confirm } = useDialogs();
   const sso = me?.mode === 'oidc'; // an accountable person is required with SSO
 
   async function create(e: FormEvent<HTMLFormElement>) {
@@ -76,7 +75,12 @@ function Tokens() {
     ['Expires', (t) => when(t.expires_at)],
     ['Last used', (t) => when(t.last_used_at)],
     ['', (t) => t.state === 'active' && (
-      <button onClick={() => confirm(`Revoke token ${t.name} (${t.token_id})?`) && act(api.revokeToken(t.token_id))}>
+      <button
+        className="danger"
+        onClick={async () =>
+          (await confirm({ title: `Revoke token ${t.name}?`, body: `${t.token_id} stops working at once.`, action: 'Revoke token', danger: true })) &&
+          act(api.revokeToken(t.token_id))}
+      >
         Revoke
       </button>
     )],
@@ -110,7 +114,7 @@ function Tokens() {
           <label>
             Days <input name="days" type="number" min={1} size={5} placeholder="90" />
           </label>
-          <button>Create</button>
+          <button className="primary">Create token</button>
         </div>
         {reauth && (
           <p className="inline">
@@ -143,7 +147,7 @@ function Tokens() {
         </section>
       )}
       <Err error={tokens.error} />
-      <Table rows={tokens.data?.items ?? []} cols={cols} rowId={(t) => t.token_id} />
+      <Table rows={tokens.data?.items ?? []} cols={cols} rowId={(t) => t.token_id} loading={tokens.loading} empty="No API token yet." />
     </>
   );
 }
@@ -155,10 +159,12 @@ function Users() {
   const [disabled, setDisabled] = useState<Disabled>();
   const [error, setError] = useState<string>();
   const act = acting(setError, users.reload);
+  const { confirm } = useDialogs();
 
-  function disable(u: User) {
-    const tokens = revokeTokens ? ', and revoke every token they created or own' : '';
-    if (!confirm(`Disable ${u.username} (${u.user_id}) and end their sessions${tokens}?`)) return;
+  async function disable(u: User) {
+    const tokens = revokeTokens ? ', and every token they created or own is revoked' : '';
+    const asked = { title: `Disable ${u.username}?`, body: `${u.user_id}: their sessions end at once${tokens}.`, action: 'Disable user', danger: true };
+    if (!(await confirm(asked))) return;
     setDisabled(undefined);
     act(api.disableUser(u.user_id, revokeTokens).then(setDisabled));
   }
@@ -179,7 +185,7 @@ function Users() {
         {u.disabled_at ? (
           <button onClick={() => act(api.enableUser(u.user_id))}>Enable</button>
         ) : (
-          me?.actor !== `user:${u.user_id}` && <button onClick={() => disable(u)}>Disable</button>
+          me?.actor !== `user:${u.user_id}` && <button className="danger" onClick={() => disable(u)}>Disable</button>
         )}
         <a href={href(['admin', 'audit'], { actor: `user:${u.user_id}` })}>audit</a>
       </span>
@@ -205,7 +211,7 @@ function Users() {
           <Table rows={disabled.tokens} cols={DISABLED_TOKEN_COLS} rowId={(t) => t.token_id} />
         </section>
       )}
-      <Table rows={users.data?.items ?? []} cols={cols} rowId={(u) => u.user_id} />
+      <Table rows={users.data?.items ?? []} cols={cols} rowId={(u) => u.user_id} loading={users.loading} empty="No user has signed in yet." />
     </>
   );
 }
@@ -221,6 +227,7 @@ function Sessions() {
   const sessions = useLoad(api.sessions, []);
   const [error, setError] = useState<string>();
   const act = acting(setError, sessions.reload);
+  const { confirm } = useDialogs();
   const cols: Col<SignedIn>[] = [
     ['Session', (s) => <a className="mono" href={href(['admin', 'audit'], { session_id: s.session_id })}>{s.session_id}</a>],
     ['Who', (s) => <Named name={s.name} actor={s.actor} />],
@@ -231,8 +238,13 @@ function Sessions() {
     ['Last seen', (s) => when(s.last_seen_at)],
     ['Ends', (s) => when(s.expires_at)],
     ['', (s) => (
-      <button onClick={() => confirm(`End session ${s.session_id} of ${s.name}?`) && act(api.revokeSession(s.session_id))}>
-        Revoke
+      <button
+        className="danger"
+        onClick={async () =>
+          (await confirm({ title: `End this session of ${s.name}?`, body: `${s.session_id} ends at its next request.`, action: 'End session', danger: true })) &&
+          act(api.revokeSession(s.session_id))}
+      >
+        End session
       </button>
     )],
   ];
@@ -240,10 +252,21 @@ function Sessions() {
     <>
       <p className="muted">Live sessions, newest first. A revoked session ends at its next request.</p>
       <Err error={error ?? sessions.error} />
-      <Table rows={sessions.data?.items ?? []} cols={cols} rowId={(s) => s.session_id} />
+      <Table rows={sessions.data?.items ?? []} cols={cols} rowId={(s) => s.session_id} loading={sessions.loading} empty="No live session." />
     </>
   );
 }
+
+/** A row's detail on one line; a long one folded under its start. */
+const Detail = ({ text }: { text: string }) =>
+  text.length <= 120 ? (
+    <code className="detail">{text}</code>
+  ) : (
+    <details>
+      <summary className="mono">{text.slice(0, 80)}…</summary>
+      <code className="detail">{text}</code>
+    </details>
+  );
 
 const AUDIT_COLS: Col<AuditRow>[] = [
   ['Id', (r) => r.id],
@@ -251,7 +274,7 @@ const AUDIT_COLS: Col<AuditRow>[] = [
   ['Actor', (r) => <Named name={r.actor_name} actor={r.actor} />],
   ['Action', (r) => r.action],
   ['Object', (r) => <span className="mono">{r.object}</span>],
-  ['Detail', (r) => <code className="detail">{cell(r.detail)}</code>],
+  ['Detail', (r) => <Detail text={cell(r.detail)} />],
   ['Request', (r) => <span className="mono">{r.request_id}</span>],
   ['Session', (r) => <span className="mono">{r.session_id}</span>],
   ['Client', (r) => r.client_addr],
@@ -282,20 +305,20 @@ function Audit({ query }: { query: URLSearchParams }) {
       <form className="panel inline" key={JSON.stringify(f)} onSubmit={apply}>
         {FILTERS.map((name) => (
           <label key={name}>
-            {name} <input name={name} defaultValue={f[name]} size={16} />
+            {label(name)} <input name={name} defaultValue={f[name]} size={16} />
           </label>
         ))}
         {['since', 'until'].map((name) => (
           <label key={name}>
-            {name} <input name={name} type="datetime-local" defaultValue={f[name]} />
+            {label(name)} <input name={name} type="datetime-local" defaultValue={f[name]} />
           </label>
         ))}
         <button>Filter</button>
-        <a href={href(['admin', 'audit'])}>clear</a>
+        <a href={href(['admin', 'audit'])}>Clear filters</a>
       </form>
       <Err error={rows.error} />
-      <Table rows={rows.items} cols={AUDIT_COLS} rowId={(r) => `audit-${r.id}`} />
-      {rows.more && <button onClick={rows.more}>More</button>}
+      <Table rows={rows.items} cols={AUDIT_COLS} rowId={(r) => `audit-${r.id}`} loading={rows.loading} empty="No audit row passes these filters." />
+      <MoreRows shown={rows.items.length} more={rows.more} />
     </>
   );
 }
