@@ -37,7 +37,7 @@ Then follow [the user guide](docs/user-guide.md): the first comparison takes abo
 |---|---|
 | [docs/deployment.md](docs/deployment.md) | Install a trial, deploy for production, update, back up, run from source |
 | [docs/user-guide.md](docs/user-guide.md) | Compare two services or tables, read the results, write a spec, a short demo |
-| [docs/architecture.md] | The design, a map of the code, and where future enhancements fit |
+| [docs/architecture.md](docs/architecture.md) | The design, a map of the code, and where future enhancements fit |
 | [SECURITY.md](SECURITY.md) | How to report a vulnerability, and how releases are signed and scanned |
 
 ## Development
