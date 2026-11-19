@@ -47,8 +47,8 @@ function Approvers({ a }: { a: Approval }) {
 const LIST_COLS: Col<Approval>[] = [
   ['Approval', (a) => <a className="mono" href={href(['approvals', a.approval_id])}>{a.approval_id}</a>],
   ['Status', (a) => <Badge v={a.status} />],
-  ['Kind', (a) => (a.kind === 'spec' ? 'spec version' : 'sign-off')],
-  ['Spec', (a) => `${a.spec_name} ${a.spec_version} (#${a.spec_id})`],
+  ['Kind', (a) => (a.kind === 'spec' ? 'comparison version' : 'sign-off')],
+  ['Comparison', (a) => `${a.spec_name} ${a.spec_version} (#${a.spec_id})`],
   ['Covers', covers],
   ['Approvers', (a) => <Approvers a={a} />],
   ['Requested by', (a) => <Named name={a.requested_by_name} actor={a.requested_by} />],
@@ -61,9 +61,9 @@ function List({ status }: { status: string }) {
     <>
       <h1>Approvals</h1>
       <p className="muted">
-        Under SSO a spec version that shows values in clear, suppresses findings or filters what is compared runs only once
+        Under SSO a comparison version that shows values in clear, suppresses findings or filters what is compared runs only once
         someone who did not write it approved its content; a cycle is parity evidence only once someone who neither wrote
-        its spec, started its run nor asked for the sign-off accepted it.
+        its comparison, started its run nor asked for the sign-off accepted it.
       </p>
       <p className="inline">
         <label>
@@ -97,9 +97,6 @@ function Review({ id }: { id: string }) {
   const a = found.data;
   return (
     <>
-      <p>
-        <a href={href(['approvals'])}>Approvals</a>
-      </p>
       <h1>
         Approval <span className="mono">{id}</span> <Badge v={a?.status} />
       </h1>
@@ -135,7 +132,7 @@ function Review({ id }: { id: string }) {
 }
 
 function Summary({ a }: { a: ApprovalDetail }) {
-  const spec = `${a.spec_name} ${a.spec_version} (spec #${a.spec_id})`;
+  const spec = `${a.spec_name} ${a.spec_version} (comparison #${a.spec_id})`;
   return (
     <section>
       <p>
@@ -368,8 +365,8 @@ function SpecReview({ a }: { a: ApprovalDetail }) {
       <section>
         <h2>
           {previous
-            ? `Changes since spec #${previous.spec_id} (${previous.version}), approved as ${previous.approval_id}`
-            : 'The whole content: no earlier version of this spec is approved'}
+            ? `Changes since comparison #${previous.spec_id} (${previous.version}), approved as ${previous.approval_id}`
+            : 'The whole content: no earlier version of this comparison is approved'}
         </h2>
         <p className="muted">A: the version approved before; B: this version. Inline keys are masked.</p>
         <DocDiff a={before ?? null} b={body} findings={bodyChanges(before, body)} />

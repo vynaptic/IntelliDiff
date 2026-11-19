@@ -194,7 +194,7 @@ function Header({ run, cycle, viewed, reload }: HeaderProps) {
     <section>
       <p className="muted">
         Run <span className="mono">{run.run_id}</span> <Copy text={run.run_id}>Copy id</Copy> ·{' '}
-        <a href={href(['specs', run.spec_id])}>spec #{run.spec_id}</a>
+        <a href={href(['specs', run.spec_id])}>comparison #{run.spec_id}</a>
         {` · ${label(run.mode)} · cycle ${run.cycle} · created `}
         <When at={run.created_at} />
         {run.created_by && <> by <Named name={run.created_by_name} actor={run.created_by} /></>}
@@ -644,7 +644,7 @@ function Sample({ run }: { run: RunDetail }) {
 
   const ledgerCols: Col<LedgerDraw>[] = [
     ['Draw', (x) => <span className={x.draw_id === d?.draw_id ? 'mono' : 'mono muted'}>{x.draw_id}</span>],
-    ['Spec', (x) => x.spec_name],
+    ['Comparison', (x) => x.spec_name],
     ['Run', (x) => <a href={href(['runs', x.run_id])}>{`${x.run_id} cycle ${x.cycle}`}</a>],
     ['Drawn', (x) => when(x.drawn_at)],
     ['Status', (x) => <><Badge v={x.status} />{x.method === 'rate' && ' monitoring'}{x.blocking && ' blocking'}</>],
@@ -728,7 +728,7 @@ function Signoffs({ run, reload }: { run: RunDetail; reload: () => void }) {
     <section>
       <h2>Sign-off</h2>
       <p className="muted">
-        A sign-off accepts one ended cycle as parity evidence, once someone who neither wrote its spec, started this run
+        A sign-off accepts one ended cycle as parity evidence, once someone who neither wrote its comparison, started this run
         nor asked for it approved its facts.{me?.mode !== 'oidc' && ` ${ssoOnly(me?.mode)}`}
       </p>
       <Table rows={ended} cols={cols} rowId={(cycle) => `signoff-${cycle}`} />

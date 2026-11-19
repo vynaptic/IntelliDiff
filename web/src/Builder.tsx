@@ -116,7 +116,7 @@ export function Builder({ id, form, standIns = false }: { id: string; form: Spec
           <button onClick={() => check('compare')} disabled={busy || !key || !!refused} title={refused}>
             Save and compare this key
           </button>
-          {saved && <a href={href(['specs', saved.spec_id])}>Saved as spec #{saved.spec_id}.</a>}
+          {saved && <a href={href(['specs', saved.spec_id])}>Saved as comparison #{saved.spec_id}.</a>}
           <span>{status}</span>
         </p>
         <p className="muted">Saving makes this the newest version of its name: schedules that follow the name run it next.</p>

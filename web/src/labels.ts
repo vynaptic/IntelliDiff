@@ -9,6 +9,7 @@ const WORDS: Record<string, string> = {
   NOT_FOUND_B: 'Not found in B',
   taxonomy_code: 'Taxonomy',
   root_cause_id: 'Root cause',
+  spec_name: 'Comparison name',
   session_id: 'Session',
 };
 

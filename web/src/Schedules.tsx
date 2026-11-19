@@ -67,7 +67,7 @@ function ScheduleForm({ from, specId, onSaved }: { from?: Schedule; specId?: str
           <input value={d.name} onChange={(e) => set({ name: e.target.value })} required maxLength={63} size={24} placeholder="nightly-customers" />
         </label>
         <label>
-          Spec{' '}
+          Comparison{' '}
           <select value={spec_id} onChange={(e) => set({ spec_id: e.target.value })} required>
             {items.map((s) => <option key={s.spec_id} value={s.spec_id}>{`${s.name} ${s.version} (#${s.spec_id})`}</option>)}
           </select>
@@ -179,7 +179,7 @@ export function SchedulesScreen({ query }: { query: URLSearchParams }) {
 
   const cols: Col<Schedule>[] = [
     ['Name', (s) => <a href={href(['schedules', s.schedule_id])}>{s.name}</a>],
-    ['Spec and version', (s) => specLabel(s)],
+    ['Comparison and version', (s) => specLabel(s)],
     ['Mode', (s) => s.run.mode],
     ['Cron and zone', (s) => <><code>{s.cron}</code> {s.time_zone}</>],
     [`Next due (${NOT_A_FORECAST})`, (s) => s.next_due && dueLine(s.next_due, s.time_zone)],
@@ -268,7 +268,6 @@ export function ScheduleScreen({ id }: { id: string }) {
       <h1>
         Schedule {d?.name ?? id} <Badge v={d?.state} />
       </h1>
-      <p><a href="#/schedules">All schedules</a></p>
       <Err error={found.error ?? error} />
       <Warnings lines={warnings} />
       {d && (

@@ -11,7 +11,7 @@ import { DialogHost } from './Dialogs';
 import { KeyScreen } from './Key';
 import { LicenceScreen } from './Licence';
 import { Licensed, Who, message, useRoute } from './lib';
-import { currentOf, navOf, titleOf } from './nav';
+import { crumbsOf, currentOf, navOf, titleOf } from './nav';
 import { NotificationsScreen } from './Notifications';
 import { PrecheckScreen, PrechecksScreen } from './Prechecks';
 import { bannerLines } from './notify';
@@ -23,6 +23,8 @@ import { TOKEN_HINT, addressHint } from './signin';
 import { SpecScreen, Specs } from './Specs';
 import { Targets } from './Targets';
 import { Err, Named } from './ui';
+import '@fontsource-variable/atkinson-hyperlegible-next/wght.css';
+import '@fontsource-variable/atkinson-hyperlegible-mono/wght.css';
 import './styles.css';
 
 // The callback's fixed codes; the page never shows text from the URL.
@@ -63,6 +65,7 @@ function SignIn({ mode, query, onSignedIn }: { mode: Mode; query: URLSearchParam
   return (
     <section className="panel login">
       <h1>Sign in</h1>
+      <p className="muted">DeltaSleuth compares what two sources hold, key by key, and explains the differences.</p>
       {query.get('signed_out') === '1' && <p>You are signed out.</p>}
       {shown && (
         <p className="error" role="alert">
@@ -171,6 +174,7 @@ function App() {
   const licensed = !!licence && licence.state !== 'open';
   const nav = navOf({ sso: me?.mode === 'oidc', admin, notifications: !!notify?.enabled, licensed });
   const current = currentOf(parts);
+  const crumbs = me && !signedOut ? crumbsOf(parts, Object.fromEntries(query)) : [];
   const page =
     !health || me === undefined ? null : signedOut ? (
       <SignIn mode={health.auth} query={query} onSignedIn={signedIn} />
@@ -252,6 +256,11 @@ function App() {
         </nav>
         <main key={signIns}>
           <Err error={error} />
+          {crumbs.length > 0 && (
+            <nav className="crumbs" aria-label="Back to">
+              {crumbs.map((crumb) => <a key={crumb.href} href={crumb.href}>{crumb.label}</a>)}
+            </nav>
+          )}
           {page}
         </main>
         {me && licence && !licensed && (

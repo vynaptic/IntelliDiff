@@ -85,7 +85,7 @@ export function Targets() {
   const remove = async (t: Target) =>
     (await confirm({
       title: `Remove ${t.target_id}?`,
-      body: `Stored specs and schedules that name ${t.target_id} stop running.`,
+      body: `Stored comparisons and schedules that name ${t.target_id} stop running.`,
       action: 'Remove endpoint',
       danger: true,
     })) && act(api.removeTarget(t.target_id), t.target_id, `Removed endpoint ${t.target_id}.`);

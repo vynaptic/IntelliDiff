@@ -53,9 +53,6 @@ export function KeyScreen({ runId, keyMasked, query }: { runId: string; keyMaske
   const d = detail.data;
   return (
     <>
-      <p>
-        <a href={href(['runs', runId], { cycle })}>Run {runId}</a>
-      </p>
       <h1>
         Key {keyMasked} <Badge v={d?.result?.outcome} />
       </h1>

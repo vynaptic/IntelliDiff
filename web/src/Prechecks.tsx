@@ -39,11 +39,11 @@ function PrecheckForm({ specId }: { specId?: string }) {
       <div className="inline">
         <label>
           <input type="checkbox" checked={d.every} onChange={(e) => setD({ ...d, every: e.target.checked })} /> every stored
-          spec of two tables (the newest version of each name)
+          comparison of two tables (the newest version of each name)
         </label>
         {!d.every && (
           <label>
-            Specs{' '}
+            Comparisons{' '}
             <select
               multiple required size={6} value={d.spec_ids}
               onChange={(e) => setD({ ...d, spec_ids: [...e.target.selectedOptions].map((o) => o.value) })}
@@ -237,7 +237,7 @@ function PairPanel({ id, n }: { id: string; n: number }) {
           {can('operator') && p.spec_id !== null && (
             <button onClick={() => compare(p)} disabled={!!refused} title={refused}>Run a comparison</button>
           )}
-          {can('spec_author') && draftable(p) && <button onClick={draft}>Draft a spec</button>}
+          {can('spec_author') && draftable(p) && <button onClick={draft}>Draft a comparison</button>}
         </>
       )}
     </section>
@@ -268,7 +268,6 @@ export function PrecheckScreen({ id, pair }: { id: string; pair?: string }) {
   return (
     <>
       <h1>Table pre-check <span className="mono">{id}</span></h1>
-      <p><a href="#/prechecks">All pre-checks</a></p>
       <Err error={found.error ?? error} />
       {d && (
         <>

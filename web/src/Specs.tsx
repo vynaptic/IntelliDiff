@@ -50,7 +50,7 @@ export function Specs() {
   async function request(s: Spec) {
     const note = await prompt({
       title: `Request a four-eyes approval of ${s.name} ${s.version}`,
-      body: `Spec #${s.spec_id}. Someone who did not write it approves its content.`,
+      body: `Comparison #${s.spec_id}. Someone who did not write it approves its content.`,
       input: { label: 'Note for the approver (optional)' },
       action: 'Request approval',
     });
@@ -91,7 +91,7 @@ export function Specs() {
         if (!issues.length) setStatus('No issues.');
       } else {
         const saved = await api.saveSpec(yaml);
-        setStatus(`Saved as spec #${saved.spec_id}.${sso ? gated(saved) : ''}`);
+        setStatus(`Saved as comparison #${saved.spec_id}.${sso ? gated(saved) : ''}`);
         specs.reload();
       }
     } catch (e) {
@@ -102,7 +102,7 @@ export function Specs() {
 
   return (
     <>
-      <h1>Specs</h1>
+      <h1>Comparisons</h1>
       {can('spec_author') && <p><a className="button primary" href="#/specs/new">New comparison</a></p>}
       <Err error={error ?? specs.error ?? schedules.error} />
       <Table
@@ -110,12 +110,12 @@ export function Specs() {
         cols={cols}
         rowId={(s) => String(s.spec_id)}
         loading={specs.loading}
-        empty={can('spec_author') ? 'No spec stored yet. Start with "New comparison", or upload one below.' : 'No spec stored yet.'}
+        empty={can('spec_author') ? 'No comparison stored yet. Start with "New comparison", or upload one below.' : 'No comparison stored yet.'}
       />
       {can('spec_author') && (
         <>
           <section className="panel">
-            <h2>Upload a spec</h2>
+            <h2>Upload a comparison (YAML or JSON)</h2>
             <input type="file" accept=".yaml,.yml,.json" onChange={(e) => e.target.files?.[0]?.text().then(setYaml)} />
             <textarea rows={16} value={yaml} onChange={(e) => setYaml(e.target.value)} spellCheck={false} />
             <p className="inline">
@@ -150,13 +150,12 @@ export function SpecScreen({ id }: { id: string }) {
   const standIns = !!s?.body.key.source?.keys && (s.body.key.class ?? 'business_code') !== 'business_code';
   return (
     <>
-      <h1>{fresh ? 'New comparison' : s ? `${s.name} ${s.version}` : `Spec #${id}`}</h1>
-      <p><a href="#/specs">All specs</a></p>
+      <h1>{fresh ? 'New comparison' : s ? `${s.name} ${s.version}` : `Comparison #${id}`}</h1>
       <Err error={found.error} />
       {s && (
         <>
           <p className="muted">
-            Spec #{s.spec_id} · content hash <span className="mono">{s.content_hash}</span> · stored {when(s.created_at)} by{' '}
+            Comparison #{s.spec_id} · content hash <span className="mono">{s.content_hash}</span> · stored {when(s.created_at)} by{' '}
             {s.created_by ? <Named name={s.created_by_name} actor={s.created_by} /> : 'an unrecorded actor'}
           </p>
           {s.form ? <Builder id={id} form={s.form} standIns={standIns} /> : <pre className="panel">{s.yaml}</pre>}
@@ -212,7 +211,7 @@ function Profile({ onDraft }: { onDraft: (draft: Draft) => void }) {
   const cols = Object.keys(evidence[0] ?? {}).map((k): Col<Record<string, unknown>> => [k, (row) => cell(row[k])]);
   return (
     <form className="panel" onSubmit={submit}>
-      <h2>Draft a spec from sample pairs</h2>
+      <h2>Draft a comparison from sample pairs</h2>
       <p className="muted">A JSON array of {'{key, a, b}'}, or JSON Lines of {'{key, side, status, body}'} records (a side without a 2xx JSON body has no document). The draft and its issues open in the editor above.</p>
       <div className="inline">
         <input type="file" name="samples" accept=".json,.jsonl" required />

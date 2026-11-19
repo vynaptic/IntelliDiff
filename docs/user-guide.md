@@ -15,10 +15,10 @@ What a person may do depends on the role. A viewer reads everything. An operator
 ## Your first comparison
 This compares the two bundled practice services: an old version (side a) and a new version (side b) of a customer service. Both hold the same 40 customers, with a few differences planted on purpose.
 
-1. Click "Specs". In "Upload a spec", press the file button and choose `mocks/customer/spec.yaml` in the repository's folder. Press "Validate": it shows one warning, `inline_keys_stored`, which stops nothing. Press "Save".
+1. Click "Comparisons": the screens call a stored spec a comparison. In "Upload a comparison (YAML or JSON)", press the file button and choose `mocks/customer/spec.yaml` in the repository's folder. Press "Validate": it shows one warning, `inline_keys_stored`, which stops nothing. Press "Save".
    You should see "Saved as spec #1." beside the buttons.
-2. Click "Runs". In "New run", leave "Spec" at `mock-customer-v1-vs-v2 1.0.0 (#1)`, "Mode" at "Batch" and the keys box empty. Press "Start run".
-   You should see, after about five seconds, the status `completed`, the line `40/40 keys · done 40` and the counts `MATCH 35`, `MISMATCH 2`, `KNOWN_DIFF 2` and `NOT_FOUND_B 1`.
+2. Click "Runs". In "New run", leave "Comparison" at `mock-customer-v1-vs-v2 1.0.0 (#1)`, "Mode" at "Batch" and the keys box empty. Press "Start run".
+   You should see, after about five seconds, the status "Completed", the line `40/40 keys · done 40` and, under the bar, the counts "2 Mismatch", "1 Not found in B", "2 Known difference" and "35 Match".
 3. Read the bar of the keys by outcome and the counts under it, then the tabs. The page opens on "Not matching": the keys whose outcome is not a match, by outcome. "Root causes" has 4 rows, the gravest first, "Findings" one row for each single difference and "All results" one row for each key, with its outcome. Click the count "2 Mismatch" to see only those keys in "All results", then "Clear filters".
 4. Open the tab "Root causes". In its first row, click the key under "Sample keys". The record opens on its differences only: "Next difference" steps through them, and unticking "differences only" shows the whole record.
    You should see five rows, the last one `granted  true  false`: the field that differs, with its value on side A and on side B.
@@ -53,7 +53,7 @@ A comparison spec names two declared services, says how to ask each for a record
 
 1. Click "Targets". In "Declare an endpoint", type an "Id" such as `orders-legacy` and the service's "Base URL". For a service on this machine, write the host as `host.docker.internal`, as in `http://host.docker.internal:8081/api`, and tick "Private or local network". Under "Authentication" keep "None", or choose "Bearer token" or "Header" and type the "Credential", which is stored on the server and shown nowhere again. With a credential and an address that starts with `http://`, also tick "Credential over plain http". Press "Save endpoint".
    You should see "Saved endpoint orders-legacy." Do the same for the second service. Skip this step to try steps 2 and 3 on the practice pair.
-2. Click "Specs", then "New comparison". Type one key in "Sample key", here `C00012001`. Under "Side A" choose the "Target", here `customer-a`, and type the "Path" of one record with `{{ key }}` where the key goes, here `/api/v1/customers/{{ key }}`. Or press "Import curl…", paste the request as a browser or REST client copies it (as cURL, for bash) and replace the record's id in "Path" with `{{ key }}`. Press "Send".
+2. Click "Comparisons", then "New comparison". Type one key in "Sample key", here `C00012001`. Under "Side A" choose the "Target", here `customer-a`, and type the "Path" of one record with `{{ key }}` where the key goes, here `/api/v1/customers/{{ key }}`. Or press "Import curl…", paste the request as a browser or REST client copies it (as cURL, for bash) and replace the record's id in "Path" with `{{ key }}`. Press "Send".
    You should see a line such as `HTTP 200, 1 ms, 1 attempt, 764 bytes` and the JSON that came back. Do the same under "Side B", here with `customer-b` and `/v2/customers/{{ key }}`.
 3. Press "Validate", which should say "No issues.", then "Save and compare this key".
    You should see "Saved as spec #...." and "Compared now (run R-...)" with `MISMATCH`: the two answers are not in one shape yet. Give them one with `select` and `map` under each side in the box "Everything else (YAML)", as the spec below does. Keep the name `scratch-comparison` while you build, because a saved version is never deleted.
@@ -220,7 +220,7 @@ and end the scan without reading the remaining copies. Its row counts include on
 Time limits are checked between fetched batches, including within duplicate groups; a stopped group's
 partial rows are excluded from the checkpoint so a resume reads that key again.
 
-**A pre-check** counts and adds up two tables before any row is compared. Run `ds precheck run examples/tables/spec.yaml`, or use the screen "Pre-checks". You should see the pair with its verdict: `1  crm-customers-vs-platform-users  rows differ: side a 989, side b 990 (1 fewer on side a)`. **The schema guard** holds a run when a table it reads changed since the last run of its spec, for example in a column's type. The run reads `paused`, and "Resume (accept the changes)" or "cancel" on its page decides. Step B of the demo shows it.
+**A pre-check** counts and adds up two tables before any row is compared. Run `ds precheck run examples/tables/spec.yaml`, or use the screen "Pre-checks". You should see the pair with its verdict: `1  crm-customers-vs-platform-users  rows differ: side a 989, side b 990 (1 fewer on side a)`. **The schema guard** holds a run when a table it reads changed since the last run of its spec, for example in a column's type. The run reads "Paused", and "Resume (accept the changes)" or "Cancel run" on its page decides. Step B of the demo shows it.
 
 **MySQL and Oracle.** A side can be a MySQL or Oracle table, and the spec stays a table spec. Model the target on `billing-mysql` or `ledger-oracle` in [targets.example.yaml](../deploy/config/targets.example.yaml), with its password and certificate in secret files. `ds target check <target id>` must print a line that ends `session ok`; it reports what a server lacks before a run is tried. Observed on MySQL 8.4 and Oracle 23 (MySQL 8.0 and Oracle 19c are supported but were not observed: run the kits in `examples/tables/mysql` and `examples/tables/oracle` first). Oracle is reached over plain TCP or TCPS. MariaDB and SQL Server are not supported.
 
@@ -268,7 +268,7 @@ entry and time bounds; an entry-limit refusal pauses the run without claiming it
 - **The cut-over brief** ("Readiness", a pair's name, then "Cut-over brief") shows one pair on one screen: its gates, the stored figures of its newest complete cycle, a trend of its last 30 measured cycles, and its root-cause groups as opened, still open or closed. Closed means not observed in the newest complete cycle, not fixed. The buttons "brief.pdf", "brief.csv" and "causes.csv" save it. So does `ds readiness report --pair <pair> --out /var/lib/deltasleuth/p0/<folder>`.
 
 ## Sign-off, sampling and approvals
-- **Approvals** need single sign-on and two different people. A spec version that shows values in clear, declares known differences, filters what is compared or draws a sample needs a second person's approval. A spec author presses "Request approval" in its row of "Specs". A person with the role `rule_approver` who did not write it opens the request on "Approvals" and presses "Approve" or "Reject". With token sign-in such a run goes ahead and is labelled unapproved.
+- **Approvals** need single sign-on and two different people. A spec version that shows values in clear, declares known differences, filters what is compared or draws a sample needs a second person's approval. A spec author presses "Request approval" in its row of "Comparisons". A person with the role `rule_approver` who did not write it opens the request on "Approvals" and presses "Approve" or "Reject". With token sign-in such a run goes ahead and is labelled unapproved.
 - **Sign-off** accepts one ended cycle as evidence. An operator presses "Request sign-off" under "Sign-off" in the tab "Evidence and sign-off" of the run's page, and a person who neither wrote the spec, started the run nor asked for the sign-off approves it. With a signing key in the `packs` block of the settings, "Issue evidence pack" then writes one signed ZIP, which `ds packs verify <file>.zip --fingerprint <hex>` checks offline. Validate the spec first: with the warning `key_pattern_empty`, a spec never gets an evidence pack.
 - **Sampling** serves a pair with too many keys to compare them all. A `key.source` of `kind: hash_sample` with `method: bottom_k` draws a random sample of a fixed size, and the run's page shows each stratum's bound and verdict under "Sample". `ds samples size --tier standard` prints the size: 2,995 cleanly compared keys without a discrepancy show a rate of at most 0.1% at 95% confidence (`--tier high`: 29,956 keys for 0.01%). Fix the size before any key is compared, and never extend it. `ds samples` lists every draw.
 - **Labelled accuracy** checks the comparison itself against a source of truth. In the tab "Labelled accuracy" of the run's page, an operator names the truth source, presses "Draw", downloads the sheet, labels every item and uploads it. `ds labellings` lists the results.
@@ -286,7 +286,7 @@ A schedule starts runs of a stored spec by itself, at cron times in a time zone.
    ```bash
    ds schedules add nightly-customers --spec mock-customer-v1-vs-v2 --cron '0 2 * * *' --tz Europe/London
    ```
-2. Or, in the browser: click "Schedules". In "New schedule", type `nightly-customers` in "Name", choose the spec in "Spec", leave "Runs" at `daily`, set "at" to 02:00 and press "Add schedule". You should see "Added SC-… (nightly-customers)." above the form. Only a running app starts scheduled runs.
+2. Or, in the browser: click "Schedules". In "New schedule", type `nightly-customers` in "Name", choose the spec in "Comparison", leave "Runs" at `daily`, set "at" to 02:00 and press "Add schedule". You should see "Added SC-… (nightly-customers)." above the form. Only a running app starts scheduled runs.
 
 A notification is a short message to a webhook, Slack, Teams or e-mail when an event you chose happens, such as a cycle that ends with a new root cause, a run that paused or failed, or a schedule that missed its time.
 
@@ -321,17 +321,17 @@ Each feature with its screen and its `ds` command. "Not offered" marks what the 
 
 | Feature | In the browser | `ds` command |
 |---|---|---|
-| Store and validate a spec | "Specs", panel "Upload a spec" | `ds spec validate`; `ds run` and `ds compare` store the file they are given |
-| Draft a spec from sample answers | "Specs", panel "Draft a spec from sample pairs" | `ds profile` |
+| Store and validate a spec | "Comparisons", panel "Upload a comparison (YAML or JSON)" | `ds spec validate`; `ds run` and `ds compare` store the file they are given |
+| Draft a spec from sample answers | "Comparisons", panel "Draft a comparison from sample pairs" | `ds profile` |
 | Declare a target | "Targets": "Declare an endpoint", for a service | none: the file `deploy/config/targets.yaml`, for every kind; `ds target check`, for database and files targets |
-| Build a comparison and try each side's request | "Specs": "New comparison", or a stored spec's name; "Import curl…", "Send", "Save and compare this key" | none |
+| Build a comparison and try each side's request | "Comparisons": "New comparison", or a stored spec's name; "Import curl…", "Send", "Save and compare this key" | none |
 | Start a run, batch or soak; pause, resume and cancel it | "Runs", panel "New run"; the run's page: "Pause run", "Resume run", "Cancel run" | `ds run` starts one |
 | Read a run: counts, root causes, results, findings | "Runs", then the run's id | `ds runs` lists the runs; the rows are in the reports |
 | One key, side by side, and compared again now | the key's page, from a table of the run; "Compare now" | `ds compare` |
 | Reports | the run's page: nine buttons | `ds report` |
 | Table, MySQL, Oracle and file sides | the same screens; the run's page adds the line `Table scan (...)` | `ds run`, `ds target check` |
-| Table pre-check; the schema guard | "Pre-checks", or "Pre-check…" in a row of "Specs"; the paused run's page: "Resume (accept the changes)", "Cancel run" | `ds precheck`; none for the guard |
-| Schedules | "Schedules", or "Schedule…" in a row of "Specs" | `ds schedules` |
+| Table pre-check; the schema guard | "Pre-checks", or "Pre-check…" in a row of "Comparisons"; the paused run's page: "Resume (accept the changes)", "Cancel run" | `ds precheck`; none for the guard |
+| Schedules | "Schedules", or "Schedule…" in a row of "Comparisons" | `ds schedules` |
 | Notifications | "Notifications", in the bar once they are switched on | `ds notify` |
 | AI chat and AI drafts | a run's page: "Ask AI about this run", "Explain", "Summarise this run" | `ds llm-probe`, which checks the model only |
 | MCP server for an agent of your own | not offered | `ds mcp check`, `ds mcp` |
@@ -355,16 +355,16 @@ The steps below show DeltaSleuth on the bundled practice data. Steps 1 to 8 take
 
 | # | Min | Do | What it shows |
 |---|---|---|---|
-| 1 | 2 | In "New run", choose `mock-customer-v1-vs-v2 1.0.0` under "Spec" and press "Start run". Wait about five seconds for `completed`. | An old and a new customer service hold the same 40 customers. 35 agree, 2 differ without an explanation, 1 is missing on the new side, and 2 differ in a way the spec declares as known. |
+| 1 | 2 | In "New run", choose `mock-customer-v1-vs-v2 1.0.0` under "Comparison" and press "Start run". Wait about five seconds for "Completed". | An old and a new customer service hold the same 40 customers. 35 agree, 2 differ without an explanation, 1 is missing on the new side, and 2 differ in a way the spec declares as known. |
 | 2 | 2 | Open the tab "Root causes", then "Findings". | Differences that look alike are grouped into one root cause, the gravest first. |
 | 3 | 2 | Back in "Root causes", click the key under "Sample keys" in the first row. It opens on the differences only; press "Next difference". | One customer, side by side. One field differs: a marketing consent is granted on the old side and withdrawn on the new one. Names, addresses and the customer number show only as stand-ins. |
 | 4 | 1 | Click the link "Run R-..." back to the run, press "Download", then "report.pdf", and open the saved file. | The same result as a PDF to pass on. The other entries give CSV files. |
 | 5 | 2 | In the editor, scroll `mocks/customer/spec.yaml`: `key`, `sides`, `compare`, `knownDiffs`, `security`. | Everything that was compared is in one file: how to ask each side, what counts as equal, which differences are known and why, and what is masked. |
-| 6 | 3 | Click "Runs", choose `practice-customers 1.0.0` under "Spec" and press "Start run". Read the line that starts `Table scan (done)`, then the tab "Root causes". | The same works on two database tables. One scan read 1,000 rows on side A and 990 on side B, found 985 identical and reported the other 16 keys: 11 missing on side B, 1 only there, 4 with different values. |
+| 6 | 3 | Click "Runs", choose `practice-customers 1.0.0` under "Comparison" and press "Start run". Read the line that starts `Table scan (done)`, then the tab "Root causes". | The same works on two database tables. One scan read 1,000 rows on side A and 990 on side B, found 985 identical and reported the other 16 keys: 11 missing on side B, 1 only there, 4 with different values. |
 | 7 | 1 | In the terminal: `ds run mocks/customer/spec.yaml --fail-on-diff`, then `echo $?`, which prints `1`. | The same from the command line. With this option the command fails when keys differ, so a pipeline can stop on it. |
 | 8 | 2 | Click "Readiness", then a pair's name, then "Cut-over brief". | Named gates say what is still missing before sign-off. The brief restates what the newest complete cycle measured, with no score and no forecast. |
-| A | 3 | Click "Pre-checks". Under "New table pre-check" choose `practice-customers 1.0.0` in "Specs" and press "Start pre-check". | A pre-check counts and adds up both tables before any row is compared. Its verdict reads `rows differ: side a 1,000, side b 990 (10 fewer on side b)`. |
-| B | 4 | Change a column's type with the command below. Start `practice-customers 1.0.0` again on "Runs": the run reads `paused` and names the column. Press "Resume (accept the changes)": it completes. | The schema guard holds a run before a single row is read, says what changed, and a person decides. |
+| A | 3 | Click "Pre-checks". Under "New table pre-check" choose `practice-customers 1.0.0` in "Comparisons" and press "Start pre-check". | A pre-check counts and adds up both tables before any row is compared. Its verdict reads `rows differ: side a 1,000, side b 990 (10 fewer on side b)`. |
+| B | 4 | Change a column's type with the command below. Start `practice-customers 1.0.0` again on "Runs": the run reads "Paused" and names the column. Press "Resume (accept the changes)": it completes. | The schema guard holds a run before a single row is read, says what changed, and a person decides. |
 | C | 4 | Do "Compare your own two services", in the browser, steps 2 and 3, as printed. | Two services need no file. "Send" asks one endpoint once for one key and stores nothing. One press stores the comparison and compares the key. |
 
 ```bash
@@ -372,4 +372,4 @@ docker exec deltasleuth-practice-db psql -U postgres -d ds_demo_legacy -c 'ALTER
 ```
 The guard holds a run once for a change. To show step B again, run the command with `character(2)` in place of `text`, start the run and accept.
 
-If the page asks for the token again, paste it again. If it says `cross-origin request refused`, the address must be `http://localhost:8000`, typed exactly so. If the table run of step 6 reads `paused`, a table changed since its last run: press "Resume (accept the changes)".
+If the page asks for the token again, paste it again. If it says `cross-origin request refused`, the address must be `http://localhost:8000`, typed exactly so. If the table run of step 6 reads "Paused", a table changed since its last run: press "Resume (accept the changes)".

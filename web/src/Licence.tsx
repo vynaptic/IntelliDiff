@@ -2,14 +2,17 @@
  *  its renewal, the state and its warnings, what it allows, the pairs counted with their seats, and who
  *  installed or withdrew each licence and why. Licences are installed on the host (ds licence install). In
  *  an open build it says that no licence is needed, with the id and what is allowed: no pair is
- *  counted, and only a licence an earlier vendor build stored is listed, as one that does not count. */
+ *  counted, and only a licence an earlier vendor build stored is listed, as one that does not count. Under it,
+ *  the typefaces the UI bundles, each with the copy of its licence that ships beside the font files. */
+import monoLicence from '@fontsource-variable/atkinson-hyperlegible-mono/LICENSE?url';
+import nextLicence from '@fontsource-variable/atkinson-hyperlegible-next/LICENSE?url';
 import { api, type CountedPair, type InstalledLicence } from './api';
 import { allowsLine, installLine, licenceLine, namedLine, pairsLine } from './licensing';
 import { useLoad } from './lib';
 import { Badge, Err, Named, Table, when, type Col } from './ui';
 
 const PAIRS: Col<CountedPair>[] = [
-  ['Pair (spec name)', (p) => p.name],
+  ['Pair (comparison name)', (p) => p.name],
   ['First run', (p) => when(p.first_at)],
   ['Targets', (p) => p.targets.join(', ')],
   ['Seat', (p) => (p.seated ? 'seated' : <span className="warn">no seat</span>)],
@@ -61,6 +64,11 @@ export function LicenceScreen() {
             </>
           )}
           <p className="muted">{installLine(l)}</p>
+          <h2>Bundled typefaces</h2>
+          <p className="muted">
+            The screens are set in Atkinson Hyperlegible Next and Atkinson Hyperlegible Mono, each under the SIL Open Font
+            License 1.1: <a href={nextLicence}>the licence of Next</a>, <a href={monoLicence}>the licence of Mono</a>.
+          </p>
         </>
       )}
     </>

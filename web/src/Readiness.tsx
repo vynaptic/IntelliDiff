@@ -204,7 +204,7 @@ export function ReadinessScreen({ query }: { query: URLSearchParams }) {
               </section>
             );
           })}
-          {!d.programmes.length && <p className="muted">No pair: readiness judges the specs with a batch or soak run.</p>}
+          {!d.programmes.length && <p className="muted">No pair: readiness judges the comparisons with a batch or soak run.</p>}
           {d.next_cursor && <button onClick={() => setPages(pages + 1)}>More</button>}
         </>
       )}
@@ -316,7 +316,7 @@ export function ReadinessPair({ name }: { name: string }) {
       <h1>
         Readiness of {name} {d && <State pair={d} />}
       </h1>
-      <p><a href="#/readiness">All pairs</a> · <a href={href(['readiness', name, 'brief'])}>Cut-over brief</a></p>
+      <p><a href={href(['readiness', name, 'brief'])}>Cut-over brief</a></p>
       <Err error={found.error ?? check.error} />
       {d && (
         <>
@@ -545,7 +545,7 @@ export function ReadinessBrief({ name }: { name: string }) {
       <h1>
         Cut-over brief of {name} {d && <State pair={d} />}
       </h1>
-      <p><a href="#/readiness">All pairs</a> · <a href={href(['readiness', name])}>Gates in full</a></p>
+      <p><a href={href(['readiness', name])}>Gates in full</a></p>
       <Err error={found.error ?? error} />
       {d && (
         <>

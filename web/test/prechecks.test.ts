@@ -107,7 +107,7 @@ test('no screen builds a text, shows a tick or paints a verdict: they print the 
   assert.match(screens, /can\('operator'\) && p\.spec_id !== null && \(\n\s*<button onClick=\{\(\) => compare\(p\)\}.*>Run a comparison</);
   // Spec authors pair two schemas' tables by name and draft a spec of such a pair.
   assert.match(screens, /can\('spec_author'\) && <CatalogueForm \/>/);
-  assert.match(screens, /can\('spec_author'\) && draftable\(p\) && <button onClick=\{draft\}>Draft a spec<\/button>/);
+  assert.match(screens, /can\('spec_author'\) && draftable\(p\) && <button onClick=\{draft\}>Draft a comparison<\/button>/);
   assert.match(source('nav.ts'), /\['schedules', 'prechecks'\],/); // a group no role is asked for
   assert.equal(/prechecks|pre-check/i.test(source('Readiness.tsx') + source('ready.ts')), false); // never there
   assert.match(source('Specs.tsx'), /can\('operator'\)\) cols\.push\(\['Table pre-check', \(s\) => <a href=\{href\(\['prechecks'\], \{ spec_id: s\.spec_id \}\)\}>Pre-check…<\/a>\]\)/);

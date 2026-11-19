@@ -28,7 +28,7 @@ test('a filter is labelled by what it filters, not by its parameter name', () =>
     ['key', 'taxonomy_code', 'path_pattern', 'root_cause_id', 'session_id'].map(label),
     ['Key', 'Taxonomy', 'Path pattern', 'Root cause', 'Session'],
   );
-  assert.deepEqual(['spec_name', 'target_a', 'target_b', 'key_name'].map(label), ['Spec name', 'Target A', 'Target B', 'Key name']);
+  assert.deepEqual(['spec_name', 'target_a', 'target_b', 'key_name'].map(label), ['Comparison name', 'Target A', 'Target B', 'Key name']);
 });
 
 test('text that is no code is left as it is', () => {

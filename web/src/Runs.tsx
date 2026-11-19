@@ -13,7 +13,7 @@ const byOutcome = (r: Run) => r.counters.by_outcome as Record<string, number> | 
 
 const COLS: Col<Run>[] = [
   ['Run', (r) => <a className="mono" href={href(['runs', r.run_id])} title={r.run_id}>{shortId(r.run_id)}</a>],
-  ['Spec', (r) => `${r.spec_name} ${r.spec_version}`],
+  ['Comparison', (r) => `${r.spec_name} ${r.spec_version}`],
   ['Mode', (r) => label(r.mode)],
   ['Status', (r) => <Badge v={r.status} />],
   ['Result', (r) => (
@@ -40,7 +40,7 @@ export function Runs() {
         cols={COLS}
         rowId={(r) => r.run_id}
         loading={runs.loading}
-        empty={can('operator') ? 'No runs yet. A run needs a stored spec: create one under "Specs", then start a run with the form above.' : 'No runs yet.'}
+        empty={can('operator') ? 'No runs yet. A run needs a stored comparison: create one under "Comparisons", then start a run with the form above.' : 'No runs yet.'}
       />
       <MoreRows shown={runs.items.length} more={runs.more} />
     </>
@@ -75,7 +75,7 @@ function NewRun() {
       <h2>New run</h2>
       <div className="inline">
         <label>
-          Spec{' '}
+          Comparison{' '}
           <select name="spec_id" required>
             {specs.data?.items.map((s) => (
               <option key={s.spec_id} value={s.spec_id}>{`${s.name} ${s.version} (#${s.spec_id})`}</option>
@@ -96,7 +96,7 @@ function NewRun() {
         )}
       </div>
       <label>
-        Keys, one per line (none: the spec's key source; a table pair without one scans both tables)
+        Keys, one per line (none: the comparison's key source; a table pair without one scans both tables)
         <textarea name="keys" rows={4} />
       </label>
       <p className="muted">A multi-part key: its parts joined by |</p>
