@@ -303,9 +303,7 @@ async def digest(conn: repo.Conn, run: Mapping[str, Any], c: int, bug_rules: lis
 
     async def discrepant() -> repo.Row:
         before_all = c > 1 and await read_all(before, c - 1)
-        return await repo.discrepant_changes(
-            conn, run_id, c, read_all_before=before_all, read_all=await read_all(ended, c)
-        )
+        return await repo.discrepant_changes(conn, run_id, c, read_all_before=before_all)
 
     changes = None
     if not sampled:

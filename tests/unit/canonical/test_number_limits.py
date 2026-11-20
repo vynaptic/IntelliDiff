@@ -84,7 +84,7 @@ def test_mapped_numbers_are_resource_limited_before_array_rewriting(make_spec, m
     monkeypatch.setattr(jsonio, "MAX_NUMBER_BYTES", 180)
     spec = make_spec(
         CompareConfig(arrays=(ArrayRule("$", "set"),)),
-        side_a=SideConfig(side=Side.A, role="a", target="a", map='[$number("1e99"), $number("2e99")]'),
+        side_a=SideConfig(side=Side.A, role="a", target="a", map='[$number("1e-99"), $number("2e-99")]'),
     )
     result = observe(make_observation(b"{}"), spec.sides[Side.A], spec, TargetCapabilities())
     assert (result.kind, result.reason) == (SideStateKind.INCOMPLETE, "resource_limit")

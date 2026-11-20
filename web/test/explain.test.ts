@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { api, type Message, type Run } from '../src/api.ts';
-import { AI_OFF, CITATION, NO_SUMMARY, answerOf, citedKeys, draftTitle, firstOnly, off, refused, runFacts } from '../src/explain.ts';
+import { AI_OFF, CITATION, NO_SUMMARY, answerOf, citationMatches, citedKeys, draftTitle, firstOnly, off, refused, runFacts } from '../src/explain.ts';
 
 const RC = 'RC-4b68f1b25392';
 const KEY = 'tok:identifier:v1:KB7XB764PVDAZMIHUMMHBVQY33';
@@ -26,6 +26,14 @@ test('a cited finding or observation leads to its key, as the tool results name 
   ];
   assert.deepEqual(citedKeys(messages), { 'F-1': KEY, 'F-2': 'tok:other', 'F-3': KEY, 'O-a': KEY, 'O-b': KEY });
   assert.deepEqual(citedKeys([]), {});
+});
+
+test('only IDs accepted for an assistant answer become links', () => {
+  const content = 'The price differs [F-1]. Check [K:example].';
+  const visible = (m: Message) => citationMatches(m).map((found) => found[1]);
+  assert.deepEqual(visible({ role: 'user', content, citations: ['F-1'] }), []);
+  assert.deepEqual(visible({ role: 'assistant', content, citations: [] }), []);
+  assert.deepEqual(visible({ role: 'assistant', content, citations: ['F-1'] }), ['F-1']);
 });
 
 test('a chip is a citation as the validator reads one: a bracket with a line break inside is none', () => {

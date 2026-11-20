@@ -42,7 +42,7 @@ def test_an_unreadable_llm_key_is_a_503_naming_its_file(open_client: Any, seed: 
 def test_a_key_scoped_session_is_answered_by_the_agent(
     open_client: Any, stub: Any, seed: Any, audit: Any
 ) -> None:
-    async def answer(ctx: Any, session_id: str, question: str, who: Any, about: Any) -> None:
+    async def answer(ctx: Any, session_id: str, question: str, who: Any, about: Any, **scope: Any) -> None:
         await append_chat(ctx, session_id, "user", question)
         await append_chat(ctx, session_id, "assistant", "The price differs.")
 
@@ -70,7 +70,7 @@ def test_a_question_over_the_cap_is_refused_before_anything_is_stored(
 ) -> None:
     asked: list[int] = []
 
-    async def answer(ctx: Any, session_id: str, question: str, who: Any, about: Any) -> None:
+    async def answer(ctx: Any, session_id: str, question: str, who: Any, about: Any, **scope: Any) -> None:
         asked.append(len(question))
         await append_chat(ctx, session_id, "user", question)
 
@@ -95,7 +95,7 @@ def test_questions_are_rate_limited_per_asker(
     stored or asked, while another caller is answered."""
     asked: list[str] = []
 
-    async def answer(ctx: Any, session_id: str, question: str, who: Any, about: Any) -> None:
+    async def answer(ctx: Any, session_id: str, question: str, who: Any, about: Any, **scope: Any) -> None:
         asked.append(who.actor)
         await append_chat(ctx, session_id, "user", question)
 
@@ -146,7 +146,7 @@ def test_once_the_run_s_current_cycle_is_purging_no_chat_starts_or_asks(
 ) -> None:
     from deltasleuth.store import repo
 
-    async def answer(*_: Any) -> None:
+    async def answer(*_: Any, **scope: Any) -> None:
         raise AssertionError("the agent must not run")
 
     async def purging(ctx: Any, run_id: str) -> Any:  # the purge's first step: its reads answer 410
@@ -175,7 +175,7 @@ def test_explain_starts_a_session_asks_the_fixed_question_and_audits_it(
 ) -> None:
     turns: list[tuple[Any, ...]] = []
 
-    async def answer(ctx: Any, session_id: str, question: str, who: Any, about: Any) -> None:
+    async def answer(ctx: Any, session_id: str, question: str, who: Any, about: Any, **scope: Any) -> None:
         turns.append((session_id, question, about, who))
         await append_chat(ctx, session_id, "user", question)
         await append_chat(ctx, session_id, "assistant", "The price differs.")
@@ -219,7 +219,7 @@ def test_explain_starts_a_session_asks_the_fixed_question_and_audits_it(
 def test_explain_refuses_an_unknown_root_cause_without_a_session(
     open_client: Any, stub: Any, seed: Any, audit: Any
 ) -> None:
-    async def answer(*_: Any) -> None:
+    async def answer(*_: Any, **scope: Any) -> None:
         raise AssertionError("the agent must not run")
 
     async def next_cycle(ctx: Any, run_id: str) -> int:  # a soak's second cycle: no root cause yet

@@ -82,8 +82,8 @@ def test_the_cycle_text() -> None:
     assert doc["text"] == (
         f"[prod] customer-profile: cycle 12 of run {RUN} ended: 12 of 1,000,000 keys different,"
         " 3 indeterminate, 0 not read (observed). 2 root causes observed for the first time since cycle 4;"
-        " 1 no longer observed. Of the keys read in both cycles 11 and 12, 41 were observed discrepant in 12"
-        " and not in 11; 17 no longer."
+        " 1 no longer observed. From cycle 11 to 12, 41 keys newly observed discrepant and"
+        " 17 previously discrepant keys observed matching."
         " Mismatch rate 0.0021 (was 0.0009 in cycle 11; above 0.001)."
         f" Observed by DeltaSleuth (installation {INSTALLATION}); not evidence and not a sign-off."
         " Audit row 81234."
@@ -97,7 +97,7 @@ def test_the_cycle_text() -> None:
     assert "Of the keys" not in sampled
     timed = rendered(ended(new_root_causes=None, newly_discrepant=None, unavailable=["new_root_causes"]))[0]
     assert "Root causes observed for the first time since cycle 4: not counted; 1 no longer" in timed["text"]
-    assert "Of the keys read in both cycles 11 and 12, changes were not counted." in timed["text"]
+    assert "Key changes from cycle 11 to 12 were not counted." in timed["text"]
 
 
 def test_the_footer_says_what_it_is_not() -> None:

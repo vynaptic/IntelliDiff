@@ -68,7 +68,8 @@ async def planted(world: World) -> tuple[str, ...]:
     scan = {"done": True, "after": [RAW_KEY], "rows_a": 4, "rows_b": 4, "skipped_a": 0, "skipped_b": 0,
             "matched": 2, "candidates": 2, "graph": GRAPH}  # fmt: skip
     params = {"samples_dir": "/srv/exports/Export-Canary-2026", "pinned": {"a": "Pinned-Canary"},
-              "tables": {"a": {"file": "Export-Canary-2026.csv", "files_sha256": "f" * 64}}}  # fmt: skip
+              "tables": {"a": {"file": "Export-Canary-2026.csv", "files_sha256": "f" * 64,
+                               "columns": []}}}  # fmt: skip
     async with ctx.pool.connection() as conn:
         await conn.execute(
             "INSERT INTO ds.scans (run_id, cycle, state) VALUES (%s, 1, %s)", (world.run_id, Jsonb(scan))
@@ -236,6 +237,18 @@ async def test_no_result_names_the_target_a_gate_is_worded_with(
     await gates_unworded(harness.ctx, "unit-runner", "not_met", "svc-b", "svc-a")
 
 
+async def test_historical_member_names_need_clear_permission(world: World) -> None:
+    ctx = world.ctx
+    args = {"run_id": world.run_id}
+    assert not (await ask(ctx, token("viewer", 2), "get_findings", args, settings=MASKED))[1]
+    async with ctx.pool.connection() as conn:
+        await conn.execute("UPDATE ds.runs SET params = params - 'member_names' WHERE run_id = %s",
+                           (world.run_id,))
+    reason, failed = await ask(ctx, token("viewer", 2), "get_findings", args, settings=MASKED)
+    assert failed and "older masking policy" in reason
+    assert not (await ask(ctx, token("viewer", 2), "get_findings", args))[1]
+
+
 async def test_clear_declared(world: World) -> None:
     """With ``production_tokenised`` alone such a run is not served and nothing of it is shown; with
     ``production_clear_declared`` its clear value shows at the path its spec declares, and its key as
@@ -278,7 +291,8 @@ async def test_clear_declared(world: World) -> None:
     assert (status["path_pattern"], status["value_a"], status["value_b"]) == ("$.status", "ACTIVE", INJECTION)
     canonical = json.loads(seen["get_observations"]["side_b"]["canonical"])
     assert canonical["status"] == INJECTION and canonical["name"].startswith("tok:name:")
-    assert canonical["id"].startswith("tok:")  # the key's own field is not declared clear: a token still
+    assert "id" not in canonical
+    assert canonical[ctx.tokeniser.field_label("free_text", "id", CLEAR_KEY)].startswith("tok:")
 
 
 @pytest.mark.parametrize("mode", ["auto", "legacy"])

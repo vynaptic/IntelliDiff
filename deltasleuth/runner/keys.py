@@ -22,9 +22,9 @@ from typing import Any
 
 from deltasleuth.connectors import tables
 from deltasleuth.connectors.base import UnsafeTargetError, utc_now_iso
-from deltasleuth.connectors.http import TargetGate
+from deltasleuth.connectors.tables.connector import population_snapshot
 from deltasleuth.connectors.tables.engine import ERRORS
-from deltasleuth.context import Context
+from deltasleuth.context import Capabilities, Context
 from deltasleuth.core import jsonio, sampling
 from deltasleuth.core.canonical.encoding import scalar_text
 from deltasleuth.core.canonical.errors import CanonicalError
@@ -38,7 +38,7 @@ from deltasleuth.runner.census import TIMEOUT_S
 from deltasleuth.runner.compare import connect
 from deltasleuth.runner.stop import StopConditions
 from deltasleuth.security.policy import BUSINESS_CODE
-from deltasleuth.security.tokenise import KeyForm, Tokeniser, mask_key
+from deltasleuth.security.tokenise import KEY_FORM, KeyForm, Tokeniser, mask_key
 
 KEYLESS = "the key source holds {:,} row(s) without a key: leave them out with table.where"
 UNROWED = (
@@ -65,7 +65,8 @@ async def resolve_keys(ctx: Context, spec: CompiledSpec, explicit: Sequence[str]
 
 
 async def resolve(
-    ctx: Context, spec: CompiledSpec, explicit: Sequence[str] | None = None, *, bound_s: float = TIMEOUT_S
+    ctx: Context, spec: CompiledSpec, explicit: Sequence[str] | None = None, *, bound_s: float = TIMEOUT_S,
+    form: KeyForm = KEY_FORM, caps: Capabilities | None = None,
 ) -> tuple[list[str], dict[str, Any] | None]:
     """``resolve_keys``, and the read's record: the listing's census record when the keys were walked from
     one (``{basis, target, items, first_at, last_at}``), or what a key table's read met (``{basis:
@@ -81,10 +82,12 @@ async def resolve(
         elif source.get("kind") == "list":
             raw = source["keys"]
         elif source.get("kind") == "paginated_endpoint":
-            raw, record = await _listed(ctx, spec, source)
+            raw, record = await _listed(ctx, spec, source, caps)
         else:
             raise Invalid("no keys: pass keys with the run or declare key.source")
         keys = await asyncio.to_thread(normalise_keys, raw, spec)
+    if form != KEY_FORM:
+        await asyncio.to_thread(_refuse_alike, keys, spec)
     if not keys:
         raise Invalid("the key set is empty")
     return keys, record
@@ -92,10 +95,9 @@ async def resolve(
 
 def normalise_keys(raw_keys: Iterable[Any], spec: CompiledSpec) -> list[str]:
     """Apply ``key.normalize`` and check ``key.pattern`` and the store's limits; the first of
-    duplicates is kept. Keys that would share a masked key are refused (``_refuse_alike``)."""
+    duplicates is kept. Distinct wire keys are kept when the spec's normalisers leave them distinct."""
     keys: dict[str, None] = {}
     _refuse(_fit(raw_keys, spec, keys), spec)
-    _refuse_alike(keys, spec)
     return list(keys)
 
 
@@ -130,7 +132,7 @@ def _refuse(bad: Sequence[int], spec: CompiledSpec) -> None:
 
 def _refuse_alike(keys: Iterable[str], spec: CompiledSpec) -> None:
     """ValueError naming the positions in the key set of the keys that would share a masked key, if any.
-    A key's token is of its NFC text, so keys that differ only in Unicode normal form would be one masked
+    A historical key token is of its NFC text, so keys that differ only in Unicode normal form are one masked
     key, and one of them would get no result. A business code is shown as it is: its keys never share one.
     Two keys alike hold a key outside ASCII, so a set in ASCII is passed at once."""
     keys = list(keys)
@@ -161,13 +163,16 @@ def keys_cut(resolved: Sequence[str], taken: Mapping[str, str]) -> dict[str, int
 
 
 async def _listed(
-    ctx: Context, spec: CompiledSpec, source: dict[str, Any]
+    ctx: Context, spec: CompiledSpec, source: dict[str, Any], caps: Capabilities | None
 ) -> tuple[list[Any], dict[str, Any]]:
     """The ``keyPath`` value of every item of a paginated listing ("" where an item has none), and the
     walk's census record. A multi-part key's ``keyPath`` selects its parts, each a string or a number: an
     item giving anything else is "" too."""
     side = listing_side(source)
-    connector = connect(ctx, side.target, spec.execution, max_values=LISTING_MAX_VALUES)  # under its budget
+    connector = connect(
+        ctx, side.target, spec.execution, max_values=LISTING_MAX_VALUES,
+        capabilities=caps.get(side.target) if caps is not None else None,
+    )
     first_at = utc_now_iso()
     try:
         obs = await connector.fetch("keys", side)
@@ -237,18 +242,15 @@ async def _tabled(
             if plan.get("rejected"):  # a CSV file's lines its plan counted: its reader leaves them out
                 raise Invalid(UNROWED.format(plan["rejected"]))
             target = ctx.targets.live(cfg.target)
-            gate = ctx.gates.setdefault(cfg.target, TargetGate.for_target(target))
-            async with gate.semaphore:  # one slot and one tick of the target's budget for the whole read
-                await gate.limiter.acquire()
-                engine = tables.of(target)
-                async with engine.snapshot(target, timeout_s=bound_s) as session:
-                    at = utc_now_iso()
-                    async for batch in engine.census(session, plan):
-                        ranked, unfit = await asyncio.to_thread(_ranked, batch, last, spec, keys, seen)
-                        rows, seen, last, bad = rows + len(batch), seen + ranked, batch[-1], bad + unfit
-                        if seen > sampling.LIMIT:
-                            raise Invalid(OVER.format(sampling.LIMIT))
-                    skipped = await engine.null_keys(session, plan)
+            engine = tables.of(target)
+            async with population_snapshot(ctx.gates, engine, target, bound_s) as session:
+                at = utc_now_iso()
+                async for batch in engine.census(session, plan):
+                    ranked, unfit = await asyncio.to_thread(_ranked, batch, last, spec, keys, seen)
+                    rows, seen, last, bad = rows + len(batch), seen + ranked, batch[-1], bad + unfit
+                    if seen > sampling.LIMIT:
+                        raise Invalid(OVER.format(sampling.LIMIT))
+                skipped = await engine.null_keys(session, plan)
         if "selected" in plan and rows + skipped != plan["selected"]:  # a file's rows guard
             read = rows + skipped
             raise tables.RowsMoved(f"{read:,} rows were read where the plan counted {plan['selected']:,}")
@@ -261,7 +263,6 @@ async def _tabled(
     if skipped:
         raise Invalid(KEYLESS.format(skipped))
     _refuse(bad, spec)
-    await asyncio.to_thread(_refuse_alike, keys, spec)
     record = {"basis": "key_table", "target": cfg.target, "relation": tables.relation(plan)}
     return list(keys), record | {"rows": rows, "keys": len(keys), "at": at}
 

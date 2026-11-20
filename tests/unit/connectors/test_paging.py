@@ -13,7 +13,13 @@ from deltasleuth.connectors.base import ConnectorConfigError
 from deltasleuth.connectors.paging import DEFAULT_MAX_PAGES, check_pagination
 from deltasleuth.core import jsonio
 from deltasleuth.core.canonical.encoding import content_hash
-from deltasleuth.core.types import Observation, Pagination, RetryPolicy, TargetCapabilities
+from deltasleuth.core.types import (
+    Observation,
+    Pagination,
+    RetryPolicy,
+    TargetCapabilities,
+    TruncationIndicators,
+)
 
 from .conftest import Recorder, Start, fast_execution, side_config
 
@@ -84,6 +90,42 @@ def window_reply(
 
 
 class TestCursor:
+    @pytest.mark.parametrize(
+        ("later", "whole"),
+        [({"total": 3}, False), ({"total": 1}, False), ({"total": -1}, False), ({"total": None}, False),
+         ({"total": "2"}, False), ({"total": 2.5}, False), ({"total": 2}, True), ({}, True)],
+    )
+    @pytest.mark.parametrize("inherited", [False, True])
+    async def test_later_total_agrees_when_reported(
+        self, start: Start, later: dict, whole: bool, inherited: bool
+    ) -> None:
+        def reply(request: web.Request) -> web.Response:
+            if "cursor" in request.query:
+                return web.json_response({"items": [2], "next": None, "other": 4, **later})
+            return web.json_response({"items": [1], "next": "2", "total": 2, "other": 5})
+
+        indicators = TruncationIndicators(2, "$.items", "$.total")
+        caps = TargetCapabilities(
+            truncation_indicators=indicators if inherited else TruncationIndicators(10, "$.items", "$.other")
+        )
+        side = dataclasses.replace(
+            side_config(pagination=CURSOR), truncation=None if inherited else indicators
+        )
+        obs = await (await start(reply, capabilities=caps)).fetch("K1", side)
+        assert obs.pages == 2 and obs.pages_eof is whole
+        assert (obs.error_detail is None) is whole
+
+    @pytest.mark.parametrize(("flag", "whole"), [(True, False), ("unknown", False), (False, True)])
+    async def test_later_envelope_truncation_survives_the_merge(self, start: Start, flag, whole) -> None:
+        def reply(request: web.Request) -> web.Response:
+            if "cursor" in request.query:
+                return web.json_response({"items": [2], "next": None, "partial": flag})
+            return web.json_response({"items": [1], "next": "2", "partial": False})
+
+        side = dataclasses.replace(side_config(pagination=CURSOR), truncation_flags=("$.partial",))
+        obs = await (await start(reply)).fetch("K1", side)
+        assert obs.pages == 2 and obs.pages_eof is whole
+
     async def test_merges_all_pages(self, start: Start, recorder: Recorder) -> None:
         obs = await (await start(cursor_reply())).fetch("K1", side_config(pagination=CURSOR))
         assert ids(obs) == list(range(10))

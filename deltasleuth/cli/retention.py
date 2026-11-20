@@ -119,7 +119,12 @@ def purge_hold(run_id: RunArg, reason: Annotated[str, _o(REASON)], config: Confi
     if problem := purger.reason_error(reason):
         _fail(problem)
     who = _local(config)
-    _in_context(config, lambda ctx: purger.hold(ctx, who, run_id, reason))
+    excluded = _in_context(config, lambda ctx: purger.hold(ctx, who, run_id, reason))
+    if excluded:
+        purging = ", ".join(map(str, excluded["purging"])) or "none"
+        typer.echo(f"held remaining evidence of run {run_id}; cycles already purged: {excluded['purged']};"
+                   f" cycles being purged: {purging}")
+        return
     typer.echo(f"held run {run_id}: its evidence stays until 'ds purge release {run_id}'")
 
 

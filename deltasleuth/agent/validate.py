@@ -1,7 +1,9 @@
 """The answer contract: at least one inline citation [F-…] [O-…] [RC-…] [K:<masked key>], each an
 id that this session's tool results returned, and no number that no tool result holds. Sentence by
 sentence: one that states a number or names an outcome cites at least one such id, and each number it
-states stands in the record of an id it cites. A sentence that does neither may stand uncited.
+states stands in the record of an id it cites. Counts of keys, findings and named outcomes must agree
+with the cited engine field, and a named key outcome with the stored result. A sentence that does
+neither may stand uncited.
 
 A record is a mapping of a tool result that holds a citable id, with everything nested in it: a finding,
 a root cause, a side's observation, a key's view. A number that stands in no record (a run's counters,
@@ -52,7 +54,8 @@ _APART = re.compile(f"[{_GAP}]")
 # 1,234 and 1 234 are one number, .97 is one, and 250ms is one with its unit; digits inside a token, an id,
 # a code behind a word and a hyphen (ORG-000007) or a version are not a number.
 NUMBER = re.compile(
-    rf"(?<![\w.])(?<![A-Za-z_]-)(?P<digits>(?:\d{{1,3}}(?:[{_GAP}]\d{{3}})+|\d(?:[\d,]*\d)?)(?:\.\d+)?|\.\d+)"
+    r"(?<![\w.])(?<![A-Za-z_]-)(?P<sign>[-+\u2212]?)"
+    rf"(?P<digits>(?:\d{{1,3}}(?:[{_GAP}]\d{{3}})+|\d(?:[\d,]*\d)?)(?:\.\d+)?|\.\d+)"
     rf"(?P<unit>(?i:{'|'.join(UNITS)}))?(?!\w|\.\d)"
 )
 # A count NUMBER does not read: with a magnitude (2.4M, 37k, 3bn) or an exponent (1e6), or grouped by dots
@@ -122,6 +125,28 @@ _END = re.compile(r"\n|[.!?]+[\"'\u2019\u201d)\]]*(?=\s)")
 _ABBREVIATED = re.compile(r"(?:^|[\s(])(?:e\.g|i\.e|etc|vs|cf|approx|incl|no|nr|fig)$", re.IGNORECASE)
 _LEADING = re.compile(rf"\s*(?:{CITATION.pattern}[\s,;:]*)+")  # citations that open a sentence
 _EXCERPT = 80  # characters of a sentence the repair request quotes
+_OUTCOME_NAME = "|".join(o.value for o in Outcome)
+_COUNT_OF = re.compile(
+    rf"\s+(?:(?:keys?\s+)?(?:(?:is|are|were|was)\s+)?(?:a\s+)?(?P<outcome>{_OUTCOME_NAME})"
+    r"(?:es|ed|s)?\b|(?P<noun>keys?|findings?)\b)", re.I,
+)
+_TOTAL_BEFORE = re.compile(r"(?:^\s*of|\b(?:out of|compared|total(?: of)?))\s*$", re.I)
+_TOTAL_AFTER = re.compile(r"\s+(?:(?:were|was)\s+)?(?:compared|in total)\b", re.I)
+_RUN_BEFORE = re.compile(r"\b(?:(?:across|in|for) (?:the|this) run,?|the run (?:has|had|recorded))\s*$", re.I)
+_DIFFER = re.compile(r"\s+differ(?:ed)?\b", re.I)
+_LABEL_BEFORE = re.compile(rf"\b(?P<outcome>{_OUTCOME_NAME})\s*[:=]\s*$", re.I)
+_COUNT_LABEL = re.compile(r"\b(?P<name>affected[ _]keys|finding[ _]count)\s*(?:[:=]|\bis)\s*$", re.I)
+_ONE_COUNT = re.compile(r"\s+(?:keys?|findings?)\b", re.I)
+_ENUM = re.compile(rf"\b(?:{_OUTCOME_NAME})\b")
+_OUTCOME_CLAIM = re.compile(
+    rf"\b(?:key(?:'s outcome)?|outcome|result)\s+(?:(?:is|was|of)\s+)?(?:a\s+)?(?P<outcome>{_OUTCOME_NAME})"
+    r"(?:es|ed|s)?\b", re.I,
+)
+_UNIVERSAL = re.compile(rf"\b(?:every key|all keys)\s+(?P<outcome>{_OUTCOME_NAME})(?:es|ed|s)?\b", re.I)
+_RELEASE_CLAIM = re.compile(
+    r"\b(?:run|comparison|cut[- ]over|release)\s+(?:is|was|has been)\s+"
+    r"(?:certified|approved|signed[- ]off|safe|ready for cut[- ]over)\b", re.I,
+)
 
 
 @dataclass
@@ -133,6 +158,8 @@ class Evidence:
     numbers: set[Decimal] = field(default_factory=set)
     shorthand: set[str] = field(default_factory=set)
     held: dict[str, set[Decimal]] = field(default_factory=dict)
+    # Named engine fields; an equal number in a finding's displayed value cannot stand in for a count.
+    facts: dict[str, dict[str, str | int]] = field(default_factory=dict)
 
     def add(self, data: Any) -> None:
         """Take in one tool result's data: each number under the ids of the records it stands in, and one
@@ -142,6 +169,28 @@ class Evidence:
         self._add(data, (), loose, found)
         for cited in found:
             self.held.setdefault(cited, set()).update(loose)
+        if isinstance(data, dict):
+            self._engine_facts(data, found)
+
+    def _engine_facts(self, data: dict[str, Any], found: set[str]) -> None:
+        counters = data.get("counters") or {}
+        counts = {k: v for k, v in counters.get("by_outcome", counters).items() if k in Outcome}
+        if "different" in counters:
+            counts["different"] = counters["different"]
+        total = next((counters[k] for k in ("total", "keys", "compared") if k in counters), None)
+        if total is not None:
+            counts["total"] = total
+        for cited in found:
+            self.facts.setdefault(cited, {}).update(counts)
+        for cause in [data, *data.get("root_causes", [])]:
+            if "root_cause_id" in cause:
+                fields = {k: cause[k] for k in ("affected_keys", "finding_count") if k in cause}
+                self.facts.setdefault(cause["root_cause_id"], {}).update(fields)
+        result = data.get("result") or data
+        if data.get("key_masked") and result.get("outcome") in Outcome:
+            for cited in found:
+                if not cited.startswith("RC-"):
+                    self.facts.setdefault(cited, {})["outcome"] = result["outcome"]
 
     def _add(self, data: Any, owners: tuple[str, ...], loose: set[Decimal], found: set[str]) -> None:
         """Take in ``data``, which stands in the records of ``owners``."""
@@ -183,7 +232,8 @@ def _values(data: Any) -> set[Decimal]:
         values = {value for _, value in stated(data)}
         # Each group of a spaced number is also a value of its own: "10 250" may be two numbers.
         return values | {
-            _number(group) for found in NUMBER.finditer(data) for group in _APART.split(found["digits"])
+            _number(group) for found in NUMBER.finditer(data) if not found["sign"]
+            for group in _APART.split(found["digits"])
         }
     if isinstance(data, int | float | Decimal) and not isinstance(data, bool):
         return {Decimal(str(data))}
@@ -238,6 +288,58 @@ def _unsupported(answer: str, evidence: Evidence, shown: bool) -> Iterator[str]:
         for written, value in numbers:
             if value in evidence.numbers and value not in held:  # else: no tool result holds it at all
                 yield f"{written} in {where} appears in no record it cites"
+        yield from _decision_claims(bare, evidence, known, where, held)
+
+
+def _count_field(before: str, after: str) -> str | None:
+    """The field a count names: a run outcome, the run total, or a cause's keys or findings."""
+    if label := _LABEL_BEFORE.search(before):
+        return label["outcome"].upper()
+    if label := _COUNT_LABEL.search(before):
+        return label["name"].lower().replace(" ", "_")
+    if not (unit := _COUNT_OF.match(after)):
+        return None
+    if unit["outcome"]:
+        return unit["outcome"].upper()
+    if unit["noun"].lower().startswith("finding"):
+        return "finding_count"
+    if _RUN_BEFORE.search(before) and _DIFFER.match(after, unit.end()):
+        return "different"
+    if _TOTAL_BEFORE.search(before) or _TOTAL_AFTER.match(after, unit.end()):
+        return "total"
+    return "affected_keys"
+
+
+def _decision_claims(
+    text: str, evidence: Evidence, known: list[str], where: str, held: set[Decimal]
+) -> Iterator[str]:
+    """Check the quantities and outcomes the sentence attributes to the comparison engine."""
+    records = [evidence.facts.get(c, {}) for c in known]
+    quantified: set[int] = set()
+    for start, (end, written, value) in _stated(text, counted_one=True).items():
+        field = _count_field(text[:start], text[end:])
+        if outcome_count := _COUNT_OF.match(text, end):
+            if outcome_count["outcome"]:
+                quantified.add(outcome_count.start("outcome"))
+        if label := _LABEL_BEFORE.search(text, 0, start):
+            quantified.add(label.start("outcome"))
+        if field is None or (value not in held and written.lower() != "one"):
+            continue  # an ungrounded number already has its own error
+        values = {record[field] for record in records if field in record}
+        if values != {value}:
+            yield f"{written} in {where} needs a citation for {field}; use one subject per claim"
+    for claim in _UNIVERSAL.finditer(text):
+        quantified.add(claim.start("outcome"))
+        if not any(r.get("total") and r.get("total") == r.get(claim["outcome"].upper()) for r in records):
+            yield f"{where} gives an outcome for every key that its cited run counters do not establish"
+    # An unquantified named outcome is a claim about the key's result.
+    assertions = {m.start(): m[0] for m in _ENUM.finditer(text)}
+    assertions.update({m.start("outcome"): m["outcome"] for m in _OUTCOME_CLAIM.finditer(text)})
+    outcomes = {r["outcome"] for r in records if "outcome" in r}
+    if any(outcomes != {value.upper()} for at, value in assertions.items() if at not in quantified):
+        yield f"{where} names a key outcome its citations do not establish"
+    if _RELEASE_CLAIM.search(text):
+        yield f"{where} gives a release verdict that comparison evidence cannot establish"
 
 
 def sentences(answer: str) -> list[tuple[str, tuple[str, ...]]]:
@@ -268,22 +370,28 @@ def _excerpt(sentence: str) -> str:
 
 def stated(text: str) -> list[tuple[str, Decimal]]:
     """Every number ``text`` states, in its order: as written, and its value."""
-    found: dict[int, tuple[str, Decimal]] = {}
+    return [(written, value) for _, written, value in _stated(text).values()]
+
+
+def _stated(text: str, *, counted_one: bool = False) -> dict[int, tuple[int, str, Decimal]]:
+    found: dict[int, tuple[int, str, Decimal]] = {}
     words = text  # what the cardinal words are read from: a magnitude behind digits is no word of its own
     for digits in NUMBER.finditer(text):
-        end, value = digits.end(), _number(_APART.sub("", digits["digits"]))
+        sign = digits["sign"].replace("\u2212", "-")
+        end, value = digits.end(), _number(sign + _APART.sub("", digits["digits"]))
         if not digits["unit"] and (magnitude := _MAGNITUDE.match(text, end)):
             end, value = magnitude.end(), value * _VALUE[magnitude[1].lower()]
             words = words[: digits.end()] + "#" * (end - digits.end()) + words[end:]
-        found[digits.start()] = text[digits.start() : end], value
+        found[digits.start()] = end, text[digits.start() : end], value
     for run in WORDS.finditer(words):
-        if run[0].lower() == "one":
+        if run[0].lower() == "one" and not (counted_one and _ONE_COUNT.match(text, run.end())
+                                            and not text[:run.start()].lower().endswith("no ")):
             continue
         for start, end, spelt in _spelt(run):
             written = " ".join(text[start:end].split())
             if written.lower() != "two" or not _PAIR.match(text, end):
-                found[start] = written, Decimal(spelt)
-    return [found[start] for start in sorted(found)]
+                found[start] = end, written, Decimal(spelt)
+    return dict(sorted(found.items()))
 
 
 def _spelt(run: re.Match[str]) -> Iterator[tuple[int, int, int]]:

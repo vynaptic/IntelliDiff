@@ -267,11 +267,10 @@ async def _stored(ctx: Context, conn: repo.Conn, asked: _Asked, run_id: str) -> 
         raise NotFound(f"run {run_id} not found")
     asked.run = run
     await refuse_purged(conn, run_id, run["cycle"])
-    spec = await ctx.spec(conn, run["spec_id"])
-    if chat.clear_declared(spec) and CLEAR not in asked.settings.data_classes:
+    spec = await ctx.run_spec(conn, run)
+    if CLEAR not in asked.settings.data_classes and (reason := chat.clear_egress_reason(spec)):
         raise ToolError(
-            f"run {run_id} is not served by this installation: its spec declares clear values or a"
-            f" business-code key (mcp.data_classes lacks {CLEAR})"
+            f"run {run_id} is not served by this installation: {reason} (mcp.data_classes lacks {CLEAR})"
         )
     return run
 

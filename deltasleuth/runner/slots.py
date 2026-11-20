@@ -10,9 +10,8 @@ time. It renews the leases while the keys wait and are read: A then B, or B then
 ``confirm`` judges against the stored first read; a recheck reads no side of fixed files again, whose first
 observation stands. The group's observations, results, masked findings and next states (done, or a recheck
 due ``recheck.delay`` + jitter after the database's now) are saved in one transaction; a lost lease rolls it
-back, so a kill -9 costs at most the keys in flight and never duplicates a result. A key a table scan queued
-falls due that long after the scan saved it, so its first usable per-key read is its confirming read and no
-second one follows.
+back, so a kill -9 costs at most the keys in flight and never duplicates a result. A table scan queues its
+candidates for the same first read and recheck as other live keys.
 
 Politeness: one gate per target for the process (``ctx.gates``: rate budget, in-flight cap, and a breaker
 for each ``execution.circuitBreaker`` its specs declare, so a run is governed by its own spec's), at most
@@ -46,7 +45,7 @@ import psycopg
 from deltasleuth.auth.principal import WORKER
 from deltasleuth.connectors.tables import unsealed
 from deltasleuth.context import Capabilities, Context
-from deltasleuth.core.types import CompiledSpec, Confirmation, KeyResult, Outcome, Side, SideStateKind
+from deltasleuth.core.types import CompiledSpec, KeyResult, Side, SideStateKind
 from deltasleuth.evidence.store import EvidenceKeyError, EvidenceStore
 from deltasleuth.runner import drift, sample
 from deltasleuth.runner.compare import (
@@ -94,7 +93,6 @@ class _Run:
     monitor: StopMonitor
     lanes: asyncio.Semaphore | None  # live runs: execution.concurrency groups of keys in flight
     form: KeyForm  # how its keys are masked, as it recorded at its creation
-    scanned: bool = False  # its keys come from a table scan, which saw each differ recheck.delay before
     halted: bool = False  # this process paused or stopped the run
 
 
@@ -357,27 +355,29 @@ class Slots:
             return self.runs[run_id]
         async with self.loading.setdefault(run_id, asyncio.Lock()):
             if run_id not in self.runs:
-                self.runs[run_id] = await self._load(run_id, row["spec_id"])
+                self.runs[run_id] = await self._load(run_id)
         return self.runs[run_id]
 
-    async def _load(self, run_id: str, spec_id: int) -> _Run:
+    async def _load(self, run_id: str) -> _Run:
         async with self.ctx.pool.connection() as conn:
             stored = await repo.get_run(conn, run_id)
             assert stored is not None  # a run is never deleted while its keys are leased
             samples = stored["params"].get("samples_dir")
-            spec = await self.ctx.spec(conn, spec_id, live=not samples)  # live: calls targets
-            critical = await repo.unexplained_critical(conn, run_id)  # saved by an earlier worker too
+            spec = await self.ctx.run_spec(conn, stored, live=not samples)  # live: calls targets
+            conditions = StopConditions.from_spec(spec.raw)
+            critical = (
+                await repo.unexplained_critical(conn, run_id) if conditions.max_unexplained_critical else None
+            )
             tables = stored["params"].get("tables")
             if stored["params"].get("pinned"):  # a file side's pins
                 tables = unsealed(await self.ctx.sealer(conn, run_id), stored["params"])
-        reader = FileReader(samples, spec) if samples else LiveReader(self.ctx, spec, tables)
-        monitor = StopMonitor(StopConditions.from_spec(spec.raw), stored["started_at"], critical)
+        caps = self.ctx.capabilities(stored)
+        reader = FileReader(samples, spec) if samples else LiveReader(self.ctx, spec, tables, caps=caps)
+        monitor = StopMonitor(conditions, stored["started_at"], critical)
         lanes = None if samples else asyncio.Semaphore(spec.execution.concurrency)
         policy = RecheckPolicy.from_spec(spec.raw)
-        caps = self.ctx.capabilities(stored)
-        scanned = stored["scan"] is not None
         form = key_form(stored["params"])
-        return _Run(spec, caps, reader, not samples, policy, monitor, lanes, form, scanned)
+        return _Run(spec, caps, reader, not samples, policy, monitor, lanes, form)
 
 
 def _unwritable(exc: BaseException) -> TypeGuard[OSError]:
@@ -392,12 +392,6 @@ def _unwritable(exc: BaseException) -> TypeGuard[OSError]:
 
 
 def _confirmed(run: _Run, pass_no: int, read: KeyResult, first: KeyResult | None) -> KeyResult:
-    """A pass's result: a recheck is judged against the first read. A scanned key's usable per-key read
-    is its confirming read: the scan saw the key differ and queued it ``recheck.delay`` before, so a row
-    that converged meanwhile reads MATCH and one that still differs is confirmed; a read of fixed files
-    on both sides is final, since reading them again is a no-op."""
+    """Judge a recheck against its first observed documents; two fixed sides are final on the first read."""
     result = read if first is None else confirm(first, read, spec=run.spec, last=pass_no > run.policy.times)
-    result = freeze(result, run.reader.fixed)
-    if run.scanned and result.outcome is not Outcome.INCONCLUSIVE and run.policy.due(result):
-        result.confirmation = Confirmation.RECHECKED
-    return result
+    return freeze(result, run.reader.fixed)

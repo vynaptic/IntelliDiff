@@ -1,0 +1,16 @@
+description: >
+  A changed total on a later page survives capture as an incomplete walk, even when its
+  merged body appears complete. A negative total on a single page cannot certify completeness.
+sides:
+  a: &counted {truncation: {cap: 2, itemsPath: $.items, countPath: $.total}}
+  b: *counted
+a:
+  body: '{"items":[1,2],"total":2}'
+  pages: 2
+  pages_eof: false
+b:
+  body: '{"items":[1,2],"total":-1}'
+expect:
+  a: INCOMPLETE truncated
+  b: INCOMPLETE truncated
+  outcome: INCONCLUSIVE truncated

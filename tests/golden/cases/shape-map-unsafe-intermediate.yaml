@@ -1,0 +1,11 @@
+description: >
+  Two safe integers multiply past the range of exact arithmetic in a map. A predicate must
+  not turn the rounded intermediate into a definitive match.
+sides:
+  a: {map: "{'positive': x * y > 0}"}
+a: {body: '{"x":100000001,"y":100000001}'}
+b: {body: '{"positive":true}'}
+expect:
+  a: INCOMPLETE unparseable
+  b: COMPLETE
+  outcome: INCONCLUSIVE unparseable

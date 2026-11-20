@@ -13,6 +13,7 @@ checks that the engine reads the DSL as the schema defines it. Layout::
                   stableOrdering, maxDepth}, b: {...}}                               # optional
     a: {status: 200, body: "<JSON text>", error_class, pages, pages_eof, pagination_unstable, headers}
     b: {...}
+    recheck: {a: {...}, b: {...}, expect: "DRIFT b_converged"}    # optional second pair of reads
     expect:
       a: COMPLETE | ABSENT | "INCOMPLETE <reason>" | "ERROR <reason>"
       b: ...
@@ -69,7 +70,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 TODAY = date(2026, 9, 24)  # the day of every observation: known-difference rules expire against it
 _SCHEMA = json.loads((REPO_ROOT / "deltasleuth/core/spec/spec.schema.json").read_text())
 _DEFS = _SCHEMA["$defs"]
-_TOP_LEVEL = {"description", "key", "compare", "knownDiffs", "sides", "targets", "a", "b", "expect"}
+_TOP_LEVEL = {
+    "description", "key", "compare", "knownDiffs", "sides", "targets", "a", "b", "expect", "recheck"
+}
 _EXPECT = {"a", "b", "outcome", "findings"}
 _SIDE_MEMBERS = ("select", "map", "notFound", "success", "truncation", "pagination")
 DIFFER_ATTRIBUTES = ("value_class", "member_key", "array_path", "direction", "raw_only", "severity")
@@ -87,6 +90,7 @@ class GoldenCase:
     expect_states: dict[Side, tuple[str, str | None]]
     expect_findings: list[dict[str, Any]]
     expect_outcome: tuple[str, str | None] | None = None
+    recheck: tuple[dict[Side, Observation], tuple[str, str | None]] | None = None
 
 
 def load_case(path: Path) -> GoldenCase:
@@ -116,6 +120,9 @@ def load_case(path: Path) -> GoldenCase:
             raise ValueError(f"{path.name}: unknown finding members {sorted(unknown)}")
         if ("outcome" in expect) != ("taxonomy" in item) or ("rule" in item and "outcome" not in expect):
             raise ValueError(f"{path.name}: taxonomy and rule go with expect.outcome, on every finding")
+    recheck = raw.get("recheck")
+    if recheck is not None and set(recheck) != {"a", "b", "expect"}:
+        raise ValueError(f"{path.name}: a recheck takes both observations and its expected outcome")
     return GoldenCase(
         name=path.stem,
         description=raw["description"],
@@ -126,6 +133,8 @@ def load_case(path: Path) -> GoldenCase:
         expect_states={s: _state(expect[s.value]) for s in Side},
         expect_findings=[{**item, "finding": tuple(item["finding"])} for item in findings],
         expect_outcome=_state(expect["outcome"]) if "outcome" in expect else None,
+        recheck=({s: _observation(key, s, recheck[s.value]) for s in Side}, _state(recheck["expect"]))
+        if recheck is not None else None,
     )
 
 

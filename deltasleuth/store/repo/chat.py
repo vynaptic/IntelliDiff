@@ -33,6 +33,7 @@ async def append_chat_message(
     sealer: Sealer,
     *,
     citations: Sequence[str] = (),
+    report_prompt: str | None = None,
 ) -> int:
     """Append a message (role user: the question as typed; assistant; tool: a masked result), its
     ``payload`` ``{content, tool_calls}`` sealed by the run's ``sealer`` in the run's current cycle;
@@ -54,33 +55,42 @@ async def append_chat_message(
         )
         text = jsonio.dumps(storable(dict(payload)))  # a question or answer may quote a NUL-padded value
         await conn.execute(
-            """INSERT INTO ds.chat_messages (session_id, seq, role, cycle, sealed, citations)
-               VALUES (%s, %s, %s, %s, %s, %s)""",
+            """INSERT INTO ds.chat_messages (session_id, seq, role, cycle, sealed, citations, report_prompt)
+               VALUES (%s, %s, %s, %s, %s, %s, %s)""",
             (
                 session_id, seq, role, cycle,
                 sealer.seal("chat", cycle, chat_context(session_id, seq, role), text.encode()),
-                _jsonb(list(citations)),
+                _jsonb(list(citations)), report_prompt,
             ),
         )  # fmt: skip
     return seq
 
 
-async def get_chat_session(conn: Conn, session_id: str) -> Row | None:
+async def get_chat_session(
+    conn: Conn, session_id: str, *, recent: int | None = None, actor: str | None = None
+) -> Row | None:
     """The session, its masked ``key_masked`` (None for a run's chat) and its ``messages`` in order,
-    each ``sealed``."""
+    each ``sealed``. With ``recent``, read at most that many rows, restricted to the current cycle,
+    dropping any partial oldest turn. Zero fetches session metadata only."""
     session = await _row(
         conn,
-        """SELECT session_id, run_id, key AS key_masked, created_at, created_by FROM ds.chat_sessions
-           WHERE session_id = %s""",
-        (session_id,),
+        """SELECT s.session_id, s.run_id, s.key AS key_masked, s.created_at, s.created_by,
+                  r.cycle AS current_cycle FROM ds.chat_sessions s JOIN ds.runs r USING (run_id)
+           WHERE s.session_id = %s AND (%s::text IS NULL OR s.created_by = %s)""",
+        (session_id, actor, actor),
     )
-    if session is not None:
-        session["messages"] = await _rows(
+    if session is not None and recent != 0:
+        messages = await _rows(
             conn,
             """SELECT session_id, seq, role, cycle, sealed, citations, created_at FROM ds.chat_messages
-               WHERE session_id = %s ORDER BY seq""",
-            (session_id,),
+               WHERE session_id = %s AND (%s::integer IS NULL OR cycle = %s)
+               ORDER BY seq DESC LIMIT %s""",
+            (session_id, recent, session["current_cycle"], recent),
         )
+        if recent and len(messages) == recent:
+            while messages and messages[-1]["role"] != "user":
+                messages.pop()
+        session["messages"] = messages[::-1]
     return session
 
 
@@ -98,32 +108,18 @@ async def chat_answers(conn: Conn, run_id: str) -> list[Row]:
 
 
 async def annex_answers(conn: Conn, run_id: str, cycle: int, limit: int) -> tuple[list[Row], int]:
-    """The newest ``limit`` answers given in the run's ``cycle`` that cite a tool result (an abstention and
-    a failed turn cite none), oldest first, and how many such answers there are. Each is ``sealed``, with
-    its ``asked_by`` (the session's creator, by name) and its ``question``: the user message before it,
-    a row to open as the answer is, or None."""
+    """The newest cited answers to built-in questions in the cycle, oldest first, and their total."""
     rows = await _rows(
         conn,
         """SELECT s.session_id, s.key AS key_masked, m.seq, m.role, m.cycle, m.sealed, m.citations,
-                  m.created_at, ds.actor_name(s.created_by) AS asked_by, q.seq AS q_seq, q.cycle AS q_cycle,
-                  q.sealed AS q_sealed, count(*) OVER () AS total
+                  m.created_at, m.report_prompt, count(*) OVER () AS total
            FROM ds.chat_messages m JOIN ds.chat_sessions s USING (session_id)
-           LEFT JOIN LATERAL (
-               SELECT u.seq, u.cycle, u.sealed FROM ds.chat_messages u
-               WHERE u.session_id = m.session_id AND u.role = 'user' AND u.seq < m.seq
-               ORDER BY u.seq DESC LIMIT 1
-           ) q ON true
-           WHERE s.run_id = %s AND m.cycle = %s AND m.role = 'assistant' AND m.citations <> '[]'::jsonb
+           WHERE s.run_id = %s AND m.cycle = %s AND m.report_prompt IS NOT NULL AND m.citations <> '[]'::jsonb
            ORDER BY m.created_at DESC, s.session_id DESC, m.seq DESC
            LIMIT %s""",
         (run_id, cycle, limit),
     )
     total = rows[0]["total"] if rows else 0
-    for row in rows:
-        seq, at, sealed = row.pop("q_seq"), row.pop("q_cycle"), row.pop("q_sealed")
-        asked = {"session_id": row["session_id"], "seq": seq, "role": "user", "cycle": at, "sealed": sealed}
-        row["question"] = None if seq is None else asked
-        del row["total"]
     return rows[::-1], total
 
 
@@ -136,35 +132,47 @@ _CALL_FACTS = (
 )  # fmt: skip
 
 
-async def insert_llm_call(conn: Conn, session_id: str | None, call: Mapping[str, Any]) -> str:
-    """Record one ``LLMClient.call_log`` entry; ``usage`` keeps its ``usage_*`` fields and ``_CALL_FACTS``."""
-    call_id = "L-" + secrets.token_hex(8)
+def _call_values(call: Mapping[str, Any]) -> tuple[Any, ...]:
+    """The stored values shared by a provisional attempt, its settlement and a refused request."""
     usage = {name.removeprefix("usage_"): value for name, value in call.items() if name.startswith("usage_")}
     usage |= {name: call[name] for name in _CALL_FACTS if call.get(name) is not None}
     micros = call.get("cost_micros")
+    return (
+        call.get("model_reported"), _jsonb(usage), None if micros is None else Decimal(micros) / 1_000_000,
+        call.get("latency_ms"), call.get("denial_reason") or call.get("error_class"),
+    )
+
+
+async def insert_llm_call(conn: Conn, session_id: str | None, call: Mapping[str, Any]) -> str:
+    """Record one ``LLMClient.call_log`` entry; ``usage`` keeps its ``usage_*`` fields and ``_CALL_FACTS``."""
+    call_id = "L-" + secrets.token_hex(8)
     await conn.execute(
         """INSERT INTO ds.llm_calls (call_id, session_id, profile_id, model_reported, usage, cost,
                latency_ms, error)
            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
-        (
-            call_id,
-            session_id,
-            call["profile_id"],
-            call.get("model_reported"),
-            _jsonb(usage),
-            None if micros is None else Decimal(micros) / 1_000_000,
-            call.get("latency_ms"),
-            call.get("denial_reason") or call.get("error_class"),
-        ),
+        (call_id, session_id, call["profile_id"], *_call_values(call)),
     )
     return call_id
 
 
-async def chat_tokens(conn: Conn, run_id: str, actor: str) -> dict[str, int]:
+async def settle_llm_call(conn: Conn, call_id: str, call: Mapping[str, Any]) -> None:
+    """Replace the attempt's provisional charge with its outcome; a repeated settlement is idempotent."""
+    await conn.execute(
+        """UPDATE ds.llm_calls SET model_reported = %s, usage = %s, cost = %s, latency_ms = %s, error = %s
+           WHERE call_id = %s""",
+        (*_call_values(call), call_id),
+    )
+
+
+async def chat_tokens(conn: Conn, run_id: str, actor: str, *, lock: bool = False) -> dict[str, int]:
     """The tokens the stored model calls of chats were charged, by the budget that bounds them: those of
     every chat about the run (``per_run_tokens``), and those of the chats ``actor`` started, in the last 24
     hours (``per_actor_tokens_per_day``). A call is charged its ``usage.charged``, or where a row holds
-    none its reported input and output; a refused call holds neither."""
+    none its reported input and output; a refused call holds neither. Before an attempt, lock both
+    budgets until its charge commits. Every admission locks the run before the actor."""
+    if lock:
+        await conn.execute("SELECT pg_advisory_xact_lock(%s, hashtext(%s))", (0x44534C52, run_id))
+        await conn.execute("SELECT pg_advisory_xact_lock(%s, hashtext(%s))", (0x44534C41, actor))
     row = await _row(
         conn,
         """SELECT coalesce(sum(t.tokens) FILTER (WHERE s.run_id = %(run)s), 0) AS per_run_tokens,
@@ -176,7 +184,8 @@ async def chat_tokens(conn: Conn, run_id: str, actor: str) -> dict[str, int]:
                (c.usage->>'charged')::bigint,
                coalesce((c.usage->>'input')::bigint, 0) + coalesce((c.usage->>'output')::bigint, 0)
            ) AS tokens) t
-           WHERE s.run_id = %(run)s OR s.created_by = %(actor)s""",
+           WHERE s.run_id = %(run)s
+              OR (s.created_by = %(actor)s AND c.created_at > now() - interval '24 hours')""",
         {"run": run_id, "actor": actor},
     )
     assert row is not None  # an aggregate without GROUP BY returns one row

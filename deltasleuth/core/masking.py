@@ -3,7 +3,7 @@ keys, findings, pointers and documents.
 
 Policy: a matching tokenise rule of a PII floor class always tokenises, whatever ``security.clear`` says.
 Otherwise the most specific rule wins, a clear entry only when strictly more specific (a tie tokenises).
-Unlisted paths follow ``security.unlisted``. Booleans and nulls are always clear (the maskers apply that). A
+Unlisted paths follow ``security.unlisted``. Nulls stay clear. A
 member name is protected as the object holding it says (``Policy.names``).
 
 Tokens are deterministic, one-way HMACs separated by value class, under a key the caller reads
@@ -21,7 +21,7 @@ import hashlib
 import hmac
 import re
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from functools import lru_cache
 from typing import Any, Literal
@@ -58,6 +58,7 @@ DEFAULT_PII_FLOOR = frozenset(
 CLASS_ONLY = frozenset({"date_of_birth"})  # shown as its class, never as a token
 UNLISTED_TEXT = "free_text"
 UNLISTED_NUMBER = "free_number"
+MASKED_BOOLEAN = "class:boolean"  # a two-valued secret gets no globally linkable token
 BUSINESS_CODE = "business_code"  # a key class shown in clear
 MIXED_MEMBER_CLASS = "identifier"  # a member key built from fields of different classes
 _FIELD_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_-]{0,63}")  # a member name that may be a field's
@@ -104,12 +105,14 @@ class Policy:
     """A compiled policy over positions given as segment tuples (rules cover their subtrees)."""
 
     def __init__(
-        self, tokenize: Iterable[tuple[str, str]], clear: Iterable[str], unlisted: str, floor: frozenset[str]
+        self, tokenize: Iterable[tuple[str, str]], clear: Iterable[str], unlisted: str, floor: frozenset[str],
+        field_paths: tuple[str, ...] | None = None,
     ) -> None:
         self._tokenize = [(segments(path), cls) for path, cls in tokenize]
         self._clear = [segments(path) for path in clear]
         self._unlisted = _UNLISTED if unlisted == "tokenize" else _CLEAR
         self._floor = floor
+        self._fields = None if field_paths is None else _Fields(field_paths)
 
     def resolve(self, segs: Segments) -> Resolved:
         rules = [r for r in self._tokenize if covers(r[0], segs)]
@@ -140,18 +143,66 @@ class Policy:
         An object an explicit tokenise rule covers holds data in its names as well (a map keyed
         by email address): each is of the rule's class. Under the unlisted default alone the names
         are field names, or every one of every unlisted object would be a token; one that reads as
-        data (``reads_as_data``) is ``free_text``, unless a clear entry covers that member.
+        data (``reads_as_data``) is ``free_text``, unless a clear entry covers that member. A run that pins
+        its field labels also masks names absent from its declared structure, whatever their spelling.
         """
         resolved = self.resolve(segs)
         if not resolved.unlisted:
             return lambda member: resolved.value_class
 
         def unlisted(member: str) -> str | None:
-            if not reads_as_data(member) or self.resolve((*segs, name(member))).value_class is None:
+            pos = (*segs, name(member))
+            field = self._fields is None or self._fields.accepts(member, segs)
+            if field and self.resolve(pos).value_class is None:
                 return None
-            return UNLISTED_TEXT
+            return None if field and not reads_as_data(member) else UNLISTED_TEXT
 
         return unlisted
+
+
+class _Fields:
+    def __init__(self, paths: tuple[str, ...]) -> None:
+        self.parents: dict[str, set[Segments]] = {}
+        for path in paths:
+            pos = segments(path)
+            for i, part in enumerate(pos):
+                if part != DESC and part != WILD:
+                    self.parents.setdefault(part[1], set()).add(pos[:i])
+
+    def accepts(self, member: str, parent: Segments) -> bool:
+        """Only a literal member at this position is a declared field. A wildcard never declares names."""
+        parents = self.parents.get(member, set())
+        end = ("end", "")
+        return parent in parents or any(covers((*rule, end), (*parent, end)) for rule in parents)
+
+
+def _declared_paths(spec: CompiledSpec) -> set[str]:
+    fields = {r.path for r in spec.security.tokenize}
+    fields.update(r.path for r in spec.compare.fields)
+    fields.update((*spec.security.clear, *spec.compare.include, *spec.compare.exclude))
+    for array in spec.compare.arrays:
+        fields.add(array.path)
+        fields.update(child_pattern(member_pattern(array.path), key) for key in array.key)
+    return fields
+
+
+def run_masking(spec: CompiledSpec, params: Mapping[str, Any]) -> CompiledSpec:
+    """Apply the field-name policy pinned at run creation, including the frozen table-column plan."""
+    if "member_names" not in params:
+        return spec
+    mode = params["member_names"]
+    if mode not in ("catalogue", "declared"):
+        raise ValueError("unknown member-name policy")
+    fields = _declared_paths(spec) if mode == "declared" else set()
+    tables = params.get("tables") or {}
+    for side in ("a", "b"):
+        if side in tables:
+            fields.update(child_pattern(ROOT_PATTERN, column) for column in tables[side]["columns"])
+    paths = tuple(sorted(fields))
+    digest = hashlib.sha256(dumps(list(paths)).encode()).hexdigest()
+    return replace(
+        spec, security=replace(spec.security, field_paths=paths), judge_key=f"{spec.content_hash}:{digest}"
+    )
 
 
 def _most_specific(rules: list[tuple[Segments, str]]) -> str:
@@ -162,7 +213,7 @@ def _most_specific(rules: list[tuple[Segments, str]]) -> str:
 def canonical_policy(security: SecurityPolicy) -> Policy:
     """The policy for canonical documents and findings: ``spec.security`` over the PII floor."""
     rules = ((r.path, r.value_class) for r in security.tokenize)
-    return Policy(rules, security.clear, security.unlisted, DEFAULT_PII_FLOOR)
+    return Policy(rules, security.clear, security.unlisted, DEFAULT_PII_FLOOR, security.field_paths)
 
 
 def class_for(path_pattern: str, security: SecurityPolicy) -> str | None:
@@ -197,8 +248,8 @@ _CLASS = re.compile(r"[a-z][a-z0-9_]*")  # the class and version must not break 
 _VERSION = re.compile(r"[A-Za-z0-9]+")
 _TOKEN = re.compile(rf"tok:{_CLASS.pattern}:{_VERSION.pattern}:[A-Z2-7]{{{TOKEN_CHARS}}}")
 _INLINE = re.compile(r"masked key [1-9][0-9]* of [1-9][0-9]*")  # an inline key's place in its list
-KeyForm = Literal["value", "k1"]
-KEY_FORM: KeyForm = "k1"  # key tokens: what a run created now records as ``params["key_tokens"]``
+KeyForm = Literal["value", "k1", "k2"]
+KEY_FORM: Literal["k2"] = "k2"  # exact wire key after the spec's key normalisers
 VALUE_FORM: KeyForm = "value"  # a run created before key tokens: its keys are value tokens of their class
 
 
@@ -228,15 +279,12 @@ class Tokeniser:
         mac = self._mac(f"{value_class}\x1f{scalar_text(value)}")
         return f"tok:{value_class}:{self.version}:{mac}"
 
-    def key_token(self, value_class: str, key: JSON) -> str:
-        """``tok:<class>:k1:<26 base32>``: a run's request key, under a derivation of its own, so no key
-        token is the token of the same text as a value (``token``), and a key someone chooses to compare
-        confirms no value a token stands for."""
+    def key_token(self, value_class: str, key: str, *, form: Literal["k1", "k2"] = KEY_FORM) -> str:
+        """Tokenise the exact request key. Runs pinned to k1 retain their original NFC derivation."""
         _check_class(value_class)
-        # The NUL prefix keeps key tokens apart from value tokens (no class starts with NUL), and the label
-        # apart from scoped labels.
-        mac = self._mac(f"\x00key\x1f{value_class}\x1f{scalar_text(key)}")
-        return f"tok:{value_class}:{KEY_FORM}:{mac}"
+        domain, material = ("key", scalar_text(key)) if form == "k1" else ("key2", key)
+        mac = self._mac(f"\x00{domain}\x1f{value_class}\x1f{material}")
+        return f"tok:{value_class}:{form}:{mac}"
 
     def scoped_label(self, value_class: str, scope: str, value: JSON) -> str:
         """``class:<class>#<10 base32>``: equal values agree under one ``scope`` (the key) only."""
@@ -245,6 +293,19 @@ class Tokeniser:
         # absorbing part of the value.
         message = f"\x00scoped\x1f{value_class}\x1f{len(scope)}:{scope}\x1f{scalar_text(value)}"
         return f"class:{value_class}#{self._mac(message)[:LABEL_CHARS]}"
+
+    def field_label(self, cls: str, text: str, scope: str | None) -> str:
+        """An object name's exact spelling, so distinct Unicode keys both survive a masked view."""
+        if text == scalar_text(text):
+            return _label(text, cls, self, scope)
+        _check_class(cls)
+        if cls in CLASS_ONLY:
+            if scope is None:
+                return f"class:{cls}"
+            mac = self._mac(f"\x00field\x1f{cls}\x1f{len(scope)}:{scope}\x1f{text}")
+            return f"class:{cls}#{mac[:LABEL_CHARS]}"
+        mac = self._mac(f"\x00field\x1f{cls}\x1f{text}")
+        return f"tok:{cls}:{self.version}:{mac}"
 
     def _mac(self, message: str) -> str:
         digest = hmac.new(self._key, message.encode(), hashlib.sha256).digest()
@@ -285,6 +346,8 @@ def key_form(params: Mapping[str, Any]) -> KeyForm:
         return VALUE_FORM
     if form == KEY_FORM:
         return KEY_FORM
+    if form == "k1":
+        return "k1"
     raise TokeniserError(f"a run's key_tokens {form!r} is no key derivation this build knows")
 
 
@@ -297,7 +360,7 @@ def mask_key(key: str, spec: CompiledSpec, tok: Tokeniser, *, form: KeyForm) -> 
     cls = spec.key.value_class
     if cls == BUSINESS_CODE:
         return key
-    return tok.key_token(cls, key) if form == KEY_FORM else tok.token(cls, key)
+    return tok.token(cls, key) if form == "value" else tok.key_token(cls, key, form=form)
 
 
 def _label(text: str, cls: str | None, tok: Tokeniser | None, key: str | None) -> str:
@@ -309,6 +372,12 @@ def _label(text: str, cls: str | None, tok: Tokeniser | None, key: str | None) -
     if cls in CLASS_ONLY:  # a label scoped to the key tells members apart without linking records
         return tok.scoped_label(cls, key, text) if key is not None else f"class:{cls}"
     return tok.token(cls, text)
+
+
+def _field_label(text: str, cls: str | None, tok: Tokeniser | None, key: str | None, exact: bool) -> str:
+    if exact and cls is not None and tok is not None:
+        return tok.field_label(cls, text, key)
+    return _label(text, cls, tok, key)
 
 
 def mask_member_key(
@@ -351,12 +420,13 @@ def mask_pointer(
     renders protected segments as a non-token marker; ``key`` scopes class-only segments.
     """
     policy = canonical_policy(spec.security)
+    exact_names = spec.security.field_paths is not None
     walked: list[Segment] = []
     masked: list[tuple[str, str]] = []
     for kind, text in parts:
         here, shown = tuple(walked), text
         if kind == "field":
-            shown = _label(text, policy.names(here)(text), tok, key)
+            shown = _field_label(text, policy.names(here)(text), tok, key, exact_names)
             walked.append(name(text))
         elif kind == "member":
             shown = _label(text, member_class(here, spec), tok, key)
@@ -375,7 +445,7 @@ def _masker(
     policy = canonical_policy(spec.security)
 
     def walk(value: Any, segs: Segments) -> Any:
-        if value is None or isinstance(value, bool):
+        if value is None:
             return value
         if isinstance(value, Counted):
             return {"value": walk(value.value, segs), "count": value.n}
@@ -389,15 +459,24 @@ def _masker(
         if isinstance(value, dict):
             class_of = policy.names(segs)
             classes = {k: class_of(k) for k in value}
-            masked = {_label(k, classes[k], tok, key): walk(v, (*segs, name(k))) for k, v in value.items()}
+            exact = spec.security.field_paths is not None
+            masked = {
+                _field_label(k, classes[k], tok, key, exact): walk(v, (*segs, name(k)))
+                for k, v in value.items()
+            }
             # masked-name order where a name is data: both sides line up, raw order hidden
             return dict(sorted(masked.items())) if any(classes.values()) else masked
         if isinstance(value, list | tuple):
             return [walk(v, (*segs, WILD)) for v in value]
         # resolve_deep: a scalar where the spec protects descendants is that protected data.
-        cls = policy.resolve_deep(segs).for_value(value)
+        resolved = policy.resolve_deep(segs)
+        if isinstance(value, bool) and resolved.unlisted and spec.security.field_paths is None:
+            return value  # keep historical unlisted cells consistent with their persisted evidence
+        cls = resolved.for_value(value)
         if cls is None:
             return value
+        if isinstance(value, bool):
+            return MASKED_BOOLEAN
         return f"class:{cls}" if cls in CLASS_ONLY else tok.token(cls, value)
 
     return walk
@@ -469,22 +548,17 @@ def mask_document(doc: JSON, spec: CompiledSpec, tok: Tokeniser, *, key: str | N
 
 
 def mask_raw(doc: JSON, tok: Tokeniser) -> JSON:
-    """A parsed answer that no spec classifies yet (an endpoint tried from the builder), with its structure
-    and nothing else: every string a ``free_text`` token and every number a ``free_number`` token; booleans
-    and nulls stay. A member name stays when it reads as a field's and not as data
-    (``policy.reads_as_data``); else it is a ``free_text`` token, as a name of an object no rule lists is
-    in a masked document. Equal values give equal tokens, in every answer."""
-
-    def named(name: str) -> str:
-        return tok.token("free_text", name) if reads_as_data(name) else name
+    """The structure of an unclassified answer. Names, strings and numbers are tokens; booleans show type."""
 
     def walk(value: JSON) -> JSON:
-        if value is None or isinstance(value, bool):
+        if value is None:
             return value
+        if isinstance(value, bool):
+            return MASKED_BOOLEAN
         if isinstance(value, dict):
-            return {named(name): walk(member) for name, member in value.items()}
+            return dict(sorted((tok.field_label(UNLISTED_TEXT, k, None), walk(v)) for k, v in value.items()))
         if isinstance(value, list):
             return [walk(member) for member in value]
-        return tok.token("free_text" if isinstance(value, str) else "free_number", value)
+        return tok.token(UNLISTED_TEXT if isinstance(value, str) else UNLISTED_NUMBER, value)
 
     return walk(doc)

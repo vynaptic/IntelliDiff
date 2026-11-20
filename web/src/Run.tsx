@@ -473,7 +473,7 @@ function Drafted({ run, rows, cols, draft, children }: DraftedProps) {
         <>
           <p className="muted">{NOT_EVIDENCE}</p>
           <p className="pre">
-            <CitedText text={answer.content} runId={run.run_id} keys={citedKeys(session.messages)} cycle={cycle} />
+            <CitedText entry={answer} runId={run.run_id} keys={citedKeys(session.messages)} cycle={cycle} />
           </p>
         </>
       )}
@@ -592,7 +592,7 @@ function Changes({ runId, f, version, cycles, viewed }: TableProps & { viewed: n
   const cols: Col<Change>[] = [
     ['Cycle', (c) => c.cycle],
     ['Key', (c) => <a href={href(['runs', runId, 'keys', c.key_masked], { cycle: c.cycle })}>{c.key_masked}</a>],
-    ['From', (c) => <Badge v={c.from_outcome} />],
+    ['From', (c) => c.from_outcome === null ? 'No individual result' : <Badge v={c.from_outcome} />],
     ['To', (c) => <Badge v={c.to_outcome} />],
   ];
   return (

@@ -1,0 +1,16 @@
+description: >
+  A row queued by a scan differs on its first per-key read. The value on side B catches up
+  before the delayed read. The two observations establish drift.
+a: &current {body: '{"amount":12}'}
+b: {body: '{"amount":11}'}
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  outcome: MISMATCH
+  findings:
+    - finding: [/amount, $.amount, value_changed, null]
+      taxonomy: [VALUE_MISMATCH, MEDIUM]
+recheck:
+  a: *current
+  b: *current
+  expect: DRIFT b_converged

@@ -990,11 +990,11 @@ def _cycle_text(event: Event, bounds: Mapping[str, str], fired: Fired) -> tuple[
         tail = "; key changes are not counted between samples." if f["between_samples"] else "."
         lines.append(f"{causes}; {_n(gone)} no longer observed{tail}")
         if newly is None and not f["between_samples"]:
-            lines.append(f"Of the keys read in both cycles {c - 1} and {c}, changes were not counted.")
+            lines.append(f"Key changes from cycle {c - 1} to {c} were not counted.")
         elif newly is not None:
             lines.append(
-                f"Of the keys read in both cycles {c - 1} and {c}, {newly:,} were observed discrepant in {c}"
-                f" and not in {c - 1}; {_n(f['no_longer_discrepant'])} no longer."
+                f"From cycle {c - 1} to {c}, {newly:,} keys newly observed discrepant and"
+                f" {_n(f['no_longer_discrepant'])} previously discrepant keys observed matching."
             )
     for name in (*fired.crossed, *fired.recovered):
         fact, above, words = LEVELS[name]

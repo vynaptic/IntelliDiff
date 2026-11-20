@@ -53,7 +53,7 @@ def test_map_keyed_by_email_never_leaks_from_a_finding_row(make_spec, make_findi
     row = mask_finding(f, spec, tok, form=KEY_FORM)
     assert row["path_pattern"] == "$.contactVerified[*]"
     assert row["json_pointer"] == f"/contactVerified/{tok.token('email', JANE)}"
-    assert (row["value_a_tok"], row["value_b_tok"]) == (True, False)  # booleans stay clear
+    assert (row["value_a_tok"], row["value_b_tok"]) == ("class:boolean", "class:boolean")
     assert JANE not in dumps(row) and "jane" not in dumps(row)
 
 
@@ -62,7 +62,7 @@ def test_map_keyed_by_email_never_leaks_from_a_document_view(make_spec, tok) -> 
     doc = {"contactVerified": {JANE: True, BOB: True}, "name": "Jane Doe", "tier": "GOLD"}
     masked = mask_document(doc, spec, tok)
     assert masked["contactVerified"] == dict(
-        sorted({tok.token("email", JANE): True, tok.token("email", BOB): True}.items())
+        sorted((tok.token("email", name), "class:boolean") for name in (JANE, BOB))
     )
     text = dumps(masked)
     assert JANE not in text and BOB not in text and "Jane Doe" not in text

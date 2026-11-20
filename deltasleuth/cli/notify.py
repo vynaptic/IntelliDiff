@@ -140,8 +140,8 @@ def notify_explain(
             f" {_count(f['gone_root_causes'])} no longer observed"
         )
         typer.echo(
-            f"  keys read in both cycles {c - 1} and {c}: {_count(f['newly_discrepant'])} newly discrepant,"
-            f" {_count(f['no_longer_discrepant'])} no longer"
+            f"  from cycle {c - 1} to {c}: {_count(f['newly_discrepant'])} keys newly observed discrepant,"
+            f" {_count(f['no_longer_discrepant'])} previously discrepant keys observed matching"
         )
     typer.echo(f"  unavailable: {', '.join(f['unavailable']) or '-'}")
     for rule, verdict in found["rules"].items():

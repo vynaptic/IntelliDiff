@@ -13,7 +13,7 @@ import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -105,10 +105,10 @@ async def test_a_scan_over_more_than_three_batches_completes_in_one_snapshot(
     real_save = repo.save_scan
 
     async def save(
-        conn: repo.Conn, run_id: str, cycle: int, state: Any, keys: Any, saved: int, delays: Any
+        conn: repo.Conn, run_id: str, cycle: int, state: Any, keys: Any, saved: int
     ) -> bool:
         saves.append((saved, state["after"], len(keys)))
-        return await real_save(conn, run_id, cycle, state, keys, saved, delays)
+        return await real_save(conn, run_id, cycle, state, keys, saved)
 
     monkeypatch.setattr(scanning, "_snapshot", snapshot)
     monkeypatch.setattr(repo, "save_scan", save)
@@ -246,48 +246,46 @@ async def test_a_new_store_s_first_cycle_end_analyses_its_tables(
     assert (before, after) == (0, 4)  # no statistics, then every table's
 
 
-@pytest.mark.parametrize("converges", [True, False], ids=["b converges", "b stays"])
-async def test_a_scanned_key_is_read_its_recheck_delay_after_the_scan_saw_it_differ(
-    open_harness: OpenHarness, databases: Callable[[str], str], tmp_path: Path, converges: bool
+@pytest.mark.parametrize(("change", "outcome", "reason"), [
+    ("b", "DRIFT", "b_converged"), ("a", "DRIFT", "a_changed"), (None, "MISMATCH", None),
+])
+async def test_scanned_discrepancies_are_confirmed_from_two_per_key_reads(
+    open_harness: OpenHarness, databases: Callable[[str], str], tmp_path: Path,
+    change: str | None, outcome: str, reason: str | None, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The per-key read of a key the scan found is its confirming read: it follows the scan by
-    ``recheck.delay``, so rows that reach side b within the delay read MATCH, and rows that still differ
-    are each a MISMATCH that one read confirms."""
+    """A scan's digest admits the key. The two observed documents on each side decide drift."""
     dsns = {side: databases(seed) for side, seed in (("a", SEED), ("b", SEED + CHANGES))}
     targets = {}
     for side, dsn in dsns.items():
         (tmp_path / f"dsn_{side}").write_text(dsn)
         targets[f"db-{side}"] = {"dsn_ref": f"file:{tmp_path / f'dsn_{side}'}", "rate_per_s": 1000}
+    standing = LiveReader.standing
+
+    async def before_recheck(reader, firsts):
+        if change and firsts:
+            with psycopg.connect(dsns[change], autocommit=True) as conn:
+                prefix = "u" if change == "b" else "changed"
+                conn.execute("UPDATE users SET email = %s || userid WHERE userid = ANY(%s)",
+                             (prefix, [int(key) for key in firsts]))
+        return await standing(reader, firsts)
+
+    monkeypatch.setattr(LiveReader, "standing", before_recheck)
     spec = SPEC | {"recheck": {"delay": "1s", "times": 1}}
     async with open_harness(json.dumps({"targets": targets})) as h:
         run_id = await create_run(h.ctx, await h.spec(json.dumps(spec)), "batch", who=TESTER)
-        stop = asyncio.Event()
-        worker = asyncio.create_task(run_worker(h.ctx, stop=stop))
-        try:
-            async with asyncio.timeout(30):
-                while not (await h.run(run_id))["scan"]["done"]:
-                    await asyncio.sleep(0.02)
-            await asyncio.sleep(0.3)  # several polls of the worker, well inside the delay
-            if converges:  # what side a already holds reaches side b
-                with psycopg.connect(dsns["b"], autocommit=True) as conn:
-                    conn.execute("UPDATE users SET email = 'u' || userid WHERE userid IN (7, 23)")
-            run = await h.wait(run_id)
-        finally:
-            stop.set()
-            await worker
+        run = await h.finish(run_id)
         results = await h.results(run_id)
-        reads = [obs for key in ("7", "23") for obs in await h.observations(run_id, key)]
-    read = ("MATCH", "provisional", 1) if converges else ("MISMATCH", "rechecked", 1)
+        reads = {key: await h.observations(run_id, key) for key in ("7", "23")}
     assert run["status"] == "completed"
-    assert {key: (r["outcome"], r["confirmation"], r["revision"]) for key, r in results.items()} == {
-        "7": read,
-        "23": read,
-    }
-    scanned = datetime.fromisoformat(run["scan"]["last_at"])
-    assert len(reads) == 4  # one read a side and key: the delay adds none
-    # The scan saved its keys after its snapshots opened (last_at), by the store's clock: a margin for
-    # the two clocks.
-    assert min(obs["observed_at"] for obs in reads) - scanned >= timedelta(seconds=0.9)
+    assert set(results) == {"7", "23"}
+    for key, r in results.items():
+        assert (r["first_outcome"], r["outcome"], r["drift_reason"], r["confirmation"], r["revision"]) == (
+            "MISMATCH", outcome, reason, "rechecked", 2
+        )
+        assert len(reads[key]) == 4
+        first = max(obs["observed_at"] for obs in reads[key] if obs["pass_no"] == 1)
+        second = min(obs["observed_at"] for obs in reads[key] if obs["pass_no"] == 2)
+        assert second - first >= timedelta(seconds=0.9)
 
 
 # --- the engine seam: the key order guard and the passes an engine's error ends ----------------------
@@ -364,16 +362,16 @@ async def test_keys_out_of_order_fail_the_run(
 
 
 @pytest.mark.parametrize("batch", [10_000, 1], ids=["one checkpoint", "a checkpoint each"])
-async def test_keys_found_that_mask_alike_fail_the_run_counted_never_dropped(
+@pytest.mark.parametrize("old", [True, False], ids=["nfc-tokens", "exact-tokens"])
+async def test_a_scan_preserves_wire_keys_or_refuses_a_legacy_collision(
     open_harness: OpenHarness,
     databases: Callable[[str], str],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     batch: int,
+    old: bool,
 ) -> None:
-    """Side a holds one invented key in NFC, side b the same key in NFD: two keys, each on one side, that
-    a token masks alike. No masked key can hold a result for each, so the run fails saying so; the keys
-    its scan saved are the keys it counted, and its error names no key."""
+    """Two wire keys, one on each side, produce separate results. A legacy NFC run refuses a collision."""
     alike = {"a": "ORG-\u00c401", "b": "ORG-A\u030801"}
     monkeypatch.setattr(scanning, "BATCH", batch)
     targets = {}
@@ -387,9 +385,24 @@ async def test_keys_found_that_mask_alike_fail_the_run_counted_never_dropped(
     spec = SPEC | {"key": SPEC["key"] | {"class": "identifier"}}
     async with open_harness(json.dumps({"targets": targets})) as h:
         run_id = await create_run(h.ctx, await h.spec(json.dumps(spec)), "batch", who=TESTER)
+        if old:
+            async with h.ctx.pool.connection() as conn:  # a scan started under the earlier derivation
+                await conn.execute(
+                    "UPDATE ds.runs SET params=jsonb_set(params,'{key_tokens}','\"k1\"') WHERE run_id=%s",
+                    (run_id,),
+                )
         run = await h.finish(run_id, (*repo.TERMINAL, "paused"))
         async with h.ctx.pool.connection() as conn:
             rows, _ = await repo.list_keys(conn, run_id)
+        if not old:
+            assert run["status"] == "completed"
+            found = await h.results(run_id)
+            tok = h.ctx.tokeniser
+            assert {f["key_masked"]: f["outcome"] for f in found.values()} == {
+                tok.key_token("identifier", alike["a"]): "NOT_FOUND_B",
+                tok.key_token("identifier", alike["b"]): "NOT_FOUND_A",
+            }
+            return
     assert run["status"] == "failed"
     assert re.fullmatch(r"KeysMaskAlike: the scan found (2 keys|a key) .*Unicode normal form.*", run["error"])
     assert not any(key in run["error"] for key in alike.values())

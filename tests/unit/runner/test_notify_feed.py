@@ -597,8 +597,8 @@ RC = ["RC-" + c * 12 for c in "abcd"]
         ),
         # rolling: keys entering or leaving the listing are not counted
         ("list", [{"K2": "MATCH", "K3": "MISMATCH"}, {"K2": "MATCH", "K4": "MISMATCH"}], (0, 0)),
-        # a table scan read every key: one without a result was read identical
-        ("table_scan", [{"K1": "MISMATCH"}, {"K2": "MISMATCH"}], (1, 1)),
+        # K2 is newly observed discrepant. K1 is absent from both tables, so was never observed matching.
+        ("table_scan", [{"K1": "MISMATCH"}, {"K2": "MISMATCH"}], (1, 0)),
         # a hash sample's cycles are fresh samples: key changes are not counted between them
         ("hash_sample", [{"K1": "MISMATCH", "K2": "MATCH"}, {"K1": "MATCH", "K2": "MISMATCH"}], (None, None)),
     ],
@@ -661,7 +661,7 @@ async def _digests(
     [
         (("done", "cut"), (1, 0)),  # maxKeys cut cycle 2 before K1: never counted as no longer discrepant
         (("done", "stopped"), (1, 0)),  # maxDuration stopped cycle 2's scan at a checkpoint
-        (("stopped", "done"), (0, 1)),  # cycle 1 never read K2: not newly discrepant
+        (("stopped", "done"), (0, 0)),  # cycle 1 never observed K2 and cycle 2 never observed K1
     ],
 )
 async def test_a_cut_or_stopped_scan_counts_only_keys_read_in_both(

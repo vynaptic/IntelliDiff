@@ -1,0 +1,10 @@
+description: >
+  Converting numeric text must not round away the fractional part and produce a false match.
+sides:
+  a: {map: "{'value': $number(value)}"}
+a: {body: '{"value":"1000000000000000.01"}'}
+b: {body: '{"value":1000000000000000}'}
+expect:
+  a: INCOMPLETE unparseable
+  b: COMPLETE
+  outcome: INCONCLUSIVE unparseable

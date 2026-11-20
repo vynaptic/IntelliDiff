@@ -294,7 +294,8 @@ class Judges:
         here: list[Judged] = [None] * len(items)
         if self._closed or time.monotonic() < self._unstarted_until:
             return here
-        pickled = self._pickled(spec)
+        cache_key = spec.judge_key or spec.content_hash
+        pickled = self._pickled(spec, cache_key)
         async with self._free:
             judge, answered = (self._idle.pop() if self._idle else None), False
             try:
@@ -302,7 +303,7 @@ class Judges:
                     judge = _Judge()
                     self._judges.add(judge)
                     await asyncio.to_thread(judge.ready)
-                judged = await asyncio.to_thread(judge.ask, spec.content_hash, pickled, caps, today, items)
+                judged = await asyncio.to_thread(judge.ask, cache_key, pickled, caps, today, items)
                 answered = True
                 return judged
             except JudgeUnstarted as exc:
@@ -328,12 +329,12 @@ class Judges:
                         self._judges.discard(judge)
                         judge.end()
 
-    def _pickled(self, spec: CompiledSpec) -> bytes:
+    def _pickled(self, spec: CompiledSpec, cache_key: str) -> bytes:
         """``spec`` pickled, once while it is among the most recent of its judges' specs."""
-        pickled = self._specs.get(spec.content_hash)
+        pickled = self._specs.get(cache_key)
         if pickled is None:
-            pickled = self._specs[spec.content_hash] = pickle.dumps(spec, protocol=pickle.HIGHEST_PROTOCOL)
-        self._specs.move_to_end(spec.content_hash)
+            pickled = self._specs[cache_key] = pickle.dumps(spec, protocol=pickle.HIGHEST_PROTOCOL)
+        self._specs.move_to_end(cache_key)
         while len(self._specs) > 2 * process.SPECS:
             self._specs.popitem(last=False)
         return pickled

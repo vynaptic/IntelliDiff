@@ -633,19 +633,19 @@ def test_try_answers_masked(client: TestClient, service: tuple[str, Asked, Any],
     tok = client.app.state.ctx.tokeniser
     text, number = (lambda v: tok.token("free_text", v)), (lambda v: tok.token("free_number", Decimal(v)))
     assert answer == {
-        "id": text(RAW_KEY),
-        "price": number(PRICE),
-        "n": number("1"),
-        "open": True,
-        "closed": None,
-        "contact": {
-            "name": text("Ada Lovelace"),
-            text("ACC00012345"): {"n": number("1")},
+        text("id"): text(RAW_KEY),
+        text("price"): number(PRICE),
+        text("n"): number("1"),
+        text("open"): "class:boolean",
+        text("closed"): None,
+        text("contact"): {
+            text("name"): text("Ada Lovelace"),
+            text("ACC00012345"): {text("n"): number("1")},
             text("a b"): text("Ada Lovelace"),
         },
-        "phones": [text("+44 20 7946 0000"), number("2.5")],
+        text("phones"): [text("+44 20 7946 0000"), number("2.5")],
     }
-    assert re.fullmatch(STAND_IN, answer["id"]) and re.fullmatch(STAND_IN, answer["price"])
+    assert re.fullmatch(STAND_IN, answer[text("id")]) and re.fullmatch(STAND_IN, answer[text("price")])
     for clear in (RAW_KEY, "Ada", PRICE, "ACC00012345", "7946", "2.5", url, "127.0.0.1", "/items"):
         assert clear not in tried.text, clear
     assert _try(client, form, "b").json()["answer"] == answer  # the other side's equal values
@@ -683,7 +683,8 @@ def test_try_answers_raw_in_a_trial_only(
         author = callers(client).token("spec_author")
         masked = _try(client, _form(spec_yaml), headers=author)
         assert masked.status_code == 200, masked.text
-        assert masked.json()["raw"] is False and re.fullmatch(STAND_IN, masked.json()["answer"]["id"])
+        label = client.app.state.ctx.tokeniser.token("free_text", "id")
+        assert masked.json()["raw"] is False and re.fullmatch(STAND_IN, masked.json()["answer"][label])
         assert RAW_KEY not in masked.text and "1.0000" not in masked.text
         assert [detail["raw"] for _, _, detail in audited(client, "target.try")] == [True, True, False]
 
@@ -846,12 +847,12 @@ def test_try_never_shows_a_credential_of_its_target(
             assert answer["values"].count(routes.HIDDEN) == len(mine)
             assert routes.HIDDEN in answer["by"] and answer["by"][sent["host"]].lower() == "host"
     assert len(asked) == 2
-    with open_client() as client:  # no trial: a name that reads as a field's would stay as it came
+    with open_client() as client:  # production masks every name in an unclassified answer
         tried = _try(client, form)
         assert tried.status_code == 200 and tried.json()["raw"] is False, tried.text
         assert not any(secret in tried.text for secret in secrets)
         tok = client.app.state.ctx.tokeniser
-        assert tok.token("free_text", routes.HIDDEN) in tried.json()["answer"]["by"]
+        assert tok.token("free_text", routes.HIDDEN) in tried.json()["answer"][tok.token("free_text", "by")]
 
 
 def test_a_short_credential_hides_only_itself() -> None:
@@ -925,11 +926,12 @@ def test_try_is_one_attempt_under_the_targets_gate(
     form = _pathed(_form(spec_yaml, a="own-a", b="own-b"), "a", path="/down/{{ key }}")
     assert compile_spec(parse_yaml_text(spec_yaml)).execution.retries.max == 2
     tried = _try(client, form).json()
+    label = client.app.state.ctx.tokeniser.token("free_text", "said")
     assert (tried["status"], tried["error_class"], tried["attempts"], tried["answer"]) == (
         503,
         "http_5xx",
         1,
-        {"said": tried["answer"]["said"]},
+        {label: tried["answer"][label]},
     )
     assert len(asked) == 1
     gate = client.app.state.ctx.gates["own-a"]
@@ -1032,7 +1034,7 @@ def test_try_stores_nothing_and_is_audited_before_the_call(
     # links it to a value a run shows.
     assert first["key_masked"] != ctx.tokeniser.token("identifier", RAW_KEY)
     assert re.fullmatch("[0-9a-f]{64}", first["content_hash"]) and first["key_masked"].startswith(
-        "tok:identifier:k1:"
+        "tok:identifier:k2:"
     )
     assert first == {
         "spec": "api-demo",

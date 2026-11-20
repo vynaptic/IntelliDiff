@@ -31,7 +31,8 @@ sides:
     target: kit-mysql
     table: {name: accounts_b, keyColumns: [code]}
 
-compare: {}
+compare:
+  fields: [{path: "$.doc.rate"}]                # declared field of the JSON column
 
 recheck:
   delay: 0s

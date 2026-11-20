@@ -95,6 +95,12 @@ def test_the_critical_count_stays_linear_in_the_keys() -> None:
     assert (monitor.critical_count, len(monitor.critical)) == (33_334, 33_334)
 
 
+def test_a_run_without_a_critical_limit_never_retains_keys() -> None:
+    monitor = StopMonitor(StopConditions(), T0)
+    monitor.record_result("K1", _result(Outcome.MISMATCH, critical=1), first_read=True)
+    assert not monitor.critical and monitor.critical_count == 0
+
+
 def test_time_limits_and_cycle_boundaries() -> None:
     c = StopConditions(max_duration_s=60, until=T0 + timedelta(hours=1), max_cycles=3)
     monitor = StopMonitor(c, T0)

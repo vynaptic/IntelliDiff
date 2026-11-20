@@ -4,6 +4,7 @@ states the outcome, the per-key comparison that classifies the findings and judg
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from deltasleuth.core.classify.outcome import compare_pair
 from deltasleuth.core.classify.taxonomy import CORE_CODES
 from deltasleuth.core.diff.differ import diff
 from deltasleuth.core.types import Finding, KeyResult, Outcome, Side, SideState, SideStateKind
+from deltasleuth.runner.recheck import confirm
 
 from .conftest import DIFFER_ATTRIBUTES, REPO_ROOT, TODAY, GoldenCase
 
@@ -24,9 +26,8 @@ CASES = sorted((Path(__file__).parent / "cases").glob("*.yaml"))
 RESERVED_CODES = frozenset(
     {"MISSING_NODE", "EXTRA_NODE", "MISSING_EDGE", "EXTRA_EDGE", "INTERNAL_INCONSISTENCY", "SCHEMA_DRIFT"}
 )
-# NOISE_ONLY needs a noise mask, which the spec loader refuses as unsupported. DRIFT is a recheck's
-# judgement of two reads of one key (tests/unit/classify/test_drift_from_reads.py).
-RESERVED_OUTCOMES = frozenset({Outcome.NOISE_ONLY, Outcome.DRIFT})
+# NOISE_ONLY needs a noise mask, which the spec loader refuses as unsupported.
+RESERVED_OUTCOMES = frozenset({Outcome.NOISE_ONLY})
 
 
 def test_corpus_size() -> None:
@@ -48,6 +49,15 @@ def test_golden_case(path: Path, load) -> None:
         assert not case.expect_findings, "findings without an outcome need both sides COMPLETE"
     if case.expect_outcome is not None:
         _check_outcome(case, states, both_complete)
+    if case.recheck:
+        result = _recheck(case, _judge(case, states))
+        assert (result.outcome.value, result.drift_reason or result.inconclusive_reason) == case.recheck[1]
+
+
+def _recheck(case: GoldenCase, first: KeyResult) -> KeyResult:
+    assert case.recheck is not None
+    again = _judge(case, _observe(replace(case, observations=case.recheck[0])))
+    return confirm(first, again, spec=case.spec)
 
 
 def _check_differ(case: GoldenCase, states: dict[Side, SideState]) -> None:
@@ -97,6 +107,8 @@ def test_the_corpus_reaches_every_built_code_and_outcome_and_no_reserved_one(loa
         case = load(path)
         result = _judge(case, _observe(case))
         outcomes.add(result.outcome)
+        if case.recheck:
+            outcomes.add(_recheck(case, result).outcome)
         codes.update(f.taxonomy_code for f in result.findings)
     assert RESERVED_CODES <= CORE_CODES.keys()
     assert codes == CORE_CODES.keys() - RESERVED_CODES

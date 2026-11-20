@@ -11,8 +11,10 @@ from __future__ import annotations
 import asyncio
 import random
 import time
+from collections import OrderedDict
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
+from types import TracebackType
 
 import aiohttp
 from aiohttp.abc import AbstractResolver
@@ -42,6 +44,49 @@ class HttpResult:
     retry_after_s: float | None = None
 
 
+class _TargetSlots:
+    """A gate's resizable, first-come-first-served slots. A smaller cap honours every slot already held."""
+
+    def __init__(self) -> None:
+        self.limit = self.held = 0
+        self._waiting: OrderedDict[asyncio.Future[None], None] = OrderedDict()
+
+    def resize(self, limit: int) -> None:
+        self.limit = limit
+        self._admit()
+
+    def locked(self) -> bool:
+        return self.held >= self.limit
+
+    def _admit(self) -> None:
+        while self._waiting and not self.locked():
+            future, _ = self._waiting.popitem(last=False)
+            if not future.cancelled():
+                self.held += 1  # reserved before waking: a new caller cannot overtake it
+                future.set_result(None)
+
+    async def __aenter__(self) -> None:
+        if not self.locked():
+            self.held += 1
+            return
+        future = asyncio.get_running_loop().create_future()
+        self._waiting[future] = None
+        try:
+            await future
+        except asyncio.CancelledError:
+            self._waiting.pop(future, None)
+            if not future.cancelled():  # admitted, then cancelled before the reader resumed
+                self.held -= 1
+                self._admit()
+            raise
+
+    async def __aexit__(
+        self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None
+    ) -> None:
+        self.held -= 1
+        self._admit()
+
+
 class TargetGate:
     """Politeness state shared by every connector of one target: budget, slots, pause, and a breaker for
     each ``execution.circuitBreaker`` its connectors declare.
@@ -51,6 +96,7 @@ class TargetGate:
     """
 
     def __init__(self, rate_per_s: float, max_concurrency: int) -> None:
+        self.semaphore = _TargetSlots()
         self.rebudget(rate_per_s, max_concurrency)
         self.not_before = 0.0  # time.monotonic() before which nothing is sent
         self._breakers: dict[tuple[float | None, int, float], CircuitBreaker] = {}
@@ -62,8 +108,11 @@ class TargetGate:
         if rate_per_s <= 0 or max_concurrency < 1:
             raise ConnectorConfigError("rate_per_s must be > 0 and max_concurrency >= 1")
         self.limiter = AsyncLimiter(1, 1.0 / rate_per_s)
-        self.semaphore = asyncio.Semaphore(max_concurrency)
-        self.max_concurrency = max_concurrency
+        self.semaphore.resize(max_concurrency)
+
+    @property
+    def max_concurrency(self) -> int:
+        return self.semaphore.limit
 
     @classmethod
     def for_target(cls, target: Target) -> TargetGate:

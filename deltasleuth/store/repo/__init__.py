@@ -119,13 +119,16 @@ from deltasleuth.store.repo.base import (
     pages,
     storable,
 )
+from deltasleuth.store.repo.cause_stage import cause_members
 from deltasleuth.store.repo.causes import (
     _cause_params,
+    analyse_cause_links,
     count_outcome_changes,
     list_outcome_changes,
     list_root_causes,
     outcome_changes,
     replace_root_causes,
+    root_cause_page,
 )
 from deltasleuth.store.repo.chat import (
     _CALL_FACTS,
@@ -136,6 +139,7 @@ from deltasleuth.store.repo.chat import (
     create_chat_session,
     get_chat_session,
     insert_llm_call,
+    settle_llm_call,
 )
 from deltasleuth.store.repo.connection import (
     PURGE_LOCK,
@@ -351,6 +355,7 @@ from deltasleuth.store.repo.retention import (
     gc_due,
     get_cycle,
     grace_over,
+    hold_exclusions,
     kept_cycles,
     key_span,
     keys_in_flight,
@@ -562,6 +567,7 @@ __all__ = [
     "adjudication_causes",
     "adjudication_draw",
     "adjudication_holders",
+    "analyse_cause_links",
     "analyse_new",
     "annex_answers",
     "append_chat_message",
@@ -588,6 +594,7 @@ __all__ = [
     "bug_rules",
     "cancel_keys",
     "cancel_precheck",
+    "cause_members",
     "census_due",
     "chain_before",
     "chain_head",
@@ -672,6 +679,7 @@ __all__ = [
     "hand_back",
     "held_back",
     "held_guard",
+    "hold_exclusions",
     "hold_pair",
     "insert_adjudication",
     "insert_audit",
@@ -806,6 +814,7 @@ __all__ = [
     "rewrap_data_key",
     "rezone_schedule",
     "root_cause_changes",
+    "root_cause_page",
     "run_draws",
     "run_scans",
     "runs_reading",
@@ -838,6 +847,7 @@ __all__ = [
     "set_run_status",
     "set_user_disabled",
     "setter_live",
+    "settle_llm_call",
     "settle_schedule",
     "settle_target",
     "share_frame_keys",

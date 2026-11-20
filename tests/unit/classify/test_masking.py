@@ -162,7 +162,8 @@ def test_mask_key_and_member_key(spec, make_spec, tok) -> None:
 def test_key_form_is_what_the_run_recorded() -> None:
     """A run records its keys' derivation at its creation; one created before key tokens records none, and
     its keys stay value tokens. A derivation this build does not know is refused, never guessed."""
-    assert (key_form({"key_tokens": "k1"}), key_form({}), key_form({"keys_source": "explicit"})) == (
+    assert key_form({"key_tokens": "k1"}) == "k1"
+    assert (key_form({"key_tokens": "k2"}), key_form({}), key_form({"keys_source": "explicit"})) == (
         KEY_FORM,
         VALUE_FORM,
         VALUE_FORM,

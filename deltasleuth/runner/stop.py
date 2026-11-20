@@ -117,11 +117,13 @@ class StopMonitor:
             self._keys.append(result.outcome is Outcome.INCONCLUSIVE)
             if _exceeded(self._keys, c.max_inconclusive_rate):
                 self._fire("maxInconclusiveRate")
+        if c.max_unexplained_critical is None:
+            return
         count = sum(1 for f in result.findings if not f.suppressed and f.severity is Severity.CRITICAL)
         self._critical_total += count - self.critical.pop(key, 0)
         if count:
             self.critical[key] = count
-        if c.max_unexplained_critical is not None and self._critical_total >= c.max_unexplained_critical:
+        if self._critical_total >= c.max_unexplained_critical:
             self._fire("maxUnexplainedCritical")
 
     def reason(self, now: datetime) -> str | None:

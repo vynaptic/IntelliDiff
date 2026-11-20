@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+from collections import Counter
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -253,7 +254,7 @@ async def test_a_soak_over_two_tables_scans_them_anew_every_cycle(
     assert {k: r["outcome"] for k, r in first.items()} == {"5": "MISMATCH"}
     assert {k: r["outcome"] for k, r in second.items()} == {"5": "MATCH", "9": "MISMATCH"}
     assert [(c["cycle"], c["key_masked"], c["from_outcome"], c["to_outcome"]) for c in changes] == [
-        (2, "5", "MISMATCH", "MATCH")
+        (2, "5", "MISMATCH", "MATCH"), (2, "9", None, "MISMATCH"),
     ]
     assert (first_scan["matched"], run["scan"]["matched"]) == (9, 8)  # 5 had a result: read again
     assert all(r["observed_at"] >= due for r in reads)  # the second scan waited for its cycle
@@ -276,7 +277,7 @@ MANY_CHANGES = (
 )
 
 
-async def test_many_differing_keys_are_read_in_groups_and_scanned_keys_confirmed_in_one_pass(
+async def test_many_differing_keys_are_read_in_groups_and_confirmed_on_a_second_pass(
     tables: Callable[..., Stack],
 ) -> None:
     assert ROWS // 2 > READ_BATCH
@@ -292,8 +293,13 @@ async def test_many_differing_keys_are_read_in_groups_and_scanned_keys_confirmed
     counters = run["counters"]
     assert (counters["by_outcome"]["MISMATCH"], counters["by_outcome"]["NOT_FOUND_B"]) == (ROWS // 2, 2)
     assert (counters["total"], counters["match"]) == (ROWS, ROWS // 2 - 2)
-    assert counters["by_confirmation"]["rechecked"] == ROWS // 2 + 2  # one read each, after the scan
-    assert (len(scan_reads), {r["pass_no"] for r in scan_reads}) == (2 * (ROWS // 2 + 2), {1})
+    candidates = ROWS // 2 + 2
+    assert counters["by_confirmation"]["rechecked"] == candidates
+    keys = {r["key_masked"] for r in scan_reads}
+    assert len(keys) == candidates
+    assert Counter((r["key_masked"], r["side"], r["pass_no"]) for r in scan_reads) == {
+        (key, side, pass_no): 1 for key in keys for side in ("a", "b") for pass_no in (1, 2)
+    }
     assert {k: (r["outcome"], r["confirmation"]) for k, r in rechecked.items()} == {
         "2": ("MISMATCH", "rechecked"),
         "4": ("MISMATCH", "rechecked"),

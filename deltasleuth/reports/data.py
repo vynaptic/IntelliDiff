@@ -142,53 +142,57 @@ async def load_run(ctx: Context, run_id: str, cycle: int | None = None, *, resul
     ``runner.purge.CyclePurged`` once the cycle's purge has started.
 
     ``results=False``, for a report that lists none or reads them a page at a time (``result_pages``),
-    reads none. The counters are those the cycle's end stored (the run's ``counters``, which name their
-    cycle) whenever the run holds them, and are never counted again then. A run holds its latest summarised
-    cycle's only: a cycle before the run's current one whose counters it no longer holds (a soak's) is
-    counted again from its stored rows, a page at a time; the current cycle has none until its end stores
-    them.
+    reads none. Use the counters saved when the selected cycle ended. An older cycle that lacks those
+    counters is counted from its stored rows, a page at a time.
     """
+    async with ctx.pool.connection() as conn:
+        return await read_run(ctx, conn, run_id, cycle, results=results)
+
+
+async def read_run(
+    ctx: Context, conn: repo.Conn, run_id: str, cycle: int | None, *, results: bool, groups: bool = True
+) -> RunData:
+    """Read a cycle on the caller's connection. CSV exports read graph rows and root causes by page."""
     from deltasleuth.reports import accuracy  # it reads sheets through adjudicate, which imports this module
     from deltasleuth.runner.counters import Tally, verdict
     from deltasleuth.runner.purge import days, refuse_purged
     from deltasleuth.runner.recheck import RecheckPolicy
 
-    async with ctx.pool.connection() as conn:
-        run = await repo.get_run(conn, run_id)
-        if run is None:
-            raise NotFound(f"run {run_id} not found")
-        cycle = cycle or run["cycle"]
-        await refuse_purged(conn, run_id, cycle)
-        ended = await repo.list_cycles(conn, run_id, **days(ctx))
-        expires = next((c["expires_at"] for c in ended if c["cycle"] == cycle), None)
-        spec = await ctx.spec(conn, run["spec_id"])  # not live: a removed target keeps its history
-        counters = run["counters"] if run["counters"].get("cycle") == cycle else {}
-        recount = not counters and cycle < run["cycle"]  # an ended cycle: the run keeps its latest only
-        rows = await repo.pages(repo.list_results, conn, run_id, cycle) if results else []
-        findings = await repo.pages(repo.list_findings, conn, run_id, cycle) if results else []
-        causes = await repo.list_root_causes(conn, run_id, cycle)
-        run["scan"] = await repo.get_scan(conn, run_id, cycle)  # the reported cycle's
-        live = run["params"].get("samples_dir") is None
-        if recount:
-            tally = Tally(live=live, recheck_outcomes=RecheckPolicy.from_spec(spec.raw).outcomes)
-            async for page, found in repo.result_pages(conn, run_id, cycle):
-                for r in page:
-                    tally.add(r, found.get(r["key_masked"], ()))
-            total = sum((await repo.cycle_counts(conn, run_id, cycle))["keys"].values())
-            bulk = (run["scan"] or {}).get("matched", 0)
-            counters = tally.counters(total=total + bulk, bulk_match=bulk) | {"cycle": cycle}
-        graph = await repo.pages(repo.list_graph_diffs, conn, run_id, cycle)
-        approval = await approvals.run_approval(conn, run, cycle)
-        signoffs = await repo.approval_history(conn, run_id=run_id, cycle=cycle)
-        active = next((s for s in signoffs if s["status"] in ("requested", "approved")), None)
-        fixed = active and active["attests"].get("adjudication")  # attests format 1
-        adjudication = fixed and await repo.cycle_adjudication(conn, run_id, cycle, fixed["adjudication_id"])
-        drawn = await repo.get_draw(conn, run_id, cycle)
-        judged = (await repo.get_cycle(conn, run_id, cycle) or {}).get("sample")
-        labelling, attested, unlabelled = None, None, 0
-        if expires is not None:  # an ended cycle's; a live one has none
-            labelling, attested = await accuracy.reported(conn, run_id, cycle, signoffs)
-            unlabelled = 0 if labelling else len(await repo.list_labellings(conn, run_id, cycle))
+    run = await repo.get_run(conn, run_id)
+    if run is None:
+        raise NotFound(f"run {run_id} not found")
+    cycle = cycle or run["cycle"]
+    await refuse_purged(conn, run_id, cycle)
+    ended = next(iter(await repo.list_cycles(conn, run_id, cycle=cycle, **days(ctx))), {})
+    expires = ended.get("expires_at")
+    spec = await ctx.run_spec(conn, run)
+    counters = ended.get("counters") or (run["counters"] if run["counters"].get("cycle") == cycle else {})
+    recount = not counters and cycle < run["cycle"]  # an ended cycle: the run keeps its latest only
+    rows = await repo.pages(repo.list_results, conn, run_id, cycle) if results else []
+    findings = await repo.pages(repo.list_findings, conn, run_id, cycle) if results else []
+    causes = await repo.list_root_causes(conn, run_id, cycle) if groups else []
+    run["scan"] = await repo.get_scan(conn, run_id, cycle)  # the reported cycle's
+    live = run["params"].get("samples_dir") is None
+    if recount:
+        tally = Tally(live=live, recheck_outcomes=RecheckPolicy.from_spec(spec.raw).outcomes)
+        async for page, found in repo.result_pages(conn, run_id, cycle):
+            for r in page:
+                tally.add(r, found.get(r["key_masked"], ()))
+        total = sum((await repo.cycle_counts(conn, run_id, cycle))["keys"].values())
+        bulk = (run["scan"] or {}).get("matched", 0)
+        counters = tally.counters(total=total + bulk, bulk_match=bulk) | {"cycle": cycle}
+    graph = await repo.pages(repo.list_graph_diffs, conn, run_id, cycle) if groups else []
+    approval = await approvals.run_approval(conn, run, cycle)
+    signoffs = await repo.approval_history(conn, run_id=run_id, cycle=cycle)
+    active = next((s for s in signoffs if s["status"] in ("requested", "approved")), None)
+    fixed = active and active["attests"].get("adjudication")  # attests format 1
+    adjudication = fixed and await repo.cycle_adjudication(conn, run_id, cycle, fixed["adjudication_id"])
+    drawn = await repo.get_draw(conn, run_id, cycle)
+    judged = ended.get("sample")
+    labelling, attested, unlabelled = None, None, 0
+    if expires is not None:  # an ended cycle's; a live one has none
+        labelling, attested = await accuracy.reported(conn, run_id, cycle, signoffs)
+        unlabelled = 0 if labelling else len(await repo.list_labellings(conn, run_id, cycle))
     by_key: dict[str, list[Row]] = defaultdict(list)
     for f in findings:
         by_key[f["key_masked"]].append(f)

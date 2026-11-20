@@ -39,17 +39,20 @@ from deltasleuth.core.types import (
     ExecutionConfig,
     KeyResult,
     Observation,
+    Outcome,
+    RuleClassification,
     Side,
     SideState,
     SideStateKind,
     Target,
+    TargetCapabilities,
 )
 from deltasleuth.errors import Invalid
 from deltasleuth.evidence.store import EvidenceNotFoundError
 from deltasleuth.runner.judges import ENDED_DETAIL, Ended, Item, Judged, Judges
 from deltasleuth.runner.recheck import tag_intermittent
 from deltasleuth.security.crypto import Sealer
-from deltasleuth.security.tokenise import KeyForm, mask_finding, mask_key
+from deltasleuth.security.tokenise import KeyForm, mask_finding, mask_key, mask_pointer
 from deltasleuth.store import repo
 
 Reads = dict[Side, Observation]
@@ -105,6 +108,7 @@ def connect(
     execution: ExecutionConfig,
     table: Plan | None = None,
     *,
+    capabilities: TargetCapabilities | None = None,
     max_body_bytes: int = jsonio.DEFAULT_MAX_BYTES,
     max_values: int | None = None,
 ) -> Connector:
@@ -116,6 +120,8 @@ def connect(
     holds more). A change another process made to the product's list of targets is taken in first."""
     product.follow(ctx)
     target = ctx.targets.live(target_id)
+    if capabilities is not None:
+        target = dataclasses.replace(target, capabilities=capabilities)
     gate = ctx.gates.setdefault(target_id, TargetGate.for_target(target))
     limits = {"table": table, "max_body_bytes": max_body_bytes, "max_values": max_values}
     return CONNECTORS[target.kind](target, execution, gate, **limits)
@@ -159,9 +165,13 @@ class LiveReader:
     """The spec's two sides, live; ``tables`` is the run's column plan (``params["tables"]``). A side whose
     connector is a ``BatchConnector`` reads groups of keys; any other reads its keys one by one."""
 
-    def __init__(self, ctx: Context, spec: CompiledSpec, tables: Plan | None = None) -> None:
+    def __init__(
+        self, ctx: Context, spec: CompiledSpec, tables: Plan | None = None, *,
+        caps: Capabilities | None = None,
+    ) -> None:
         self._ctx, self._sides, self._execution = ctx, spec.sides, spec.execution
         self._tables = tables or {}
+        self._caps = caps or {}
         self._connectors: dict[Side, Connector] = {}
         self._replaced: list[Connector] = []
         self.reconnect()
@@ -170,7 +180,10 @@ class LiveReader:
         """Connect both sides, reading the targets' credentials (again, once a refused one was
         replaced); reads in flight finish on the connectors replaced, closed with the reader."""
         fresh = {
-            side: connect(self._ctx, cfg.target, self._execution, self._tables.get(side.value))
+            side: connect(
+                self._ctx, cfg.target, self._execution, self._tables.get(side.value),
+                capabilities=self._caps.get(cfg.target),
+            )
             for side, cfg in self._sides.items()
         }
         self._replaced += self._connectors.values()
@@ -501,23 +514,32 @@ async def rederive_all(
     caps: Capabilities,
     intermittent: Container[str] = (),
     judges: Judges | None = None,
+    saved_findings: Mapping[str, Sequence[repo.Row]] | None = None,
 ) -> list[KeyResult]:
-    """Each stored result's comparison again, from its observations and their evidence: the
+    """One cycle's stored comparisons again, from their observations and evidence: the
     observations are read in one query and judged in one thread call, or with ``judges`` opened in a
     thread and judged by a judge process (``evaluate_many``). The keys (masked) in ``intermittent`` had
-    their stored findings tagged by a recheck (``confirm``), so they are tagged again."""
+    their stored findings tagged by a recheck (``confirm``), so they are tagged again. An expiring
+    rule keeps the decision recorded with the result; the cycle end already has its ``saved_findings``."""
     if not rows:
         return []
     ids = [row[f"obs_{s}_id"] for row in rows for s in "ab" if row[f"obs_{s}_id"]]
     sealer = await ctx.sealer(conn, run_id)
     found = await repo.get_observations(conn, run_id, ids)
     observations = {obs_id: repo.as_observation(sealer.open_row(row)) for obs_id, row in found.items()}
+    rules = None
+    if any(rule.expires for rule in spec.known_diffs):
+        rules = saved_findings if saved_findings is not None else await repo.get_findings(
+            conn, run_id, rows[0]["cycle"], [row["key_masked"] for row in rows]
+        )
 
     def judged(row: Mapping, result: KeyResult | None = None) -> KeyResult:
         if result is None:
             stored = [_stored(ctx, spec, caps, observations[row[f"obs_{s}_id"]]) for s in "ab"]
             result = _compare(ctx, spec, stored[0][0].key, stored[0][1], stored[1][1])
         result.obs_a_id, result.obs_b_id = row["obs_a_id"], row["obs_b_id"]
+        if rules and (saved := rules.get(row["key_masked"])):
+            _recorded_rules(ctx, spec, row, result, saved)
         if row["key_masked"] in intermittent:
             result.findings = tag_intermittent(result.findings, spec)
         return result
@@ -538,6 +560,26 @@ async def rederive_all(
             for row, item, answer in zip(rows, items, answers, strict=True)
         ]
     )
+
+
+def _recorded_rules(
+    ctx: Context, spec: CompiledSpec, row: Mapping, result: KeyResult, saved: Sequence[repo.Row]
+) -> None:
+    """Restore the rule decisions made when these findings were judged, including on older stored runs."""
+    # Both reads use finding order; check identity even when two masked pointers are alike.
+    for f, recorded in zip(result.findings, saved, strict=True):
+        pointer = repo.storable(mask_pointer(f.pointer_parts, spec, ctx.tokeniser, key=f.key))
+        if (pointer, f.change_type.value) != (recorded["json_pointer"], recorded["change_type"]):
+            raise ValueError("the stored finding does not match its evidence")
+        f.rule_id = recorded["rule_id"]
+        kind = recorded["rule_classification"]
+        f.rule_classification = RuleClassification(kind) if kind is not None else None
+    result.outcome = Outcome(row["outcome"])
+    result.first_outcome = Outcome(row["first_outcome"])
+    result.suppressed_count = row["suppressed_count"]
+    result.attrs.pop("known_diff_errors", None)
+    if errors := row["attrs"].get("known_diff_errors"):
+        result.attrs["known_diff_errors"] = errors
 
 
 async def save_pass(

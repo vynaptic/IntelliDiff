@@ -12,6 +12,7 @@ from deltasleuth.core.canonical.paths import child_pattern
 from deltasleuth.core.classify.enrich import enrich
 from deltasleuth.core.classify.rootcause import root_causes
 from deltasleuth.core.jsonio import dumps
+from deltasleuth.core.masking import run_masking
 from deltasleuth.core.types import ChangeType, KeyResult, Outcome, Side, SideConfig, SideState
 from deltasleuth.security.tokenise import (
     KEY_FORM,
@@ -36,6 +37,50 @@ DATA = (
     "n" * 65,
 )
 FIELDS = ("givenName", "address_line_1", "top10", "p99-latency", "_links", "Smith")
+
+
+def test_declared_names_preserve_structure_and_mask_dynamic_words(make_spec, make_finding, tok) -> None:
+    base = make_spec(tokenize=(("$.contacts[*].age", "free_number"),), clear=("$.available",))
+    spec = run_masking(base, {"member_names": "declared"})
+    [finding] = enrich([_age(make_finding, email="Smith")], spec, today=TODAY)
+    row = mask_finding(finding, spec, tok, form=KEY_FORM)
+    member = tok.token("free_text", "Smith")
+    assert (row["path_pattern"], row["json_pointer"]) == ("$.contacts[*].age", f"/contacts/{member}/age")
+    doc = {"contacts": {"Smith": {"age": 8, "flag": False}}, "available": True}
+    unknown = tok.token("free_text", "flag")
+    assert mask_document(doc, spec, tok) == {
+        "contacts": {member: {"age": tok.token("free_number", 8), unknown: "class:boolean"}},
+        "available": True,
+    }
+    assert "Smith" not in dumps(row)
+    assert run_masking(base, {}) is base
+    assert mask_path_pattern("$.contacts.Smith.age", base) == "$.contacts.Smith.age"
+
+
+def test_declared_table_columns_are_scoped_to_their_position_and_run(make_spec, tok) -> None:
+    base = make_spec()
+
+    def policy(column: str):
+        tables = {"a": {"columns": {column: "SRC"}}, "only_b": []}
+        return run_masking(base, {"member_names": "declared", "tables": tables})
+
+    amount, tier = policy("amount"), policy("tier")
+    assert len({amount.judge_key, tier.judge_key, base.judge_key}) == 3
+    assert mask_path_pattern("$.amount.amount", amount) == "$.amount[*]"
+    assert mask_path_pattern("$.amount", tier) == "$[*]"
+    doc = {"é": 7, "e\u0301": 8}
+    shown = mask_document(doc, amount, tok)
+    assert len(shown) == len(doc)
+    for name, value in doc.items():
+        pointer = mask_pointer((("field", name),), amount, tok)
+        assert shown[pointer[1:]] == tok.token("free_number", value)
+
+
+def test_unreviewed_spec_cannot_publish_names_outside_its_catalogue(make_spec) -> None:
+    base = make_spec(tokenize=(("$.contacts[*].age", "free_number"),))
+    tables = {"a": {"columns": {"contacts": "SRC"}}}
+    spec = run_masking(base, {"member_names": "catalogue", "tables": tables})
+    assert mask_path_pattern("$.contacts.Smith.age", spec) == "$.contacts[*][*]"
 
 
 def _age(make_finding, key: str = "K1", email: str = ADA):

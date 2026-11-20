@@ -407,9 +407,9 @@ async def _unkeyed(ctx: Context, conn: repo.Conn, run: repo.Row, text: str) -> N
 # -- holds and the dry run ----------------------------------------------------------------------------
 
 
-async def hold(ctx: Context, who: Principal, run_id: str, text: str | None) -> None:
+async def hold(ctx: Context, who: Principal, run_id: str, text: str | None) -> repo.Row:
     """Hold the run's evidence past its retention with the reason ``text`` (audited
-    ``retention.hold``), or release it (None; ``retention.release``)."""
+    ``retention.hold``), or release it (None; ``retention.release``). Return the cycles the hold excludes."""
     async with repo.audited(ctx.pool) as (conn, audit):
         run = await repo.get_run(conn, run_id)
         if run is None:
@@ -421,8 +421,11 @@ async def hold(ctx: Context, who: Principal, run_id: str, text: str | None) -> N
             raise Invalid(f"run {run_id} is {'already' if text is not None else 'not'} held")
         if text is None:
             await audit(who, "retention.release", run_id, {"reason": before["hold_reason"]})
-        else:
-            await audit(who, "retention.hold", run_id, {"reason": text})
+            return {}
+        excluded = await repo.hold_exclusions(conn, run_id)
+        detail = excluded if excluded["purged"] or excluded["purging"] else {}
+        await audit(who, "retention.hold", run_id, {"reason": text, **detail})
+        return detail
 
 
 async def preview(ctx: Context, *, limit: int | None = None) -> dict[str, list[repo.Row]]:

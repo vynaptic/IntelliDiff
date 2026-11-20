@@ -92,7 +92,7 @@ def test_the_table_demo_soak_moves_from_not_ready_to_parity_ready(
     stack = make_stack(yaml.safe_dump({"targets": targets}))
     spec = load_spec_file(DEMO / "spec.yaml")
     spec["execution"] |= {"cycleInterval": "3s", "stop": {"maxCycles": 5}}
-    spec["recheck"] |= {"delay": "1s"}  # a scanned key's confirming read follows its scan well inside a cycle
+    spec["recheck"] |= {"delay": "1s"}  # a discrepant key's two observations fit inside a cycle
     local = {
         "base_url": "http://127.0.0.1",
         "client": ("127.0.0.1", 50000),

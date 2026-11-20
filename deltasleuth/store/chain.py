@@ -17,11 +17,13 @@ hash.
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import hashlib
 import hmac
 import ipaddress
 import json
 import logging
+import os
 import re
 import time
 from collections.abc import AsyncIterator, Mapping, Sequence
@@ -318,6 +320,26 @@ def _held(path: Path, key: bytes) -> Anchor | None:
     return read_anchor(path, key) if path.exists() else None
 
 
+def _advance(path: Path, key: bytes, expected: Anchor | None, fresh: Anchor) -> Anchor:
+    """Publish the head only while the anchor checked against the database is still current.
+
+    The directory survives each atomic rename. Its lock covers the check and replace across the API,
+    worker and overlapping sweeps, including a background write finishing after its caller was cancelled.
+    """
+    directory = os.open(path.parent, os.O_RDONLY)
+    try:
+        fcntl.flock(directory, fcntl.LOCK_EX)
+        current = _held(path, key)
+        if current != expected:
+            if current is None:
+                raise Invalid("audit anchor disappeared while advancing")
+            return current
+        atomic_write(path, (fresh.text() + "\n").encode())
+        return fresh
+    finally:
+        os.close(directory)
+
+
 async def anchor(pool: AsyncConnectionPool, path: Path, key: bytes, *, said: bool = False) -> Anchor | None:
     """Write the chain's head to ``path`` as its anchor, by atomic replace, when it moved; and log the
     anchor's line when it moved and none was logged for ``LOG_EVERY_S``, or with ``said``. An anchor the
@@ -343,11 +365,10 @@ async def anchor(pool: AsyncConnectionPool, path: Path, key: bytes, *, said: boo
     if held is None or head != (held.seq, held.hash):
         fresh = Anchor.made(key, *head, datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
         try:
-            await asyncio.to_thread(atomic_write, path, (fresh.text() + "\n").encode())
-        except OSError as exc:
+            held = await asyncio.to_thread(_advance, path, key, held, fresh)
+        except (OSError, ValueError) as exc:
             _complain(path, f"audit anchor not written to {path}: {_why(exc)}")
             return held
-        held = fresh
         said = said or now - _logged.get(path, float("-inf")) >= LOG_EVERY_S
     _complained.pop(path, None)  # a complaint of a later fault is logged again
     if said:

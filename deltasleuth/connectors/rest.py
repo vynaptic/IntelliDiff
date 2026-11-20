@@ -168,7 +168,7 @@ class RestConnector:
         render = partial(self._request, side_cfg.request, template_variables("keys", "p0", 0))
         first = request = render(window_params(paging))
         check_literal_host(self._endpoint.host, allow_private=self._target.allow_private_network)
-        walk = PageWalk(paging, stable_ordering=self._target.capabilities.stable_ordering, merge=False)
+        walk = self._walk(paging, side_cfg, merge=False)
         status, page_no = None, 0
         while True:
             page = await self._page(request)
@@ -219,6 +219,14 @@ class RestConnector:
     ) -> RenderedRequest:
         return build_request(self._endpoint, template, variables, auth_headers=self._auth, page_params=params)
 
+    def _walk(self, paging: Pagination, side: SideConfig, *, merge: bool) -> PageWalk:
+        caps = self._target.capabilities
+        indicators = side.truncation or caps.truncation_indicators
+        return PageWalk(
+            paging, stable_ordering=caps.stable_ordering, merge=merge, max_values=self._max_values,
+            truncation_flags=side.truncation_flags, count_path=indicators.count_path if indicators else None,
+        )
+
     async def _read(
         self,
         observation: Callable[..., Observation],
@@ -233,9 +241,7 @@ class RestConnector:
             return _ended_on(
                 observation, result, result.error_detail, result.attempts, min(result.attempts, 1)
             )
-        walk = PageWalk(
-            paging, stable_ordering=self._target.capabilities.stable_ordering, max_values=self._max_values
-        )
+        walk = self._walk(paging, side_cfg, merge=True)
         await asyncio.to_thread(walk.start, result.body or b"", result.headers, first.url)
         pages, attempts, latency, size = 1, result.attempts, result.latency_ms or 0.0, len(result.body or b"")
         while (step := walk.next) is not None:

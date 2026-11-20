@@ -257,6 +257,13 @@ class TargetRegistry:
             raise UnknownTargetError(f"target {target_id!r} is not in the registry")
         return self._targets[target_id]
 
+    def with_capabilities(self, pinned: Mapping[str, TargetCapabilities]) -> TargetRegistry:
+        """Today's endpoints and credentials, with the run's behaviour for targets still present."""
+        return TargetRegistry(self._targets | {
+            name: replace(self._targets[name], capabilities=caps)
+            for name, caps in pinned.items() if name in self._targets
+        })
+
     def live(self, target_id: str) -> Target:
         """The target for a live connector; refuses a file-sample-only target (a service without base_url)."""
         target = self.get(target_id)

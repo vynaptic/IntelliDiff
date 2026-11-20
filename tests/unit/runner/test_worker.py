@@ -133,12 +133,14 @@ async def test_a_recheck_s_jitter_comes_from_the_masked_key(
     assert masked != "K001" and "K001" not in spread and spread.count(masked) >= 3  # the recheck's too
 
 
+@pytest.mark.parametrize("critical", [True, False])
 async def test_slots_that_meet_a_run_together_load_it_once(
-    harness: Harness, monkeypatch: pytest.MonkeyPatch
+    harness: Harness, monkeypatch: pytest.MonkeyPatch, critical: bool
 ) -> None:
-    """The first slot to meet a run loads it, the CRITICAL counts saved before among it; the slots that meet
-    it meanwhile wait for that load instead of repeating it."""
-    run_id = await create_run(harness.ctx, await harness.spec(spec_text(["K001"])), "batch", who=TESTER)
+    """All slots share one load. Only a run with a critical stop condition reads the saved counts."""
+    execution = "stop: {maxUnexplainedCritical: 5}" if critical else ""
+    spec_id = await harness.spec(spec_text(["K001"], execution=execution))
+    run_id = await create_run(harness.ctx, spec_id, "batch", who=TESTER)
     row = {"run_id": run_id, "spec_id": (await harness.run(run_id))["spec_id"]}
     counted, unexplained_critical = [], repo.unexplained_critical
 
@@ -152,7 +154,8 @@ async def test_slots_that_meet_a_run_together_load_it_once(
         loaded = await asyncio.gather(*(sweeper.slots._run(row) for _ in range(4)))
     finally:
         await sweeper.close()
-    assert counted == [run_id] and all(run is loaded[0] for run in loaded)
+    assert counted == ([run_id] if critical else [])
+    assert all(run is loaded[0] for run in loaded)
 
 
 async def test_two_runs_share_the_slots(harness: Harness, service: ScriptedService) -> None:

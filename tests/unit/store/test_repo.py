@@ -20,6 +20,7 @@ from psycopg_pool import AsyncConnectionPool
 
 from deltasleuth.api.deps import shown
 from deltasleuth.auth import sessions, tokens
+from deltasleuth.core.classify.rootcause import Member, group_members
 from deltasleuth.core.types import (
     ChangeType,
     CompareConfig,
@@ -41,7 +42,7 @@ from deltasleuth.runner.scan import new_scan
 from deltasleuth.security.tokenise import VALUE_FORM, Tokeniser, mask_finding
 from deltasleuth.store import repo
 from deltasleuth.store.db import MIGRATIONS, migrate
-from tests.conftest import TEST_DATA_KEY, TEST_SEALER, TESTER, evidence_store
+from tests.conftest import LATEST_SCHEMA, TEST_DATA_KEY, TEST_SEALER, TESTER, evidence_store
 
 pytestmark = pytest.mark.db
 
@@ -137,7 +138,7 @@ async def test_migrations_apply_once(pool: AsyncConnectionPool) -> None:
     assert await migrate(pool) == []
     async with pool.connection() as conn:
         cur = await conn.execute("SELECT version FROM ds.schema_version ORDER BY version")
-        assert await cur.fetchall() == [(v,) for v in range(1, 23)]
+        assert await cur.fetchall() == [(v,) for v in range(1, LATEST_SCHEMA + 1)]
 
 
 async def test_a_spec_is_stored_once_per_content_hash(pool: AsyncConnectionPool) -> None:
@@ -385,6 +386,25 @@ async def test_a_result_upsert_counts_revisions_and_replaces_findings(
     assert sorted(o["obs_id"] for o in after["observations"]) == sorted([obs_a.obs_id, obs_b.obs_id])
 
 
+async def test_revised_findings_keep_distinct_ids_for_the_same_display_pointer(
+    pool: AsyncConnectionPool, make_run: MakeRun
+) -> None:
+    run_id = await make_run(["k0"])
+    r = result("k0", Outcome.MISMATCH, [Severity.HIGH] * 3)
+    masked = [
+        mask_finding(f, SPEC, TOKENISER, form=VALUE_FORM) | {"json_pointer": "/shared", "path_pattern": path}
+        for f, path in zip(r.findings, ["$.first", "$.second", "$.second"], strict=True)
+    ]
+    async with pool.connection() as conn:
+        await repo.save_key_result(conn, run_id, 1, "m-k0", r, masked)
+        before = await repo.get_key_detail(conn, run_id, "m-k0")
+        r.findings = r.findings[1:]
+        await repo.save_key_result(conn, run_id, 1, "m-k0", r, masked[1:])
+        after = await repo.get_key_detail(conn, run_id, "m-k0")
+    assert before and after
+    assert [f["finding_id"] for f in after["findings"]] == [f["finding_id"] for f in before["findings"][1:]]
+
+
 async def test_results_and_findings_filter_and_page(pool: AsyncConnectionPool, make_run: MakeRun) -> None:
     all_keys = [f"k{i}" for i in range(5)]
     run_id = await make_run(all_keys)
@@ -605,6 +625,69 @@ async def test_root_causes_are_replaced_and_linked_to_findings(
     assert [f["finding_id"] for f in linked] == [findings[0]["finding_id"]]
 
 
+async def test_staged_causes_match_the_engine_and_roll_back_as_the_application_role(
+    pool: AsyncConnectionPool, make_run: MakeRun, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    keys = ["z", "é", "A", "β", "B", "a", "ä", "y"]
+    run_id = await make_run(keys)
+    async with pool.connection() as conn, conn.transaction(force_rollback=True):
+        for key in keys:
+            await save(conn, run_id, result(key, Outcome.MISMATCH, [Severity.HIGH]))
+        fs, _ = await repo.list_findings(conn, run_id)
+        refs = {f["key_masked"]: f["finding_id"] for f in fs}
+        positions = {f"m-{k}": i for i, k in enumerate(keys)}
+        # A site with PUBLIC's TEMP privilege revoked, using only the documented app grants.
+        role = f"ds_test_{run_id[-8:].lower()}"
+        await conn.execute(psycopg.sql.SQL("REVOKE TEMP ON DATABASE {} FROM PUBLIC").format(
+            psycopg.sql.Identifier(conn.info.dbname),
+        ))
+        await conn.execute(repo.grants(role).encode())
+        await conn.execute(psycopg.sql.SQL("SET LOCAL ROLE {}").format(psycopg.sql.Identifier(role)))
+        rights = await conn.execute(
+            "SELECT has_database_privilege(current_database(), 'TEMP'), has_schema_privilege('ds', 'CREATE')"
+        )
+        assert await rights.fetchone() == (True, False)
+
+        fan = ("$.items", "$.items[*]", "tok:unit:1111", "missing_in_b")
+        members = [
+            Member(f"raw-unit-{k}", f"m-{k}", fan, f"sig-{i % 2}", None, f"$.path{i}",
+                   ChangeType.MISSING_IN_B, Direction.A_ONLY if i else Direction.B_ONLY,
+                   Severity.CRITICAL if i else Severity.HIGH, None if i else "code",
+                   None if i else "FIELD_MISSING", refs[f"m-{k}"])
+            for i, k in enumerate(keys)
+        ]
+        # A fan-out partitioned by a bug rule, a repeated single-key candidate that falls back to
+        # signature, a null reference, and overlapping references across different ranked causes.
+        members.extend(dataclasses.replace(m, bug_rule="KD-UNIT-1") for m in members[:2])
+        singleton = dataclasses.replace(members[0], fanout=(*fan[:2], "tok:unit:2222", fan[3]))
+        members.extend([singleton, dataclasses.replace(singleton, ref=None),
+                        dataclasses.replace(members[1], fanout=None, path_pattern="$.other", ref=None)])
+        groups = group_members(members)
+        expected = [repo._cause_params(rc) | {"seq": i, "run_id": run_id, "cycle": 1}
+                    for i, (rc, _) in enumerate(groups)]
+        links = {m.ref: rc.root_cause_id for rc, ms in groups for m in ms if m.ref is not None}
+        for size in (1, 4, len(members)):
+            async with repo.cause_members(conn, run_id, 1) as stage:
+                for offset in range(0, len(members), size):
+                    await stage(members[offset:offset + size], positions)
+                staged = await conn.execute("SELECT to_jsonb(m)::text FROM pg_temp.ds_cause_members m")
+                assert all("raw-unit-" not in row[0] for row in await staged.fetchall())
+            assert await repo.list_root_causes(conn, run_id) == expected
+            fs, _ = await repo.list_findings(conn, run_id)
+            assert {f["finding_id"]: f["root_cause_id"] for f in fs} == links
+
+        # A collision of published ids must fail the entire replacement and leave its predecessor usable.
+        monkeypatch.setattr("deltasleuth.store.repo.cause_stage.cause_id", lambda *_: "RC-" + "a" * 12)
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            async with repo.cause_members(conn, run_id, 1) as stage:
+                await stage(members, positions)
+        assert await repo.list_root_causes(conn, run_id) == expected
+        fs, _ = await repo.list_findings(conn, run_id)
+        assert {f["finding_id"]: f["root_cause_id"] for f in fs} == links
+        table = await conn.execute("SELECT to_regclass('pg_temp.ds_cause_members')")
+        assert await table.fetchone() == (None,)
+
+
 async def test_soak_cycles_list_outcome_changes(pool: AsyncConnectionPool, make_run: MakeRun) -> None:
     run_id = await make_run(["k1", "k2"], mode="soak")
     async with pool.connection() as conn:
@@ -678,6 +761,25 @@ async def test_outcome_changes_are_one_cycle_s_and_page_in_manifest_order(
         assert counted == [0, 3, 2, 0]
         with pytest.raises(ValueError):
             await repo.list_outcome_changes(conn, run_id, 2, cursor="x")
+
+
+async def test_scan_changes_leave_unrecorded_prior_outcome_unknown(
+    pool: AsyncConnectionPool, make_run: MakeRun
+) -> None:
+    run_id = await make_run([], mode="soak", scan={"matched": 1, "done": True})
+    async with pool.connection() as conn:
+        await repo.end_cycle(conn, run_id)
+        keys = TEST_SEALER.seal_keys({"had-no-row": "m-had-no-row", "new": "m-new"})
+        assert await repo.start_next_cycle(conn, run_id, datetime.now(UTC), keys) == 2
+        for key in ("had-no-row", "new"):
+            await save(conn, run_id, result(key, Outcome.MISMATCH, [Severity.HIGH]), cycle=2)
+        found = await repo.outcome_changes(conn, run_id)
+        assert {r["key_masked"] for r in found} == {"m-had-no-row", "m-new"}
+        assert all(r["from_outcome"] is None and r["to_outcome"] == "MISMATCH" for r in found)
+        assert await repo.count_outcome_changes(conn, run_id, 2) == len(found)
+        assert await repo.start_purge(conn, run_id, 1, "erasure")
+        assert await repo.list_outcome_changes(conn, run_id, 2) == ([], None)
+        assert await repo.count_outcome_changes(conn, run_id, 2) == 0
 
 
 async def test_run_status_moves_only_from_the_expected_states(
@@ -861,7 +963,7 @@ async def test_migration_4_moves_a_run_s_scan_to_its_current_cycle(pg_dsn: str) 
     pool = AsyncConnectionPool(pg_dsn, open=False)
     await pool.open(wait=True)
     try:
-        assert await migrate(pool) == [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
+        assert await migrate(pool) == list(range(4, LATEST_SCHEMA + 1))
         async with pool.connection() as conn:
             run = await repo.get_run(conn, "R-" + "0" * 26)
             assert await repo.get_scan(conn, run["run_id"], 1) is None
@@ -898,7 +1000,7 @@ async def test_migration_5_keeps_legacy_rows_and_checks_new_ones(pg_dsn: str) ->
     pool = AsyncConnectionPool(pg_dsn, open=False)
     await pool.open(wait=True)
     try:
-        assert await migrate(pool) == [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
+        assert await migrate(pool) == list(range(5, LATEST_SCHEMA + 1))
         async with pool.connection() as conn:
             run = await repo.get_run(conn, "R-" + "0" * 26)
             cur = await conn.execute("SELECT actor, actor_name FROM ds.audit_log ORDER BY id")

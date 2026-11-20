@@ -58,7 +58,14 @@ def known(tokeniser: Tokeniser) -> str:
 
 
 TOKENISER = Tokeniser(b"an invented tokeniser key of 32+ bytes")
-SPEC = compile_spec(parse_yaml_text(spec_text(extra=known(TOKENISER))))
+
+
+def _spec(tokeniser: Tokeniser, keys: list[str] | None = None) -> str:
+    text = spec_text(keys, extra=known(tokeniser))
+    return text.replace("  fields:\n", '  fields:\n    - {path: "$.limits"}\n')
+
+
+SPEC = compile_spec(parse_yaml_text(_spec(TOKENISER)))
 CAPS = {t: TargetCapabilities(authoritative_absence=AuthoritativeAbsence((404,))) for t in ("svc-a", "svc-b")}
 
 
@@ -305,7 +312,7 @@ async def test_judge_processes_save_what_a_thread_saves(
     for processes in (0, 2):
         service.calls.clear()  # each run reads each key's script from its start
         async with open_harness(targets, judge_processes=processes) as h:
-            spec_id = await h.spec(spec_text(keys, extra=known(h.ctx.tokeniser)))
+            spec_id = await h.spec(_spec(h.ctx.tokeniser, keys))
             run_id = await create_run(h.ctx, spec_id, "batch", who=TESTER)
             assert (await h.finish(run_id))["status"] in ("completed", "completed_with_issues")
             saved.append(await _saved(h, run_id))
@@ -330,7 +337,7 @@ async def test_a_key_whose_judging_ends_a_judge_is_inconclusive_and_the_run_goes
     assert service.server is not None
     targets = TARGETS.format(base=f"http://127.0.0.1:{service.server.port}", rate=500)
     async with open_harness(targets, judge_processes=1) as h:
-        spec_id = await h.spec(spec_text(keys, extra=known(h.ctx.tokeniser)))
+        spec_id = await h.spec(_spec(h.ctx.tokeniser, keys))
         run_id = await create_run(h.ctx, spec_id, "batch", who=TESTER)
         assert (await h.finish(run_id))["status"] in ("completed", "completed_with_issues")
         results = await h.results(run_id)
@@ -358,7 +365,7 @@ async def test_the_worker_ends_its_judges_as_it_stops(
     assert service.server is not None
     targets = TARGETS.format(base=f"http://127.0.0.1:{service.server.port}", rate=500)
     async with open_harness(targets, judge_processes=2) as h:
-        spec_id = await h.spec(spec_text(keys, extra=known(h.ctx.tokeniser)))
+        spec_id = await h.spec(_spec(h.ctx.tokeniser, keys))
         run_id = await create_run(h.ctx, spec_id, "batch", who=TESTER)
         await h.finish(run_id)
     assert seen  # the run was judged by judge processes

@@ -10,3 +10,9 @@
 web/node_modules
 web/dist
 **/__pycache__
+**/.DS_Store
+**/.env
+**/.env.*
+**/secrets
+**/*.key
+**/*.key.*

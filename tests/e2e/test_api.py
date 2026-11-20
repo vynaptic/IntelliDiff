@@ -82,7 +82,7 @@ def test_run_results_key_reports_and_chat(serve: Any, make_stack: Any, llm: Any,
             "assistant",
             [causes[0]["root_cause_id"]],
         )
-        assert answer["content"] in pdf and "AI-generated, not evidence" in pdf
+        assert answer["content"] not in pdf and "No shareable AI draft for this cycle." in pdf
     else:
         assert (chat.status_code, chat.json()) == (503, {"detail": "AI disabled"}) and sent == []
     published = [json.dumps([run, mismatches, view, causes]), csv, pdf, json.dumps(sent)]
@@ -113,14 +113,15 @@ def test_explain_and_summarise_are_cited_or_refused(serve: Any, make_stack: Any,
         pdf = pdf_text(client.get(f"/v1/runs/{run_id}/reports/report.pdf").content)
     if not ai:
         assert [(d.status_code, d.json()) for d in drafts] == [(503, {"detail": "AI disabled"})] * 3
-        assert sent == [] and "No chat answer of this cycle cites a tool result." in pdf
+        assert sent == [] and "No shareable AI draft for this cycle." in pdf
         return
     assert [d.status_code for d in drafts] == [201] * 3
     explained, summarised, refused = (d.json()["messages"][-1] for d in drafts)
-    assert [m["citations"] for m in (explained, summarised, refused)] == [[first], [first], []]
+    replies = [explained, summarised, refused]
+    assert [m["citations"] for m in replies] == [[first], [first], []], [m["content"] for m in replies]
     problem = f"the answer does not cite [{other}], the root cause asked about"
     assert refused["content"] == prompt.abstain([problem])
-    # report.pdf's annex holds each cited draft as any chat answer, never the refusal
+    # Each cited built-in draft appears under its session ID.
     assert pdf.count(explained["content"]) == 2 and "AI-generated, not evidence" in pdf
     assert [d.json()["session_id"] in pdf for d in drafts] == [True, True, False]
     stored = [d.json()["messages"][:2] for d in drafts]

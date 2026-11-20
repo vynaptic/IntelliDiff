@@ -11,7 +11,8 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import AsyncIterator, Callable, Collection, Iterable, Sequence
+from contextlib import AsyncExitStack, asynccontextmanager
 from functools import partial
 
 from deltasleuth.connectors.base import (
@@ -27,6 +28,7 @@ from deltasleuth.connectors.tables.engine import (
     TIMEOUT,
     UNREACHABLE,
     Asked,
+    Engine,
     Row,
     Session,
     SnapshotLost,
@@ -45,6 +47,41 @@ from deltasleuth.core.types import ExecutionConfig, Observation, SideConfig, Tar
 
 Observed = dict[str, Observation]  # by key
 FIXED_ARMS = 2000  # keys of a statement over fixed files whose rows are not large: one pass over them
+
+
+@asynccontextmanager
+async def population_snapshot[S: Session](
+    gates: dict[str, TargetGate], engine: Engine[S], target: Target, timeout_s: float
+) -> AsyncIterator[S]:
+    """A census, key listing or sample frame holds one target slot and one rate tick for its read."""
+    gate = gates.setdefault(target.target_id, TargetGate.for_target(target))
+    async with gate.semaphore:
+        await gate.limiter.acquire()
+        async with engine.snapshot(target, timeout_s=timeout_s) as session:
+            yield session
+
+
+@asynccontextmanager
+async def scan_slots(
+    gates: dict[str, TargetGate], targets: Collection[Target], *, prefetch: bool = False
+) -> AsyncIterator[asyncio.Lock | None]:
+    """Reserve the two sides' read slots before opening either snapshot, in target order across runs.
+    When both sides use one target and only one slot is free, share it and serialise their cursor I/O."""
+    held = {}
+    async with AsyncExitStack() as stack:
+        for target in sorted(targets, key=lambda t: t.target_id):
+            if target.target_id not in held:
+                gate = gates.setdefault(target.target_id, TargetGate.for_target(target))
+                held[target.target_id] = gate.semaphore
+                await stack.enter_async_context(gate.semaphore)
+        serial = None
+        if prefetch and len(held) == 1:
+            slot = next(iter(held.values()))
+            if slot.locked():
+                serial = asyncio.Lock()
+            else:
+                await stack.enter_async_context(slot)  # available now: never wait for a second slot
+        yield serial
 
 
 def relation(side: Plan) -> str:

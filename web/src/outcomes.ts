@@ -88,5 +88,5 @@ export const changesTitle = (cycle: number): string =>
 /** What the changes tab says when it lists no key. */
 export const noChanges = (cycle: number): string =>
   cycle > 1
-    ? `No key changed its outcome from cycle ${cycle - 1} to cycle ${cycle}.`
+    ? `No outcome change is recorded from cycle ${cycle - 1} to cycle ${cycle}.`
     : "The run's first cycle has none before it to compare with.";

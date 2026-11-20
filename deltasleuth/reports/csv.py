@@ -19,9 +19,8 @@ import csv
 import io
 import json
 import re
-from collections.abc import AsyncIterator, Callable, Iterable, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable, Mapping, Sequence
 from decimal import Decimal
-from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -29,14 +28,14 @@ from deltasleuth.connectors.tables import engine_name
 from deltasleuth.context import Context
 from deltasleuth.core.jsonio import number_text
 from deltasleuth.core.types import INCONCLUSIVE_PRECEDENCE, Confirmation, DriftReason, Outcome
-from deltasleuth.errors import Invalid
+from deltasleuth.errors import Invalid, NotFound
 from deltasleuth.reports.data import (
     RunData,
     compared_columns,
     filters,
     is_discrepant,
-    load_run,
     rank,
+    read_run,
     result_pages,
 )
 from deltasleuth.security.tokenise import mask_path_pattern
@@ -197,45 +196,50 @@ async def write_csv(ctx: Context, run_id: str, cycle: int | None, kind: str, *, 
 
 async def stream_csv(
     ctx: Context, run_id: str, cycle: int | None, kind: str, *, keyed: bool = True
-) -> AsyncIterator[bytes]:
-    """One export of a run cycle (``KINDS``) as UTF-8 CSV bytes, a chunk at a time. Awaited, it reads the
-    run and what the export holds besides the rows of the cycle's results, so that what refuses it does so
-    first (LookupError for an unknown run, ``CyclePurged`` once the cycle's purge has started); the
-    iterator it gives then yields the header with those rows, and an export of findings or a retry list,
-    whose rows may be every key of the cycle, a page of results at a time, each page rendered in a thread.
-    ``keyed=False``, an evidence pack's, leaves out ``UNKEYED_COLUMNS`` and a graph row's masked members."""
+) -> AsyncGenerator[bytes]:
+    """Prepare a cycle export, refusing an absent run or purged cycle before the download is audited.
+    Its chunks read a single snapshot from the first byte, checking purge again before any byte is sent."""
+    from deltasleuth.runner.purge import refuse_purged
+
     if kind not in KINDS:
         raise ValueError(f"unknown CSV export {kind!r}; one of {', '.join(KINDS)}")
-    data = await load_run(ctx, run_id, cycle, results=False)
-    pages: Callable[[], AsyncIterator[list[Row]]] | None = None  # the rows read a page at a time
-    header: tuple[str, ...]
-    if kind == "graph":
-        gone = () if keyed else _MEMBERS
-        rows = [r | {"detail": {n: v for n, v in r["detail"].items() if n not in gone}} for r in data.graph]
-        header, rows = GRAPH_COLUMNS, [r | {"detail": _compact(r["detail"])} for r in rows]
-    elif kind == "retry":
-        header, rows, pages = RETRY_COLUMNS, [], partial(_retry_rows, ctx, data)
-    elif kind == "coverage":
-        header, rows = COVERAGE_COLUMNS, [_coverage_row(data)] if data.counters else []
-        if data.run["params"].get("keys_source") == "hash_sample":
-            header, rows = (*header, *SAMPLE_COLUMNS), rows + _strata_rows(data, rows)
-    elif kind == "root_causes":
-        header, rows = ROOT_CAUSE_COLUMNS, await _root_cause_rows(ctx, data)
-    else:
-        header, rows, pages = FINDING_COLUMNS, [], partial(_finding_pages, ctx, data, kind)
-    if not keyed:
-        header = tuple(name for name in header if name not in UNKEYED_COLUMNS)
-    return _chunks(header, rows, pages)
+    async with ctx.pool.connection() as conn:
+        run = await repo.get_run(conn, run_id)
+        if run is None:
+            raise NotFound(f"run {run_id} not found")
+        selected = cycle or run["cycle"]
+        await refuse_purged(conn, run_id, selected)
+    return _snapshot_chunks(ctx, run_id, selected, kind, keyed)
 
 
-async def _chunks(
-    header: Sequence[str], rows: list[Row], pages: Callable[[], AsyncIterator[list[Row]]] | None
-) -> AsyncIterator[bytes]:
-    yield await asyncio.to_thread(_encoded, header, rows, True)
-    if pages is not None:
-        async for page in pages():
-            if page:
-                yield await asyncio.to_thread(_encoded, header, page, False)
+async def _snapshot_chunks(
+    ctx: Context, run_id: str, cycle: int, kind: str, keyed: bool
+) -> AsyncGenerator[bytes]:
+    async with ctx.pool.connection() as conn:
+        await repo.read_one_snapshot(conn)
+        data = await read_run(ctx, conn, run_id, cycle, results=False, groups=False)
+        header: tuple[str, ...]
+        pages: AsyncIterator[list[Row]] | None = None
+        rows: list[Row] = []
+        if kind == "graph":
+            header, pages = GRAPH_COLUMNS, _graph_pages(conn, data, keyed)
+        elif kind == "retry":
+            header, pages = RETRY_COLUMNS, _retry_rows(conn, data)
+        elif kind == "coverage":
+            header, rows = COVERAGE_COLUMNS, [_coverage_row(data)] if data.counters else []
+            if data.run["params"].get("keys_source") == "hash_sample":
+                header, rows = (*header, *SAMPLE_COLUMNS), rows + _strata_rows(data, rows)
+        elif kind == "root_causes":
+            header, pages = ROOT_CAUSE_COLUMNS, _root_cause_pages(conn, data)
+        else:
+            header, pages = FINDING_COLUMNS, _finding_rows(conn, data, kind)
+        if not keyed:
+            header = tuple(name for name in header if name not in UNKEYED_COLUMNS)
+        yield await asyncio.to_thread(_encoded, header, rows, True)
+        if pages is not None:
+            async for page in pages:
+                if page:
+                    yield await asyncio.to_thread(_encoded, header, page, False)
 
 
 def _encoded(header: Sequence[str], rows: Iterable[Mapping[str, Any]], headed: bool) -> bytes:
@@ -277,13 +281,7 @@ async def _finding_rows(conn: repo.Conn, data: RunData, kind: str) -> AsyncItera
         yield rows
 
 
-async def _finding_pages(ctx: Context, data: RunData, kind: str) -> AsyncIterator[list[Row]]:
-    async with ctx.pool.connection() as conn:
-        async for page in _finding_rows(conn, data, kind):
-            yield page
-
-
-async def _retry_rows(ctx: Context, data: RunData) -> AsyncIterator[list[Row]]:
+async def _retry_rows(conn: repo.Conn, data: RunData) -> AsyncIterator[list[Row]]:
     """The retry list a page at a time: the keys of each page of the cycle's results that are due a
     retry, then the cancelled keys with no result, a page of them at a time (a key cancelled before its
     recheck keeps its first result)."""
@@ -292,52 +290,66 @@ async def _retry_rows(ctx: Context, data: RunData) -> AsyncIterator[list[Row]]:
 
     rechecked = {o.value for o in RecheckPolicy.from_spec(data.spec.raw).outcomes}
     run_id = data.run["run_id"]
-    async with ctx.pool.connection() as conn:
-        async for results in result_pages(conn, data):  # a page of the cycle's results at a time
-            due = [
-                r
-                for r in results
-                if r["outcome"] in ("INCONCLUSIVE", "DRIFT")
-                or owed(r, r["verdict"], live=data.live, due=rechecked)
-            ]
-            ids = [r[f"obs_{s}_id"] for r in due for s in "ab" if r[f"obs_{s}_id"]]
-            read = await repo.get_observations(conn, run_id, ids) if ids else {}
-            rows = []
-            for r in due:
-                attempts = {s: read.get(r[f"obs_{s}_id"], {}).get("attempts") for s in "ab"}
-                attrs = r["attrs"]
-                sides = sorted(
-                    f"{s}: {attrs[f'side_{s}_detail']}" for s in "ab" if attrs.get(f"side_{s}_detail")
-                )
-                detail = "; ".join(
-                    ([attrs["inconclusive_detail"]] if attrs.get("inconclusive_detail") else []) + sides
-                )
-                row = {"run_id": run_id, "key": r["key_masked"], "detail": detail or None,
-                       "reason": r["inconclusive_reason"] or r["drift_reason"] or "recheck_owed",
-                       "attempts_a": attempts["a"], "attempts_b": attempts["b"]}  # fmt: skip
-                rows.append(row | {n: r[n] for n in _RESULT_FIELDS if n in RETRY_COLUMNS})
-            yield rows
-        reason, cursor = data.run["stop_reason"] or "cancelled", None
-        while True:
-            keys, cursor = await repo.keys_without_result(
-                conn, run_id, data.cycle, state="cancelled", cursor=cursor
+    async for results in result_pages(conn, data):  # a page of the cycle's results at a time
+        due = [
+            r
+            for r in results
+            if r["outcome"] in ("INCONCLUSIVE", "DRIFT")
+            or owed(r, r["verdict"], live=data.live, due=rechecked)
+        ]
+        ids = [r[f"obs_{s}_id"] for r in due for s in "ab" if r[f"obs_{s}_id"]]
+        read = await repo.get_observations(conn, run_id, ids) if ids else {}
+        rows = []
+        for r in due:
+            attempts = {s: read.get(r[f"obs_{s}_id"], {}).get("attempts") for s in "ab"}
+            attrs = r["attrs"]
+            sides = sorted(
+                f"{s}: {attrs[f'side_{s}_detail']}" for s in "ab" if attrs.get(f"side_{s}_detail")
             )
-            yield [
-                {"run_id": run_id, "key": k["key_masked"], "outcome": "CANCELLED", "reason": reason}
-                for k in keys
-            ]
-            if cursor is None:
-                break
+            detail = "; ".join(
+                ([attrs["inconclusive_detail"]] if attrs.get("inconclusive_detail") else []) + sides
+            )
+            row = {"run_id": run_id, "key": r["key_masked"], "detail": detail or None,
+                   "reason": r["inconclusive_reason"] or r["drift_reason"] or "recheck_owed",
+                   "attempts_a": attempts["a"], "attempts_b": attempts["b"]}  # fmt: skip
+            rows.append(row | {n: r[n] for n in _RESULT_FIELDS if n in RETRY_COLUMNS})
+        yield rows
+    reason, cursor = data.run["stop_reason"] or "cancelled", None
+    while True:
+        keys, cursor = await repo.keys_without_result(
+            conn, run_id, data.cycle, state="cancelled", cursor=cursor
+        )
+        yield [
+            {"run_id": run_id, "key": k["key_masked"], "outcome": "CANCELLED", "reason": reason}
+            for k in keys
+        ]
+        if cursor is None:
+            break
 
 
-async def _root_cause_rows(ctx: Context, data: RunData) -> list[Row]:
-    async with ctx.pool.connection() as conn:
-        bug = await repo.bug_rules(conn, data.run["run_id"], data.cycle)
-    return [
-        {name: rc.get(name) for name in ROOT_CAUSE_COLUMNS}
-        | {"sample_keys": ";".join(rc["sample_keys"]), "bug_rule_id": bug.get(rc["root_cause_id"])}
-        for rc in data.root_causes
-    ]
+async def _root_cause_pages(conn: repo.Conn, data: RunData) -> AsyncIterator[list[Row]]:
+    run_id, cursor = data.run["run_id"], None
+    while True:
+        rows, cursor = await repo.root_cause_page(conn, run_id, data.cycle, cursor=cursor)
+        bug = await repo.bug_rules(conn, run_id, data.cycle, [r["root_cause_id"] for r in rows])
+        yield [
+            {name: rc.get(name) for name in ROOT_CAUSE_COLUMNS}
+            | {"sample_keys": ";".join(rc["sample_keys"]), "bug_rule_id": bug.get(rc["root_cause_id"])}
+            for rc in rows
+        ]
+        if cursor is None:
+            return
+
+
+async def _graph_pages(conn: repo.Conn, data: RunData, keyed: bool) -> AsyncIterator[list[Row]]:
+    gone, cursor = (() if keyed else _MEMBERS), None
+    while True:
+        rows, cursor = await repo.list_graph_diffs(conn, data.run["run_id"], data.cycle, cursor=cursor)
+        yield [
+            r | {"detail": _compact({n: v for n, v in r["detail"].items() if n not in gone})} for r in rows
+        ]
+        if cursor is None:
+            return
 
 
 def _coverage_row(data: RunData) -> Row:

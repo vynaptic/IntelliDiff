@@ -54,10 +54,10 @@ ROOT = Path(__file__).resolve().parents[1]  # the checkout a release builds from
 # The python:3.13-slim index that deploy/Dockerfile's PYTHON default pins, and its platform manifests, looked
 # up once and never pulled by this tool: a release builds from its platform's manifest digest, so the local
 # index reference, which source builds use, never changes.
-INDEX = "sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa725dd7cb2cd3b"
+INDEX = "sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90"
 BASES = {
-    "linux/amd64": "sha256:37134a49d21d2120e4c4d73bb76f8a4ab9aef31f096f7ec2ead48c2feead4332",
-    "linux/arm64": "sha256:e2a5fce94bd761967528a12f16d707c2613e1522f3f2d77fa45766f45962547f",
+    "linux/amd64": "sha256:48d884813cf44e927cf64c5529dd630dd3b18338c6dc727991eef9b71e934a20",
+    "linux/arm64": "sha256:7e9b0661d175b176a592d3969ccaf702c11b6769a485fa8b0d3769dd07bf1720",
 }
 MACHINES = {"linux/amd64": "x86_64", "linux/arm64": "aarch64"}  # platform_machine, for uv.lock's markers
 # The canonical verification procedure: VERIFY.txt repeats it from line 3, and each release key is filed

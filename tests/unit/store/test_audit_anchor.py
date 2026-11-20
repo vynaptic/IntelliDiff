@@ -233,6 +233,16 @@ async def _swept(settings: Settings, rows: int) -> None:
 # -- the anchor ------------------------------------------------------------------------------------
 
 
+def test_a_late_writer_keeps_the_newer_durable_anchor(tmp_path: Path) -> None:
+    path, key = tmp_path / chain.ANCHOR_FILE, bytes(range(32))
+    at = "2026-01-01T09:00:00Z"
+    initial, earlier, later = (chain.Anchor.made(key, i, str(i) * 64, at) for i in (1, 2, 3))
+    assert chain._advance(path, key, None, initial) == initial
+    assert chain._advance(path, key, initial, later) == later
+    assert chain._advance(path, key, initial, earlier) == later
+    assert chain.read_anchor(path, key) == later
+
+
 @pytest.mark.usefixtures("audit_logger")
 def test_a_chain_whose_newest_rows_were_deleted_is_refused_against_its_anchor(
     pg_dsn: str, tmp_path: Path

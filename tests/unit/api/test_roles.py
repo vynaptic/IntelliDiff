@@ -335,7 +335,9 @@ def test_denials_are_audited_once_a_minute_per_caller_and_route(
 def test_a_chat_session_is_its_creator_s(
     build: str, open_client: OpenClient, callers: Any, stub: Any, seed: Any, audit: Any
 ) -> None:
-    async def answer(ctx: Any, session_id: str, question: str, who: Principal, about: Any) -> None:
+    async def answer(
+        ctx: Any, session_id: str, question: str, who: Principal, about: Any, **scope: Any
+    ) -> None:
         await append_chat(ctx, session_id, "user", question)
 
     stub("deltasleuth.agent.loop", answer=answer)

@@ -21,6 +21,7 @@ from typing import Any
 from deltasleuth.auth.principal import WORKER, Principal
 from deltasleuth.connectors.base import KeyRejectedError, utc_now_iso
 from deltasleuth.connectors.tables import Plan, RowsMoved, decode_key, named, planned, relation, unsealed
+from deltasleuth.connectors.tables.connector import population_snapshot
 from deltasleuth.context import Context
 from deltasleuth.core.types import CompiledSpec, Side
 from deltasleuth.store import repo
@@ -177,7 +178,7 @@ async def _count(ctx: Context, spec: CompiledSpec, side: str, plan: Plan, keys: 
     previous: Key | None = None
     live = ctx.targets.live(target)
     engine = planned(side, plan, live)
-    async with engine.snapshot(live, timeout_s=TIMEOUT_S) as session:
+    async with population_snapshot(ctx.gates, engine, live, TIMEOUT_S) as session:
         at, server, twice = utc_now_iso(), engine.release(session), None  # twice: the key last repeated
         async for batch in engine.census(session, plan):
             for row in batch:

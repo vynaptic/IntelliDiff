@@ -24,6 +24,7 @@ import psycopg
 from deltasleuth.connectors import postgres as pg
 from deltasleuth.connectors.base import utc_now_iso
 from deltasleuth.connectors.postgres import errors as pg_errors
+from deltasleuth.connectors.tables.connector import scan_slots
 from deltasleuth.context import Context
 from deltasleuth.core.types import CompiledSpec, Side
 from deltasleuth.security.tokenise import VALUE_FORM, mask_key
@@ -95,10 +96,12 @@ async def _analysed(ctx: Context, spec: CompiledSpec, tables: pg.Plan, state: Ro
         return mask_key(text, spec, ctx.tokeniser, form=VALUE_FORM)
 
     async with AsyncExitStack() as stack:  # one read-only snapshot a side for the whole analysis
-        conns = {
-            s: await stack.enter_async_context(pg.snapshot(ctx.targets.live(spec.sides[Side(s)].target)))
-            for s in "ab"
-        }
+        targets = {s: ctx.targets.live(spec.sides[Side(s)].target) for s in "ab"}
+        await stack.enter_async_context(scan_slots(ctx.gates, targets.values()))
+        conns = {}
+        for side, target in targets.items():  # the graph reads its two cursors sequentially
+            await ctx.gates[target.target_id].limiter.acquire()
+            conns[side] = await stack.enter_async_context(pg.snapshot(target))
         state["graph_at"] = utc_now_iso()
 
         async def lookup(side: str, by: str, batch: list[str]) -> list[tuple[str, str]]:

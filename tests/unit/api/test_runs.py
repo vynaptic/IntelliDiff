@@ -77,6 +77,26 @@ def test_a_soak_post_keeps_its_settings(client: TestClient, spec_yaml: str) -> N
         assert refused.status_code == 422
 
 
+def test_an_oidc_run_pins_reviewed_field_names_at_creation(open_client, callers, spec_yaml) -> None:
+    body = yaml.safe_load(spec_yaml)
+    body["security"] = {"unlisted": "tokenize"}
+    body["compare"] = {"fields": [{"path": "$.price"}]}
+    with open_client(auth={"oidc": OIDC}) as client:
+        author = callers(client).session(*expand(["spec_author"]))
+        operator = callers(client).session(*expand(["operator"]), username="olga")
+        spec_id = client.post("/v1/specs", json=body, headers=author).json()["spec_id"]
+        query = {"key": RAW_KEY, "spec_id": spec_id}
+        first = client.post("/v1/compare", json=query, headers=operator).json()
+        masked = client.app.state.ctx.tokeniser.token("free_text", "price")
+        assert first["findings"][0]["json_pointer"] == f"/{masked}"
+        assert masked in first["canonical"]["a"] and "price" not in first["canonical"]["a"]
+        approved(client, spec_id)
+        second = client.post("/v1/compare", json=query, headers=operator).json()
+        assert second["findings"][0]["json_pointer"] == "/price" and "price" in second["canonical"]["a"]
+        original = f"/v1/runs/{first['run_id']}/keys/{first['key_masked']}"
+        assert client.get(original, headers=operator).json()["canonical"] == first["canonical"]
+
+
 SAMPLED = (
     "source: {kind: hash_sample, method: bottom_k, salt: api-q4,"
     " strata: [{name: all, cel: 'true', buckets: [{label: Y, values: [true], targetSize: 10}]}],"
@@ -532,7 +552,7 @@ def test_compare_runs_one_key_now_and_answers_with_its_key_view(client: TestClie
     view = now.json()
     assert (view["result"]["outcome"], view["result"]["confirmation"]) == ("MISMATCH", "rechecked")
     shown = view["key_masked"]
-    assert shown != seeded.key and shown.startswith("tok:identifier:k1:")
+    assert shown != seeded.key and shown.startswith("tok:identifier:k2:")
     assert view["run_id"] != seeded.run_id and view["canonical"]["b"]["price"] == 2.5
     assert seeded.raw_key not in now.text
     assert client.get(f"/v1/runs/{view['run_id']}/keys/{shown}").json()["key_masked"] == shown
@@ -559,10 +579,10 @@ def test_a_key_compared_now_shows_as_a_key_token_and_never_as_its_value_token(
     view = client.post("/v1/compare", json={"spec_id": spec_id, "key": RAW_KEY}).json()
     value = client.app.state.ctx.tokeniser.token("identifier", RAW_KEY)
     assert view["canonical"]["a"]["id"] == view["canonical"]["b"]["id"] == value
-    assert view["key_masked"] != value and view["key_masked"].startswith("tok:identifier:k1:")
-    assert client.get(f"/v1/runs/{view['run_id']}").json()["params"]["key_tokens"] == "k1"
+    assert view["key_masked"] != value and view["key_masked"].startswith("tok:identifier:k2:")
+    assert client.get(f"/v1/runs/{view['run_id']}").json()["params"]["key_tokens"] == "k2"
     created = client.post("/v1/runs", json={"spec_id": spec_id, "mode": "batch", "keys": [RAW_KEY]}).json()
-    assert client.get(f"/v1/runs/{created['run_id']}").json()["params"]["key_tokens"] == "k1"
+    assert client.get(f"/v1/runs/{created['run_id']}").json()["params"]["key_tokens"] == "k2"
 
 
 def test_compare_by_masked_key_refuses_another_spec(client: TestClient, seeded: Any, spec_yaml: str) -> None:
@@ -724,6 +744,25 @@ def test_a_read_that_outlasts_the_read_timeout_is_refused(
         client.app.state.ctx = ctx
     assert said(refused) == (503, "the store did not answer this read within 1 s: try again")
     assert client.get(path).status_code == 200  # within the default 30 s
+
+
+def test_csv_purge_after_admission_returns_gone_before_http_headers(
+    client: TestClient, seeded: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from deltasleuth import reports
+
+    original = reports.download
+
+    async def then_purge(*args: Any, **kwargs: Any) -> reports.Download:
+        prepared = await original(*args, **kwargs)
+        async with client.app.state.ctx.pool.connection() as conn:
+            await repo.end_cycle(conn, seeded.run_id)
+            assert await repo.start_purge(conn, seeded.run_id, 1, "retention standard")
+        return prepared
+
+    monkeypatch.setattr(reports, "download", then_purge)
+    response = client.get(f"/v1/runs/{seeded.run_id}/reports/discrepancies.csv")
+    assert response.status_code == 410 and "purged" in response.json()["detail"]
 
 
 def test_a_csv_export_streams_the_bytes_it_always_had(client: TestClient, seeded: Any) -> None:

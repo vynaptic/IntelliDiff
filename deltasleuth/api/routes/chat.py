@@ -1,7 +1,8 @@
 """Chat about a run or one of its keys. Every chat route answers 503 while AI is off, to a viewer.
 
 A session is its creator's: questions are stored as typed, so only the creator may read or continue
-it, and anyone else is told it does not exist. Answers are run-level evidence (the report's AI annex).
+it, and anyone else is told it does not exist. Only a cited draft from a built-in question can be shared
+in the report's AI annex.
 Once the run's current cycle is purged no chat starts or asks (410): answers need its evidence.
 ``explain`` starts a session and asks it one of the two fixed questions. A typed question holds at most
 ``MAX_QUESTION`` characters (422), and a caller asks at most ``ASK_LIMIT`` questions a minute over both
@@ -61,10 +62,10 @@ def _asking(ctx: Context, who: Principal) -> None:
         )
 
 
-async def _own(conn: repo.Conn, session_id: str, who: Principal) -> repo.Row:
+async def _own(conn: repo.Conn, session_id: str, who: Principal, *, recent: int | None = None) -> repo.Row:
     """The caller's session; 404 for another's (sessions before 005 are no one's)."""
-    row = await repo.get_chat_session(conn, session_id)
-    return need(row if row and row["created_by"] == who.actor else None, f"chat session {session_id}")
+    return need(await repo.get_chat_session(conn, session_id, recent=recent, actor=who.actor),
+                f"chat session {session_id}")
 
 
 @router.post("", status_code=201)
@@ -86,15 +87,18 @@ async def explain(ctx: Ctx, who: Viewer, body: ExplainIn) -> Response:
     _asking(ctx, who)
     cause, about, detail = body.root_cause_id, None, {"question": "summarise"}
     async with repo.audited(ctx.pool) as (conn, audit):
-        await refuse_chat(conn, await run_of(conn, body.run_id))
+        run = await run_of(conn, body.run_id)
+        await refuse_chat(conn, run)
         if cause is not None:
-            rows = {row["root_cause_id"]: row for row in await repo.list_root_causes(conn, body.run_id)}
+            causes = await repo.list_root_causes(conn, body.run_id, run["cycle"])
+            rows = {r["root_cause_id"]: r for r in causes}
             about = tools.cause_facts(need(rows.get(cause), f"root cause {cause}"))
             detail = {"question": "explain", "root_cause_id": cause}
         session_id = await repo.create_chat_session(conn, body.run_id, created_by=who.actor)
         await audit(who, "chat.create", session_id, {"run_id": body.run_id})
     question = prompt.SUMMARISE if cause is None else prompt.EXPLAIN.format(id=cause)
-    await _answer(ctx, replace(who, roles=expand(["viewer"])), session_id, question, detail, about)
+    await _answer(ctx, replace(who, roles=expand(["viewer"])), session_id, question, detail, about,
+                  preset="summary" if cause is None else "root_cause", cycle=run["cycle"])
     drafted = await session(ctx, who, session_id)
     drafted.status_code = 201
     return drafted
@@ -106,9 +110,9 @@ async def ask(ctx: Ctx, who: Viewer, session_id: str, body: MessageIn) -> Respon
     calls and the answer. Returns the session with every message."""
     _asking(ctx, who)
     async with ctx.pool.connection() as conn:
-        own = await _own(conn, session_id, who)
+        own = await _own(conn, session_id, who, recent=0)
         await refuse_chat(conn, await run_of(conn, own["run_id"]))
-    await _answer(ctx, who, session_id, body.content)
+    await _answer(ctx, who, session_id, body.content, cycle=own["current_cycle"])
     return await session(ctx, who, session_id)
 
 
@@ -119,6 +123,9 @@ async def _answer(
     question: str,
     detail: dict[str, Any] | None = None,
     about: Mapping[str, Any] | None = None,
+    *,
+    preset: str | None = None,
+    cycle: int | None = None,
 ) -> None:
     """Have the agent answer ``question`` in the session, acting for ``who``, and audit ``chat.ask``
     with ``detail``. ``about``: the root cause a fixed question explains."""
@@ -126,7 +133,7 @@ async def _answer(
 
     asked = True
     try:
-        await answer(ctx, session_id, question, who, about)
+        await answer(ctx, session_id, question, who, about, preset=preset, cycle=cycle)
     except SecretError as exc:  # the profile's key file: the message names the file, never its content
         asked = False  # the model client never opened, so nothing was asked or stored
         raise HTTPException(503, str(exc)) from None
@@ -145,5 +152,5 @@ async def session(ctx: Ctx, who: Viewer, session_id: str) -> Response:
         row = await _own(conn, session_id, who)
         if messages := row["messages"]:
             sealer = await ctx.sealer(conn, row["run_id"])
-            messages = [shown(sealer.open_row(m), "session_id", "cycle") for m in messages]
-    return ok(shown(row) | {"messages": messages})
+            messages = [shown(sealer.open_row(m), "session_id") for m in messages]
+    return ok(shown(row, "current_cycle") | {"messages": messages})

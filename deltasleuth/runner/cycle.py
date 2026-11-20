@@ -18,7 +18,7 @@ licence does not allow, or whose name it does not seat, as of when that cycle fa
 (``runner.sample``); a sampled soak's next cycle opens with no keys and its own draw pending, paused when
 the ending cycle's ``bottom_k`` draw did not pass. A cycle end on a store whose tables were never analysed
 analyses them first (``repo.analyse_new``), so the planner joins its rows by key; the root causes it then
-links are analysed with them (``repo.replace_root_causes``).
+links are analysed with them (``repo.cause_members``).
 """
 
 from __future__ import annotations
@@ -26,7 +26,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections import defaultdict
 from datetime import UTC, datetime, timedelta
+from operator import attrgetter
 from typing import Any
 
 from deltasleuth import approvals, licence
@@ -38,7 +40,7 @@ from deltasleuth.context import Capabilities, Context
 from deltasleuth.core.classify import rootcause
 from deltasleuth.core.secrets import SecretError
 from deltasleuth.core.spec import parse_duration
-from deltasleuth.core.types import CompiledSpec, Finding, Verdict
+from deltasleuth.core.types import CompiledSpec, Verdict
 from deltasleuth.errors import ours, told
 from deltasleuth.runner import census, sample
 from deltasleuth.runner.compare import rederive_all
@@ -48,7 +50,7 @@ from deltasleuth.runner.recheck import INTERMITTENT_B, RecheckPolicy
 from deltasleuth.runner.scan import new_scan
 from deltasleuth.runner.stop import StopConditions
 from deltasleuth.security.crypto import MaskedAlike
-from deltasleuth.security.tokenise import KeyForm, key_form, mask_key, mask_pointer
+from deltasleuth.security.tokenise import KeyForm, key_form, mask_path_pattern, mask_pointer
 from deltasleuth.store import repo
 
 CANCELLED = "cancelled"  # the stop reason of a cancel asked for through the API
@@ -65,27 +67,25 @@ def final_status(counters: dict[str, Any]) -> str:
 
 async def summarise(ctx: Context, conn: repo.Conn, spec: CompiledSpec, run: repo.Row) -> dict[str, Any]:
     """Save the cycle's root causes and counters; return the counters. The results are read, counted and
-    their discrepant keys derived again a page at a time; of those keys only each finding's grouping facts
-    (``rootcause.Member``) are kept, never their documents or values."""
+    their discrepant keys derived again a page at a time. The database groups their masked facts."""
     run_id, cycle, caps = run["run_id"], run["cycle"], ctx.capabilities(run)
     live, due = run["params"].get("samples_dir") is None, RecheckPolicy.from_spec(spec.raw).outcomes
     tally = Tally(live=live, recheck_outcomes=due)
-    grouped: list[rootcause.Member] = []
-    async for results, found in repo.result_pages(conn, run_id, cycle):
-        discrepant = []
-        for r in results:
-            fs = found.get(r["key_masked"], [])
-            # Root causes group discrepant findings only, so only discrepant results are re-derived.
-            if tally.add(r, fs) is Verdict.DIFFERENT:
-                discrepant.append((r, fs))
-        grouped += await _members(ctx, conn, spec, run_id, discrepant, caps, key_form(run["params"]))
-    groups = await asyncio.to_thread(rootcause.group_members, grouped)
-    links = {m.ref: rc.root_cause_id for rc, ms in groups for m in ms if m.ref is not None}
-    await repo.replace_root_causes(conn, run_id, cycle, [rc for rc, _ in groups], links)
-    states = await repo.cycle_counts(conn, run_id, cycle)
-    bulk = (run["scan"] or {}).get("matched", 0)  # a table scan's identical rows
-    counters = tally.counters(total=sum(states["keys"].values()) + bulk, bulk_match=bulk)
-    await repo.set_counters(conn, run_id, counters | {"cycle": cycle})
+    form = key_form(run["params"])
+    async with repo.cause_members(conn, run_id, cycle) as stage:
+        async for results, found in repo.result_pages(conn, run_id, cycle):
+            discrepant = []
+            for r in results:
+                fs = found.get(r["key_masked"], [])
+                if tally.add(r, fs) is Verdict.DIFFERENT:
+                    discrepant.append((r, fs))
+            if discrepant:
+                await stage(await _members(ctx, conn, spec, run_id, discrepant, caps, form),
+                            {r["key_masked"]: r["seq"] for r, _ in discrepant})
+        states = await repo.cycle_counts(conn, run_id, cycle)
+        bulk = (run["scan"] or {}).get("matched", 0)  # a table scan's identical rows
+        counters = tally.counters(total=sum(states["keys"].values()) + bulk, bulk_match=bulk)
+        await repo.set_counters(conn, run_id, counters | {"cycle": cycle})
     return counters
 
 
@@ -100,27 +100,30 @@ async def _members(
 ) -> list[rootcause.Member]:
     """One page's discrepant (result, stored findings), derived again from their evidence, as members of
     root causes, each key masked in the run's ``form``. A member's ``ref`` is its stored finding's id (known
-    by its masked key and pointer), or None. Keys whose stored findings a recheck tagged intermittent are
-    tagged again."""
+    by its masked pointer, pattern, change and occurrence), or None. Repeat any intermittent tag."""
     if not discrepant:
         return []
     tagged = {r["key_masked"] for r, fs in discrepant if any(f["value_class"] == INTERMITTENT_B for f in fs)}
-    derived = await rederive_all(ctx, conn, spec, run_id, [r for r, _ in discrepant], caps, tagged)
-    ids = {
-        (f["key_masked"], f["json_pointer"], f["change_type"]): f["finding_id"]
-        for _, fs in discrepant
-        for f in fs
-    }
+    derived = await rederive_all(
+        ctx, conn, spec, run_id, [r for r, _ in discrepant], caps, tagged,
+        saved_findings={r["key_masked"]: fs for r, fs in discrepant},
+    )
     tok = ctx.tokeniser
 
-    def stored(f: Finding) -> str | None:
-        pointer = repo.storable(mask_pointer(f.pointer_parts, spec, tok, key=f.key))
-        return ids.get((mask_key(f.key, spec, tok, form=form), pointer, f.change_type.value))
-
     def read() -> list[rootcause.Member]:
-        return [
-            m for r in derived for m in rootcause.members(r, spec=spec, tokeniser=tok, form=form, ref=stored)
-        ]
+        members = []
+        for result, (_, saved) in zip(derived, discrepant, strict=True):
+            ids: dict[tuple[str, str, str], list[str]] = defaultdict(list)
+            for row in reversed(saved):  # pop the first stored occurrence of a published identity
+                ids[row["json_pointer"], row["path_pattern"], row["change_type"]].append(row["finding_id"])
+            for f in result.findings:  # consume suppressed occurrences too, before grouping filters them
+                pointer = repo.storable(mask_pointer(f.pointer_parts, spec, tok, key=f.key))
+                pattern = repo.storable(mask_path_pattern(f.path_pattern, spec))
+                matches = ids.get((pointer, pattern, f.change_type.value))
+                f.finding_id = matches.pop() if matches else None
+            members.extend(rootcause.members(result, spec=spec, tokeniser=tok, form=form,
+                                             ref=attrgetter("finding_id")))
+        return members
 
     return await asyncio.to_thread(read)
 
@@ -138,7 +141,7 @@ async def finish_cycle(
             or not await repo.cycle_done(conn, run_id, run["cycle"])
         ):
             return
-        spec = await ctx.spec(conn, run["spec_id"])
+        spec = await ctx.run_spec(conn, run)
         await repo.analyse_new(conn)  # a new store's first cycle end, before summarise joins its rows
     soak = run["status"] == "running" and run["mode"] == "soak"
     next_at, reason = _boundary(spec, run) if soak else (None, None)
@@ -247,7 +250,10 @@ async def _rolled(
         return None, None, None
     interval = parse_duration(spec.raw["execution"]["cycleInterval"])
     try:
-        resolved, walk = await resolve(ctx, spec, bound_s=min(census.TIMEOUT_S, interval or census.TIMEOUT_S))
+        resolved, walk = await resolve(
+            ctx, spec, bound_s=min(census.TIMEOUT_S, interval or census.TIMEOUT_S),
+            form=key_form(params), caps=ctx.capabilities(run),
+        )
     except KeyAuthRefused:
         raise
     except ValueError as exc:  # a refusal's message names positions and statuses, never keys

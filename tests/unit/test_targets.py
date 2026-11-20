@@ -638,7 +638,7 @@ async def test_a_change_keeps_one_budget(ctx: Context) -> None:
         assert ctx.gates["own"] is gate and gate.limiter is limiter
         await _put(ctx, rate_per_s=50, max_concurrency=8, auth=BEARER)
         assert ctx.gates["own"] is gate and gate.limiter is not limiter  # never popped: rebudgeted
-        assert (gate.limiter.time_period, gate.max_concurrency, gate.semaphore._value) == (0.02, 8, 8)
+        assert (gate.limiter.time_period, gate.max_concurrency, gate.semaphore.held) == (0.02, 8, 0)
     finally:
         await reader.aclose()
     await product.remove(ctx, "own", TESTER)
@@ -672,14 +672,45 @@ async def test_another_process_follows_a_change_without_a_restart(ctx: Context) 
 
 
 @pytest.mark.db
-async def test_an_unreadable_change_keeps_what_the_process_holds(
-    ctx: Context, caplog: pytest.LogCaptureFixture
+async def test_an_unreadable_change_retires_product_addresses_until_recovery(
+    ctx: Context, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     await _put(ctx)
     async with Context.open(ctx.settings) as other:
-        product.path(ctx.settings).write_text("{not json")
+        await connect(other, "own", ExecutionConfig()).aclose()
+        gate = other.gates["own"]
+        source = product.path(ctx.settings)
+        moved = {"targets": {"own": {"base_url": "https://moved.example", "max_concurrency": 2}}}
+        source.write_text(json.dumps(moved))
         with caplog.at_level(logging.WARNING, logger="deltasleuth.targets"):
+            with monkeypatch.context() as unreadable:
+                def denied(path: Path) -> dict[str, Any]:
+                    raise PermissionError("unavailable")
+
+                unreadable.setattr(product, "_entries", denied)
+                for _ in range(2):
+                    with pytest.raises(LookupError):
+                        connect(other, "own", ExecutionConfig())
+                assert "own" not in other.targets
+                await connect(other, "filed", ExecutionConfig()).aclose()
+            # Restoring access need not change the list's inode, size or modification time.
             await connect(other, "own", ExecutionConfig()).aclose()
-            await connect(other, "own", ExecutionConfig()).aclose()
-        assert other.targets.get("own").base_url == "https://own.example/api"
-        assert len([r for r in caplog.records if "read again" in r.getMessage()]) == 1  # once per change
+        assert other.targets.get("own").base_url == "https://moved.example"
+        assert other.gates["own"] is gate and gate.max_concurrency == 2
+        assert len([r for r in caplog.records if "read again" in r.getMessage()]) == 1
+
+        source.write_text("{not json")
+        with pytest.raises(LookupError):
+            connect(other, "own", ExecutionConfig())
+        source.write_text(json.dumps(moved))
+        with monkeypatch.context() as active:
+            async def reading(conn: Any, target_id: str) -> int:
+                assert target_id == "own"
+                return 1
+
+            active.setattr(product.repo, "runs_reading", reading)
+            with pytest.raises(product.Refused, match="1 unfinished run"):
+                await _put(other, base_url="https://changed.example")
+        source.unlink()  # an operator restores an empty list
+        await connect(other, "filed", ExecutionConfig()).aclose()
+        assert "own" not in other.targets and "own" not in other.gates

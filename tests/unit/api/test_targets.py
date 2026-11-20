@@ -523,7 +523,7 @@ def test_a_link_in_the_products_secrets_stops_the_start_and_every_change(
         issues = [[(i["pointer"], i["code"]) for i in answer.json()["issues"]] for answer in refused]
         assert issues == [[("/targets/own-b/auth", "link")]] * 3
         assert not any(str(tmp_path) in answer.text or name in answer.text for answer in refused)
-        assert _compared(client, spec_id).status_code == 200  # what the server read at its start holds
+        assert _compared(client, spec_id).status_code == 422  # stale product addresses are unavailable
     for at in ("/targets/own-b/auth", "/targets"):
         if at == "/targets":  # the secrets folder itself: no credential and no list is needed
             (folder / "secrets" / name).unlink()
@@ -536,8 +536,7 @@ def test_a_link_in_the_products_secrets_stops_the_start_and_every_change(
         assert (issue.pointer, issue.code) == (at, "link")
         assert issue.message.endswith(f" (the product's list, {folder / 'targets.json'})")
     assert dsn.read_text().startswith("postgresql://") and len(list(elsewhere.iterdir())) == 3
-    sent = [headers.get("authorization") for _, headers in seen]
-    assert sent == [None, None]  # the one compare's two reads, of own-a: never the DSN as a bearer
+    assert not seen
 
 
 def test_a_product_target_takes_no_capabilities(client: TestClient, endpoint: tuple[str, Seen]) -> None:

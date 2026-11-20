@@ -164,14 +164,26 @@ async def test_concurrent_calls_cannot_overshoot_the_turn(start_mock: Any, make_
 
 async def test_a_failed_call_releases_its_reservation(start_mock: Any, make_client: Any) -> None:
     mock = await start_mock("openai")
-    mock.enqueue(500, {"error": {"message": "x", "type": "server_error", "code": None}})
+    mock.enqueue(400, {"error": {"message": "x", "type": "invalid_request_error", "code": None}})
     request = req(max_output_tokens=16)
     budget = make_client(mock).estimate_input_tokens(request) + 16
     client = make_client(mock, budgets={"per_run_tokens": budget}, retry_attempts=1)
-    with pytest.raises(ProviderError):
+    with pytest.raises(BadRequest):
         await client.complete(request)
     await client.complete(request)  # the failed call charged nothing
     assert len(mock.requests) == 2
+
+
+async def test_a_retry_cannot_spend_a_timed_out_attempt_s_reservation_again(start_mock, make_client) -> None:
+    mock = await start_mock("openai")
+    request = req(max_output_tokens=16)
+    limit = _one_call_budget(make_client(mock), request)
+    client = make_client(mock, limits={"timeout_s": 0.05}, budgets={"per_run_tokens": limit})
+    mock.delay_s = 0.5
+    with pytest.raises(BudgetExceeded, match="per_run_tokens"):
+        await client.complete(request, turn=client.new_turn())
+    assert len(mock.requests) == 1
+    assert [row["error_class"] for row in client.call_log] == ["Timeout", "PolicyDenied"]
 
 
 async def test_replies_without_usage_are_charged_their_worst_case(start_mock: Any, make_client: Any) -> None:

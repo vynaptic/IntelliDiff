@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, LiteralString
 
 from deltasleuth.core.types import RootCause
 from deltasleuth.store.repo.base import (
@@ -67,14 +67,19 @@ async def replace_root_causes(
                WHERE f.finding_id = m.id AND f.run_id = %(run_id)s AND f.cycle = %(cycle)s""",
             params | {"ids": list(finding_causes), "rcs": list(finding_causes.values())},
         )
-        if finding_causes and await _value(
-            conn,
-            """SELECT (1 - s.null_frac) * c.reltuples * 2 < %s
-               FROM pg_class c JOIN pg_stats s ON s.schemaname = 'ds' AND s.tablename = c.relname
-               WHERE c.oid = 'ds.findings'::regclass AND s.attname = 'root_cause_id'""",
-            (len(finding_causes),),
-        ):
-            await conn.execute("ANALYZE ds.findings (root_cause_id)")
+        await analyse_cause_links(conn, len(finding_causes))
+
+
+async def analyse_cause_links(conn: Conn, linked: int) -> None:
+    """Refresh statistics when a cycle links over twice the planner's estimate of all linked findings."""
+    if linked and await _value(
+        conn,
+        """SELECT (1 - s.null_frac) * c.reltuples * 2 < %s
+           FROM pg_class c JOIN pg_stats s ON s.schemaname = 'ds' AND s.tablename = c.relname
+           WHERE c.oid = 'ds.findings'::regclass AND s.attname = 'root_cause_id'""",
+        (linked,),
+    ):
+        await conn.execute("ANALYZE ds.findings (root_cause_id)")
 
 
 async def list_root_causes(conn: Conn, run_id: str, cycle: int | None = None) -> list[Row]:
@@ -86,31 +91,52 @@ async def list_root_causes(conn: Conn, run_id: str, cycle: int | None = None) ->
     )
 
 
+async def root_cause_page(conn: Conn, run_id: str, cycle: int, *, cursor: str | None = None) -> Page:
+    """Most probable causes first, in pages for an export."""
+    after = _after(cursor, 1)[0]
+    rows = await _rows(
+        conn,
+        """SELECT * FROM ds.root_causes WHERE run_id = %s AND cycle = %s AND seq > %s
+           ORDER BY seq LIMIT 1001""",
+        (run_id, cycle, after),
+    )
+    return _page(rows, 1000, "seq")
+
+
+# A scan records identical rows only as a count. A new per-key discrepancy therefore has no
+# known prior outcome: the key may have matched, or may be new to the population.
+_CHANGED: LiteralString = """NOT EXISTS (
+    SELECT 1 FROM ds.cycles WHERE run_id = %(run_id)s AND cycle = %(cycle)s - 1 AND purging_at IS NOT NULL
+) AND (cur.outcome <> prev.outcome OR (
+    prev.outcome IS NULL AND cur.outcome <> 'MATCH' AND EXISTS (
+        SELECT 1 FROM ds.scans WHERE run_id = %(run_id)s AND cycle = %(cycle)s - 1)))"""
+
+
 async def list_outcome_changes(
     conn: Conn, run_id: str, cycle: int | None = None, *, limit: int = 100, cursor: str | None = None
 ) -> Page:
     """The cycle's keys whose outcome differs from the cycle before's, in manifest order: cycle,
     key_masked, from_outcome and to_outcome. A page walks the cycle's keys by their order from where the
     page before ended, reading each key's result of the cycle before and then of the cycle by key, and
-    stops at its last change; a run's first cycle has none before it."""
+    stops at its last change. A new non-MATCH after a table scan has a null from_outcome."""
     after = _after(cursor, 1)[0]
     cycle = await _current(conn, run_id, cycle)
     if cycle is None or cycle <= 1:
         return [], None
     rows = await _rows(
         conn,
-        """SELECT k.seq, k.cycle, k.key_masked, prev.outcome AS from_outcome, cur.outcome AS to_outcome
+        f"""SELECT k.seq, k.cycle, k.key_masked, prev.outcome AS from_outcome, cur.outcome AS to_outcome
            FROM ds.run_keys k
-           CROSS JOIN LATERAL (
+           LEFT JOIN LATERAL (
                SELECT r.outcome FROM ds.results r
                WHERE (r.run_id, r.cycle, r.key_masked) = (k.run_id, k.cycle - 1, k.key_masked)
-               OFFSET 0) prev
+               OFFSET 0) prev ON true
            CROSS JOIN LATERAL (
                SELECT r.outcome FROM ds.results r
                WHERE (r.run_id, r.cycle, r.key_masked) = (k.run_id, k.cycle, k.key_masked) OFFSET 0) cur
            WHERE k.run_id = %(run_id)s AND k.cycle = %(cycle)s AND k.seq > %(after)s
-             AND cur.outcome <> prev.outcome
-           ORDER BY k.seq LIMIT %(limit)s""",
+             AND {_CHANGED}
+           ORDER BY k.seq LIMIT %(limit)s""",  # noqa: S608 - fixed SQL fragment
         {"run_id": run_id, "cycle": cycle, "after": after, "limit": limit + 1},
     )
     changed, next_cursor = _page(rows, limit, "seq")
@@ -125,13 +151,13 @@ async def count_outcome_changes(conn: Conn, run_id: str, cycle: int) -> int:
         return 0
     return await _value(
         conn,
-        """SELECT count(*)
-           FROM ds.results cur CROSS JOIN LATERAL (
+        f"""SELECT count(*)
+           FROM ds.results cur LEFT JOIN LATERAL (
                SELECT r.outcome FROM ds.results r
                WHERE (r.run_id, r.cycle, r.key_masked) = (cur.run_id, cur.cycle - 1, cur.key_masked)
-               OFFSET 0) prev
-           WHERE cur.run_id = %s AND cur.cycle = %s AND cur.outcome <> prev.outcome""",
-        (run_id, cycle),
+               OFFSET 0) prev ON true
+           WHERE cur.run_id = %(run_id)s AND cur.cycle = %(cycle)s AND {_CHANGED}""",  # noqa: S608
+        {"run_id": run_id, "cycle": cycle},
     )
 
 

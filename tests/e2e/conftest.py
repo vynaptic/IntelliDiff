@@ -114,7 +114,7 @@ class _LLM(BaseHTTPRequestHandler):
         if framed.get("tool") == "get_run_summary":  # not the root cause a fixed question is given
             data = framed["data"]
             cause, different = data["root_causes"][0]["root_cause_id"], data["counters"]["different"]
-            message["content"] = f"{different} keys differ; the most probable root cause is [{cause}]."
+            message["content"] = f"Across the run, {different} keys differ; the top root cause is [{cause}]."
         else:
             call = {"name": "get_run_summary", "arguments": "{}"}
             message["tool_calls"] = [
@@ -193,7 +193,7 @@ def make_stack(tmp_path: Path, pg_dsn: str) -> Callable[..., Stack]:
         if llm_url:
             profile = {  # the mock pairs' specs declare clear paths, which their runs' chats carry
                 "dialect": "openai_chat", "base_url": llm_url, "model": "m", "environments": ["test"],
-                "data_classes": ["production_tokenised", "production_clear_declared"],
+                "data_classes": ["production_tokenised", "production_clear_declared", "analyst_text"],
                 "capabilities": {"tool_calling": True},
             }  # fmt: skip
             profiles = {"hosts": {"127.0.0.1": "internal"}, "profiles": {LLM_PROFILE: profile}}

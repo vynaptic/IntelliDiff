@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from deltasleuth.context import Context
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+LATEST_SCHEMA = 23
 PG_IMAGE = "postgres:16-alpine"  # the local image; tests never pull
 MYSQL_IMAGE = "mysql:8.4"
 ORACLE_IMAGE = "gvenzl/oracle-free:23-slim-faststart"

@@ -218,7 +218,7 @@ async def _judged(
     signoff = await repo.signed_off(conn, run_id, cycle)
     if signoff is None:
         return [*found, f"{at} has no approved sign-off"], None
-    spec = await ctx.spec(conn, run["spec_id"])
+    spec = await ctx.run_spec(conn, run)
     recorded, signoff_id = signoff["attests"], signoff["approval_id"]
     number = recorded.get("format", 0)
     rebuilt = await approvals.rebuilt(conn, run, cycle, spec, recorded)

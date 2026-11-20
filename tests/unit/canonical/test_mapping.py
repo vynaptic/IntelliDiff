@@ -92,6 +92,37 @@ class TestNumbers:
         assert apply_map("a + b", {"a": D(2), "b": D("0.5")}) == D("2.5")
         assert apply_map("0.1 + 0.2", {}) == D("0.30000000000000004")  # shortest float text
 
+    @pytest.mark.parametrize("expression", [
+        "{'v':100000000000000000000001}", "1e23 / 1", "$eval(expr)",
+        "(100000001 * 100000001) / 1", "100000001 * 100000001 > 0",
+        "$sum([5000000000000000, 5000000000000000]) > 0",
+        "$string(10000001 * 100000001)", "$eval('(100000001 * 100000001) / 1 > 0')",
+        "$string([1000000000000000..1000000000000010])",
+    ])
+    def test_unsafe_integral_results_never_reach_the_document_or_a_predicate(self, expression) -> None:
+        with pytest.raises(MappingError):
+            apply_map(expression, {"expr": "1e23 / 1"})
+
+    def test_range_ending_at_a_safe_power_of_ten(self) -> None:
+        assert apply_map("[999999999999999..1000000000000000]", {}) == [
+            D("999999999999999"), D("1000000000000000")
+        ]
+
+    @pytest.mark.parametrize("expression", [
+        "$number(text) = 1000000000000000", "($f := $number; $f(text))",
+        "$eval('$number(text)')", "$map([text], $number)", "text.$number()",
+    ])
+    @pytest.mark.parametrize("text", ["1000000000000000.01", "1e-400", "0x20000000000001"])
+    def test_unsafe_number_text_never_rounds(self, expression, text) -> None:
+        with pytest.raises(MappingError):
+            apply_map(expression, {"text": text})
+
+    def test_checked_number_retains_the_native_grammar_and_context(self) -> None:
+        assert apply_map("$map(['2.5e-1','0x10','0B11','0O10',true,false], $number)", {}) == [
+            D("0.25"), D(16), D(3), D(8), D(1), D(0)
+        ]
+        assert apply_map("text.$number()", {"text": " 12.00 "}) == D(12)
+
     def test_equal_high_precision_numbers_compare_equal(self) -> None:
         assert apply_map("{'same': x = y}", {"x": HP1, "y": HP1}) == {"same": True}
         assert apply_map("{'same': x = y}", {"x": HP1, "y": HP2}) == {"same": False}

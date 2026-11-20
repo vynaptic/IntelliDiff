@@ -126,10 +126,10 @@ async def test_keys_that_mask_alike_refuse_by_rank(on_tables: Tables) -> None:
     async with harness as h:
         tokenised = {"pattern": "^K", "class": "identifier"}
         with pytest.raises(ValueError, match=r"^2 key\(s\) .*\(positions 2, 3 of the key set\)") as refused:
-            await resolve(h.ctx, compiled(h, keyed(ITEM_KEYS, tokenised)))
+            await resolve(h.ctx, compiled(h, keyed(ITEM_KEYS, tokenised)), form="k1")
         assert not any(key in str(refused.value) for key in alike)
-        found, _ = await resolve(h.ctx, compiled(h, keyed(ITEM_KEYS, {"pattern": "^K"})))
-        assert sorted(found) == sorted(["K001", *alike])  # a business code is shown as it is: three keys
+        found, _ = await resolve(h.ctx, compiled(h, keyed(ITEM_KEYS, tokenised)))
+        assert sorted(found) == sorted(["K001", *alike])  # the current form preserves all three
 
 
 async def test_lines_that_are_not_rows_refuse(on_tables: Tables, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -25,6 +25,7 @@ from deltasleuth.reports.csv import (
     escape_cell,
     read_csv,
     render_csv,
+    stream_csv,
     write_csv,
 )
 from deltasleuth.reports.measure import measure_run
@@ -343,3 +344,25 @@ async def test_a_download_renders_and_audits_once_before_its_first_byte(ctx: Con
     with pytest.raises(LookupError, match=f"^run R-{'0' * 26} not found$"):
         await download(ctx, TESTER, f"R-{'0' * 26}", "report.pdf")
     assert [detail for *_, detail in await _downloads(ctx)][1:] == [{"name": "report.pdf", "cycle": 1}]
+
+
+@pytest.mark.db
+async def test_csv_uses_one_snapshot_while_an_ended_cycle_is_erased(ctx: Context) -> None:
+    from deltasleuth.runner.purge import CyclePurged
+
+    run_id = await seed_run(ctx, {"K004": (doc("K004", status="A"), doc("K004", status="B"))})
+    async with ctx.pool.connection() as conn:
+        await repo.end_cycle(conn, run_id)
+    full = await write_csv(ctx, run_id, 1, "discrepancies")
+    before = await stream_csv(ctx, run_id, 1, "discrepancies")
+    waiting = await stream_csv(ctx, run_id, 1, "discrepancies")
+    header = await anext(before)
+    assert full != header
+    async with ctx.pool.connection() as conn:
+        assert await repo.start_purge(conn, run_id, 1, "retention standard")
+        span = await repo.key_span(conn, run_id, 1)
+        assert span is not None
+        await repo.purge_keys(conn, run_id, 1, span[0], span[1] + 1)
+    with pytest.raises(CyclePurged):
+        await anext(waiting)
+    assert header + b"".join([part async for part in before]) == full

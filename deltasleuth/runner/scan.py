@@ -13,17 +13,15 @@ there, and the pass ends without failing it (``drift.Tripped``). A pass with a f
 reader's one sort before either snapshot opens, so no database's snapshot sits idle while the pass waits for
 another run's sort.
 
-A key the merge queues falls due ``recheck.delay`` and its jitter after the checkpoint that saves it, on the
-store's clock, so its per-key read is the read that confirms what the scan saw: a row that converged
-meanwhile reads MATCH. Where both sides read fixed files it is due at once: no later read of them answers
-otherwise.
+A candidate is due as soon as its checkpoint commits. Its per-key reads keep the documents and apply the
+spec's recheck policy.
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 from datetime import UTC, datetime
 from typing import Any
 
@@ -43,10 +41,10 @@ from deltasleuth.connectors.tables import (
     planned,
     unsealed,
 )
+from deltasleuth.connectors.tables.connector import scan_slots
 from deltasleuth.context import Context
-from deltasleuth.core.types import Side, Target
+from deltasleuth.core.types import CompiledSpec, Side, Target
 from deltasleuth.runner import drift, graph
-from deltasleuth.runner.recheck import RecheckPolicy
 from deltasleuth.runner.stop import STOP_PREFIX, StopConditions
 from deltasleuth.security.crypto import MaskedAlike, Sealer, seal_after
 from deltasleuth.security.crypto import opened_after as _opened_after
@@ -106,6 +104,7 @@ class _Stream:
         self._floor, self._bound = after, True  # the key before it: the resume bound, then each row's
         self.check: Callable[[], Awaitable[None]] | None = None
         self.group_rows = 0
+        self.serial: asyncio.Lock | None = None  # both cursors share a single target slot
         self._ahead: asyncio.Task[list[tuple[Any, ...]] | None] | None = None  # the next batch, being fetched
 
     async def open(self) -> None:
@@ -120,12 +119,14 @@ class _Stream:
         if self.relation is not None:
             seen = {c.name: list(c.collation) for c in self.relation.columns if c.collation}
             said = {"charset": self.relation.facts.get("charset"), "seen_collations": seen}
-        self._batches = await self._engine.scan(self.session, self._plan | said, bound)
+        async with self.serial or nullcontext():
+            self._batches = await self._engine.scan(self.session, self._plan | said, bound)
         self._ahead = asyncio.create_task(self._fetch())
         await asyncio.sleep(0)  # sent before the other side's statement
 
     async def _fetch(self) -> list[tuple[Any, ...]] | None:
-        return await anext(self._batches, None)
+        async with self.serial or nullcontext():
+            return await anext(self._batches, None)
 
     async def settle(self) -> None:
         """End the fetch begun ahead, if one is: a pass that stops before its end closes its session with no
@@ -194,6 +195,28 @@ async def _snapshot(side: str, target: Target, plan: Plan, after: Key | None) ->
         yield _Stream(side, plan, engine, session, after, relation)
 
 
+@asynccontextmanager
+async def _snapshots(
+    ctx: Context, spec: CompiledSpec, tables: Plan, after: Key | None
+) -> AsyncIterator[tuple[_Stream, _Stream]]:
+    """Admit both sides before opening a snapshot. A file sort is taken before opening a database
+    snapshot, so none sits idle while this pass waits for another's sort."""
+    targets = {s: ctx.targets.live(spec.sides[s].target) for s in Side}
+    async with AsyncExitStack() as stack:
+        serial = await stack.enter_async_context(scan_slots(ctx.gates, targets.values(), prefetch=True))
+        if any("pinned" in tables[s.value] for s in Side):
+            await stack.enter_async_context(duck.SORT.held())
+        streams = {}
+        for side, target in targets.items():
+            await ctx.gates[target.target_id].limiter.acquire()
+            stream = await stack.enter_async_context(_snapshot(side.value, target, tables[side.value], after))
+            stream.serial = serial
+            streams[side] = stream
+        for stream in streams.values():
+            stack.push_async_callback(stream.settle)  # before either session closes
+        yield streams[Side.A], streams[Side.B]
+
+
 class _Stopped(Exception):
     def __init__(self, reason: str | None) -> None:
         self.reason = reason
@@ -220,10 +243,6 @@ async def scan(ctx: Context, run_id: str) -> str | None:
     tables, state, cycle = unsealed(sealer, run["params"]), dict(run["scan"]), run["cycle"]
     assert tables is not None  # a scanned run is of two table sides
     conditions = StopConditions.from_spec(spec.raw)
-    # The seconds a key found waits for its per-key read; none where both sides read fixed files.
-    policy = RecheckPolicy.from_spec(spec.raw)
-    settles = any(tables[s.value].get("consistency") != "fixed" for s in Side)
-    wait = policy.wait_s if settles and (policy.delay_s or policy.jitter_s) else None
     async with ctx.pool.connection() as conn:  # read again even when identical: they did not match
         unmatched = await repo.unmatched_keys(conn, run_id, cycle - 1) if cycle > 1 else []
     before = {sealer.open_row(row)["key"] for row in unmatched}
@@ -232,19 +251,7 @@ async def scan(ctx: Context, run_id: str) -> str | None:
     after = None if state["after"] is None else tuple(state["after"])
     found: dict[str, str] = {}  # keys since the last checkpoint: raw -> masked (in the run's form)
     form = key_form(run["params"])
-    async with AsyncExitStack() as stack:
-        if any("pinned" in tables[s.value] for s in Side):
-            # The one sort of the file reader, before a database side's snapshot opens: none
-            # sits idle while this pass waits for another's sort.
-            await stack.enter_async_context(duck.SORT.held())
-        a, b = [
-            await stack.enter_async_context(
-                _snapshot(s.value, ctx.targets.live(spec.sides[s].target), tables[s.value], after)
-            )
-            for s in Side
-        ]
-        for stream in (a, b):  # before its session closes
-            stack.push_async_callback(stream.settle)
+    async with _snapshots(ctx, spec, tables, after) as (a, b):
         # When the snapshots opened, not when a file side's sort returned; counted with the rows next saved:
         # a lost pass read none of them.
         opened = utc_now_iso()
@@ -268,7 +275,7 @@ async def scan(ctx: Context, run_id: str) -> str | None:
             reason = conditions.expired(run["started_at"], datetime.now(UTC))
             if merged != checkpointed and (reason or max(a.group_rows, b.group_rows) >= BATCH):
                 # A long group's counters and key are local to take(), never part of this checkpoint.
-                if not await _save(ctx, sealer, run_id, cycle, state, found, saved, wait):
+                if not await _save(ctx, sealer, run_id, cycle, state, found, saved):
                     raise _Stopped(None)
                 saved, checkpointed = saved + 1, merged
             if reason:
@@ -306,13 +313,13 @@ async def scan(ctx: Context, run_id: str) -> str | None:
                 ):
                     stop = STOP_PREFIX + "maxKeys"
                     await _save(
-                        ctx, sealer, run_id, cycle, state, found, saved, wait, done=True, stop_reason=stop
+                        ctx, sealer, run_id, cycle, state, found, saved, done=True, stop_reason=stop
                     )
                     return None
                 if merged % SLICE == 0:  # the event loop serves the rest of the process between slices
                     await asyncio.sleep(0)
                 if merged % BATCH == 0:
-                    if not await _save(ctx, sealer, run_id, cycle, state, found, saved, wait):
+                    if not await _save(ctx, sealer, run_id, cycle, state, found, saved):
                         return None
                     saved, checkpointed = saved + 1, merged
                     if reason := conditions.expired(run["started_at"], datetime.now(UTC)):
@@ -334,7 +341,7 @@ async def scan(ctx: Context, run_id: str) -> str | None:
         state["graph"], diffs = await graph.analyse(ctx, spec, tables, state)
         async with ctx.pool.connection() as conn:
             await repo.replace_graph_diffs(conn, run_id, cycle, diffs)
-    await _save(ctx, sealer, run_id, cycle, state, found, saved, wait, done=True)
+    await _save(ctx, sealer, run_id, cycle, state, found, saved, done=True)
     return None
 
 
@@ -346,14 +353,13 @@ async def _save(
     state: dict[str, Any],
     found: dict[str, str],
     saved: int,
-    wait: Callable[[str], float] | None = None,
     *,
     done: bool = False,
     stop_reason: str | None = None,
 ) -> bool:
     """Checkpoint the state with the keys found since checkpoint ``saved``, both sealed (a done scan
     resumes nowhere: its ``after`` is None), and a maxKeys ``stop_reason`` with the run's ``keys_cut``;
-    each key's per-key read falls due ``wait`` of its masked key seconds after the save (None: at once).
+    each key's per-key read is due once the checkpoint commits.
     False: the run stopped running, or another scanner saved since (a worker lock handover), so this one
     stops. Keys that share a masked key, among those found or with one saved before, raise
     ``KeysMaskAlike`` and save nothing."""
@@ -365,10 +371,9 @@ async def _save(
     state["candidates"] += len(found)
     state["done"] = done
     stored = state | {"after": None if done else seal_after(sealer, cycle, state["after"])}
-    delays = None if wait is None else {masked: wait(masked) for masked in found.values()}
     async with ctx.pool.connection() as conn:
         try:
-            ok = await repo.save_scan(conn, run_id, cycle, stored, sealed, saved, delays)
+            ok = await repo.save_scan(conn, run_id, cycle, stored, sealed, saved)
         except psycopg.errors.UniqueViolation as exc:  # rolled back with the checkpoint
             if exc.diag.constraint_name != "run_keys_pkey":
                 raise

@@ -5,11 +5,13 @@ nothing from a non-empty input (an error envelope read through the success map),
 ``MappingError``, so two failed responses never compare as equal documents.
 
 JSONata only knows int/float: it computes in doubles and writes a number as text with 15
-significant digits. A number of at most 15 significant digits survives both, and goes in as an
-int or, where a double holds it, as a float. Any other number goes in as a stand-in string
+significant digits. A number of at most 15 significant digits goes in as a safe integer or,
+where a double round-trips the decimal, as a float. Any other number goes in as a stand-in string
 (derived from a digest of the input, so data cannot forge it) and is swapped back afterwards.
 A stand-in is exact only while moved, so a map that reads one is evaluated again with nearest
-doubles and both results must agree.
+doubles and both results must agree. Numeric literals and text passed to $number must fit the
+same native limits. Integer intermediates must fit too, including operands of later predicates;
+ordinary fractional arithmetic retains JSONata's double semantics.
 
 A map runs inside the shared server process, and a regular expression can backtrack for hours, so every
 regular expression literal of a map compiles through ``regex_engine``. It refuses a pattern that does not
@@ -28,9 +30,10 @@ import math
 import re
 import sys
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from contextvars import ContextVar
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from functools import cache, lru_cache, partial
 from re import _compiler, _parser  # type: ignore[attr-defined]  # typeshed omits re's private modules
 from re import _constants as _sre  # type: ignore[attr-defined]  # as above
@@ -38,6 +41,8 @@ from typing import Any
 
 import jsonata
 import regex
+from jsonata.functions import Functions
+from jsonata.parser import Parser
 from jsonata.regex_engine import RegexFlags
 from jsonata.utils import Utils
 
@@ -63,7 +68,51 @@ MAP_TIMEOUT_MS = 2000
 MAP_MAX_DEPTH = 500
 # The significant digits JSONata keeps when it writes a number as text; a double holds them all.
 EXACT_DIGITS = 15
+MAX_SAFE_INTEGER = (1 << 53) - 1  # beyond this magnitude, doubles cannot distinguish adjacent integers
 _DEADLINE: ContextVar[float | None] = ContextVar("map_deadline", default=None)  # the running map's
+
+
+class NumericLiteralError(MappingError):
+    """A literal the map's number representation cannot carry."""
+
+
+class _MapParser(Parser):
+    def advance(self, id: str | None = None, infix: bool = False) -> Any:
+        previous = self.lexer.position
+        token = super().advance(id, infix)
+        if token.type == "number":
+            # JSONata's lexer has already converted the token to a double. Use its two positions
+            # to read the original digits, excluding any leading whitespace or comments.
+            start = token.position - 1
+            while start > previous and self.source[start - 1] in "0123456789.eE+-":
+                start -= 1
+            try:
+                number = _native_number(Decimal(self.source[start:token.position]))
+            except InvalidOperation:  # an exponent beyond Decimal's own bounds
+                number = None
+            if number is None:
+                raise NumericLiteralError(f"numeric literal at character {start + 1} exceeds map precision")
+        return token
+
+
+@contextmanager
+def _map_parser() -> Iterator[None]:
+    """Use the map's number checks for this thread's parse, including a nested JSONata $eval."""
+    original = jsonata.Jsonata.get_parser()
+    parsers = jsonata.Jsonata.PARSER  # JSONata keeps this cache local to the calling thread.
+    if not hasattr(parsers, "checked_map_parser"):
+        parsers.checked_map_parser = _MapParser()
+    parsers.parser = parsers.checked_map_parser
+    try:
+        yield
+    finally:
+        parsers.parser = original
+
+
+def parse_map(source: str) -> Any:
+    """Compile a map with the same number and regex checks at authoring and run time."""
+    with _map_parser():
+        return jsonata.Jsonata(source, regex_engine)
 
 
 def apply_select(select: str, doc: JSON) -> JSON:
@@ -77,8 +126,8 @@ def apply_select(select: str, doc: JSON) -> JSON:
 @lru_cache(maxsize=256)
 def _compiled(expression: str) -> Any:
     try:
-        compiled = jsonata.Jsonata(expression, regex_engine)
-    except RegexRefused:
+        compiled = parse_map(expression)
+    except (RegexRefused, NumericLiteralError):
         raise
     except Exception as exc:  # the parser raises JException or plain Python errors
         raise ExpressionError(f"JSONata expression does not compile: {_code(exc)}") from exc
@@ -93,21 +142,31 @@ def apply_map(expression: str, node: JSON) -> JSON:
     if result is None or result is Utils.NULL_VALUE:
         raise MappingError(_MAP_EMPTY)
     out = codec.decode(result)
-    if codec.held and not codec.agrees(result, _evaluate(compiled, _to_jsonata(node, float))):
+    if codec.held and not codec.agrees(result, _evaluate(compiled, _to_jsonata(node, float), exact=False)):
         raise MappingError("map expression computed with a high-precision number (only moving it is exact)")
     if not _has_value(out) and node not in (None, {}, []):  # an empty input may map to nothing
         raise MappingError(_MAP_EMPTY)
     return out
 
 
-def _evaluate(compiled: Any, data: Any) -> Any:
+def _evaluate(compiled: Any, data: Any, *, exact: bool = True) -> Any:
     # A fresh bindings frame per call keeps "$" out of the cached expression's shared environment,
     # so concurrent evaluations cannot see each other's input, and starts this call's time bound.
     frame = compiled.create_frame()
     frame.set_runtime_bounds(MAP_TIMEOUT_MS, MAP_MAX_DEPTH)
+    frame.bind("number", _MAP_NUMBER)
+    if exact:
+        bounded = frame.lookup("__evaluate_exit")
+
+        def checked(expr: Any, value: Any, env: Any, result: Any) -> None:
+            bounded(expr, value, env, result)
+            _check_magnitude(result)
+
+        frame.set_evaluate_exit_callback(checked)
     deadline = _DEADLINE.set(time.monotonic() + MAP_TIMEOUT_MS / 1000)  # its regular expressions'
     try:
-        return compiled.evaluate(data, frame)
+        with _map_parser():
+            return compiled.evaluate(data, frame)
     except MappingError:  # a regular expression's bound
         raise
     except Exception as exc:  # JException (D1012 timeout, D1011 depth), ZeroDivisionError, ...
@@ -140,14 +199,56 @@ def _significant(value: Decimal) -> int:
     return count
 
 
+def _native_number(value: Decimal) -> int | float | None:
+    if not value.is_finite() or _significant(value) > EXACT_DIGITS:
+        return None
+    if value == value.to_integral_value():
+        return int(value) if -MAX_SAFE_INTEGER <= value <= MAX_SAFE_INTEGER else None
+    as_float = float(value)
+    return as_float if Decimal(repr(as_float)) == value else None
+
+
+class _MapFunctions:
+    @staticmethod
+    def number(arg: Any) -> Any:
+        result = Functions.number(arg)  # the native grammar, including its base-prefixed integers
+        if isinstance(arg, str):
+            try:
+                exact = Decimal(result) if isinstance(result, int) else Decimal(arg)
+                safe = _native_number(exact) is not None
+            except InvalidOperation:
+                safe = False
+            if not safe:
+                raise MappingError("numeric text exceeds map precision")
+        return result
+
+
+_MAP_NUMBER = jsonata.Jsonata.function("number", "<(nsb)-:n>", _MapFunctions, "number")
+
+
+def _check_magnitude(value: Any) -> None:
+    if isinstance(value, Utils.RangeList):
+        # The evaluated endpoints passed their scalar checks. Any unsafe interior must include
+        # a neighbour of an endpoint: above 15 digits, consecutive integers cannot both be safe.
+        lo, hi = value.a, value.b - 1  # the library's range is half open
+        if hi - lo > 1:
+            _check_magnitude(lo + 1)
+            _check_magnitude(hi - 1)
+        return
+    if not isinstance(value, (int, float)):
+        return
+    # At this magnitude every binary64 is integral. Even below it, an integer with more than
+    # 15 significant digits loses information in JSONata's string conversions.
+    if not -MAX_SAFE_INTEGER <= value <= MAX_SAFE_INTEGER:
+        raise MappingError("map expression produced a number outside its safe integer range")
+    if abs(value) >= 10**EXACT_DIGITS and value == int(value) and _significant(Decimal(value)) > EXACT_DIGITS:
+        raise MappingError("map expression produced an integer beyond its significant-digit limit")
+
+
 def _to_jsonata(value: JSON, high_precision: Callable[[Decimal], Any]) -> Any:
     if isinstance(value, Decimal):
-        if _significant(value) > EXACT_DIGITS:
-            return high_precision(value)
-        if value == value.to_integral_value():
-            return int(value)
-        as_float = float(value)
-        return as_float if Decimal(repr(as_float)) == value else high_precision(value)
+        native = _native_number(value)
+        return high_precision(value) if native is None else native
     if isinstance(value, dict):
         return {k: _to_jsonata(v, high_precision) for k, v in value.items()}
     if isinstance(value, list | tuple):
@@ -180,10 +281,12 @@ class _Codec:
         if value is None or isinstance(value, bool):  # a nested None is an input null
             return value
         if isinstance(value, int):
+            _check_magnitude(value)
             return Decimal(value)
         if isinstance(value, float):
             if not math.isfinite(value):
                 raise MappingError("map expression produced a non-finite number")
+            _check_magnitude(value)
             return Decimal(repr(value))
         if isinstance(value, str):
             return self.held[value] if value in self.held else self._plain(value, "text")

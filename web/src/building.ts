@@ -36,7 +36,7 @@ recheck: {delay: 1s, times: 1}
 export const PLACEHOLDERS = '{{ key }}, {{ keyParts.<name> }}'; // what a path, a query, a header and a body may hold
 export const NOT_JSON = 'The body is not JSON.';
 export const REPLACE_ID = "Replace the record's id in the path with {{ key }}.";
-export const MASKED = 'Every value is a stand-in: equal values get equal stand-ins.';
+export const MASKED = 'Names, text and numbers show as tokens. Boolean values show only their type.';
 export const AS_IT_CAME =
   'The answer as it came: this is a trial installation on this machine. An office installation shows stand-ins only.';
 /** The server's refusal of a reopened spec's masked inline keys, said before it is met. */

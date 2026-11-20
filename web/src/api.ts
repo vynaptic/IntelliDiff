@@ -469,7 +469,7 @@ export interface KeyDetail {
   canonical: { a: unknown; b: unknown };
 }
 
-export interface Change { cycle: number; key_masked: string; from_outcome: string; to_outcome: string }
+export interface Change { cycle: number; key_masked: string; from_outcome: string | null; to_outcome: string }
 export interface Spec {
   spec_id: number;
   name: string;
@@ -555,7 +555,7 @@ export interface Draft {
   issues: Issue[];
 }
 /** A chat message. A stored assistant message that cites nothing is a refusal. */
-export interface Message { role: string; content: string; citations?: string[]; created_at?: string }
+export interface Message { role: string; content: string; citations?: string[]; cycle?: number; created_at?: string }
 export type Session = { session_id: string; messages: Message[] };
 
 export type Mode = 'none' | 'tokens' | 'oidc';

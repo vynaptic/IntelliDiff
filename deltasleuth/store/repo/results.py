@@ -133,18 +133,19 @@ def _result_params(run_id: str, cycle: int, key_masked: str, r: KeyResult) -> di
 
 
 def _finding_params(
-    run_id: str, cycle: int, key_masked: str, seq: int, f: Mapping[str, Any], kept: dict[tuple[str, str], str]
+    run_id: str, cycle: int, key_masked: str, seq: int, f: Mapping[str, Any],
+    kept: dict[tuple[str, str, str], list[str]],
 ) -> dict[str, Any]:
-    """The finding's row; it takes the id ``kept`` holds for its masked pointer and change type."""
+    """Keep the prior id for this published pointer, pattern and change, in finding order."""
     a, b = f["value_a_tok"], f["value_b_tok"]
     columns = storable({name: f[name] for name in _FINDING_COLUMNS})
+    ids = kept.get((columns["json_pointer"], columns["path_pattern"], columns["change_type"]))
     return columns | {
         "run_id": run_id,
         "cycle": cycle,
         "key_masked": key_masked,
         "seq": seq,
-        "finding_id": kept.pop((columns["json_pointer"], columns["change_type"]), None)
-        or "F-" + secrets.token_hex(8),
+        "finding_id": ids.pop() if ids else "F-" + secrets.token_hex(8),
         "value_a": None if a is None else _jsonb(a),
         "value_b": None if b is None else _jsonb(b),
     }
@@ -216,13 +217,16 @@ async def save_key_results(
             if not cur.nextset():
                 break
         await cur.execute(
-            """DELETE FROM ds.findings WHERE run_id = %s AND cycle = %s AND key_masked = ANY(%s)
-               RETURNING key_masked, json_pointer, change_type, finding_id""",
+            """WITH prior AS (
+                   DELETE FROM ds.findings WHERE run_id = %s AND cycle = %s AND key_masked = ANY(%s)
+                   RETURNING key_masked, json_pointer, path_pattern, change_type, finding_id, seq)
+               SELECT key_masked, json_pointer, path_pattern, change_type, finding_id FROM prior
+               ORDER BY seq DESC""",
             (run_id, cycle, [key_masked for key_masked, _, _ in items]),
         )
-        kept: dict[str, dict[tuple[str, str], str]] = {}
-        for key_masked, pointer, change_type, finding_id in await cur.fetchall():
-            kept.setdefault(key_masked, {})[(pointer, change_type)] = finding_id
+        kept: dict[str, dict[tuple[str, str, str], list[str]]] = {}
+        for key_masked, pointer, pattern, change_type, finding_id in await cur.fetchall():
+            kept.setdefault(key_masked, {}).setdefault((pointer, pattern, change_type), []).append(finding_id)
         await cur.executemany(
             """INSERT INTO ds.findings (run_id, cycle, key_masked, seq, finding_id, taxonomy_code, severity,
                    change_type, direction, path_pattern, json_pointer, value_a, value_b, value_class,
@@ -498,7 +502,7 @@ async def rechecks(conn: Conn, run_id: str, cycle: int, seqs: Sequence[int]) -> 
     return found
 
 
-async def bug_rules(conn: Conn, run_id: str, cycle: int) -> dict[str, str]:
+async def bug_rules(conn: Conn, run_id: str, cycle: int, ids: Sequence[str] | None = None) -> dict[str, str]:
     """root_cause_id -> the ``bug`` rule that suppressed a finding linked to it (the last one in manifest
     and finding order), for the cycle's root causes that have one. Each such finding's key is read by
     key."""
@@ -509,8 +513,8 @@ async def bug_rules(conn: Conn, run_id: str, cycle: int) -> dict[str, str]:
                SELECT k.seq FROM ds.run_keys k
                WHERE (k.run_id, k.cycle, k.key_masked) = (f.run_id, f.cycle, f.key_masked) OFFSET 0) k
            WHERE f.run_id = %s AND f.cycle = %s AND f.root_cause_id IS NOT NULL AND f.suppressed
-             AND f.rule_classification = 'bug'
+             AND f.rule_classification = 'bug' AND (%s::text[] IS NULL OR f.root_cause_id = ANY(%s))
            ORDER BY f.root_cause_id, k.seq DESC, f.seq DESC""",
-        (run_id, cycle),
+        (run_id, cycle, ids, ids),
     )
     return {row["root_cause_id"]: row["rule_id"] for row in rows}

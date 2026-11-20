@@ -28,6 +28,7 @@ from deltasleuth import targets as product
 from deltasleuth.auth.oidc import Oidc
 from deltasleuth.config import KEY_FILE, Settings
 from deltasleuth.connectors.http import TargetGate
+from deltasleuth.core.masking import run_masking
 from deltasleuth.core.secrets import read_secret
 from deltasleuth.core.spec import TargetRegistry, compile_spec
 from deltasleuth.core.types import (
@@ -152,20 +153,29 @@ class Context:
         """Drop the run's cached sealer: its data key was destroyed."""
         self._sealers.pop(run_id, None)
 
-    async def spec(self, conn: repo.Conn, spec_id: int, *, live: bool = False) -> CompiledSpec:
+    async def spec(
+        self, conn: repo.Conn, spec_id: int, *, live: bool = False, capabilities: Capabilities | None = None
+    ) -> CompiledSpec:
         """A stored spec, compiled. ``live`` also checks it against today's targets (a change another
         process made to the product's list taken in first), as calling them needs; reading a finished run
         must not, so removing a target never hides its history."""
         row = await repo.get_spec(conn, spec_id)
         if row is None:
             raise NotFound(f"spec {spec_id} not found")
+        registry = None
         if live:
             product.follow(self)
-        return compile_spec(row["body"], targets=self.targets if live else None)
+            registry = self.targets if capabilities is None else self.targets.with_capabilities(capabilities)
+        return compile_spec(row["body"], targets=registry)
+
+    async def run_spec(self, conn: repo.Conn, run: Mapping[str, Any], *, live: bool = False) -> CompiledSpec:
+        """Compile the stored spec with the masking policy and column names pinned for this run."""
+        caps = self.capabilities(run) if live and "capabilities" in run["params"] else None
+        return run_masking(await self.spec(conn, run["spec_id"], live=live, capabilities=caps), run["params"])
 
     def declared(self, spec: CompiledSpec) -> dict[str, Any]:
         """What the spec's targets declare today, kept as a run's ``params["capabilities"]``."""
-        return {s.target: asdict(self.targets.get(s.target).capabilities) for s in spec.sides.values()}
+        return {name: asdict(target.capabilities) for name, target in product.reading(self, spec).items()}
 
     def capabilities(self, run: Mapping[str, Any]) -> Capabilities:
         """The capabilities a run is observed with: those declared when it was created (a target

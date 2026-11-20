@@ -182,12 +182,8 @@ def _paging_state(
         why = _truncated(indicators, doc, merged=obs.pages > 1 and obs.pages_eof)
         if why is not None:
             return SideState.incomplete("truncated", why)
-    # The service's own flags, after the count rule: only false, or no node, says the answer is whole.
-    for path in side_cfg.truncation_flags:
-        for flag, _ in find(path, doc):
-            if flag is not False:
-                why = "true" if flag is True else "not a boolean"
-                return SideState.incomplete("truncated", f"the truncation flag {path} is {why}")
+    if why := truncation_flag(side_cfg.truncation_flags, doc):
+        return SideState.incomplete("truncated", why)
     if not obs.pages_eof:
         # The connector's reason stays in the evidence: transport text can carry the key.
         return SideState.incomplete("truncated", "paging stopped before the last page")
@@ -198,6 +194,27 @@ def _paging_state(
         why = f"{kind} paging over several pages without declared stable ordering"
         return SideState.incomplete("unstable_pagination", why)
     return None
+
+
+def truncation_flag(paths: tuple[str, ...], doc: JSON) -> str | None:
+    """The service's own flag of a partial response, checked on each page before its envelope is lost."""
+    for path in paths:
+        for flag, _ in find(path, doc):
+            if flag is not False:
+                why = "true" if flag is True else "not a boolean"
+                return f"the truncation flag {path} is {why}"
+    return None
+
+
+def reported_total(path: str, doc: JSON) -> tuple[Decimal | None, str | None]:
+    """The total in this envelope, if reported. A present total must be one non-negative integer."""
+    matches = find(path, doc)
+    if not matches:
+        return None, None
+    value = matches[0][0]
+    if len(matches) != 1 or not isinstance(value, Decimal) or value < 0 or value != value.to_integral_value():
+        return None, "the declared total count is not one non-negative integer"
+    return value, None
 
 
 def _truncated(indicators: TruncationIndicators, doc: JSON, *, merged: bool = False) -> str | None:
@@ -216,10 +233,9 @@ def _truncated(indicators: TruncationIndicators, doc: JSON, *, merged: bool = Fa
         if returned is not None and returned >= cap and not merged:
             return f"items returned reach the cap of {cap} and no total is reported"
         return None
-    totals = [value for value, _ in find(indicators.count_path, doc)]
-    total = totals[0] if len(totals) == 1 else None
-    if not isinstance(total, Decimal) or total != total.to_integral_value():
-        return "the declared total count is missing or not an integer"
+    total, problem = reported_total(indicators.count_path, doc)
+    if total is None:
+        return problem or "the declared total count is missing"
     if total > cap and not merged:
         return f"reported total exceeds the cap of {cap}"
     if returned is not None and total > returned:

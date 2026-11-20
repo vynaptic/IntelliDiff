@@ -15,7 +15,7 @@ from aiohttp import web
 
 from deltasleuth.connectors.paging import PageWalk
 from deltasleuth.connectors.rest import ListingIncomplete, RestConnector
-from deltasleuth.core.types import Pagination
+from deltasleuth.core.types import Pagination, TargetCapabilities, TruncationIndicators
 
 from .conftest import Recorder, Start, side_config
 from .test_paging import CURSOR, LINK, STABLE, cursor_reply, window, window_reply
@@ -101,6 +101,18 @@ async def test_each_page_is_capped_never_the_merged_body(start: Start) -> None:
     assert (await walked(small, CURSOR))[1] == (
         "the key listing of target t was not read completely (HTTP 200: response body exceeds 500 bytes)"
     )
+
+
+async def test_a_streamed_listing_refuses_changing_totals_even_after_an_omitted_total(start: Start) -> None:
+    counts = [{"total": 3}, {}, {"total": 4}]
+
+    def reply(request: web.Request) -> web.Response:
+        i = int(request.query.get("cursor", "0"))
+        return web.json_response({"items": [i], "next": str(i + 1) if i < 2 else None, **counts[i]})
+
+    caps = TargetCapabilities(truncation_indicators=TruncationIndicators(5, "$.items", "$.total"))
+    pages, problem = await walked(await start(reply, capabilities=caps), CURSOR)
+    assert pages == [[0], [1], [2]] and problem and "total count changed between pages" in problem
 
 
 @pytest.mark.parametrize(

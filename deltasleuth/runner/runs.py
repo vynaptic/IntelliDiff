@@ -42,6 +42,7 @@ from deltasleuth.connectors import tables
 from deltasleuth.context import Capabilities, Context
 from deltasleuth.core import cron
 from deltasleuth.core.canonical.encoding import sha256_hex
+from deltasleuth.core.masking import run_masking
 from deltasleuth.core.types import CompiledSpec, KeyResult, Observation, SideState
 from deltasleuth.errors import Invalid, NotFound
 from deltasleuth.runner import census, drift, sample
@@ -175,6 +176,7 @@ async def create_run(
     async with product.unmoved(ctx, read), repo.audited(ctx.pool) as (conn, audit):
         params["capabilities"] = ctx.declared(spec)
         approval_id, _ = await approvals.gate(ctx, conn, spec_id, spec, lock=True)
+        params["member_names"] = _member_names(ctx, approval_id)
         params["licence"], pair = await licence.admit(ctx, conn, spec, lock=True)
         await sample.overlapping(conn, spec, lock=True)
         # Against the version's newest earlier baseline run; a refusal writes nothing.
@@ -368,7 +370,6 @@ async def compare_one(ctx: Context, spec_id: int, key: str, *, who: Principal) -
     key, masked = next(iter(taken.items()))
     planned = await tables.planning(ctx.targets, spec)
     plan = planned.plan
-    reader = LiveReader(ctx, spec, tables.pins(plan, planned.pinned) if plan and planned.pinned else plan)
     params = {
         "keys_source": "explicit",
         "capabilities": ctx.declared(spec),
@@ -382,6 +383,7 @@ async def compare_one(ctx: Context, spec_id: int, key: str, *, who: Principal) -
         params["pinned"] = tables.sealed(sealer, planned.pinned)
     async with repo.audited(ctx.pool) as (conn, audit):
         approval_id, _ = await approvals.gate(ctx, conn, spec_id, spec, lock=True)
+        params["member_names"] = _member_names(ctx, approval_id)
         params["licence"], pair = await licence.admit(ctx, conn, spec, lock=True)
         await repo.create_run(
             conn, spec_id, "one_shot", sealer.seal_keys(taken), params, run_id=run_id, created_by=who.actor,
@@ -395,9 +397,13 @@ async def compare_one(ctx: Context, spec_id: int, key: str, *, who: Principal) -
         await audit(who, "compare_one", run_id, detail)
         if pair is not None:  # a new pair
             await audit(who, "licence.pair", pair[0], pair[1] | {"run_id": run_id})
+        spec = run_masking(spec, params)
+        caps = ctx.capabilities(run)
+        live_tables = tables.pins(plan, planned.pinned) if plan and planned.pinned else plan
+        reader = LiveReader(ctx, spec, live_tables, caps=caps)
     try:
         result = await _read_now(
-            ctx, spec, ctx.capabilities(run), reader, run_id, key, sealer, key_form(run["params"])
+            ctx, spec, caps, reader, run_id, key, sealer, key_form(run["params"])
         )
     except Exception as exc:
         await fail_run(ctx, run_id, exc, who=who)
@@ -429,6 +435,11 @@ async def compare_one(ctx: Context, spec_id: int, key: str, *, who: Principal) -
     result.attrs["run_id"], result.attrs["warnings"] = run_id, warnings
     result.attrs["key_masked"], result.attrs["key_form"] = masked, KEY_FORM
     return result
+
+
+def _member_names(ctx: Context, approval_id: str | None) -> str:
+    """Only reviewed spec declarations can identify public labels in single sign-on mode."""
+    return "catalogue" if ctx.settings.auth_mode == "oidc" and approval_id is None else "declared"
 
 
 @dataclass(frozen=True)
@@ -464,7 +475,7 @@ async def key_view(
         detail = await repo.get_key_detail(conn, run_id, key_masked, cycle)
         if detail is None:
             return None
-        spec, caps = await ctx.spec(conn, run["spec_id"]), ctx.capabilities(run)
+        spec, caps = await ctx.run_spec(conn, run), ctx.capabilities(run)
         result = detail["result"] or {}  # empty until the key is compared
         sides = {
             s: await side_state(ctx, conn, spec, run_id, result.get(f"obs_{s}_id"), caps) for s in "ab"
@@ -493,7 +504,8 @@ class Compared:
 
 
 async def compare_again(
-    ctx: Context, run_id: str, key_masked: str, *, who: Principal, spec_id: int | None = None
+    ctx: Context, run_id: str, key_masked: str, *, who: Principal, spec_id: int | None = None,
+    cycle: int | None = None,
 ) -> Compared | None:
     """Compare the key ``key_masked`` of the run's current cycle again now (``compare_one``, which audits
     it), under the run's own spec: another could mask the key and its values less. None when the cycle holds
@@ -507,13 +519,17 @@ async def compare_again(
             raise NotFound(f"run {run_id} not found")
         if spec_id is not None and run["spec_id"] != spec_id:
             raise Invalid("a key of a run is compared under that run's spec")
-        await refuse_purged(conn, run_id, run["cycle"])
-        detail = await repo.get_key_detail(conn, run_id, key_masked, run["cycle"])
+        source_cycle = run["cycle"] if cycle is None else cycle
+        await refuse_purged(conn, run_id, source_cycle)
+        detail = await repo.get_key_detail(conn, run_id, key_masked, source_cycle)
         if detail is None:
             return None
-        spec = await ctx.spec(conn, run["spec_id"])
         key = (await ctx.sealer(conn, run_id)).open_row(detail)["key"]
     result = await compare_one(ctx, run["spec_id"], key, who=who)
+    async with ctx.pool.connection() as conn:
+        created = await repo.get_run(conn, result.attrs["run_id"])
+        assert created is not None  # compare_one created this run
+        spec = await ctx.run_spec(conn, created)
     return Compared(result, run["spec_id"], spec, detail["cycle"])
 
 

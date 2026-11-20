@@ -4,7 +4,7 @@
 #   docker build -f deploy/Dockerfile -t deltasleuth:source .
 
 # The python:3.13-slim index; a release passes its platform's manifest digest instead (release.BASES).
-ARG PYTHON=python:3.13-slim@sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa725dd7cb2cd3b
+ARG PYTHON=python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90
 
 FROM --platform=$BUILDPLATFORM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS web
 WORKDIR /src/web
@@ -27,7 +27,11 @@ RUN uv sync --frozen --no-dev --no-cache
 
 FROM ${PYTHON}
 ENV PYTHONUNBUFFERED=1 PATH=/app/.venv/bin:$PATH DS_CONFIG=/etc/deltasleuth/deltasleuth.yaml
-RUN python -m pip uninstall --yes --root-user-action=ignore pip \
+# The pinned base predates the trixie security update to zlib.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends --only-upgrade 'zlib1g=1:1.3.dfsg+really1.3.1-1+deb13u1' \
+ && rm -rf /var/lib/apt/lists/* \
+ && python -m pip uninstall --yes --root-user-action=ignore pip \
  && groupadd --system --gid 10001 deltasleuth \
  && useradd --system --uid 10001 --gid 10001 --home-dir /app --shell /usr/sbin/nologin deltasleuth \
  && install -d -o deltasleuth -m 0700 /var/lib/deltasleuth/evidence /var/lib/deltasleuth/workspace \

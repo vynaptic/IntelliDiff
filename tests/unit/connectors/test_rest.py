@@ -732,6 +732,47 @@ async def test_a_rebudgeted_gate_holds_for_an_open_connector(start: Start) -> No
     assert gate.max_concurrency == 2  # a refused budget changes nothing
 
 
+async def test_rebudget_keeps_slots_held_and_wakes_existing_waiters() -> None:
+    gate = TargetGate(500, 2)
+    entered = asyncio.Event()
+
+    async def read() -> None:
+        async with gate.semaphore:
+            entered.set()
+
+    async with asyncio.timeout(5):
+        async with gate.semaphore:
+            async with gate.semaphore:
+                gate.rebudget(1000, 1)
+                waiting = asyncio.create_task(read())
+                await asyncio.sleep(0)
+                assert not entered.is_set()
+            await asyncio.sleep(0)
+            assert not entered.is_set()
+            gate.rebudget(500, 2)
+            await waiting
+        assert entered.is_set() and not gate.semaphore.locked()
+
+
+async def test_cancelled_gate_waiter_returns_a_slot_reserved_before_it_resumed() -> None:
+    gate = TargetGate(1000, 1)
+    seen = []
+
+    async def read(key: int) -> None:
+        async with gate.semaphore:
+            seen.append(key)
+
+    async with asyncio.timeout(5):
+        async with gate.semaphore:
+            first, second = (asyncio.create_task(read(key)) for key in (1, 2))
+            await asyncio.sleep(0)
+        first.cancel()  # the first waiter was awoken by the release on exit
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        await second
+    assert seen == [2] and gate.semaphore.held == 0
+
+
 async def test_breaker_is_checked_again_before_each_send(start: Start, recorder: Recorder) -> None:
     # Calls admitted while the circuit was closed but still queued at the gate used to
     # reach the target after the circuit opened.

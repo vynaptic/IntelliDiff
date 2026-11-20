@@ -253,6 +253,24 @@ async def test_a_held_run_is_kept_past_its_retention_until_released(
         await purge.hold(harness.ctx, TESTER, "R-0", "x")
 
 
+async def test_hold_names_cycle_already_purging_and_keeps_other_cycles(
+    harness: Harness, service: ScriptedService
+) -> None:
+    run_id = (await live_soak(harness, service, KEYS[:1]))["run_id"]
+    async with harness.ctx.pool.connection() as conn:
+        assert await repo.start_purge(conn, run_id, 1, "retention standard")
+    assert await purge.hold(harness.ctx, TESTER, run_id, "legal hold") == {"purged": 0, "purging": [1]}
+    [event] = await audited(harness, "retention.hold")
+    assert (event["detail"]["reason"], event["detail"]["purged"], event["detail"]["purging"]) == (
+        "legal hold", 0, [1],
+    )
+    await aged(harness, run_id, 100)
+    assert (await purge.purge(harness.ctx, TESTER)).cycles == 1
+    async with harness.ctx.pool.connection() as conn:
+        assert (await repo.get_cycle(conn, run_id, 1))["purged_at"] is not None
+        assert (await repo.get_cycle(conn, run_id, 2))["purging_at"] is None
+
+
 async def test_a_hold_placed_after_the_pass_read_its_due_cycles_keeps_them(
     harness: Harness, service: ScriptedService, monkeypatch: pytest.MonkeyPatch
 ) -> None:

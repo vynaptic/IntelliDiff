@@ -45,7 +45,7 @@ worker:                                          # the slots that lease, read, j
 # llm_profiles_file: llm_profiles.yaml
 # llm_profile: gateway
 # llm_environment: prod
-## Testing chat with Claude/OpenAI, dev/test/eval only: there, also llm_external_data_classes: [production_tokenised]
+## External evaluation also requires each transmitted class in llm_external_data_classes. Approve analyst_text only for typed questions.
 ## Evidence packs: they need the single sign-on lines above and a signing key, and in a vendor build the
 ## Enterprise licence.
 # packs:
@@ -86,7 +86,7 @@ worker:                                          # the slots that lease, read, j
 #   plan_s: 300
 #   os_limits: true                               # false: no data limit and no socket filter in the reader's process (Linux)
 ## The MCP server for your own agents: off without this block. Holds no secret. Adding
-## production_clear_declared to data_classes also serves the runs whose spec declares clear values or a
+## production_clear_declared to data_classes also serves runs with older member-name masking, clear values or a
 ## business-code key: those values then reach the agent's model host.
 # mcp:
 #   data_classes: [aggregates, production_tokenised]   # required: what tool results may carry

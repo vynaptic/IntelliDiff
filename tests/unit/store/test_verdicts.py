@@ -118,7 +118,7 @@ async def test_the_digest_counts_a_key_as_the_counters_do(
         second[key] = (Outcome(after), False) if after else (outcome, bug)
     run_id = await _run(pool, [first, second])
     async with pool.connection() as conn:
-        found = await repo.discrepant_changes(conn, run_id, 2, read_all_before=False, read_all=False)
+        found = await repo.discrepant_changes(conn, run_id, 2, read_all_before=False)
     different, match = {Verdict.DIFFERENT}, {Verdict.MATCH}
     expected = {
         "new": (_count(different), 0),

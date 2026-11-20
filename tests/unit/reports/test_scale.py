@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import asyncio
 import tracemalloc
+import weakref
 from collections import defaultdict
+from collections.abc import Callable
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
@@ -15,9 +17,12 @@ import pytest
 import yaml
 
 from deltasleuth.context import Context
+from deltasleuth.core.classify.rootcause import Member
 from deltasleuth.core.types import (
+    ChangeType,
     CompiledSpec,
     Confirmation,
+    Direction,
     DriftReason,
     Outcome,
     Severity,
@@ -25,6 +30,7 @@ from deltasleuth.core.types import (
 from deltasleuth.reports import pdf
 from deltasleuth.reports.csv import KINDS, parse_csv, read_csv, stream_csv, write_csv
 from deltasleuth.reports.data import is_discrepant, load_run
+from deltasleuth.runner import cycle as cycle_end
 from deltasleuth.runner.counters import count_cycle
 from deltasleuth.runner.cycle import summarise
 from deltasleuth.runner.recheck import RecheckPolicy
@@ -106,8 +112,7 @@ async def test_a_cycle_s_end_stores_the_counters_of_the_whole_cycle_whatever_its
     ctx: Context, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The counters a paged end stores are ``count_cycle``'s over every row, member for member.
-    Once the run holds a later cycle's counters, the earlier cycle is counted again from its rows, a page
-    at a time too, and gives them again."""
+    An earlier cycle uses its retained counters, or recounts its rows by page if it has no stored counts."""
     spec = _spec()
     run_id = await _cycle(ctx, spec)
     walks, paged = [], partial(repo.result_pages, size=5)  # twelve results: 5, 5, 2
@@ -143,12 +148,40 @@ async def test_a_cycle_s_end_stores_the_counters_of_the_whole_cycle_whatever_its
     linked = {key for key, fs in findings.items() if any(f["root_cause_id"] for f in fs)}
     keyed = ("K004", "K005", "K006", "K008", "K009")
     assert linked == {mask_key(key, spec, ctx.tokeniser, form=VALUE_FORM) for key in keyed}
-    earlier = await load_run(ctx, run_id, 1, results=False)  # not stored any more: counted again, paged
-    assert walks == [1, 2, 1] and earlier.counters == whole | {"cycle": 1} and earlier.results == []
+    earlier = await load_run(ctx, run_id, 1, results=False)
+    assert walks == [1, 2] and earlier.counters == whole | {"cycle": 1} and earlier.results == []
+    async with ctx.pool.connection() as conn:
+        await conn.execute("UPDATE ds.cycles SET counters = '{}' WHERE run_id = %s AND cycle = 1", (run_id,))
+    legacy = await load_run(ctx, run_id, 1, results=False)
+    assert walks == [1, 2, 1] and legacy.counters == earlier.counters
 
 
-async def test_a_cycle_s_end_holds_a_page_of_its_results_never_the_cycle(ctx: Context) -> None:
-    """KEYS keys with one suppressed finding each, under CEILING."""
+@pytest.mark.parametrize("classification", ["accepted", "bug"])
+async def test_a_cycle_s_end_holds_a_page_of_its_results_never_the_cycle(
+    ctx: Context, monkeypatch: pytest.MonkeyPatch, classification: str, record_property: Callable[..., None]
+) -> None:
+    """KEYS stored findings, all accepted or all discrepant, under CEILING. For the latter, half the
+    keys share one cause and every other key gets a separate cause."""
+    class ObservedMember(Member):
+        """Allows a weak reference to verify that each derived page is released."""
+
+    previous: weakref.ReferenceType[ObservedMember] | None = None
+
+    async def derived(ctx: Any, conn: Any, spec: Any, run_id: str, discrepant: Any, *args: Any) -> Any:
+        nonlocal previous
+        assert previous is None or previous() is None
+        found = []
+        for r, fs in discrepant:
+            key = r["key_masked"]
+            sig = "shared" if r["seq"] % 2 == 0 else f"signature-{r['seq']}"
+            found.append(ObservedMember(
+                key, key, None, sig, "KD-UNIT-1", "$.status", ChangeType.VALUE_CHANGED,
+                Direction.BOTH, Severity.HIGH, None, "VALUE_MISMATCH", fs[0]["finding_id"],
+            ))
+        previous = weakref.ref(found[0])
+        return found
+
+    monkeypatch.setattr(cycle_end, "_members", derived)
     spec = unit_spec()
     keys = {f"K{n:05d}": f"K{n:05d}" for n in range(KEYS)}
     async with ctx.pool.connection() as conn:
@@ -172,9 +205,9 @@ async def test_a_cycle_s_end_holds_a_page_of_its_results_never_the_cycle(ctx: Co
                    rule_classification, suppressed)
                SELECT run_id, cycle, key_masked, 0, 'F-' || substr(md5(key_masked), 1, 16), 'VALUE_MISMATCH',
                    'HIGH', 'value_changed', 'both', '$.status', '/status', '"OLD"', '"NEW"', 'KD-UNIT-1',
-                   'accepted', true
+                   %s, true
                FROM ds.run_keys WHERE run_id = %s""",
-            (run_id,),
+            (classification, run_id),
         )
         await conn.execute("ANALYZE ds.findings")  # ``finish_cycle`` analyses a new store's tables first
         run = await repo.get_run(conn, run_id)
@@ -184,8 +217,19 @@ async def test_a_cycle_s_end_holds_a_page_of_its_results_never_the_cycle(ctx: Co
             peak = tracemalloc.get_traced_memory()[1]
         finally:
             tracemalloc.stop()
-    assert (counters["total"], counters["match"], counters["suppressed"]) == (KEYS, KEYS, KEYS)
+        causes = await conn.execute(
+            "SELECT count(*), max(affected_keys) FROM ds.root_causes WHERE run_id = %s", (run_id,),
+        )
+        expected = (0, None) if classification == "accepted" else (KEYS // 2 + 1, KEYS // 2)
+        assert await causes.fetchone() == expected
+        link_count = await conn.execute(
+            "SELECT count(root_cause_id) FROM ds.findings WHERE run_id = %s", (run_id,),
+        )
+        assert await link_count.fetchone() == ((0,) if classification == "accepted" else (KEYS,))
+    assert (counters["total"], counters["suppressed"]) == (KEYS, KEYS)
+    assert counters["match"] == (KEYS if classification == "accepted" else 0)
     assert counters["suppressed_by_rule"] == {"KD-UNIT-1": KEYS}
+    record_property("worker_peak_bytes", peak)
     assert peak < CEILING, f"the cycle's end held {peak / 2**20:.1f} MB"
 
 

@@ -38,6 +38,7 @@ class DataClass(StrEnum):
     PRODUCTION_TOKENISED = "production_tokenised"
     # Beside production_tokenised: raw values at the paths a spec declares clear, and business-code keys.
     PRODUCTION_CLEAR_DECLARED = "production_clear_declared"
+    ANALYST_TEXT = "analyst_text"  # an unrestricted question as typed, or a conversation derived from it
 
 
 @dataclass(frozen=True)

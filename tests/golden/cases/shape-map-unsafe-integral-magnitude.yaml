@@ -1,0 +1,12 @@
+description: >
+  An integer can have a short significant coefficient and still exceed the consecutive integers
+  of a double. Dividing it by one must never substitute the rounded integer for its exact value.
+sides:
+  a: {map: "{'value': value / 1}"}
+  b: {map: "{'value': value}"}
+a: {body: '{"value":1e23}'}
+b: {body: '{"value":1e23}'}
+expect:
+  a: INCOMPLETE unparseable
+  b: COMPLETE
+  outcome: INCONCLUSIVE unparseable

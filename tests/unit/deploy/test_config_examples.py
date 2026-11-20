@@ -289,7 +289,11 @@ def test_uv_requirements_reach_the_build(repo_root: Path) -> None:
     copied = [s for c in re.findall(r"^COPY (?!--from)(.+) \S+$", dockerfile, re.M) for s in c.split()]
     assert "deploy/uv-requirements.txt" in copied and "web/package-lock.json" in copied
     assert [source for source in copied if not _sent(ignore, source.rstrip("/"))] == []
-    site = [".env", "deploy/secrets/kek", "deploy/config/deltasleuth.yaml", "deploy/docker-compose.site.yml"]
+    site = [
+        ".env", "deploy/secrets/kek", "deploy/config/deltasleuth.yaml", "deploy/docker-compose.site.yml",
+        "deltasleuth/.DS_Store", "web/.env.local", "deltasleuth/example/secrets/token",
+        "web/example.key.pem", "deltasleuth/example.key",
+    ]
     assert [path for path in site if _sent(ignore, path)] == []
 
 

@@ -13,7 +13,9 @@ from typing import Any
 
 import pytest
 
-from deltasleuth.core.types import Side
+from deltasleuth.connectors.http import TargetGate
+from deltasleuth.connectors.tables.connector import scan_slots
+from deltasleuth.core.types import Side, Target
 from deltasleuth.runner import scan as scanning
 from deltasleuth.store import repo
 
@@ -67,7 +69,7 @@ def _harness(monkeypatch: pytest.MonkeyPatch, source: Source, stop: dict[str, An
         return sealer
 
     async def save(
-        conn: Any, run_id: str, cycle: int, state: Any, found: Any, checkpoint: int, delays: Any
+        conn: Any, run_id: str, cycle: int, state: Any, found: Any, checkpoint: int, delays: Any = None
     ) -> bool:
         assert checkpoint == run["scan"]["checkpoint"]
         assert not (keys.keys() & found.keys()), "a resumed key was queued twice"
@@ -107,12 +109,80 @@ def _harness(monkeypatch: pytest.MonkeyPatch, source: Source, stop: dict[str, An
     monkeypatch.setattr(scanning, "_snapshot", snapshot)
     monkeypatch.setattr(scanning.drift, "check", drift)
     monkeypatch.setattr(scanning, "mask_key", lambda key, *args, **kwargs: key)
+    def target(target_id: str) -> Target:
+        return Target(target_id, "", rate_per_s=10_000, max_concurrency=1)
+
     ctx = SimpleNamespace(pool=SimpleNamespace(connection=connection), spec=get_spec, sealer=get_sealer,
-                          targets=SimpleNamespace(live=lambda target: target), tokeniser=None)
+                          targets=SimpleNamespace(live=target), gates={}, tokeniser=None)
     return SimpleNamespace(
         ctx=ctx, run=run, saved=saved, keys=keys, bounds=bounds, spec=spec, sealer=sealer, plans=plans,
         waits=waits,
     )  # fmt: skip
+
+
+async def test_same_target_scan_shares_one_slot_with_key_reads_and_serialises_fetches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entered, release = asyncio.Event(), asyncio.Event()
+    reading = peak = 0
+
+    async def source(side: str, after: Any) -> AsyncIterator[Rows]:
+        nonlocal reading, peak
+        reading += 1
+        peak = max(peak, reading)
+        try:
+            entered.set()
+            await release.wait()
+        finally:
+            reading -= 1
+        yield [("key", DIGEST)]
+
+    harness = _harness(monkeypatch, source, {})
+    harness.spec.sides[Side.B].target = "a"
+    gate = harness.ctx.gates["a"] = TargetGate.for_target(harness.ctx.targets.live("a"))
+    async with asyncio.timeout(5):
+        async with gate.semaphore:  # a per-key connector is reading
+            scan = asyncio.create_task(scanning.scan(harness.ctx, "run"))
+            await asyncio.sleep(0)
+            started_early = bool(harness.bounds)
+        await entered.wait()
+        held = gate.semaphore.locked()
+        release.set()
+        await scan
+    assert not started_early and held and not gate.semaphore.locked()
+    assert peak == 1 and harness.run["scan"]["matched"] == 1
+
+
+async def test_reversed_scan_pairs_share_slots_and_release_a_partial_reservation_on_cancel() -> None:
+    a, b = (Target(name, "", max_concurrency=1) for name in ("a", "b"))
+    gates = {t.target_id: TargetGate.for_target(t) for t in (a, b)}
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def scan(pair: tuple[Target, Target]) -> None:
+        async with scan_slots(gates, pair) as serial:
+            assert serial is None
+            assert all(g.semaphore.locked() for g in gates.values())
+            entered.set()
+            await release.wait()
+
+    async with asyncio.timeout(5):
+        async with gates["b"].semaphore:  # both orders reserve A first
+            reversed_scan = asyncio.create_task(scan((b, a)))
+            await asyncio.sleep(0)
+            assert gates["a"].semaphore.locked() and not entered.is_set()
+            reversed_scan.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await reversed_scan
+            assert not gates["a"].semaphore.locked()
+        forward = asyncio.create_task(scan((a, b)))
+        await entered.wait()
+        entered.clear()
+        reverse = asyncio.create_task(scan((b, a)))
+        await asyncio.sleep(0)
+        assert not entered.is_set()
+        release.set()
+        await asyncio.gather(forward, reverse)
+    assert entered.is_set() and all(not g.semaphore.locked() for g in gates.values())
 
 
 @pytest.mark.parametrize("side", ["a", "b", "ab"])
@@ -231,13 +301,11 @@ async def test_final_key_limit_skips_unusable_duplicates_and_keeps_singleton_mat
     assert harness.keys == {"b": "b"}
 
 
-@pytest.mark.parametrize(("fixed", "waits"), [("", {"key": 2.0}), ("a", {"key": 2.0}), ("ab", None)])
-async def test_a_key_found_waits_its_recheck_delay_unless_both_sides_read_fixed_files(
-    monkeypatch: pytest.MonkeyPatch, fixed: str, waits: dict[str, float] | None
+@pytest.mark.parametrize("fixed", ["", "a", "ab"])
+async def test_scan_candidates_are_due_immediately_for_their_first_observations(
+    monkeypatch: pytest.MonkeyPatch, fixed: str
 ) -> None:
-    """A key the scan found is queued ``recheck.delay`` ahead, so its per-key read can meet a row that
-    converged meanwhile; where both sides read fixed files no later read answers otherwise, and it is due
-    at once."""
+    """The recheck delay starts after the first observed comparison has produced its result."""
 
     async def source(side: str, after: Any) -> AsyncIterator[Rows]:
         yield [("key", DIGEST if side == "a" else b"e" * 32)]
@@ -247,7 +315,7 @@ async def test_a_key_found_waits_its_recheck_delay_unless_both_sides_read_fixed_
     for side in fixed:
         harness.plans[side]["consistency"] = "fixed"
     assert await scanning.scan(harness.ctx, "run") is None
-    assert harness.keys == {"key": "key"} and harness.waits == [waits]
+    assert harness.keys == {"key": "key"} and harness.waits == [None]
 
 
 async def test_a_long_batch_is_merged_in_slices_between_which_the_event_loop_runs(

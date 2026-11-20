@@ -24,6 +24,7 @@ from deltasleuth.connectors.base import ConnectorConfigError
 from deltasleuth.core import jsonio
 from deltasleuth.core.canonical.encoding import canonical_json, sha256_hex
 from deltasleuth.core.canonical.errors import CanonicalError, PathError
+from deltasleuth.core.canonical.observe import reported_total, truncation_flag
 from deltasleuth.core.canonical.paths import compile_path
 from deltasleuth.core.types import Pagination
 
@@ -116,10 +117,15 @@ class PageWalk:
         stable_ordering: bool,
         merge: bool = True,
         max_values: int | None = None,
+        truncation_flags: tuple[str, ...] = (),
+        count_path: str | None = None,
     ) -> None:
         """``max_values``: the values a page, and the pages merged, hold at most (default
         ``jsonio.MAX_VALUES``)."""
         self._cfg = cfg
+        self._truncation_flags = truncation_flags
+        self._count_path = count_path
+        self._total: Decimal | None = None
         self._merge = merge
         self._max_pages = cfg.max_pages or DEFAULT_MAX_PAGES
         self._stable = stable_ordering
@@ -270,6 +276,9 @@ class PageWalk:
         return True
 
     def _advance(self, doc: Any, items: list[Any], headers: Mapping[str, str], url: URL) -> None:
+        if why := self._count_problem(doc) or truncation_flag(self._truncation_flags, doc):
+            self.stop(f"page {self._pages}: {why}")
+            return
         step = self._step(doc, items, headers, url)
         if step and self._pages >= self._max_pages:
             if self._cfg.kind in _WINDOW_KINDS and self._short:
@@ -278,6 +287,16 @@ class PageWalk:
                 self.stop(f"max_pages ({self._max_pages}) reached before the last page")
                 step = None
         self.next = step
+
+    def _count_problem(self, doc: Any) -> str | None:
+        if self._count_path is None:
+            return None
+        total, problem = reported_total(self._count_path, doc)
+        if total is not None:
+            if self._total is not None and total != self._total:
+                return "the declared total count changed between pages"
+            self._total = total
+        return problem
 
     def _step(self, doc: Any, items: list[Any], headers: Mapping[str, str], url: URL) -> NextPage | None:
         if self._cfg.kind == "cursor":

@@ -13,18 +13,20 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncIterator, Awaitable, Iterator
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 from weakref import WeakKeyDictionary
 
+from anyio import CancelScope
 from fastapi import APIRouter, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from psycopg.errors import QueryCanceled
 from psycopg_pool import AsyncConnectionPool
 from pydantic import Field, StrictBool
+from starlette.types import Receive, Scope, Send
 
 from deltasleuth import licence, schedules
 from deltasleuth.api.deps import (
@@ -428,6 +430,29 @@ def _key_shown(view: KeyView) -> dict[str, Any]:
     }
 
 
+class _ReportStream(StreamingResponse):
+    """Open the export snapshot before sending 200. Release it even when the client disconnects."""
+
+    def __init__(self, chunks: AsyncGenerator[bytes], media: str, headers: dict[str, str]) -> None:
+        self.chunks = chunks
+        super().__init__(chunks, media_type=media, headers=headers)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            first = await anext(self.chunks)
+
+            async def body() -> AsyncIterator[bytes]:
+                yield first
+                async for chunk in self.chunks:
+                    yield chunk
+
+            self.body_iterator = body()
+            await super().__call__(scope, receive, send)
+        finally:
+            with CancelScope(shield=True):
+                await self.chunks.aclose()
+
+
 @router.get("/runs/{run_id}/reports/{name}")
 async def report(ctx: Ctx, who: Viewer, run_id: str, name: str, cycle: int | None = None) -> Response:
     """A report of ``reports.FORMATS`` (masked; CSV cells OWASP-escaped), as a download, audited before its
@@ -438,7 +463,7 @@ async def report(ctx: Ctx, who: Viewer, run_id: str, name: str, cycle: int | Non
     headers = {"Content-Disposition": f'attachment; filename="{got.file_name}"'}
     if isinstance(got.content, bytes):
         return Response(got.content, media_type=got.media, headers=headers)
-    return StreamingResponse(got.content, media_type=got.media, headers=headers)
+    return _ReportStream(got.content, got.media, headers)
 
 
 @router.post("/compare")

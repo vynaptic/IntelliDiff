@@ -56,6 +56,7 @@ from deltasleuth.connectors.tables import (
     relation,
     unsealed,
 )
+from deltasleuth.connectors.tables.connector import population_snapshot
 from deltasleuth.context import Context
 from deltasleuth.core import jsonio, sampling
 from deltasleuth.core.canonical.encoding import sha256_hex
@@ -302,7 +303,7 @@ class _Frame:
         order: list[tuple[bytes, ...] | None] = [None]  # the last key read
         engine, rows = planned(side, plan, target), 0
         try:
-            async with engine.snapshot(target, timeout_s=census.TIMEOUT_S) as session:
+            async with population_snapshot(self._ctx.gates, engine, target, census.TIMEOUT_S) as session:
                 moment, server = datetime.now(UTC), engine.release(session)
                 self._started(moment)
                 async for fetched in engine.frame(session, plan):
@@ -333,7 +334,11 @@ class _Frame:
         """A side's key listing, walked to its end a page at a time; ``DrawError`` when it lists a key
         twice, or was not read completely."""
         side = listing_side(member.source)
-        connector = connect(self._ctx, self._target(side.target).target_id, self._spec.execution)
+        target = self._target(side.target)
+        connector = connect(
+            self._ctx, target.target_id, self._spec.execution,
+            capabilities=self._ctx.capabilities(self._run).get(target.target_id),
+        )
         # A type check that is the honest test: a key listing walks a service's pages, which only the REST
         # connector does, and the loader takes only a service target for a listing.
         assert isinstance(connector, RestConnector)

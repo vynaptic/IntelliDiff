@@ -138,8 +138,10 @@ function Summary({ a }: { a: ApprovalDetail }) {
       <p>
         {a.kind === 'spec' ? (
           <>
-            The whole content of {spec}, owner {a.spec_owner ?? 'not named'}; its runs need{' '}
-            {a.scopes.join(', ') || 'no scope'}. Content hash <span className="mono">{a.review.content_hash}</span>.
+            This approval covers the whole content of {spec}, owned by {a.spec_owner ?? 'an unnamed owner'}.
+            {' '}Runs need {a.scopes.join(', ') || 'no mandatory scope'}. Approval also allows names declared
+            in the comparison and security rules to appear as field labels in new runs.
+            {' '}Content hash <span className="mono">{a.review.content_hash}</span>.
           </>
         ) : (
           <>

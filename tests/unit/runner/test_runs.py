@@ -78,6 +78,55 @@ async def _run(h: Harness, spec: str, keys: list[str] | None = None, **kw: Any) 
 # -- rechecks and evidence -------------------------------------------------------------------
 
 
+async def test_findings_sharing_a_published_pointer_keep_their_own_cause_links(
+    harness: Harness, service: ScriptedService
+) -> None:
+    # PostgreSQL publishes a NUL as the visible escape. Both original field names are valid JSON.
+    names = ("name\x00", r"name\u0000")
+    service.both("K001", dict.fromkeys(names, "old"), dict.fromkeys(names, "new"))
+    text = spec_text().replace("unlisted: tokenize", "unlisted: clear")
+    run_id, run = await _run(harness, text, ["K001"])
+    assert run["status"] == "completed"
+    async with harness.ctx.pool.connection() as conn:
+        findings, _ = await repo.list_findings(conn, run_id)
+        causes = {c["root_cause_id"]: c for c in await repo.list_root_causes(conn, run_id)}
+    assert [f["json_pointer"] for f in findings] == [r"/name\u0000"] * 2
+    assert len({f["finding_id"] for f in findings}) == 2
+    assert all(f["root_cause_id"] in causes for f in findings)
+    assert all(causes[f["root_cause_id"]]["signature_hash"] == f["signature_hash"] for f in findings)
+
+
+async def test_expiring_rules_stay_with_their_stored_reads(
+    harness: Harness, service: ScriptedService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    today = datetime(2026, 9, 1, tzinfo=UTC)
+    monkeypatch.setattr(compare, "datetime", SimpleNamespace(now=lambda tz: today))
+    rule = """knownDiffs:
+  - id: KD-0001
+    when: "path == '$.status'"
+    classification: accepted
+    expires: "2026-09-01"
+    reason: the two statuses agree under the temporary rule
+    ticket: TCK-0001
+"""
+    service.both("K001", doc("K001"), doc("K001", name="Changed", status="PAUSED"))
+    run_id, run = await _run(harness, spec_text(extra=rule), ["K001"])
+    assert run["counters"]["suppressed_by_rule"] == {"KD-0001": 1}
+    today += timedelta(days=1)
+    async with harness.ctx.pool.connection() as conn:
+        spec = await harness.ctx.run_spec(conn, run)
+        [row] = (await repo.get_results(conn, run_id, 1, ["K001"])).values()
+        [again] = await compare.rederive_all(
+            harness.ctx, conn, spec, run_id, [row], harness.ctx.capabilities(run)
+        )
+        assert {f.path_pattern for f in again.findings if f.suppressed} == {"$.status"}
+        await cycle.summarise(harness.ctx, conn, spec, run)
+        causes = await repo.list_root_causes(conn, run_id)
+        assert [cause["path_pattern"] for cause in causes] == ["$.name"]
+    _, fresh = await _run(harness, spec_text(extra=rule), ["K001"])
+    assert fresh["counters"]["suppressed_by_rule"] == {}
+
+
 @pytest.mark.parametrize("failing", ["a", "b"])
 async def test_a_transient_failure_then_agreement_is_match(
     harness: Harness, service: ScriptedService, failing: str
@@ -588,17 +637,21 @@ async def test_keys_the_store_cannot_hold_are_refused_by_position(harness: Harne
 ALIKE = ["K\u00c901", "KE\u030101"]  # one invented key, in NFC and in NFD
 
 
-async def test_keys_that_mask_alike_are_refused_by_position_naming_none(harness: Harness) -> None:
+async def test_only_historical_forms_refuse_keys_that_mask_alike_by_position(harness: Harness) -> None:
     tokenised = spec_text().replace('pattern: "^K[0-9]{3}$"', 'pattern: "^K"')
     spec_id = await harness.spec(tokenised.replace("class: business_code", "class: identifier"))
-    with pytest.raises(Invalid) as refused:  # the API answers its status and its message
-        await create_run(harness.ctx, spec_id, "batch", keys=["K001", *ALIKE], who=TESTER)
-    said = str(refused.value)
-    assert refused.value.status == 422
-    assert re.search(r"^2 key\(s\) .*\(positions 2, 3 of the key set\)", said)
-    assert not any(key in said for key in ALIKE)
     async with harness.ctx.pool.connection() as conn:
-        assert (await repo.list_runs(conn))[0] == []
+        spec = await harness.ctx.spec(conn, spec_id)
+    with pytest.raises(Invalid) as refused:
+        await key_sets.resolve(harness.ctx, spec, ["K001", *ALIKE], form="k1")
+    assert refused.value.status == 422
+    assert re.search(r"^2 key\(s\) .*\(positions 2, 3 of the key set\)", str(refused.value))
+    assert not any(key in str(refused.value) for key in ALIKE)
+    run_id = await create_run(harness.ctx, spec_id, "batch", keys=["K001", *ALIKE], who=TESTER)
+    async with harness.ctx.pool.connection() as conn:
+        rows, _ = await repo.list_keys(conn, run_id)
+    expected = {harness.ctx.tokeniser.key_token("identifier", k) for k in ["K001", *ALIKE]}
+    assert {r["key_masked"] for r in rows} == expected
 
 
 async def test_a_business_code_keeps_keys_that_differ_only_in_unicode_form(harness: Harness) -> None:
@@ -983,6 +1036,38 @@ async def test_a_run_reads_the_same_once_its_targets_are_gone(
                 h.ctx, conn, spec, run_id, result["obs_b_id"], h.ctx.capabilities(run)
             )
     assert found is not None and (result["outcome"], found[1].kind) == ("NOT_FOUND_B", SideStateKind.ABSENT)
+
+
+async def test_a_worker_acquires_and_observes_pages_with_the_runs_pinned_count_path(
+    open_harness: OpenHarness, service: ScriptedService
+) -> None:
+    assert service.server is not None
+    targets = TARGETS.format(base=f"http://127.0.0.1:{service.server.port}", rate=500)
+    initial = targets.replace(
+        "    capabilities:\n",
+        "    capabilities:\n"
+        "      truncation_indicators: {cap: 50, items_path: $.tags, count_path: $.total}\n",
+    )
+    spec = spec_text().replace(
+        '    truncation: {itemsPath: "$.tags", cap: 50}',
+        "    pagination: {kind: cursor, itemsPath: $.tags, cursorPath: $.next, cursorParam: cursor}",
+    )
+    spec = spec.replace("recheck: {", "recheck: {outcomes: [MISMATCH, NOT_FOUND_A, NOT_FOUND_B], ")
+    first = {"tags": [1], "total": 2, "next": "2"}
+    last = {"tags": [2], "total": 2, "next": None}
+    service.script("a", "K001", (200, first), (200, last | {"total": 3}))
+    service.script("b", "K001", (200, first), (200, last))
+    async with open_harness(initial) as h:
+        run_id = await create_run(h.ctx, await h.spec(spec), "batch", keys=["K001"], who=TESTER)
+    async with open_harness(targets) as h:  # the operator removed today's total declaration
+        run = await h.finish(run_id)
+        async with h.ctx.pool.connection() as conn:
+            compiled = await h.ctx.run_spec(conn, run)
+            (result,), _ = await repo.list_results(conn, run_id)
+            saved = await compare.side_state(h.ctx, conn, compiled, run_id, result["obs_a_id"],
+                                             h.ctx.capabilities(run))
+        assert (result["outcome"], result["inconclusive_reason"]) == ("INCONCLUSIVE", "truncated")
+        assert saved is not None and saved[1].reason == "truncated"
 
 
 async def test_stored_capabilities_unchanged(open_harness: OpenHarness, service: ScriptedService) -> None:

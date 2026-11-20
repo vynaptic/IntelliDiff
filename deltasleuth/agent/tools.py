@@ -82,6 +82,7 @@ class Scope:
     compares: Rate | None = None  # what compare_key counts against, by actor; None: the caller limits it
     # The stored keys the calls read, each with its cycle (get_observations, compare_key): a key view each.
     views: list[tuple[str, int]] = field(default_factory=list)
+    cycle: int | None = None  # a chat pins its turn; direct tools default to the current cycle
 
 
 def _tool(name: str, description: str, required: tuple[str, ...], **properties: Any) -> ToolSpec:
@@ -121,6 +122,15 @@ def clear_declared(spec: CompiledSpec) -> bool:
     return bool(declared) or spec.key.value_class == BUSINESS_CODE
 
 
+def clear_egress_reason(spec: CompiledSpec) -> str | None:
+    """Why a run's pinned spec needs permission to send possibly clear values to a model."""
+    if clear_declared(spec):
+        return "its spec declares clear values or a business-code key"
+    if spec.security.field_paths is None:
+        return "its older masking policy may expose undeclared member names"
+    return None
+
+
 def tools_for(who: Principal) -> tuple[ToolSpec, ...]:
     """The tools ``who``'s roles allow."""
     return tuple(t for t in TOOLS if NEEDS[t.name] in who.roles)
@@ -158,8 +168,10 @@ async def _run_summary(ctx: Context, scope: Scope) -> Any:
     async with ctx.pool.connection() as conn:
         run = await repo.get_run(conn, scope.run_id)
         assert run is not None  # a chat's run outlives the chat
-        causes = await repo.list_root_causes(conn, scope.run_id)
-        progress = await repo.cycle_counts(conn, scope.run_id)
+        if scope.cycle is not None and scope.cycle != run["cycle"]:
+            raise ToolError("the comparison cycle changed; ask again")
+        causes = await repo.list_root_causes(conn, scope.run_id, run["cycle"])
+        progress = await repo.cycle_counts(conn, scope.run_id, run["cycle"])
         sampled = run["params"].get("keys_source") == "hash_sample"
         ended = await repo.get_cycle(conn, scope.run_id, run["cycle"]) or await repo.get_cycle(
             conn, scope.run_id, run["cycle"] - 1
@@ -217,7 +229,7 @@ async def _findings(
 ) -> Any:
     async with ctx.pool.connection() as conn:
         rows, more = await repo.list_findings(
-            conn, scope.run_id, key_masked=key, limit=limit, root_cause_id=root_cause_id,
+            conn, scope.run_id, scope.cycle, key_masked=key, limit=limit, root_cause_id=root_cause_id,
             taxonomy_code=taxonomy_code, path_pattern=path_pattern, severity=severity,
         )  # fmt: skip
     return {"findings": _picks(rows, (*_FINDING, "key_masked")), "more": more is not None}
@@ -228,7 +240,7 @@ async def _observations(ctx: Context, scope: Scope, key: str) -> Any:
     from deltasleuth.runner.runs import key_view
 
     try:
-        view = await key_view(ctx, scope.run_id, key)  # the turn audits it with the others it read
+        view = await key_view(ctx, scope.run_id, key, scope.cycle)
     except EvidenceMissing as exc:  # purged or lost: the model is told, as a person gets a 410
         raise ToolError(str(exc)) from None
     if view is None:
@@ -255,7 +267,7 @@ async def _compare_key(ctx: Context, scope: Scope, key: str) -> Any:
     if scope.compares is not None and not scope.compares.hit(scope.who.actor):
         raise ToolError(f"rate limited: at most {COMPARE_LIMIT} compare_key calls a minute per caller")
     try:  # always under the run's own spec: another spec could mask the key and its values less
-        compared = await compare_again(ctx, scope.run_id, key, who=scope.who)
+        compared = await compare_again(ctx, scope.run_id, key, who=scope.who, cycle=scope.cycle)
     except (approvals.ApprovalRequired, LicenceRefused) as exc:  # no four-eyes approval, or the licence
         raise ToolError(str(exc)) from None
     except Unconnected as exc:  # its message names the target's host, port and account: the model gets none
@@ -299,7 +311,7 @@ def _side(view: KeyView, side: str) -> dict[str, Any] | None:
 
 async def _root_cause(ctx: Context, scope: Scope, root_cause_id: str) -> Any:
     async with ctx.pool.connection() as conn:
-        rows = await repo.list_root_causes(conn, scope.run_id)
+        rows = await repo.list_root_causes(conn, scope.run_id, scope.cycle)
     row = next((row for row in rows if row["root_cause_id"] == root_cause_id), None)
     if row is None:
         raise ToolError(f"no root cause {root_cause_id} in the run's current cycle")

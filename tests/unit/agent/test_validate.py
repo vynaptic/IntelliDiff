@@ -152,9 +152,9 @@ def test_a_unit_attached_in_a_tool_result_is_read_the_same() -> None:
 
 @pytest.mark.parametrize("written", [".97", ".5", "-.25"])
 def test_a_decimal_without_its_zero_is_a_number(written: str) -> None:
-    assert _refused(f"The error rate is {written} [RC-1].", counted()) == [written.lstrip("-")]
+    assert _refused(f"The error rate is {written} [RC-1].", counted()) == [written]
     ev = counted()
-    ev.add({"rate": Decimal("0.970"), "half": "0.5", "quarter": ".25"})
+    ev.add({"rate": Decimal("0.970"), "half": "0.5", "quarter": "-.25"})
     assert _refused(f"The error rate is {written} [RC-1].", ev) == []
 
 
@@ -283,6 +283,8 @@ def test_a_claim_floating_beside_a_citation_elsewhere_is_refused() -> None:
     assert check(floating, ev, shown=True)[1] == ["sentence 1 names an outcome but cites no tool result"]
     counted = "Every key matches [RC-aaaaaaaaaaaa]. In all, 40 keys were compared."
     assert check(counted, ev)[1] == [
+        'the sentence "Every key matches [RC-aaaaaaaaaaaa]." gives an outcome for every key that its cited'
+        ' run counters do not establish',
         'the sentence "In all, 40 keys were compared." states 40 but cites no tool result'
     ]
 
@@ -356,3 +358,39 @@ def test_digits_behind_a_word_and_a_hyphen_are_part_of_a_code() -> None:
     assert check("Key ORG-000007 differs [RC-aaaaaaaaaaaa].", ev)[1] == []
     assert check("7 keys differ [RC-aaaaaaaaaaaa].", ev)[1] == ["7 appears in no tool result"]
     assert check("Between 1-7 keys differ [RC-aaaaaaaaaaaa].", ev)[1] == ["7 appears in no tool result"]
+
+
+@pytest.mark.parametrize(("answer", "valid"), [
+    ("Root cause [RC-bbbbbbbbbbbb] affects 4 keys with 3 findings.", False),
+    ("Root cause [RC-bbbbbbbbbbbb] affects three keys in four findings.", True),
+    ("Root cause [RC-bbbbbbbbbbbb] covers a group of 3 keys.", True),
+    ("The total differs in 12 keys [RC-bbbbbbbbbbbb].", False),
+    ("The total differs in one key [RC-bbbbbbbbbbbb].", False),
+    ("There were 2 MATCH and 35 MISMATCH keys [RC-bbbbbbbbbbbb].", False),
+    ("There were 35 MATCH and 2 MISMATCH keys [RC-bbbbbbbbbbbb].", True),
+    ("The key's outcome is MATCH [K:k-1].", False),
+    ("In cycle 1 it was MATCH [K:k-1].", False),
+    ("The key's outcome is MISMATCH [K:k-1].", True),
+    ("The run is certified for cut-over [RC-bbbbbbbbbbbb].", False),
+])
+def test_decision_claims_use_the_cited_engine_field(answer: str, valid: bool) -> None:
+    ev = summary()
+    ev.add({"finding_id": FINDING, "root_cause_id": "RC-bbbbbbbbbbbb", "value_b": 12})
+    ev.add({"key_masked": "k-1", "result": {"outcome": "MISMATCH"}})
+    assert (not check(answer, ev)[1]) is valid
+
+
+def test_the_run_s_different_verdict_count_belongs_to_the_run_only() -> None:
+    ev = Evidence()
+    ev.add({"counters": {"total": 8, "different": 5, "by_outcome": {"MISMATCH": 2}},
+            "root_causes": [{"root_cause_id": "RC-1", "affected_keys": 1}]})
+    assert not check("Across the run, 5 keys differ [RC-1].", ev)[1]
+    assert check("Across the run, 2 keys differ [RC-1].", ev)[1]
+    assert check("The root cause affects 5 keys [RC-1].", ev)[1]
+
+
+def test_a_signed_measurement_keeps_its_sign() -> None:
+    ev = Evidence()
+    ev.add({"finding_id": FINDING, "value_a": "-3.5"})
+    assert not check(f"Side A held \u22123.5 [{FINDING}].", ev)[1]
+    assert check(f"Side A held 3.5 [{FINDING}].", ev)[1]

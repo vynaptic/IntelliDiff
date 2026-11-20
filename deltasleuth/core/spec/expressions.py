@@ -20,12 +20,11 @@ from dataclasses import dataclass, field
 from re import _constants, _parser  # type: ignore[attr-defined]  # typeshed omits re's private modules
 from typing import Literal
 
-import jsonata
 import regex
 from cel_expr_python import cel
 from jsonata.jexception import JException
 
-from deltasleuth.core.canonical.mapping import regex_engine
+from deltasleuth.core.canonical.mapping import NumericLiteralError, parse_map
 from deltasleuth.core.canonical.regexes import RegexLimitError, RegexRefused, regex_work
 from deltasleuth.core.spec import _keypattern_process
 
@@ -127,10 +126,10 @@ def reads(source: str, kind: CelKind, name: str) -> bool:
 def jsonata_error(source: str) -> str | None:
     """Why ``source`` does not parse as JSONata, or None."""
     try:
-        jsonata.Jsonata(source, regex_engine)
+        parse_map(source)
     except JException as exc:
         return f"{exc.error}: {exc} (at character {exc.location})"
-    except RegexRefused as exc:
+    except (RegexRefused, NumericLiteralError) as exc:
         return str(exc)
     except RecursionError:
         return "the expression nests too deeply"

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
@@ -258,10 +261,22 @@ def report(
             if isinstance(got.content, bytes):
                 path.write_bytes(got.content)
                 continue
-            with path.open("wb") as file:
-                async for chunk in got.content:
-                    file.write(chunk)
+            await _write_chunks(path, got.content)
         return written
 
     for path in _in_context(config, work):
         typer.echo(str(path))
+
+
+async def _write_chunks(path: Path, chunks: AsyncGenerator[bytes]) -> None:
+    """Install a complete streamed export, keeping an existing report if the read or write fails."""
+    async with aclosing(chunks):
+        with NamedTemporaryFile(dir=path.parent, delete=False) as file:
+            temporary = Path(file.name)
+            try:
+                async for chunk in chunks:
+                    file.write(chunk)
+                file.close()
+                temporary.replace(path)
+            finally:
+                temporary.unlink(missing_ok=True)

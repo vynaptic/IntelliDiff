@@ -20,7 +20,7 @@ from deltasleuth.core import sampling
 from deltasleuth.runner import census
 from deltasleuth.store import db, repo
 from deltasleuth.store.db import MIGRATIONS, migrate
-from tests.conftest import TEST_DATA_KEY, TEST_SEALER, TESTER
+from tests.conftest import LATEST_SCHEMA, TEST_DATA_KEY, TEST_SEALER, TESTER
 from tests.unit.store.four_eyes import approved, end, person, request_signoff, spec, start, upload
 
 pytestmark = pytest.mark.db
@@ -359,7 +359,8 @@ async def test_store_at_011_is_refused_by_001_to_010_files(
         if int(path.name[:3]) < db.SAMPLING:
             (tmp_path / path.name).write_bytes(path.read_bytes())
     monkeypatch.setattr(db, "MIGRATIONS", tmp_path)
-    with pytest.raises(db.MigrationError, match=r"not have: 11, 12, .*, 22 \(this build's newest is 10\)"):
+    newer = rf"not have: 11, 12, .*, {LATEST_SCHEMA} \(this build's newest is 10\)"
+    with pytest.raises(db.MigrationError, match=newer):
         await migrate(pool)
     async with pool.connection() as conn:
-        assert await _all(conn, "SELECT max(version) FROM ds.schema_version") == [(22,)]
+        assert await _all(conn, "SELECT max(version) FROM ds.schema_version") == [(LATEST_SCHEMA,)]

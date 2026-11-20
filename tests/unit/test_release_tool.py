@@ -536,8 +536,11 @@ REFUSALS: dict[str, tuple[Setup, str]] = {
         "missing: syft (needs docker, git, grype, npm, syft and uv)",
     ),
     "base not local": (
-        _scenario(images=lambda i: {ref: v for ref, v in i.items() if "37134a49" not in ref}),
-        "python@sha256:37134a49d21d… (python:3.13-slim for linux/amd64) is not in the local image store; this"
+        _scenario(images=lambda images: {
+            ref: image for ref, image in images.items() if release.BASES["linux/amd64"] not in ref
+        }),
+        f"python@{release.BASES['linux/amd64'][:19]}… (python:3.13-slim for linux/amd64) is not in the local"
+        " image store; this"
         f" tool never pulls. To add it: docker pull python@{release.BASES['linux/amd64']}",
     ),
     "base of another platform": (

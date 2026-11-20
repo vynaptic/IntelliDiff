@@ -9,7 +9,7 @@ gives one to a person, as the API and the CLI do: audited, and a CSV export a pa
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from functools import partial
 
@@ -39,7 +39,7 @@ class Download:
 
     file_name: str
     media: str
-    content: bytes | AsyncIterator[bytes]
+    content: bytes | AsyncGenerator[bytes]
 
 
 async def download(

@@ -16,6 +16,13 @@ export const NO_DRAFT = 'No AI draft';
  *  did not check, such as a bracket with a line break inside, is no chip. */
 export const CITATION = /\[((?:F|O|RC)-[0-9A-Za-z]+|K:[^\]\n]+)\]/g;
 
+/** Only the citations the server accepted for this assistant message become links. */
+export function citationMatches(message: Message): RegExpExecArray[] {
+  if (message.role !== 'assistant' || !message.citations?.length) return [];
+  const accepted = new Set(message.citations);
+  return Array.from(message.content.matchAll(CITATION)).filter((match) => accepted.has(match[1]));
+}
+
 /** A draft's heading; `subject` is its root cause, or null for the run. */
 export const draftTitle = (subject: string | null) => (subject ? `AI draft: root cause ${subject}` : 'AI draft: run summary');
 

@@ -17,7 +17,7 @@ from deltasleuth.core.spec import compile_spec
 from deltasleuth.core.spec.documents import parse_yaml_text
 from deltasleuth.runner import create_run, sample
 from deltasleuth.runner.runs import compare_again, key_view
-from deltasleuth.security.tokenise import is_token, key_form, mask_key
+from deltasleuth.security.tokenise import KeyForm, is_token, key_form, mask_key
 from deltasleuth.store import repo
 from tests.conftest import TESTER
 
@@ -76,7 +76,7 @@ async def stored_keys(h: Harness, run_id: str, cycle: int = 1) -> dict[str, str]
     return {sealer.open("run_key", 0, masked, sealed).decode(): masked for masked, sealed in rows}
 
 
-async def made_before(h: Harness, run_id: str, value_class: str) -> None:
+async def made_before(h: Harness, run_id: str, value_class: str, *, form: KeyForm = "value") -> None:
     """Make a run just created, none of its keys read, one created before key tokens: its params without
     ``key_tokens`` and each key it holds stored, and sealed, as the value token of ``value_class``."""
     async with h.ctx.pool.connection() as conn, conn.transaction():
@@ -86,13 +86,25 @@ async def made_before(h: Harness, run_id: str, value_class: str) -> None:
         )
         for cycle, seq, masked, sealed in await cur.fetchall():
             key = sealer.open("run_key", 0, masked, sealed).decode()
-            value = h.ctx.tokeniser.token(value_class, key)
+            tok = h.ctx.tokeniser
+            value = (
+                tok.token(value_class, key) if form == "value" else tok.key_token(value_class, key, form=form)
+            )
             await conn.execute(
                 "UPDATE ds.run_keys SET key_masked = %s, key_enc = %s"
                 " WHERE (run_id, cycle, seq) = (%s, %s, %s)",
                 (value, sealer.seal("run_key", 0, value, key.encode()), run_id, cycle, seq),
             )
-        await conn.execute("UPDATE ds.runs SET params = params - 'key_tokens' WHERE run_id = %s", (run_id,))
+        if form == "value":
+            await conn.execute(
+                "UPDATE ds.runs SET params = params - 'key_tokens' WHERE run_id = %s", (run_id,)
+            )
+        else:
+            await conn.execute(
+                "UPDATE ds.runs SET params=jsonb_set(params,'{key_tokens}',to_jsonb(%s::text))"
+                " WHERE run_id=%s",
+                (form, run_id),
+            )
 
 
 async def sample_keys(h: Harness, run_id: str) -> set[str]:
@@ -101,9 +113,9 @@ async def sample_keys(h: Harness, run_id: str) -> set[str]:
 
 
 def key_tokens(masked: dict[str, str], value_class: str, h: Harness) -> bool:
-    """Whether each key shows as a key token: a token's form written k1, never the value token of its text."""
+    """Whether each key shows as a key token: a token's form written k2, never the value token of its text."""
     return all(
-        is_token(shown) and shown.startswith(f"tok:{value_class}:k1:")
+        is_token(shown) and shown.startswith(f"tok:{value_class}:k2:")
         and shown != h.ctx.tokeniser.token(value_class, key)
         for key, shown in masked.items()
     )  # fmt: skip
@@ -119,7 +131,7 @@ async def test_a_run_created_now_shows_key_tokens_apart_from_value_tokens(
     run = await harness.finish(run_id)
     masked, tok = await stored_keys(harness, run_id), harness.ctx.tokeniser
     assert sorted(masked) == sorted(NAMES) and key_tokens(masked, "name", harness)
-    assert (run["status"], run["params"]["key_tokens"]) == ("completed", "k1")
+    assert (run["status"], run["params"]["key_tokens"]) == ("completed", "k2")
     results = await harness.results(run_id)
     assert set(results) == set(masked.values())
     view = await key_view(harness.ctx, run_id, masked["Ada"])
@@ -133,18 +145,20 @@ async def test_a_run_created_now_shows_key_tokens_apart_from_value_tokens(
     assert sampled and sampled <= set(masked.values())
 
 
-async def test_a_run_created_before_keeps_its_value_tokens(
-    harness: Harness, service: ScriptedService
+@pytest.mark.parametrize("form", ["value", "k1"])
+async def test_a_run_created_before_keeps_its_key_identities(
+    harness: Harness, service: ScriptedService, form: KeyForm
 ) -> None:
     """A run created before key tokens saves its new passes, rechecks, findings and root causes under the
     value tokens its keys were stored under: the store refuses a result of any other masked key."""
     script(service)
     run_id = await create_run(harness.ctx, await harness.spec(named()), "batch", who=TESTER)
-    await made_before(harness, run_id, "name")
+    await made_before(harness, run_id, "name", form=form)
     run = await harness.finish(run_id)
     masked, tok = await stored_keys(harness, run_id), harness.ctx.tokeniser
-    assert masked == {key: tok.token("name", key) for key in NAMES}
-    assert (run["status"], "key_tokens" in run["params"]) == ("completed", False)
+    expected = tok.token if form == "value" else lambda cls, key: tok.key_token(cls, key, form=form)
+    assert masked == {key: expected("name", key) for key in NAMES}
+    assert (run["status"], key_form(run["params"])) == ("completed", form)
     results = await harness.results(run_id)
     assert set(results) == set(masked.values())
     assert results[masked["Grace"]]["confirmation"] == "rechecked"
@@ -153,6 +167,26 @@ async def test_a_run_created_before_keeps_its_value_tokens(
     sampled = await sample_keys(harness, run_id)
     assert sampled and sampled <= set(masked.values())
     assert await key_view(harness.ctx, run_id, masked["Ada"]) is not None
+
+
+async def test_a_rolling_soak_distinguishes_wire_keys_across_cycles(harness, service) -> None:
+    first, second = "Caf\u00e9", "Cafe\u0301"
+    body = json.loads(named(execution=SOAK, source=LISTING))
+    body["key"]["pattern"] = "^C"
+    service.listings = [[first], [second]]
+    script(service, [first, second])
+    service.both(first, doc(first), doc(first, name="Changed"))
+    run_id = await create_run(
+        harness.ctx, await harness.spec(json.dumps(body)), "soak", soak={"rolling": True}, who=TESTER
+    )
+    assert (await harness.finish(run_id))["cycle"] == 2
+    earlier, later = await stored_keys(harness, run_id, 1), await stored_keys(harness, run_id, 2)
+    assert set(earlier) == {first} and set(later) == {second} and earlier[first] != later[second]
+    assert (await harness.results(run_id, 1))[earlier[first]]["outcome"] == "MISMATCH"
+    assert (await harness.results(run_id, 2))[later[second]]["outcome"] == "MATCH"
+    async with harness.ctx.pool.connection() as conn:
+        delta = await repo.discrepant_changes(conn, run_id, 2, read_all_before=True)
+        assert delta["no_longer"] == 0  # the first key left; it was never observed to agree
 
 
 @pytest.mark.parametrize("before", [True, False], ids=["created-before", "created-now"])
@@ -234,7 +268,7 @@ async def test_draws_either_side_of_the_change_share_their_keys(
     spec = compile_spec(body, targets=harness.ctx.targets)
     async with harness.ctx.pool.connection() as conn:
         runs = [await repo.get_run(conn, run_id) for run_id in (first, second)]
-        assert [(run or {}).get("params", {}).get("key_tokens") for run in runs] == [None, "k1"]
+        assert [(run or {}).get("params", {}).get("key_tokens") for run in runs] == [None, "k2"]
         for run_id in (first, second):
             drawn = await repo.get_draw(conn, run_id, 1)
             assert drawn is not None and await sample.reselected(conn, drawn)

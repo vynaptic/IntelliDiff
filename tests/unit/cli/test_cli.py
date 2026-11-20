@@ -21,7 +21,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -1178,6 +1178,20 @@ def test_the_worker_copies_audit_rows_to_stdout(
     (tmp_path / "ds.yaml").write_text(SETTINGS)
     assert ds("worker", "--config", tmp_path / "ds.yaml")[0] == 0
     assert [h.stream for h in audit_logger.handlers] == ["stdout"] and not audit_logger.propagate  # type: ignore[attr-defined]
+
+
+async def test_interrupted_csv_keeps_the_existing_export(tmp_path: Path) -> None:
+    from deltasleuth.cli.runs import _write_chunks
+
+    async def interrupted() -> AsyncGenerator[bytes]:
+        yield b"header"
+        raise OSError("read interrupted")
+
+    path = tmp_path / "discrepancies.csv"
+    path.write_bytes(b"complete export")
+    with pytest.raises(OSError, match="read interrupted"):
+        await _write_chunks(path, interrupted())
+    assert path.read_bytes() == b"complete export" and list(tmp_path.iterdir()) == [path]
 
 
 def test_report_names_are_the_apis(tmp_path: Path) -> None:

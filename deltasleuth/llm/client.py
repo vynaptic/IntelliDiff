@@ -19,7 +19,7 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
-from typing import Any
+from typing import Any, Protocol
 
 import stamina
 
@@ -46,6 +46,14 @@ from deltasleuth.llm.usage import cost_micros
 MAX_RETRY_AFTER_S = 30.0  # a longer Retry-After surfaces as RateLimited instead of stalling a turn
 DEFAULT_BYTES_PER_TOKEN = 3.0  # leans high for prose and JSON until reported usage calibrates it
 _CALIBRATION_BYTES = 8 * 1024  # below this, fixed per-request overhead distorts the ratio
+
+
+class AttemptLedger(Protocol):
+    """Durable admission shared by all chat clients: reserve before sending, settle the same attempt."""
+
+    async def reserve(self, row: dict[str, Any], tokens: int) -> str: ...
+
+    async def settle(self, call_id: str, row: dict[str, Any]) -> None: ...
 
 
 @dataclass
@@ -103,6 +111,7 @@ class LLMClient:
         self.counters = ClientCounters()
         self.call_log: list[dict[str, Any]] = []
         self.prior: dict[str, int] = {}  # tokens charged before this client, by ``STANDING`` budget
+        self.ledger: AttemptLedger | None = None
         self.gate = gate or Gate(profile.limits)
         self._retry_attempts = retry_attempts
         self._reserved_tokens = 0  # worst cases of calls in flight
@@ -169,7 +178,9 @@ class LLMClient:
             self._account(response, nbytes, worst_case, estimate, turn)
         return response
 
-    def _check_budgets(self, request: LLMRequest, estimate: int, turn: TurnMeter | None) -> None:
+    def _check_budgets(
+        self, request: LLMRequest, estimate: int, turn: TurnMeter | None, *, reserved: bool = False
+    ) -> None:
         budgets, counters = self.profile.budgets, self.counters
         worst_case = estimate + request.max_output_tokens
         checks: list[tuple[str, float, float]] = [
@@ -177,11 +188,13 @@ class LLMClient:
         ]
         used = counters.input_tokens + counters.output_tokens + counters.estimated_tokens
         for name in STANDING:
-            if (limit := getattr(budgets, name)) is not None:
-                requested = self.prior.get(name, 0) + used + self._reserved_tokens + worst_case
+            if self.ledger is None and (limit := getattr(budgets, name)) is not None:
+                requested = self.prior.get(name, 0) + used + self._reserved_tokens
+                if not reserved:
+                    requested += worst_case
                 checks.append((name, limit, requested))
         if turn is not None:
-            turn_input = turn.input_tokens + turn.reserved_input_tokens + estimate
+            turn_input = turn.input_tokens + turn.reserved_input_tokens + (0 if reserved else estimate)
             checks += [
                 ("max_input_tokens_per_turn", turn.max_input_tokens, turn_input),
                 ("max_tool_calls", budgets.max_tool_calls, turn.tool_calls),
@@ -227,6 +240,15 @@ class LLMClient:
         async with self.gate.semaphore:
             if self.gate.limiter is not None:
                 await self.gate.limiter.acquire()
+            worst = _worst(request, row)
+            call_id = None
+            try:
+                self._check_budgets(request, worst.input, turn, reserved=True)
+                if self.ledger is not None:
+                    call_id = await self.ledger.reserve(row, worst.input + worst.output)
+            except BudgetExceeded as exc:
+                self._deny(row, exc)
+                raise
             self.counters.calls += 1
             started = time.monotonic()
             try:
@@ -239,24 +261,36 @@ class LLMClient:
                     "http_status": err.status,
                     "provider_code": err.provider_code,
                 }
-                if err.error_class == "Timeout":  # the provider may have answered, and billed, it anyway
-                    failure |= self._timed_out(_worst(request, row), turn)
-                self.call_log.append(row | failure | {"latency_ms": _ms(started)})
+                if err.error_class in {"Timeout", "Interrupted", "ProviderInternal"}:
+                    failure |= self._uncertain(worst, turn)
+                await self._record(call_id, row | failure | {"latency_ms": _ms(started)})
                 raise
-        latency, usage, worst = _ms(started), response.usage, _worst(request, row)
+        latency, usage = _ms(started), response.usage
         # What ``_account`` charges the call: its reported tokens, or its worst case.
         charged = usage.input + usage.output if usage.reported else worst.input + worst.output
-        self.call_log.append(
-            row | self._outcome(response, worst) | {"usage_charged": charged, "latency_ms": latency}
+        await self._record(
+            call_id, row | self._outcome(response, worst) | {"usage_charged": charged, "latency_ms": latency}
         )
         return replace(response, latency_ms=float(latency))
 
-    def _timed_out(self, worst: Usage, turn: TurnMeter | None) -> dict[str, Any]:
-        """Charge a timed-out attempt its worst case, as a reply without usage is: what its row adds."""
+    async def _record(self, call_id: str | None, row: dict[str, Any]) -> None:
+        if call_id is not None:
+            assert self.ledger is not None
+            row["call_id"] = call_id
+            await self.ledger.settle(call_id, row)
+        self.call_log.append(row)
+
+    def _uncertain(self, worst: Usage, turn: TurnMeter | None) -> dict[str, Any]:
+        """Charge a sent attempt whose result is unknown as a reply without usage."""
         self.counters.estimated_tokens += worst.input + worst.output
         if turn is not None:
             turn.input_tokens += worst.input
-        return {"usage_charged": worst.input + worst.output, "usage_estimated": True}
+        row: dict[str, Any] = {"usage_charged": worst.input + worst.output, "usage_estimated": True}
+        if (price := self.profile.pricing) is not None:
+            cost = cost_micros(worst, price)
+            self.counters.cost_micros += cost
+            row |= {"cost_micros": cost, "currency": price.currency, "price_version": price.version}
+        return row
 
     def _account(
         self, response: LLMResponse, nbytes: int, worst_case: int, estimate: int, turn: TurnMeter | None

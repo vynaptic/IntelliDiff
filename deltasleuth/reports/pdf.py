@@ -4,8 +4,8 @@ guard recorded a change of, what it recorded through the cycle), root causes fir
 the cycle's counters, a sampled cycle's strata and bounds, an ended cycle's labelled accuracy, the trend
 against the previous run of the same spec, its pair's readiness gates as of the cycle, a soak cycle's
 outcome changes from the cycle before, graph parity (for a run whose spec has ``graph``), the top
-findings (masked) and, last, the cycle's newest chat answers that cite a tool result, each under its asker
-and question, in an annex labelled as AI output. Model text never appears outside that annex. ReportLab
+findings (masked) and the cycle's newest cited drafts from built-in prompts in an annex labelled as AI
+output. Private conversation stays in its creator's session. ReportLab
 draws the document in a worker thread, off the event loop.
 """
 
@@ -27,7 +27,7 @@ from deltasleuth.reports.data import (
     counters_section,
     graph_section,
     licence_line,
-    load_run,
+    read_run,
     retention_line,
     root_causes_section,
     scalar_counters,
@@ -36,14 +36,12 @@ from deltasleuth.reports.data import (
 )
 from deltasleuth.reports.render import Document, Section, render_pdf
 from deltasleuth.runner import drift
-from deltasleuth.security.crypto import Sealer
 from deltasleuth.store import repo
 from deltasleuth.store.repo import Row
 
 AI_LABEL = "AI-generated, not evidence"
 TOP_FINDINGS = 25
 ANNEX_ANSWERS = 20  # the newest answers the annex prints
-_QUESTION_CHARS = 200  # of a question's first line
 TOP_CHANGES = 100
 _CELL_CHARS = 120
 _GRID_PAIRS = 4  # counter/value pairs per grid row, so the counters fit on one page
@@ -51,8 +49,9 @@ _TIMES = ("created_at", "started_at", "finished_at")
 
 
 async def report_document(ctx: Context, run_id: str, cycle: int | None = None) -> Document:
-    data = await load_run(ctx, run_id, cycle, results=False)
     async with ctx.pool.connection() as conn:
+        await repo.read_one_snapshot(conn)
+        data = await read_run(ctx, conn, run_id, cycle, results=False)
         previous = await repo.previous_run(conn, run_id)
         changes: list[repo.Row] = []
         changed = 0
@@ -62,7 +61,7 @@ async def report_document(ctx: Context, run_id: str, cycle: int | None = None) -
         answers, cited = await repo.annex_answers(conn, run_id, data.cycle, ANNEX_ANSWERS)
         if answers:
             sealer = await ctx.sealer(conn, run_id)
-            answers = [_opened(sealer, a) for a in answers]
+            answers = [sealer.open_row(a) for a in answers]
         ranked = [severity.value for severity in Severity if severity.rank]
         # The discrepant ones (``is_discrepant``), most severe first, then in manifest order.
         found, discrepant = await repo.discrepant_findings(conn, run_id, data.cycle, ranked, TOP_FINDINGS)
@@ -153,8 +152,11 @@ def _changes(mode: str, cycle: int, changes: list[Row], changed: int) -> Section
         return Section(title, ["The run's first cycle has none before it to compare with."])
     between = f"from cycle {cycle - 1} to cycle {cycle}"
     if not changes:
-        return Section(title, [f"No key changed its outcome {between}."])
-    rows = [(c["cycle"], c["key_masked"], c["from_outcome"], c["to_outcome"]) for c in changes]
+        return Section(title, [f"No outcome change is recorded {between}."])
+    rows = [
+        (c["cycle"], c["key_masked"], c["from_outcome"] or "No individual result", c["to_outcome"])
+        for c in changes
+    ]
     lines = [f"{changed} change(s) {between}; the first {len(rows)} are listed."]
     return Section(title, lines, ("Cycle", "Key", "From", "To"), rows)
 
@@ -178,16 +180,8 @@ def _short(value: Any) -> str:
     return text if len(text) <= _CELL_CHARS else text[: _CELL_CHARS - 1] + "…"
 
 
-def _opened(sealer: Sealer, answer: Row) -> Row:
-    """An annex answer with its text and its question's opened."""
-    opened = sealer.open_row({name: value for name, value in answer.items() if name != "question"})
-    asked = answer["question"]
-    return opened | {"question": sealer.open_row(asked)["content"] if asked else None}
-
-
 def _annex(answers: list[Row], earlier: int) -> Section:
-    """The cycle's newest answers that cite a tool result (``answers``), each under its asker's name and its
-    question's first line as stored, and how many ``earlier`` ones are left out."""
+    """The cycle's newest cited drafts requested with built-in questions, and how many are left out."""
     lines = [
         f"{AI_LABEL}: answers a language model gave about this run from its masked data. "
         "Check every claim against the findings and keys it cites."
@@ -196,14 +190,9 @@ def _annex(answers: list[Row], earlier: int) -> Section:
         left = "answers of this cycle are" if earlier > 1 else "answer of this cycle is"
         lines.append(f"{earlier} earlier {left} not shown.")
     lines += [
-        f"{a['created_at']:%Y-%m-%d %H:%M} · {a['key_masked'] or 'run'} · {a['session_id']} · asked by"
-        f" {a['asked_by'] or 'an unknown asker'}: {_first_line(a['question'])}\n{a['content']}"
+        f"{a['created_at']:%Y-%m-%d %H:%M} · {a['session_id']} · "
+        f"{'Run summary' if a['report_prompt'] == 'summary' else 'Root cause explanation'}\n{a['content']}"
         f"\nCites: {', '.join(a['citations'])}"
         for a in answers
-    ] or ["No chat answer of this cycle cites a tool result."]
+    ] or ["No shareable AI draft for this cycle."]
     return Section(f"Annex: {AI_LABEL}", lines)
-
-
-def _first_line(question: str | None) -> str:
-    line = (question or "").strip().split("\n", 1)[0].strip()
-    return line if len(line) <= _QUESTION_CHARS else line[: _QUESTION_CHARS - 1] + "…"

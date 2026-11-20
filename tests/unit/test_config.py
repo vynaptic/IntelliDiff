@@ -869,11 +869,11 @@ def test_the_external_llm_classes_are_the_egress_policy_s(tmp_path: Path) -> Non
     """None by default; the class of clear-declared values is listed like any other, an unknown one is
     refused."""
     assert _load(tmp_path).llm_external_data_classes == frozenset()
-    both = ["production_tokenised", "production_clear_declared"]
-    assert _load(tmp_path, llm_external_data_classes=both).llm_external_data_classes == set(both)
+    classes = ["production_tokenised", "production_clear_declared", "analyst_text"]
+    assert _load(tmp_path, llm_external_data_classes=classes).llm_external_data_classes == set(classes)
     assert _refusal(tmp_path, llm_external_data_classes=["production_raw"]).startswith(
         "llm_external_data_classes.0: Input should be 'synthetic', 'golden', 'schema_summary', 'aggregates',"
-        " 'production_tokenised' or 'production_clear_declared'"
+        " 'production_tokenised', 'production_clear_declared' or 'analyst_text'"
     )
 
 

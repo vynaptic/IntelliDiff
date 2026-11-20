@@ -118,7 +118,9 @@ def sdk_error(exc: Exception, sdk: Any, *, code: str | None, context_overflow: b
     if isinstance(exc, sdk.APITimeoutError):
         return ProviderError("request timed out", error_class="Timeout")
     if isinstance(exc, sdk.APIConnectionError):
-        return ProviderError("connection failed", error_class="Connection")
+        if isinstance(exc.__cause__, httpx2.ConnectError):
+            return ProviderError("connection failed", error_class="Connection")
+        return ProviderError("connection interrupted", error_class="Interrupted")
     if not isinstance(exc, sdk.APIStatusError):
         return ProviderError("response did not match the wire schema")
     status = exc.status_code

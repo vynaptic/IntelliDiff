@@ -22,6 +22,7 @@ from deltasleuth.context import Context
 from deltasleuth.core.canonical.observe import observe
 from deltasleuth.core.classify.outcome import compare_pair
 from deltasleuth.core.classify.rootcause import root_causes
+from deltasleuth.core.masking import run_masking
 from deltasleuth.core.spec import TargetRegistry, compile_spec
 from deltasleuth.core.types import Observation, Side, Target, TargetCapabilities, TruncationIndicators
 from deltasleuth.llm.profiles import parse_profiles
@@ -196,7 +197,7 @@ def make_ctx(pool: AsyncConnectionPool, tmp_path: Path) -> Callable[..., Context
         if server is not None:
             profile = {
                 "dialect": server.dialect, "base_url": server.base_url, "model": "m",
-                "data_classes": ["production_tokenised", "production_clear_declared"],
+                "data_classes": ["production_tokenised", "production_clear_declared", "analyst_text"],
                 "environments": ["test"], "capabilities": {"tool_calling": True},
             } | fields  # fmt: skip
             hosts = {"127.0.0.1": "internal"} if trusted else {}
@@ -224,6 +225,7 @@ async def seed(
     doc: dict[str, Any] = SPEC_DOC,
     members: dict[str, Any] | None = None,
     key: str = RAW_KEY,
+    current_masking: bool = False,
 ) -> Seeded:
     """A batch run of two keys compared by the engine: ``key`` (C1001) differs in email, total and note,
     and has ``wide`` more fields and ``members`` on side B only; with ``scan``, the run's table scan state;
@@ -237,7 +239,10 @@ async def seed(
     }  # fmt: skip
     async with ctx.pool.connection() as conn:
         spec_id = await repo.save_spec(conn, spec, created_by=TESTER.actor)
-        params = {"capabilities": ctx.declared(spec)}  # no key_tokens: as a run created before them
+        params: dict[str, Any] = {"capabilities": ctx.declared(spec)}  # no key_tokens: legacy key form
+        if current_masking:
+            params["member_names"] = "declared"
+            spec = run_masking(spec, params)
         form = key_form(params)
         keys = {k: mask_key(k, spec, ctx.tokeniser, form=form) for k in docs}
         run_id, sealer = await create_run(ctx, conn, spec_id, "batch", keys, params, scan)

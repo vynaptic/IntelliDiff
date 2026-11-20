@@ -15,6 +15,7 @@ from deltasleuth.store.repo.base import (
     _after,
     _changed,
     _jsonb,
+    _one,
     _page,
     _row,
     _rows,
@@ -70,14 +71,17 @@ async def get_cycle(conn: Conn, run_id: str, cycle: int, *, lock: bool = False) 
     )
 
 
-async def list_cycles(conn: Conn, run_id: str, *, standard_days: int, audit_days: int) -> list[Row]:
+async def list_cycles(
+    conn: Conn, run_id: str, *, standard_days: int, audit_days: int, cycle: int | None = None
+) -> list[Row]:
     """The run's ended cycles in order, each with ``expires_at``, when its retention ends."""
     return await _rows(
         conn,
         f"""SELECT c.*, c.ended_at + {_KEPT} AS expires_at
             FROM ds.cycles c JOIN ds.runs r USING (run_id)
-            WHERE c.run_id = %(run_id)s ORDER BY c.cycle""",  # noqa: S608 - fixed SQL fragments only
-        {"run_id": run_id, "standard_days": standard_days, "audit_days": audit_days},
+            WHERE c.run_id = %(run_id)s AND (%(cycle)s::int IS NULL OR c.cycle = %(cycle)s)
+            ORDER BY c.cycle""",  # noqa: S608 - fixed SQL fragments only
+        {"run_id": run_id, "cycle": cycle, "standard_days": standard_days, "audit_days": audit_days},
     )
 
 
@@ -314,15 +318,32 @@ async def keys_in_flight(conn: Conn, run_id: str, cycle: int | None = None) -> b
 async def set_hold(conn: Conn, run_id: str, reason: str | None, by: str | None) -> Row | None:
     """Hold the run's evidence past its retention (``reason`` and ``by``), or release it (None); the
     run's hold columns as they were, None when the run is unknown or already in that state."""
-    return await _row(
+    async with conn.transaction():
+        before = await _row(
+            conn, "SELECT hold_reason, hold_by, hold_at FROM ds.runs WHERE run_id = %s FOR UPDATE", (run_id,)
+        )
+        if before is None or (before["hold_reason"] is None) != (reason is not None):
+            return None
+        await conn.execute(
+            """UPDATE ds.runs SET hold_reason = %(reason)s, hold_by = %(by)s,
+                   hold_at = CASE WHEN %(reason)s::text IS NULL THEN NULL ELSE now() END
+               WHERE run_id = %(run_id)s""",
+            {"run_id": run_id, "reason": reason, "by": by},
+        )
+        return before
+
+
+
+async def hold_exclusions(conn: Conn, run_id: str) -> Row:
+    """What a new run hold cannot keep. Called after set_hold owns the run row: a later purge
+    waits for this transaction and sees the hold; a purge started before it keeps its decision."""
+    return await _one(
         conn,
-        """UPDATE ds.runs r SET hold_reason = %(reason)s, hold_by = %(by)s,
-               hold_at = CASE WHEN %(reason)s::text IS NULL THEN NULL ELSE now() END
-           FROM ds.runs old
-           WHERE r.run_id = %(run_id)s AND old.run_id = r.run_id
-             AND (old.hold_reason IS NULL) = (%(reason)s::text IS NOT NULL)
-           RETURNING old.hold_reason, old.hold_by, old.hold_at""",
-        {"run_id": run_id, "reason": reason, "by": by},
+        """SELECT count(*) FILTER (WHERE purged_at IS NOT NULL) AS purged,
+                  coalesce(array_agg(cycle ORDER BY cycle) FILTER (WHERE purged_at IS NULL),
+                           '{}'::int[]) AS purging
+           FROM ds.cycles WHERE run_id = %s AND purging_at IS NOT NULL""",
+        (run_id,),
     )
 
 

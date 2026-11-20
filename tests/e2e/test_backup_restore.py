@@ -1,6 +1,6 @@
 """An installation lost and restored from its backup, with the commands docs/deployment.md gives, its
 database roles apart as the Compose kit keeps them: the app signs in as a role of its own, and the schema's
-owner takes a plain ``pg_dump`` of the store while the app runs, beside one archive of the evidence
+owner takes a plain ``pg_dump`` of the stopped installation, beside one archive of the evidence
 directory. The installation is lost with both roles, as on a new host. ``ds db setup --roles-only`` makes the
 roles again, the owner loads the dump into an empty database (``psql``, whole or not at all), and the dump's
 own grants let the app's role read it at once; ``ds db setup``, which the migrate service runs before the
@@ -15,6 +15,7 @@ them inside the database's; ``tar`` is the host's.
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -32,9 +33,11 @@ from fastapi.testclient import TestClient
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from typer.testing import CliRunner
 
+from deltasleuth import targets as product_targets
 from deltasleuth.api import create_app
 from deltasleuth.cli.main import app as cli
 from deltasleuth.config import Settings, load_settings
+from deltasleuth.evidence.fsio import atomic_write, ensure_private_dir
 from mocks.registry import pair_dir
 from tests.conftest import PG_IMAGE
 
@@ -169,10 +172,23 @@ def test_a_lost_installation_is_restored_from_its_backup(
             time.sleep(0.1)
         original = _read(client, run_id)
         logged = _chained(ds("audit", "verify"))
-        # The backup, while the app runs: the database's dump, by the schema's owner, then the evidence
-        # without its spill directory.
-        _piped([*in_db, "pg_dump", "-U", owner, database], to=dump)
-        _piped(["tar", "-C", str(settings.evidence_dir), "--exclude=./spill", "-cf", "-", "."], to=archive)
+    # A protected product declaration from the site vault is separate from the SQL and evidence.
+    target_list = product_targets.path(settings)
+    ensure_private_dir(target_list.parent)
+    credentials = target_list.parent / "secrets"
+    ensure_private_dir(credentials)
+    credential = credentials / "restore-drill.0123456789abcdef"
+    atomic_write(credential, b"invented-drill-credential")
+    entry = {
+        "base_url": "https://source.example",
+        "auth": {"kind": "bearer", "secret_ref": "file:secrets/restore-drill.0123456789abcdef"},
+    }
+    atomic_write(target_list, json.dumps({"targets": {"restore-drill": entry}}).encode())
+    saved_targets = tmp_path / "site-vault"
+    shutil.copytree(target_list.parent, saved_targets)
+    # The stopped app leaves the owner's dump and encrypted evidence at the same recovery point.
+    _piped([*in_db, "pg_dump", "-U", owner, database], to=dump)
+    _piped(["tar", "-C", str(settings.evidence_dir), "--exclude=./spill", "-cf", "-", "."], to=archive)
     assert {name: n for name, n in original["counters"]["by_outcome"].items() if n} == OUTCOMES
     assert len(original["results"]) == len(KEYS) and original["findings"]
     assert original["key"]["canonical"]["a"] and original["key"]["canonical"]["b"]
@@ -192,6 +208,11 @@ def test_a_lost_installation_is_restored_from_its_backup(
     # The restore, in its order: the roles alone, the dump by the owner in one transaction, the setup the
     # migrate service runs before the app, the evidence, the key check, which reads back every stored body,
     # every schedule paused, and then the app.
+    shutil.copytree(saved_targets, target_list.parent)
+    restored_target = product_targets.load(settings).get("restore-drill")
+    assert restored_target.declared_in == "product" and restored_target.base_url == entry["base_url"]
+    assert restored_target.auth.secret_ref == f"file:{credential}"
+    assert credential.read_bytes() == b"invented-drill-credential" and credential.stat().st_mode & 0o077 == 0
     assert ds(*setup, "--roles-only").splitlines() == [
         f"role {owner} made", f"role {application} made",
         f"role {owner} may connect to and create in database {database}",

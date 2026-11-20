@@ -132,15 +132,15 @@ _PREV_DIFFERENT = _verdict_is(Verdict.DIFFERENT, "prev", "%(c)s - 1")
 
 
 async def discrepant_changes(
-    conn: Conn, run_id: str, cycle: int, *, read_all_before: bool, read_all: bool
+    conn: Conn, run_id: str, cycle: int, *, read_all_before: bool
 ) -> Row:
-    """Over the keys read in both the cycle and the one before, ``newly`` discrepant in it and not before,
+    """Keys newly observed discrepant compared to the previous cycle,
     and ``no_longer`` discrepant, read MATCH in it. Discrepant is DIFFERENT as ``types.derive_verdict`` and
     the counters read it: MISMATCH, NOT_FOUND_A or NOT_FOUND_B, or KNOWN_DIFF under a bug rule; MATCH is
     read identical, noise, or a difference a rule that is no bug rule explains. O(discrepant keys), from
-    each cycle's results of the outcomes that can be discrepant (results_outcome_idx). In a cycle that read
-    every key (``read_all_before`` for the one before, ``read_all`` for this one: a table scan's, run to its
-    end and uncut) a key without a result was read identical; so is every key before cycle 1."""
+    each cycle's possibly discrepant results (results_outcome_idx). A complete prior table scan without
+    a per-key result recorded no discrepancy for that key. A previously discrepant key is compared
+    individually whenever it remains present, so only an observed matching result clears it."""
     return await _one(
         conn,
         f"""SELECT
@@ -154,8 +154,8 @@ async def discrepant_changes(
               LEFT JOIN ds.results cur ON (cur.run_id, cur.cycle, cur.key_masked)
                                           = (prev.run_id, prev.cycle + 1, prev.key_masked)
               WHERE prev.run_id = %(r)s AND prev.cycle = %(c)s - 1 AND {_PREV_DIFFERENT}
-                AND ({_CUR_MATCH} OR cur.outcome IS NULL AND %(all)s)) AS no_longer""",  # noqa: S608
-        {"r": run_id, "c": cycle, "before": read_all_before, "all": read_all},
+                AND {_CUR_MATCH}) AS no_longer""",  # noqa: S608
+        {"r": run_id, "c": cycle, "before": read_all_before},
     )
 
 

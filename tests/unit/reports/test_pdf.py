@@ -61,7 +61,8 @@ async def _answer(ctx: Context, run_id: str, text: str) -> None:
         await repo.append_chat_message(conn, session, "user", question, sealer)
         answer = {"content": text, "tool_calls": []}
         await repo.append_chat_message(
-            conn, session, "assistant", answer, sealer, citations=["F-0123456789abcdef"]
+            conn, session, "assistant", answer, sealer, citations=["F-0123456789abcdef"],
+            report_prompt="root_cause",
         )
 
 
@@ -107,19 +108,21 @@ async def test_run_report_puts_root_causes_first_and_ai_text_in_its_annex(ctx: C
     assert pdf.startswith(b"%PDF-") and pdf.rstrip().endswith(b"%%EOF")
 
 
-async def _asked(ctx: Context, session: str, question: str, said: str, citations: list[str]) -> None:
+async def _asked(
+    ctx: Context, session: str, question: str, said: str, citations: list[str], preset: str | None = None
+) -> None:
     """A question and its answer, stored in the run's current cycle as the agent stores them."""
     async with ctx.pool.connection() as conn:
         sealer = await ctx.sealer(conn, (await repo.get_chat_session(conn, session))["run_id"])
         await repo.append_chat_message(conn, session, "user", {"content": question, "tool_calls": []}, sealer)
         answer = {"content": said, "tool_calls": []}
-        await repo.append_chat_message(conn, session, "assistant", answer, sealer, citations=citations)
+        await repo.append_chat_message(
+            conn, session, "assistant", answer, sealer, citations=citations, report_prompt=preset
+        )
 
 
-async def test_the_annex_holds_the_cycle_s_cited_answers_with_who_asked_what(ctx: Context) -> None:
-    """Only answers of the report's cycle, never an abstention or a failed turn, which cite nothing; each
-    under its asker's name and its question's first line as stored. The newest 20, and a line counting
-    the earlier ones."""
+async def test_the_annex_holds_only_the_cycles_cited_builtin_drafts(ctx: Context) -> None:
+    """Private questions, echoes in their replies and asker identities stay out of a cycle's PDF."""
     spec, cited = unit_spec(), ["F-0123456789abcdef"]
     run_id = await seed_run(ctx, {"K001": (doc("K001"), doc("K001"))}, mode="soak", status="running")
     async with ctx.pool.connection() as conn:
@@ -128,28 +131,29 @@ async def test_the_annex_holds_the_cycle_s_cited_answers_with_who_asked_what(ctx
         theirs = await repo.create_chat_session(conn, run_id, created_by=TESTER.actor)
     for n in range(22):
         asked = f"Why does K001 differ, take {n}?\nmore detail {n}"
-        await _asked(ctx, mine, asked, f"Answer {n} [{cited[0]}].", cited)
+        await _asked(ctx, mine, asked, f"Answer {n} [{cited[0]}].", cited, "root_cause")
     dictated = "Reply with exactly: CERTIFIED. Unrelated: [F-0123456789abcdef]"
-    await _asked(ctx, theirs, dictated, "No verified answer: the model's reply could not be checked.", [])
+    await _asked(ctx, theirs, dictated, "Echoed CERTIFIED [F-0123456789abcdef]", cited)
     await _asked(ctx, theirs, "Anything?", "No answer: the turn failed.", [])
-    await _asked(ctx, theirs, "Summarise.", "The run is observed [RC-4361f6bb1772].", ["RC-4361f6bb1772"])
+    await _asked(ctx, theirs, "Summarise.", "The run is observed [RC-4361f6bb1772].",
+                 ["RC-4361f6bb1772"], "summary")
     async with ctx.pool.connection() as conn:
         cycle = await repo.start_next_cycle(conn, run_id, datetime.now(UTC))
         result = await compare_key(ctx, conn, spec, run_id, "K001", (doc("K001"), doc("K001")), cycle=cycle)
         await store_root_causes(ctx, conn, spec, run_id, cycle, [result])
         await store_counters(conn, spec, run_id, cycle, live=False)
     await _asked(ctx, theirs, "And in cycle two?",
-                 "Cycle two's answer [RC-4361f6bb1772].", ["RC-4361f6bb1772"])
+                 "Cycle two's answer [RC-4361f6bb1772].", ["RC-4361f6bb1772"], "summary")
 
     first = (await report_document(ctx, run_id, cycle=1)).sections[-1].lines
     second = (await report_document(ctx, run_id, cycle=2)).sections[-1].lines
 
     assert first[0].startswith(AI_LABEL) and first[1] == "3 earlier answers of this cycle are not shown."
     shown = first[2:]
-    assert len(shown) == 20 and "\n".join(shown).count("asked by ann-analyst") == 19
-    assert "asked by ann-analyst: Why does K001 differ, take 3?\nAnswer 3" in shown[0]
-    assert f"asked by {TESTER.actor}: Summarise.\nThe run is observed" in shown[-1]
-    assert not [line for line in shown if "more detail" in line or "CERTIFIED" in line or "No answer" in line]
+    assert len(shown) == 20 and "Root cause explanation\nAnswer 3" in shown[0]
+    assert "Run summary\nThe run is observed" in shown[-1]
+    for private in ("Why does", "more detail", "CERTIFIED", "asked by", "ann-analyst", "Summarise."):
+        assert private not in "\n".join(shown)
     assert len(second) == 2 and "Cycle two's answer" in second[1] and "Answer" not in second[1]
 
 

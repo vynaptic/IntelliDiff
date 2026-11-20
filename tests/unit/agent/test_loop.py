@@ -7,6 +7,7 @@ import asyncio
 import json
 import re
 from dataclasses import replace
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -18,6 +19,7 @@ from deltasleuth.agent.tools import COMPARE_LIMIT, cause_facts
 from deltasleuth.approvals import ApprovalRequired
 from deltasleuth.auth.principal import expand
 from deltasleuth.core.types import ChangeType, Finding, KeyResult, Outcome, SideState, SideStateKind
+from deltasleuth.errors import Conflict
 from deltasleuth.llm.client import LLMClient
 from deltasleuth.llm.model import LLMRequest, Message, TextPart
 from deltasleuth.llm.policy import EgressPolicy
@@ -50,9 +52,9 @@ async def _stored(ctx: Any, session_id: str) -> tuple[list[dict[str, Any]], list
         return [sealer.open_row(m) for m in session["messages"]], [row[0] for row in await cur.fetchall()]
 
 
-def one_shot(result: KeyResult) -> KeyResult:
+def one_shot(result: KeyResult, run_id: str) -> KeyResult:
     """``result`` as ``compare_one`` answers: naming the key form of the one-shot run that holds it."""
-    result.attrs["key_form"] = KEY_FORM
+    result.attrs.update(key_form=KEY_FORM, run_id=run_id)
     return result
 
 
@@ -148,7 +150,7 @@ async def test_compare_key_is_masked_and_rate_limited_per_asker(scripted, make_c
         side = SideState(SideStateKind.COMPLETE)
         finding = Finding(key, "/email", "$.email", ChangeType.VALUE_CHANGED, RAW_EMAIL, "b@example.org",
                           pointer_parts=(("field", "email"),))  # fmt: skip
-        return one_shot(KeyResult(key, Outcome.MISMATCH, side, side, findings=[finding]))
+        return one_shot(KeyResult(key, Outcome.MISMATCH, side, side, findings=[finding]), seeded.run_id)
 
     monkeypatch.setattr("deltasleuth.runner.runs.compare_one", compare_one)
     call = ("compare_key", {"key": seeded.key})
@@ -223,7 +225,7 @@ async def test_each_key_the_chat_reads_is_a_key_view_of_the_session(scripted, ma
 
     async def compare_one(ctx: Any, spec_id: int, key: str, *, who: Any) -> KeyResult:
         side = SideState(SideStateKind.COMPLETE)
-        return one_shot(KeyResult(key, Outcome.MATCH, side, side))
+        return one_shot(KeyResult(key, Outcome.MATCH, side, side), seeded.run_id)
 
     monkeypatch.setattr("deltasleuth.runner.runs.compare_one", compare_one)
     llm.say("", ("get_observations", {"key": seeded.key}), ("get_observations", {"key": "tok:x"}))
@@ -301,6 +303,21 @@ async def test_only_the_newest_turns_that_fit_half_a_call_are_replayed(scripted,
             return client.estimate_input_tokens(LLMRequest(tuple(said)))
 
         assert size(earlier[-1]) <= 2000 < size(*earlier[-2:])
+
+
+async def test_the_model_opens_only_whole_recent_turns_of_its_cycle(scripted, make_ctx) -> None:
+    llm = await scripted("openai_chat")
+    ctx = make_ctx(llm)
+    seeded, sid = await _session(ctx)
+    await _said(ctx, sid, ("First private question", "Older answer"), ("Newest question", "Newest answer"))
+    async with ctx.pool.connection() as conn:
+        # Three rows start in the middle of the first turn. Keep just the second whole turn.
+        tail = await repo.get_chat_session(conn, sid, recent=3)
+        assert [r["seq"] for r in tail["messages"]] == [3, 4]
+        assert await repo.get_chat_session(conn, sid, recent=3, actor="another") is None
+        await repo.start_next_cycle(conn, seeded.run_id, datetime.now(UTC))
+        assert (await repo.get_chat_session(conn, sid, recent=3))["messages"] == []
+        assert len((await repo.get_chat_session(conn, sid))["messages"]) == 4
 
 
 async def test_a_result_that_would_overflow_the_next_call_is_refused_with_a_hint(scripted, make_ctx) -> None:
@@ -422,7 +439,9 @@ async def test_an_operator_may_approve_an_external_profile_outside_prod(
     ctx = make_ctx(llm, trusted=False, environments=["test", "prod"])
     approved = {
         "llm_environment": environment,
-        "llm_external_data_classes": frozenset({"production_tokenised", "production_clear_declared"}),
+        "llm_external_data_classes": frozenset(
+            {"production_tokenised", "production_clear_declared", "analyst_text"}
+        ),
     }
     ctx = replace(ctx, settings=replace(ctx.settings, **approved))
     _, sid = await _session(ctx)
@@ -455,8 +474,8 @@ async def test_a_run_that_shows_values_clear_goes_only_to_a_profile_that_lists_t
 ) -> None:
     """An internal host is refused it too, by its profile's own list, before any request."""
     llm = await scripted("openai_chat")
-    ctx = make_ctx(llm, data_classes=["production_tokenised"])
-    _, sid = await _session(ctx, doc=doc)
+    ctx = make_ctx(llm, data_classes=["production_tokenised", "analyst_text"])
+    _, sid = await _session(ctx, doc=doc, current_masking=True)
     llm.say("", ("get_run_summary", {})).say("Done.")
 
     reply = await answer(ctx, sid, "Anything?", TESTER)
@@ -468,7 +487,8 @@ async def test_a_run_that_shows_values_clear_goes_only_to_a_profile_that_lists_t
 
 @pytest.mark.parametrize(
     ("approved", "served"),
-    [({"production_tokenised"}, False), ({"production_tokenised", "production_clear_declared"}, True)],
+    [({"production_tokenised", "analyst_text"}, False),
+     ({"production_tokenised", "production_clear_declared", "analyst_text"}, True)],
 )
 async def test_an_external_profile_needs_clear_declared_values_approved_too(
     approved: set[str], served: bool, scripted, make_ctx
@@ -484,6 +504,59 @@ async def test_an_external_profile_needs_clear_declared_values_approved_too(
     assert bool(llm.requests) is served
     assert ("external_class" in reply.text) is not served
     assert ((await _stored(ctx, sid))[1] == ["external_class"]) is not served
+
+
+async def test_private_text_needs_its_own_egress_permission(scripted, make_ctx) -> None:
+    llm = await scripted("openai_chat")
+    ctx = make_ctx(llm, data_classes=["production_tokenised"])
+    seeded, sid = await _session(ctx, doc=_doc(), current_masking=True)
+    question = "Does the private account belong to ann@example.org?"
+    refused = await answer(ctx, sid, question, TESTER)
+    assert refused.abstained and "class_not_allowed" in refused.text and not llm.requests
+
+    # A previously private session cannot be reclassified by a later built-in question.
+    refused = await answer(ctx, sid, prompt.SUMMARISE, TESTER, preset="summary")
+    assert refused.abstained and not llm.requests
+    fresh = await _another(ctx, seeded.run_id)
+    cause = seeded.causes["$.email"]
+    llm.say("", ("get_run_summary", {})).say(f"The email differs [{cause}].")
+    draft = await answer(ctx, fresh, prompt.SUMMARISE, TESTER, preset="summary")
+    assert not draft.abstained and question not in llm.sent()
+    async with ctx.pool.connection() as conn:
+        rows, total = await repo.annex_answers(conn, seeded.run_id, 1, 20)
+    assert total == 1 and rows[0]["report_prompt"] == "summary"
+
+
+async def test_historical_member_names_require_clear_egress_permission(scripted, make_ctx) -> None:
+    llm = await scripted("openai_chat")
+    ctx = make_ctx(llm, data_classes=["production_tokenised", "analyst_text"])
+    _, sid = await _session(ctx, doc=_doc(), members={"ExampleSurname": True})
+    refused = await answer(ctx, sid, "What changed?", TESTER)
+    assert refused.abstained and "class_not_allowed" in refused.text and not llm.requests
+
+
+async def test_a_soak_changing_cycle_during_a_model_call_publishes_no_draft(
+    scripted, make_ctx, monkeypatch
+) -> None:
+    llm = await scripted("openai_chat")
+    ctx = make_ctx(llm)
+    seeded, sid, about = await _explaining(ctx)
+    llm.say(f"The total differs [{about['root_cause_id']}].")
+    complete = LLMClient.complete
+
+    async def rollover(client: Any, request: Any, **kwargs: Any) -> Any:
+        response = await complete(client, request, **kwargs)
+        async with ctx.pool.connection() as conn:
+            assert await repo.start_next_cycle(conn, seeded.run_id, datetime.now(UTC)) == 2
+        return response
+
+    monkeypatch.setattr(LLMClient, "complete", rollover)
+    with pytest.raises(Conflict, match="cycle changed"):
+        await _explain(ctx, sid, about)
+    messages, calls = await _stored(ctx, sid)
+    assert messages == [] and len(calls) == 1
+    async with ctx.pool.connection() as conn:
+        assert await repo.annex_answers(conn, seeded.run_id, 2, 20) == ([], 0)
 
 
 OTHER = replace(TESTER, actor="user:U-0000000000000002", name="olga")
@@ -572,6 +645,65 @@ async def test_a_budget_a_profile_lifts_bounds_nothing(scripted, make_ctx) -> No
     assert (await _asked(ctx, llm, sid))[1] > 0
 
 
+@pytest.mark.parametrize("budget", ["per_run_tokens", "per_actor_tokens_per_day"])
+async def test_concurrent_chats_share_a_durable_reservation(budget, make_ctx) -> None:
+    from deltasleuth.agent.loop import _ChatLedger
+    from deltasleuth.llm.model import BudgetExceeded
+    from deltasleuth.llm.profiles import Budgets
+
+    ctx = make_ctx()
+    seeded, sid = await _session(ctx)
+    other_actor = OTHER if budget == "per_run_tokens" else TESTER
+    other_run = seeded.run_id
+    if budget == "per_actor_tokens_per_day":
+        other_spec = SPEC_DOC | {"metadata": SPEC_DOC["metadata"] | {"name": "other"}}
+        other_run = (await seed(ctx, doc=other_spec)).run_id
+    other_sid = await _another(ctx, other_run, other_actor)
+    bounds = Budgets(**{budget: 100})
+    first = _ChatLedger(ctx, sid, seeded.run_id, TESTER.actor, bounds)
+    second = _ChatLedger(ctx, other_sid, other_run, other_actor.actor, bounds)
+    row = {"profile_id": PROFILE}
+    attempts = await asyncio.gather(first.reserve(row, 95), second.reserve(row, 95), return_exceptions=True)
+    accepted = [item for item in attempts if isinstance(item, str)]
+    assert len(accepted) == 1 and sum(isinstance(item, BudgetExceeded) for item in attempts) == 1
+    # A new client still sees the pending charge if the original process exits before recording a reply.
+    restarted = replace(second)
+    with pytest.raises(BudgetExceeded, match=budget):
+        await restarted.reserve(row, 6)
+    await restarted.settle(accepted[0], row | {"usage_charged": 10})
+    await restarted.settle(accepted[0], row | {"usage_charged": 10})
+    await restarted.reserve(row, 90)
+    async with ctx.pool.connection() as conn:
+        assert (await repo.chat_tokens(conn, other_run, other_actor.actor))[budget] == 100
+
+
+async def test_an_interrupted_chat_keeps_one_charge_for_its_dispatched_attempt(
+    monkeypatch, scripted, make_ctx
+) -> None:
+    from deltasleuth.llm.adapters.openai_chat import Adapter
+
+    sending = asyncio.Event()
+
+    async def no_reply(*args, **kwargs):
+        sending.set()
+        await asyncio.Future()
+
+    monkeypatch.setattr(Adapter, "send", no_reply)
+    ctx = make_ctx(await scripted("openai_chat"))
+    seeded, sid = await _session(ctx)
+    task = asyncio.create_task(answer(ctx, sid, "What differs?", TESTER))
+    try:
+        await asyncio.wait_for(sending.wait(), 5)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    async with ctx.pool.connection() as conn:
+        charged = await repo.chat_tokens(conn, seeded.run_id, TESTER.actor)
+    assert charged["per_run_tokens"] == charged["per_actor_tokens_per_day"] > 0
+    assert (await _stored(ctx, sid))[1] == ["Pending"]
+
+
 async def test_the_stored_calls_are_summed_as_they_were_charged(make_ctx) -> None:
     """A call's charge, or its reported input and output where a row from before holds no charge; a
     refused call's and a call of no session count nothing, nor does another run's or another asker's."""
@@ -612,7 +744,8 @@ async def test_a_call_row_keeps_what_the_client_computed(scripted, make_ctx) -> 
     (first, second, late) = rows
     assert first[0] | {
         "price_version": "p-2026-11", "currency": "EUR", "stop": "tool_use", "attempt": 1,
-        "data_classes": ["production_clear_declared", "production_tokenised"], "host": "127.0.0.1",
+        "data_classes": ["analyst_text", "production_clear_declared", "production_tokenised"],
+        "host": "127.0.0.1",
         "input": 50, "output": 10, "charged": 60, "reported": True,
     } == first[0]  # fmt: skip
     assert re.fullmatch(r"[0-9a-f]{64}", first[0]["request_hash"]) and first[0]["estimated_input_tokens"] > 0
@@ -642,7 +775,7 @@ async def test_the_agent_acts_for_the_asker(scripted, make_ctx, monkeypatch) -> 
     async def compare_one(ctx: Any, spec_id: int, key: str, *, who: Any) -> KeyResult:
         asked.append(who)
         side = SideState(SideStateKind.COMPLETE)
-        return one_shot(KeyResult(key, Outcome.MATCH, side, side))
+        return one_shot(KeyResult(key, Outcome.MATCH, side, side), seeded.run_id)
 
     monkeypatch.setattr("deltasleuth.runner.runs.compare_one", compare_one)
     call = ("compare_key", {"key": seeded.key})
@@ -674,7 +807,7 @@ async def _explaining(ctx: Any, path: str = "$.total") -> tuple[Any, str, dict[s
 async def _explain(ctx: Any, sid: str, about: dict[str, Any] | None) -> Answer:
     """Ask the fixed question about ``about``: without it, the same words and no facts."""
     question = prompt.EXPLAIN.format(id=about["root_cause_id"] if about else "RC-4361f6bb1772")
-    return await answer(ctx, sid, question, VIEWER, about=about)
+    return await answer(ctx, sid, question, VIEWER, about=about, preset="root_cause")
 
 
 @pytest.mark.parametrize("dialect", DIALECTS)
@@ -812,20 +945,20 @@ async def test_a_claim_beside_a_citation_elsewhere_is_repaired_then_refused(scri
     assert (reply.text, reply.citations, reply.abstained) == (prompt.abstain([shown]), (), True)
 
 
-async def test_a_wrong_count_another_result_holds_passes(scripted, make_ctx) -> None:
-    """The limit of the number rule: it asks that a number stands in a record the sentence cites, not what
-    it counts. The group has 1 key; 12 is side B's total in its finding, which names the root cause."""
+async def test_a_misattributed_key_count_is_repaired(scripted, make_ctx) -> None:
+    """The group has 1 key; side B's value of 12 in a finding naming the same cause cannot count keys."""
     llm = await scripted("openai_chat")
     ctx = make_ctx(llm)
     _, sid, about = await _explaining(ctx)
     cause = about["root_cause_id"]
     wrong = f"The total differs in 12 keys [{cause}]."
-    llm.say("", ("get_findings", {"root_cause_id": cause})).say(wrong)
+    right = f"The total differs in 1 key [{cause}]."
+    llm.say("", ("get_findings", {"root_cause_id": cause})).say(wrong).say(right)
 
     reply = await _explain(ctx, sid, about)
 
-    assert about["affected_keys"] == 1 and len(llm.requests) == 2  # no repair
-    assert (reply.text, reply.citations, reply.abstained) == (wrong, (cause,), False)
+    assert about["affected_keys"] == 1 and len(llm.requests) == 3
+    assert (reply.text, reply.citations, reply.abstained) == (right, (cause,), False)
 
 
 async def test_a_numbered_list_is_repaired_by_plain_sentences(scripted, make_ctx) -> None:

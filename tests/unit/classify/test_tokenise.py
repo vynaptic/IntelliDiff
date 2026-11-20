@@ -37,15 +37,15 @@ def test_token_format_and_reference_value() -> None:
 
 
 def test_a_key_token_has_a_derivation_of_its_own() -> None:
-    """A run's key is tokenised under a label of its own and written ``k1``: never the token the same text has
-    as a value of the key's class, so a key someone chooses to compare confirms no value a token stands
-    for. It reads the canonical text as a value token does, and has a token's form."""
-    digest = hmac.new(KEY, b"\x00key\x1fname\x1fAda Smithson", hashlib.sha256).digest()
+    """Current request tokens bind exact spelling; historical tokens keep their recorded derivation."""
     tok = Tokeniser(KEY)
-    key = tok.key_token("name", "Ada Smithson")
-    assert key == "tok:name:k1:" + base64.b32encode(digest).decode()[:26]
-    assert key.split(":")[3] != tok.token("name", "Ada Smithson").split(":")[3]
-    assert is_token(key) and tok.key_token("name", "é") == tok.key_token("name", "é")  # NFC
+    for version, domain in (("k1", b"key"), ("k2", b"key2")):
+        digest = hmac.new(KEY, b"\x00" + domain + b"\x1fname\x1fAda Smithson", hashlib.sha256).digest()
+        key = tok.key_token("name", "Ada Smithson", form=version)
+        assert key == f"tok:name:{version}:" + base64.b32encode(digest).decode()[:26]
+        assert is_token(key) and key.split(":")[3] != tok.token("name", "Ada Smithson").split(":")[3]
+    assert tok.key_token("name", "é") != tok.key_token("name", "é")
+    assert tok.key_token("name", "é", form="k1") == tok.key_token("name", "é", form="k1")
     assert tok.key_token("name", "1") != tok.key_token("account_number", "1")
     with pytest.raises(TokeniserError):
         tok.key_token("Name", "Ada")
@@ -104,10 +104,7 @@ def test_inline_stand_ins() -> None:
 
 
 def test_mask_raw() -> None:
-    """An answer no spec classifies: every string and number is a token of its kind, booleans and nulls
-    stay, and a member name stays unless it reads as data: an id by the profiler's rule, or a name holding
-    three digits in a row or four in all (an IBAN, a prefixed card number, a dashed account id). A name
-    that is a word of data, or data with fewer digits, shows."""
+    """An unclassified production answer reveals its shape, including distinct member names."""
     tok = Tokeniser(KEY)
     text, number = (lambda v: tok.token("free_text", v)), (lambda v: tok.token("free_number", v))
     data = ("12345", "ACC00012345", "ada@example.com", "+44 20 7946 0000", "abcdef0123456789", "a b", "", "é")
@@ -128,20 +125,20 @@ def test_mask_raw() -> None:
     }
     before = repr(doc)
     assert mask_raw(doc, tok) == {
-        "name": text("Ada"),
-        "amount": number(D("1.5")),
-        "open": True,
-        "closed": None,
-        "rows": [
+        text("name"): text("Ada"),
+        text("amount"): number(D("1.5")),
+        text("open"): "class:boolean",
+        text("closed"): None,
+        text("rows"): [
             text("Ada"),
             number(D("1.5")),
-            False,
+            "class:boolean",
             [None, text("7"), number(D(7))],
-            {"_id": text("x"), "holder-1": {}},
+            {text("_id"): text("x"), text("holder-1"): {}},
         ],
-        "Smith": {text(name): number(D(1)) for name in data},
-        "fields": dict.fromkeys(fields),
-        "n" * 64: [],
+        text("Smith"): {text(name): number(D(1)) for name in data},
+        text("fields"): dict.fromkeys(map(text, fields)),
+        text("n" * 64): [],
     }
     assert repr(doc) == before and text("7") != number(D(7))
     assert (mask_raw("Ada", tok), mask_raw(D(2), tok), mask_raw(None, tok), mask_raw([], tok)) == (
@@ -150,7 +147,8 @@ def test_mask_raw() -> None:
         None,
         [],
     )
-    assert mask_raw(doc, Tokeniser(b"\x02" * 32))["name"] != text("Ada")  # another key, other stand-ins
+    other = Tokeniser(b"\x02" * 32)
+    assert mask_raw(doc, other)[other.token("free_text", "name")] != text("Ada")
 
 
 @pytest.mark.parametrize(

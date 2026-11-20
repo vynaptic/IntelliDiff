@@ -424,6 +424,7 @@ class SecurityPolicy:
     tokenize: tuple[TokenizeRule, ...] = ()
     clear: tuple[str, ...] = ()
     unlisted: Literal["tokenize", "clear"] = "tokenize"
+    field_paths: tuple[str, ...] | None = None  # declared field labels for a run; None for legacy evidence
 
 
 @dataclass(frozen=True)
@@ -522,6 +523,7 @@ class CompiledSpec:
     domain_pack: str | None = None
     sample: Sample | None = None  # a hash_sample key source
     raw: dict[str, Any] = field(default_factory=dict)  # the validated spec document
+    judge_key: str = ""  # includes the run's field-name policy when it differs from the stored spec
 
     @property
     def key_parts(self) -> tuple[str, ...]:

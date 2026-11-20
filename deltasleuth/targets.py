@@ -104,8 +104,8 @@ _TURNS: WeakKeyDictionary[asyncio.AbstractEventLoop, _Turns] = WeakKeyDictionary
 # registry -> the product's list as it was when the registry last took it in (``_seen``)
 _SEEN: WeakKeyDictionary[TargetRegistry, tuple[int, int, int] | None] = WeakKeyDictionary()
 FOLLOW_FAILED = (
-    "warning: the product's list of targets changed but could not be read again (%s): this process keeps"
-    " the targets it holds"
+    "warning: the product's list of targets could not be read again (%s): product-declared targets"
+    " are unavailable until the list can be read"
 )
 
 
@@ -142,43 +142,46 @@ def follow(ctx: Context) -> None:
     """Take in a change of the product's list made since this process's registry last took it in: by
     another process, as this process's own changes are (``put``, ``remove``). A target the list no longer
     holds goes with its gate, a new one is added, a changed one replaced and its gate rebudgeted; a target
-    of the targets file stays as it is. A list that cannot be read changes nothing, and a warning says so
-    once per change."""
+    of the targets file stays as it is. An unreadable list withdraws its addresses until the next
+    successful read. Keep its gates during that interval for connectors still holding a slot."""
     source = path(ctx.settings)
-    now = _seen(source)
-    if ctx.targets in _SEEN and _SEEN[ctx.targets] == now:
-        return
-    _SEEN[ctx.targets] = now
     try:
+        now = _seen(source)
+        if ctx.targets in _SEEN and _SEEN[ctx.targets] == now:
+            return
         entries = _entries(source)
         listed = {tid: declared(tid, entry, source.parent) for tid, entry in entries.items()}
     except (TargetsError, OSError) as exc:
-        # codes only: an issue's message may quote an entry, and no log line names a credential's file
-        codes = sorted({i.code for i in exc.issues}) if isinstance(exc, TargetsError) else []
-        reason = ", ".join(codes) if codes else getattr(exc, "strerror", None)
-        log.warning(FOLLOW_FAILED, reason or type(exc).__name__)
-        return
+        if ctx.targets in _SEEN:
+            del _SEEN[ctx.targets]  # retry even when restoring access leaves the file's stamp unchanged
+            codes = sorted({i.code for i in exc.issues}) if isinstance(exc, TargetsError) else []
+            log.warning(FOLLOW_FAILED, ", ".join(codes) or type(exc).__name__)
+        listed = {}
+    else:
+        _SEEN[ctx.targets] = now
     for target_id in list(ctx.targets):
         if ctx.targets.get(target_id).declared_in == "product" and target_id not in listed:
             ctx.targets.drop(target_id)
-            ctx.gates.pop(target_id, None)
     for target_id, target in listed.items():
         was = ctx.targets.get(target_id) if target_id in ctx.targets else None
         if was is not None and was.declared_in != "product":
             continue  # the targets file wins
         ctx.targets.put(target)
         budget = (target.rate_per_s, target.max_concurrency)
-        if was is not None and target_id in ctx.gates and (was.rate_per_s, was.max_concurrency) != budget:
+        if target_id in ctx.gates and (was is None or (was.rate_per_s, was.max_concurrency) != budget):
             ctx.gates[target_id].rebudget(*budget)
+    if ctx.targets in _SEEN:
+        for removed in ctx.gates.keys() - set(ctx.targets):
+            del ctx.gates[removed]
 
 
 def _seen(source: Path) -> tuple[int, int, int] | None:
-    """The list's file as a change shows: each write replaces it, so its inode, size and time change."""
+    """The list's identity and change time, including permission changes that leave its bytes untouched."""
     try:
         found = source.stat()
     except FileNotFoundError:
         return None
-    return found.st_ino, found.st_size, found.st_mtime_ns
+    return found.st_ino, found.st_size, found.st_ctime_ns
 
 
 def item(target: Target, declares: bool) -> dict[str, Any]:
@@ -205,11 +208,11 @@ async def put(ctx: Context, target_id: str, body: Mapping[str, Any], who: Princi
     this installation's own session or sign-in cookie (``_own``), and a list that would pass what its reader
     takes, are refused before anything is written."""
     async with _changing():
-        was = ctx.targets.get(target_id) if target_id in ctx.targets else None
-        if was is not None and was.declared_in == "file":
+        if target_id in ctx.targets and ctx.targets.get(target_id).declared_in == "file":
             raise Refused(409, IN_FILE.format(target_id))
         source = path(ctx.settings)
         entries = _entries(source)
+        was = declared(target_id, entries[target_id], source.parent) if target_id in entries else None
         old = _refs(entries.get(target_id, {}))
         auth = body.get("auth") or {"kind": "none"}
         further = [more["header"] for more in auth.get("more") or ()]
@@ -254,10 +257,6 @@ async def put(ctx: Context, target_id: str, body: Mapping[str, Any], who: Princi
             await audit(who, "target.set", target_id, detail)
         await _written(source, listed, {fresh[name]: value for name, value in given.items()})
         follow(ctx)  # what another process changed before, and this change
-        ctx.targets.put(target)
-        budget = (target.rate_per_s, target.max_concurrency)
-        if was is not None and target_id in ctx.gates and (was.rate_per_s, was.max_concurrency) != budget:
-            ctx.gates[target_id].rebudget(*budget)
         return target, was is None
 
 
@@ -280,9 +279,6 @@ async def remove(ctx: Context, target_id: str, who: Principal) -> None:
         del entries[target_id]
         await _written(source, entries, {})
         follow(ctx)  # what another process changed before, and this change
-        if ours:
-            ctx.targets.drop(target_id)
-            ctx.gates.pop(target_id, None)
 
 
 def reading(ctx: Context, spec: CompiledSpec) -> dict[str, Target]:

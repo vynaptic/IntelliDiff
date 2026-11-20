@@ -85,6 +85,18 @@ def test_invalid_jsonata(source: str) -> None:
     assert problem is not None and problem.startswith("S0") and "at character" in problem
 
 
+@pytest.mark.parametrize("literal", ["100000000000000000000001", "1e23", "1e-400", "0.12345678901234567"])
+def test_jsonata_refuses_unsafe_numeric_literals(literal: str) -> None:
+    problem = jsonata_error("($f := function($n){$n}; $f(/* value */ " + literal + "))")
+    assert problem and "numeric literal" in problem and "character" in problem
+
+
+def test_numeric_text_is_only_checked_in_number_tokens() -> None:
+    source = """(/* 1e23 */ $n := 1e-2; {'100000000000000000000001': `1e23`,
+        'regex': $contains('1e23', /1e23/), 'ratio': $n / 4})"""
+    assert jsonata_error(source) is None
+
+
 @pytest.mark.parametrize(
     ("pattern", "ok"),
     [("^C[0-9]{8}$", True), (r"^\d+$", True), ("^C[0-9", False), ("*a", False), ("a{2,1}", False)],

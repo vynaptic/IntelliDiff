@@ -1,9 +1,8 @@
 # LLM profiles: copy to llm_profiles.yaml. A profile is a reviewable endpoint record; the chat uses
 # deltasleuth.yaml's llm_profile. Trust comes from `hosts`: a host listed as internal may receive
 # tokenised production data in prod. Every other host is external: dev/test/eval only, and only
-# synthetic, golden and schema-summary data. The chat always sends tokenised production findings,
-# so only an internal profile can serve it; the external ones here are for `ds llm-probe
-# --environment eval`. Credentials: auth_ref file: paths only.
+# synthetic, golden and schema-summary data by default. The external examples are for
+# `ds llm-probe --environment eval`. Credentials use auth_ref file: paths.
 
 hosts:
   models.internal.example: internal            # your model gateway, and nothing else
@@ -17,8 +16,8 @@ profiles:
     # auth_header: api-key                     # a gateway that takes the key in another header
     # auth_scheme: Bearer                      # the value's prefix; omit it for a bare key
     data_classes: [synthetic, golden, schema_summary, aggregates, production_tokenised]
-    # add production_clear_declared to chat about runs whose spec shows values clear or has a
-    # business-code key, such as the practice runs: those values reach the model as they are
+    # Add production_clear_declared for clear paths, business-code keys or runs created with historical field-name masking.
+    # Add analyst_text for staff to type questions. Fixed prompts work without it.
     environments: [dev, test, eval, staging, prod]
     capabilities: {tool_calling: true}         # the chat needs tool calling; the probe checks it
     budgets: {max_tool_calls: 8, max_input_tokens_per_call: 20000, max_wall_s: 60}

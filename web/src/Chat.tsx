@@ -3,7 +3,7 @@
  *  `ai` is /v1/health's, loaded by the screen: false shows no chat, unknown leaves the chat on. */
 import { useEffect, useState, type FormEvent } from 'react';
 import { api, type Message } from './api';
-import { CITATION } from './explain';
+import { citationMatches, citedKeys } from './explain';
 import { href, message } from './lib';
 import { Err } from './ui';
 
@@ -22,15 +22,16 @@ type Cites = { runId: string; keys?: Record<string, string>; cycle?: number };
 
 function Chip({ id, runId, keys, cycle }: Cites & { id: string }) {
   if (id.startsWith('K:')) return <a className="chip" href={href(['runs', runId, 'keys', id.slice(2)], { cycle })}>{id}</a>;
-  if (id.startsWith('RC-')) return <a className="chip" href={href(['runs', runId], { root_cause_id: id })}>{id}</a>;
+  if (id.startsWith('RC-')) return <a className="chip" href={href(['runs', runId], { cycle, root_cause_id: id })}>{id}</a>;
   if (keys?.[id]) return <a className="chip" href={href(['runs', runId, 'keys', keys[id]], { cycle, cite: id })}>{id}</a>;
   return <button type="button" className="chip" onClick={() => reveal(id)}>{id}</button>;
 }
 
-export function CitedText({ text, ...cites }: Cites & { text: string }) {
+export function CitedText({ entry, ...cites }: Cites & { entry: Message }) {
+  const text = entry.content;
   const parts = [];
   let last = 0;
-  for (const m of text.matchAll(CITATION)) {
+  for (const m of citationMatches(entry)) {
     parts.push(text.slice(last, m.index), <Chip key={m.index} id={m[1]} {...cites} />);
     last = m.index + m[0].length;
   }
@@ -78,6 +79,7 @@ export function Chat({ runId, keyMasked, closed, ai }: { runId: string; keyMaske
     setMessages([]);
   }
 
+  const keys = citedKeys(messages);
   if (ai === false) return null; // the Root causes tab says that the AI is off, and why
   if (!open)
     return (
@@ -99,7 +101,7 @@ export function Chat({ runId, keyMasked, closed, ai }: { runId: string; keyMaske
           .filter((m) => m.role !== 'tool')
           .map((m, i) => (
             <div key={i} className={`msg ${m.role}`}>
-              <CitedText text={m.content} runId={runId} />
+              <CitedText entry={m} runId={runId} keys={keys} cycle={m.cycle} />
             </div>
           ))}
       </div>

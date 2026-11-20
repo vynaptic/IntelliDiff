@@ -1495,6 +1495,7 @@ async def test_unscheduled_run_unchanged(harness: Harness) -> None:
     run = await harness.run(run_id)
     assert list(run["params"]) == [  # as before schedules: no member, no audit detail of one
         "soak", "tables", "licence", "approval", "key_tokens", "keys_source", "samples_dir", "capabilities",
+        "member_names",
     ]  # fmt: skip
     ((_, _, detail),) = await audited(harness, run_id, "create_run")
     assert sorted(detail) == [

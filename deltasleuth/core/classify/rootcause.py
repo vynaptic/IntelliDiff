@@ -11,7 +11,6 @@ documents, so a cycle's end can derive its keys again a page at a time and keep 
 from __future__ import annotations
 
 import hashlib
-import sys
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
@@ -86,8 +85,7 @@ def members(
 ) -> list[Member]:
     """The result's discrepant findings as members, in finding order, each key masked in the run's ``form``
     (``masking.key_form``); each member's ``ref`` is ``ref`` of its finding (by default the finding). A bug
-    rule's finding is still discrepant: grouped apart, under its rule. Shared texts (patterns, signatures)
-    are interned: a cycle repeats them across keys."""
+    rule's finding is still discrepant: grouped apart, under its rule."""
     masked: dict[str, str] = {}
     found = []
     for f in result.findings:
@@ -96,20 +94,20 @@ def members(
             continue
         if f.key not in masked:
             masked[f.key] = mask_key(f.key, spec, tokeniser, form=form)
-        pattern = sys.intern(mask_path_pattern(f.path_pattern, spec))
+        pattern = mask_path_pattern(f.path_pattern, spec)
         fanout = None
         one_sided = f.change_type in (ChangeType.MISSING_IN_B, ChangeType.EXTRA_IN_B)
         # array_path excludes the document-level finding, whose member key is the request key
         if one_sided and f.array_path is not None and f.member_key is not None:
             member = mask_member_key(f.member_key, f.array_path, spec, tokeniser, key=f.key)
-            array = sys.intern(mask_path_pattern(f.array_path, spec))
-            fanout = (array, pattern, sys.intern(member), f.change_type.value)
+            array = mask_path_pattern(f.array_path, spec)
+            fanout = (array, pattern, member, f.change_type.value)
         found.append(
             Member(
                 key=f.key,
                 key_masked=masked[f.key],
                 fanout=fanout,
-                signature=sys.intern(signature_hash(f, spec)),
+                signature=signature_hash(f, spec),
                 bug_rule=bug,
                 path_pattern=pattern,
                 change_type=f.change_type,
@@ -143,6 +141,12 @@ def group_members(found: Sequence[Member]) -> list[tuple[RootCause, list[Member]
     return sorted(causes, key=_rank)
 
 
+def cause_id(kind: Literal["member_key", "signature"], ident: tuple[str, ...], bug_rule: str | None) -> str:
+    """Stable published id from the masked group identity. A bug rule partitions its own groups."""
+    parts = (kind, *ident, *(("bug_rule", bug_rule) if bug_rule is not None else ()))
+    return "RC-" + hashlib.sha256("\x1f".join(parts).encode()).hexdigest()[:12]
+
+
 def _cause(
     kind: Literal["member_key", "signature"],
     ident: tuple[str, ...],
@@ -150,11 +154,8 @@ def _cause(
     member: str | None = None,
 ) -> tuple[RootCause, list[Member]]:
     first = ms[0]
-    # The rule is part of the identity of bug-suppressed groups only, so an unsuppressed group
-    # keeps its id when a bug rule suppresses the same difference elsewhere.
-    parts = (kind, *ident, *(("bug_rule", first.bug_rule) if first.bug_rule is not None else ()))
     rc = RootCause(
-        root_cause_id="RC-" + hashlib.sha256("\x1f".join(parts).encode()).hexdigest()[:12],
+        root_cause_id=cause_id(kind, ident, first.bug_rule),
         kind=kind,
         path_pattern=first.path_pattern,
         change_type=first.change_type,

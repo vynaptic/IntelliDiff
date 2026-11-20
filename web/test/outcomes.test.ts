@@ -104,7 +104,7 @@ test('only a soak run has the tab of changes across cycles', () => {
 
 test('the changes tab names the two cycles it compares, and a first cycle has none before it', () => {
   assert.equal(changesTitle(5), 'Outcome changes from cycle 4 to cycle 5');
-  assert.equal(noChanges(5), 'No key changed its outcome from cycle 4 to cycle 5.');
+  assert.equal(noChanges(5), 'No outcome change is recorded from cycle 4 to cycle 5.');
   assert.equal(changesTitle(1), 'Outcome changes across cycles');
   assert.equal(noChanges(1), "The run's first cycle has none before it to compare with.");
 });
