@@ -98,8 +98,8 @@ def _keys(d: Dialect, side: Plan, binds: Binds) -> list[str]:
     texts = []
     for column, key_map in zip(side["keys"], key_maps(side), strict=True):
         text, kind = d.key_text(column, *_typed(side, column)), key_map["kind"] if key_map else "identity"
-        if kind == "prefix_pad":
-            text = d.prefix_pad(text, key_map["prefix"], key_map["width"], binds)  # type: ignore[index]
+        if key_map and kind == "prefix_pad":
+            text = d.prefix_pad(text, key_map["prefix"], key_map["width"], binds)
         elif kind != "identity":  # refused when the spec is loaded
             raise Refusal(f"a {kind} key map is not read on this engine")
         texts.append(text)
@@ -226,10 +226,11 @@ def rows(d: Dialect, side: Plan, asked: Mapping[str, Sequence[Sequence[str]]]) -
             continue
         parts = decode_key(key, len(keys))
         conditions += [d.exact(d.order(text), part, own) for text, part in zip(keys, parts, strict=True)]
-        if None in conditions:
+        written_all = [c for c in conditions if c is not None]
+        if len(written_all) < len(conditions):
             continue
         binds |= own
-        last = " AND ".join(conditions)  # type: ignore[arg-type]
+        last = " AND ".join(written_all)
         arms.append(d.first(_select(d, side, [str(i), *select], last), 2, flag))
     if arms:
         arms += [d.first(_select(d, side, ["-1", *select], last), 2, flag)] * (d.arms(len(arms)) - len(arms))
@@ -332,8 +333,14 @@ def figured(side: Plan, wanted: Sequence[tuple[str, str | None]]) -> Callable[[R
         texts = []
         for (figure, column), found in zip(wanted, rows[0], strict=True):
             cls = column and side["classes"][column]
-            if found is not None and figure in ("min", "max") and cls in _MOMENTS:
-                found = render.value(cls, found, column)  # type: ignore[arg-type]
+            if (
+                found is not None
+                and figure in ("min", "max")
+                and column is not None
+                and cls is not None
+                and cls in _MOMENTS
+            ):
+                found = render.value(cls, found, column)
             texts.append(None if found is None else str(found))
         return texts
 

@@ -24,7 +24,7 @@ from deltasleuth import licence, schedules
 from deltasleuth.cli.main import app
 from deltasleuth.core import jsonio
 from deltasleuth.errors import Invalid
-from deltasleuth.runner import create_run, notify, recheck, runs, schedule, worker
+from deltasleuth.runner import create_run, jobs, notify, recheck, runs, schedule, slots, worker
 from deltasleuth.store import repo
 from tests.conftest import TESTER, licensed
 
@@ -75,6 +75,44 @@ async def test_a_slot_that_meets_a_bug_restarts(
         assert (await h.finish(run_id, timeout=20))["status"] == "completed"
 
 
+async def test_a_job_that_meets_a_bug_ends_neither_the_sweep_nor_the_slots(
+    harness: Harness,
+    service: ScriptedService,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A job that meets a bug at its turn, the schedules job's at every sweep here, is logged by its type and
+    place and costs its own turn alone: the same sweep ends a cancelled run's cycle and records itself, and
+    the slots process a run's keys to its end, never restarted."""
+
+    async def broken(ctx: Any) -> bool:
+        raise RuntimeError("a bug in a schedule step")
+
+    monkeypatch.setattr(schedule, "rezone", broken)
+    spec_id = await harness.spec(spec_text(["K001"]))
+    cancelled = await create_run(harness.ctx, spec_id, "batch", who=TESTER)
+    await runs.stop_run(harness.ctx, cancelled, "cancelled", who=TESTER)  # the sweep ends its cycle
+    sweeper = worker._Worker(harness.ctx)
+    try:
+        with caplog.at_level(logging.WARNING):
+            await sweeper._sweep_once()
+            await asyncio.gather(*sweeper.ending.values())
+    finally:
+        await sweeper.close()
+    async with harness.ctx.pool.connection() as conn:
+        assert await repo.last_sweep(conn) is not None
+    assert (await harness.run(cancelled))["status"] == "cancelled"
+    said = re.escape("schedules job failed: RuntimeError") + AT
+    assert [m for m in caplog.messages if re.fullmatch(said, m)]
+    service.both("K001", doc("K001"), doc("K001"))
+    run_id = await create_run(harness.ctx, spec_id, "batch", who=TESTER)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        assert (await harness.finish(run_id, timeout=20))["status"] == "completed"
+    assert [m for m in caplog.messages if re.fullmatch(said, m)]  # at every sweep the worker made
+    assert not [m for m in caplog.messages if m.startswith(("sweep failed", "worker stopped"))]
+
+
 async def test_a_recheck_s_jitter_comes_from_the_masked_key(
     harness: Harness, service: ScriptedService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -84,7 +122,7 @@ async def test_a_recheck_s_jitter_comes_from_the_masked_key(
         spread.append(key_masked)
         return 0.0
 
-    monkeypatch.setattr(worker, "key_fraction", fraction)  # the pause between a slot's groups
+    monkeypatch.setattr(slots, "key_fraction", fraction)  # the pause between a slot's groups
     monkeypatch.setattr(recheck, "key_fraction", fraction)  # a recheck's wait
     spec = spec_text(["K001"]).replace("class: business_code", "class: identifier")  # masked: a token
     spec = spec.replace("recheck: {delay: 0s,", "recheck: {delay: 0s, jitter: 1s,")
@@ -111,7 +149,7 @@ async def test_slots_that_meet_a_run_together_load_it_once(
     monkeypatch.setattr(repo, "unexplained_critical", counting)
     sweeper = worker._Worker(harness.ctx)
     try:
-        loaded = await asyncio.gather(*(sweeper._run(row) for _ in range(4)))
+        loaded = await asyncio.gather(*(sweeper.slots._run(row) for _ in range(4)))
     finally:
         await sweeper.close()
     assert counted == [run_id] and all(run is loaded[0] for run in loaded)
@@ -158,12 +196,12 @@ async def test_a_group_that_lost_some_leases_hands_back_the_rest(
             )
         raise worker._LeaseLost
 
-    monkeypatch.setattr(worker._Worker, "_process", taken_meanwhile)
+    monkeypatch.setattr(slots.Slots, "_process", taken_meanwhile)
     sweeper = worker._Worker(harness.ctx)
     try:
         async with harness.ctx.pool.connection() as conn:
             rows = await repo.lease_due(conn, "mine", 2, 60, run_id=run_id)
-        await sweeper._handle(rows, "mine")
+        await sweeper.slots._handle(rows, "mine")
     finally:
         await sweeper.close()
     async with harness.ctx.pool.connection() as conn:
@@ -213,7 +251,7 @@ async def test_watch_once_per_change(
     await licence.watch(harness.ctx)  # the next hour's: nothing changed, nothing recorded
     pro = await licensed(harness.ctx, tier="pro")
     await sweeper._sweep_once()  # within the hour still
-    sweeper.watched_at -= worker.WATCH_EVERY_S  # an hour later
+    sweeper.supervisor.licence.watched_at -= worker.WATCH_EVERY_S  # an hour later
     await sweeper._sweep_once()
     replaced = await licensed(harness.ctx, tier="pro", issued="2099-01-01T00:00:00Z")  # the same state
     await licence.watch(harness.ctx)
@@ -427,7 +465,7 @@ def test_only_the_worker_imports_the_notifier(repo_root: Path) -> None:
             r"from deltasleuth\.runner import [^\n]*\bnotify\b|deltasleuth\.runner\.notify", path.read_text()
         )
     )
-    assert importers == ["deltasleuth/runner/worker.py"]
+    assert importers == ["deltasleuth/runner/jobs.py"]
 
 
 async def test_notify_config_on_change_and_removal(open_harness: OpenHarness, tmp_path: Path) -> None:
@@ -538,7 +576,7 @@ async def test_a_slow_cycle_end_holds_up_no_other_run_s_end_or_a_schedule(
         await runs.stop_run(harness.ctx, run_id, "cancelled", who=TESTER)  # the sweep ends their cycles
     row = await scheduled(harness, spec_id, await minute(harness))
     held, ends, fired = asyncio.Event(), [], []
-    finish = worker.finish_cycle
+    finish = jobs.finish_cycle
 
     async def finishing(ctx: Any, run_id: str, **kwargs: Any) -> None:
         ends.append(run_id)
@@ -550,7 +588,7 @@ async def test_a_slow_cycle_end_holds_up_no_other_run_s_end_or_a_schedule(
         fired.append(schedule_id)
         await schedules.pause(ctx, schedule_id, TESTER)
 
-    monkeypatch.setattr(worker, "finish_cycle", finishing)
+    monkeypatch.setattr(jobs, "finish_cycle", finishing)
     monkeypatch.setattr(schedule, "fire", fire)
     sweeper = worker._Worker(harness.ctx)
     try:
@@ -576,14 +614,14 @@ async def test_a_failed_cycle_end_is_logged_by_type_and_place_and_fails_its_run_
     broken, fine = [await create_run(harness.ctx, spec_id, "batch", who=TESTER) for _ in range(2)]
     for run_id in (broken, fine):
         await runs.stop_run(harness.ctx, run_id, "cancelled", who=TESTER)
-    finish = worker.finish_cycle
+    finish = jobs.finish_cycle
 
     async def finishing(ctx: Any, run_id: str, **kwargs: Any) -> None:
         if run_id == broken:
             raise RuntimeError("a bug at a cycle end")
         await finish(ctx, run_id, **kwargs)
 
-    monkeypatch.setattr(worker, "finish_cycle", finishing)
+    monkeypatch.setattr(jobs, "finish_cycle", finishing)
     sweeper = worker._Worker(harness.ctx)
     try:
         with caplog.at_level(logging.WARNING):
@@ -838,3 +876,26 @@ async def test_ds_run_worker_fires_nothing(
     assert passed == [False] and rezoned == []  # it neither rezones nor fires
     assert await started(harness, row) == [] and (await shown(harness, row["schedule_id"]))["next_due"] == due
     assert [action for _, action, _ in await audited(harness, row["schedule_id"])] == ["schedule.create"]
+
+
+async def test_a_key_whose_task_ended_after_the_sweep_read_is_not_started_from_that_reading() -> None:
+    """A sweep reads what is due, then acts: a task that ended in between (a census recorded, a scan that
+    failed its run) is not started again from that reading, which no longer holds; the next sweep's is."""
+    from deltasleuth.runner import jobs
+
+    job = jobs.Job.__new__(jobs.Job)
+    job.read_at, job.tasks = None, jobs.Tasks(job)
+    started: list[str] = []
+
+    async def once(key: str) -> None:
+        started.append(key)
+
+    job.read_at = time.monotonic()
+    job.tasks.start("R-1", once("R-1"))
+    await asyncio.gather(*job.tasks.values())
+    job.tasks.start("R-1", once("R-1"))  # from the same reading: it ended after it
+    assert started == ["R-1"] and "R-1" not in job.tasks
+    job.read_at = time.monotonic()  # the next sweep's reading
+    job.tasks.start("R-1", once("R-1"))
+    await asyncio.gather(*job.tasks.values())
+    assert started == ["R-1", "R-1"]

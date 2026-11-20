@@ -212,7 +212,7 @@ async def _judged(
     await refuse_purged(conn, run_id, cycle)
     current = await licence.standing(ctx, conn)  # the licence at issue
     found = licence.pack_problems(current, run)
-    early = run["created_at"] < await repo.applied_at(conn, PACKS)  # type: ignore[operator]
+    early = run["created_at"] < await repo.applied_at(conn, PACKS)
     if early:  # its scan state may lack what a census needs: the pack is not built
         found.append(f"run {run_id} started before evidence packs (009): only later runs get a pack")
     signoff = await repo.signed_off(conn, run_id, cycle)
@@ -262,7 +262,8 @@ async def _judged(
         ctx, conn, run, cycle, spec, signoff, rebuilt, adjudication, labelling, results, who, current
     )
     found += facts.problems
-    pack = _build(facts, signer, ctx.settings.packs.installation)  # type: ignore[union-attr]
+    assert ctx.settings.packs is not None  # the signer is its signing key's
+    pack = _build(facts, signer, ctx.settings.packs.installation)
     if (blind := rawvalues.no_pack(run["spec_id"], spec)) is not None:
         found.append(blind)
     elif where := raw_values(spec, pack.files):
@@ -605,7 +606,7 @@ def _build(facts: _Facts, signer: PackSigner, installation: str) -> Pack:
         cycle=facts.cycle,
         signoff_id=facts.signoff["approval_id"],
         attests_sha256=facts.signoff["attests_sha256"],
-        adjudication_id=adjudication and adjudication["adjudication_id"],
+        adjudication_id=None if adjudication is None else adjudication["adjudication_id"],
         head=facts.head,
         issued_at=facts.issued_at,
         manifest=manifest,
@@ -1404,10 +1405,11 @@ async def stored(ctx: Context, pack_id: str) -> tuple[repo.Row, bytes]:
     async with ctx.pool.connection() as conn:
         data = await repo.pack_zip(conn, pack_id)  # first: a purge deleting it has started before the rest
         pack = await repo.get_pack(conn, pack_id)
-        ended = pack and await repo.get_cycle(conn, pack["run_id"], pack["cycle"])
+        ended = None if pack is None else await repo.get_cycle(conn, pack["run_id"], pack["cycle"])
     if pack is None:
         raise NotFound(f"pack {pack_id} not found")
-    purged = pack["purged_at"] or ended["purging_at"]  # type: ignore[index]
+    assert ended is not None  # a pack's cycle ended
+    purged = pack["purged_at"] or ended["purging_at"]
     if data is None or purged is not None:
         raise CyclePurged(
             f"pack {pack_id} was purged with cycle {pack['cycle']} on {purged:%Y-%m-%d}: its stored copy is"

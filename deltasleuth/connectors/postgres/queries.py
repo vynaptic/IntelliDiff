@@ -52,13 +52,13 @@ def _canonical(j: int, column: str, key_map: Mapping[str, Any] | None, params: P
     # on a column whose collation is nondeterministic (case-insensitive 'X1' = 'x1').
     value = sql.SQL('(t.{}::text COLLATE "C")').format(sql.Identifier(column))
     kind = key_map["kind"] if key_map else "identity"
-    if kind == "prefix_pad":
-        params |= {f"m{j}_prefix": key_map["prefix"], f"m{j}_width": key_map["width"]}  # type: ignore[index]
+    if key_map and kind == "prefix_pad":
+        params |= {f"m{j}_prefix": key_map["prefix"], f"m{j}_width": key_map["width"]}
         return sql.SQL(_PREFIX_PAD).format(
             v=value, prefix=sql.Placeholder(f"m{j}_prefix"), width=sql.Placeholder(f"m{j}_width")
         )
-    if kind == "regex":
-        rule = key_map["toCanonical"]  # type: ignore[index]
+    if key_map and kind == "regex":
+        rule = key_map["toCanonical"]
         pattern, replacement = f"m{j}_pattern", f"m{j}_replacement"
         params |= {pattern: f"^(?:{rule['pattern']})$", replacement: _replacement(rule["replacement"])}
         return sql.SQL(_REGEX).format(
@@ -185,7 +185,8 @@ def frame_sql(side: Plan) -> tuple[sql.Composed, Params]:
     params: Params = {}
     keys = _canonical_keys(side, params)
     order = [sql.SQL("convert_to({}, 'UTF8')").format(k) for k in keys]
-    document, lateral = sql.SQL("'{}'"), sql.SQL("")
+    document = sql.SQL("'{}'")
+    lateral: sql.Composable = sql.SQL("")
     if strata := side.get("strata"):
         document = sql.SQL("to_jsonb(r.*)::text")
         lateral = sql.SQL(" CROSS JOIN LATERAL (SELECT {}) AS r").format(_document(strata))
@@ -258,7 +259,7 @@ def figures_sql(side: Plan, wanted: Sequence[tuple[str, str | None]]) -> tuple[s
     select = []
     for figure, column in wanted:
         if column is None:  # of the rows: every one, or those ``null_keys_sql`` counts
-            counted = sql.SQL("count(*)")
+            counted: sql.Composable = sql.SQL("count(*)")
             if figure == "null_keys":
                 missing = [sql.SQL("{} IS NULL").format(k) for k in _canonical_keys(side, params)]
                 counted = sql.SQL("count(*) FILTER (WHERE {})").format(_join(missing, " OR "))
@@ -350,9 +351,10 @@ def facts_sql(
     options: list[set[str]] = [set() for _ in parts]
     for text in values:
         mapped = [to_side(piece, m) for piece, m in zip(decode_key(text, len(parts)), maps, strict=True)]
-        if None not in mapped:  # else no row of this side holds it
-            for found, alternatives in zip(options, mapped, strict=True):
-                found.update(alternatives)  # type: ignore[arg-type]
+        held = [m for m in mapped if m is not None]
+        if len(held) == len(mapped):  # else no row of this side holds it
+            for found, alternatives in zip(options, held, strict=True):
+                found.update(alternatives)
     params: Params = {"values": list(values)}
     narrow = []
     for j, (column, found) in enumerate(zip(columns, options, strict=True)):

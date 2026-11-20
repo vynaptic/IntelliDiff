@@ -374,7 +374,7 @@ async def test_kill_before_commit_refires_in_window(
             raise asyncio.CancelledError
         return await insert(conn, who, action, *args)
 
-    monkeypatch.setattr(repo, "insert_audit", killed)
+    monkeypatch.setattr(repo.audit, "insert_audit", killed)
     with pytest.raises(asyncio.CancelledError):
         await fire(harness, row)
     after = await shown(harness, row["schedule_id"])

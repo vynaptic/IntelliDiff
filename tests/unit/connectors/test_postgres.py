@@ -925,3 +925,38 @@ async def test_a_partitioned_table_is_listed_once_and_reads_every_partition(
     assert listed == [("entries", "table"), ("plain", "table")]
     assert (entries.facts["kind"], entries.facts["key"]) == ("table", ["id", "booked"])
     assert (read["rows"], read["figures"]["amount"]["sum"], read["duplicate_keys"]) == (2, "3.50", 0)
+
+
+async def test_a_session_s_settings_hold_from_its_start_whatever_the_role_sets(
+    pg_dsn: str, tmp_path: Path
+) -> None:
+    """A role may carry its own statement_timeout (here 1 ms) and other settings: a session takes its own at
+    connection, before any statement of it runs, so no statement runs under the role's and a slow host
+    cannot fail the session's first statements."""
+    from deltasleuth.connectors.postgres.session import connect
+
+    role = f"tight_{uuid.uuid4().hex[:8]}"
+    with psycopg.connect(pg_dsn, autocommit=True) as conn:
+        conn.execute(f"CREATE ROLE {role} LOGIN PASSWORD 'r'")
+        own = ("statement_timeout = '1ms'", "TimeZone = 'Europe/Amsterdam'", "DateStyle = 'SQL, DMY'")
+        for setting in own:
+            conn.execute(f"ALTER ROLE {role} SET {setting}")
+    (tmp_path / "tight").write_text(re.sub(r"//[^@]*@", f"//{role}:r@", pg_dsn, count=1))
+    (tmp_path / "targets.yaml").write_text(yaml.safe_dump({"targets": {"db": {"dsn_ref": "file:tight"}}}))
+    target = load_targets(tmp_path / "targets.yaml").get("db")
+    conn = await connect(target, timeout_s=5)
+    try:
+        cur = await conn.execute(
+            "SELECT name, setting, source FROM pg_settings WHERE name IN"
+            " ('statement_timeout', 'TimeZone', 'DateStyle', 'default_transaction_read_only')"
+            " ORDER BY name"
+        )
+        found = {name: (setting, source) for name, setting, source in await cur.fetchall()}
+    finally:
+        await conn.close()
+    assert found == {
+        "DateStyle": ("ISO, YMD", "client"),
+        "TimeZone": ("UTC", "client"),
+        "default_transaction_read_only": ("on", "client"),
+        "statement_timeout": ("5000", "client"),
+    }

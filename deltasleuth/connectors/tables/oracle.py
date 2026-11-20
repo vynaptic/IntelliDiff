@@ -250,7 +250,8 @@ class _Primitives:
     def after(self, orders: Sequence[str], bound: Sequence[bytes], binds: compose.Binds) -> str:
         """No row comparison exists there: (o1 > a) OR (o1 = a AND o2 > b). An empty part is NULL to the
         server, where > '' is never true: any text is after it and none equals it."""
-        arms, equal = [], []
+        arms: list[str] = []
+        equal: list[str] = []
         for order, part in zip(orders, bound, strict=True):
             value = _bind(binds, part.decode() if self._utf8 else part) if part else None
             greater = f"{order} > {value}" if value else f"{order} IS NOT NULL"
@@ -693,11 +694,12 @@ async def _listed(session: _Session, owner: str, name: str, *, folded: bool = Tr
 
 def _column(
     readable: bool, name: str, kind: str, length: int, precision: int | None, scale: int | None, chars: int,
-    used: str | None, collation: str | None, nullable: str = "Y", relation: str = "table",
+    used: str | None, collation: str | None, nullable: str = "Y", *, relation: str = "table",
 ) -> Column:  # fmt: skip
     """A column as the catalogue declares it: its type written out, its class, whether it can be a key,
     whether it may hold NULL (a view's is the server's guess: not said) and its size."""
-    declared, cls, size = kind, _CLASSES.get(re.sub(r"\([0-9]+\)", "", kind)), None
+    declared, cls = kind, _CLASSES.get(re.sub(r"\([0-9]+\)", "", kind))
+    size: tuple[Any, ...] | None = None
     if kind == "NUMBER" and scale is not None:
         digits = "*" if precision is None else precision
         declared = f"NUMBER({digits})" if scale == 0 and precision else f"NUMBER({digits},{scale})"

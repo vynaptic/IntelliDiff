@@ -456,7 +456,8 @@ class ChannelSettings:
         object.__setattr__(self, "labels", default if self.labels is None else self.labels)
         object.__setattr__(self, "links", default if self.links is None else self.links)
         if kind == "email" and self.smtp_port is None:
-            object.__setattr__(self, "smtp_port", {"starttls": 587, "implicit": 465, "none": 25}[self.tls])
+            ports = {"starttls": 587, "implicit": 465, "none": 25}
+            object.__setattr__(self, "smtp_port", ports[self.tls or "starttls"])  # tls is set above
 
     @property
     def destination(self) -> str | None:

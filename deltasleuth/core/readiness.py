@@ -361,7 +361,7 @@ class Streak:
     @property
     def after(self) -> datetime | None:
         """When the streak began: an evidence cycle of the current version ended later is in it."""
-        return self.boundary and self.boundary["ended_at"]
+        return None if self.boundary is None else self.boundary["ended_at"]
 
     def holds(self, row: Row) -> bool:
         """Whether a cycle (``repo.readiness_governance``'s) is in the streak: an evidence point of the
@@ -819,7 +819,7 @@ def _convergence(
         if reached is not None:
             why.append(f"the streak reaches {reached}")
         said += f" gate ({'; '.join(why)})" if why else " gate"
-        record = boundary.get("readiness") if reached is not None else {"final": True}
+        record = {"final": True} if boundary is None or reached is None else boundary.get("readiness")
         # A point still to be measured decides, by what it comes to read, which cycle is the earliest.
         if soaks is not None and record is not None and ("error" not in record or record.get("final")):
             said += f"; {_earliest(found, policy, soaks, seen, now)}"
@@ -1192,20 +1192,24 @@ def evaluate(
     notes = []
     if judged < now:
         notes.append(f"closed on {policy.closed}: judged as of that day")
-    if regressed:
+    if regressed and row is not None:  # a held sign-off is of the evidence's spec, so there is evidence
         newest = max(held, key=_when)
         notes.append(
-            f"regressed: {_named(record)} was signed off ({newest['approval_id']}, {_cycle(newest, row)})"
+            f"regressed: {_named(row['readiness'])} was signed off ({newest['approval_id']},"
+            f" {_cycle(newest, row)})"
             " and the pair is now below signed off"
         )
     issued = chosen and signed and next((p for p in chosen["packs"] if p["status"] == "issued"), None)
-    evidence = row and {name: row[name] for name in ("run_id", "cycle", "ended_at")}
+    evidence = None
+    if row is not None:
+        evidence = {name: row[name] for name in ("run_id", "cycle", "ended_at")}
+        evidence |= {"basis": row["readiness"]["basis"], "claim": "observed"}
     return {
         "pair": pair, "programme": policy.programme, "entity": policy.entity,
         "version": record and record["version"], "spec_id": current, "state": state, "regressed": regressed,
         "score": {"passed": counted.count("met"), "required": len(counted)}, "gates": items,
         "blocking": [gate for gate, status in by.items() if status in ("not_met", "unknown")],
-        "evidence": evidence and evidence | {"basis": record["basis"], "claim": "observed"},
+        "evidence": evidence,
         "candidate": chosen and {"run_id": chosen["run_id"], "cycle": chosen["cycle"]},
         "convergence": {"streak": found.k, "needed": policy.gates.cycles, "window": window(policy)},
         "trend": spark(series["trend"], tier), "signoff_id": signed and signed["approval_id"],
@@ -1229,7 +1233,7 @@ def causes(was: Mapping[str, Any], item: Mapping[str, Any], *, version: bool, co
     statuses = {gate["gate"]: gate["status"] for gate in item["gates"] if gate["required"]}
 
     def at(cycle: Mapping[str, Any] | None) -> tuple[Any, Any] | None:
-        return cycle and (cycle["run_id"], cycle["cycle"])
+        return None if cycle is None else (cycle["run_id"], cycle["cycle"])
 
     moved = at(was["evidence"]) != at(item["evidence"])
     same_run = (was["candidate"] or {}).get("run_id") == (item["candidate"] or {}).get("run_id")

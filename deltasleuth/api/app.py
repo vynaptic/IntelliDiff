@@ -14,7 +14,7 @@ import logging
 import os
 import re
 import secrets
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import asdict
 from importlib.metadata import version
@@ -92,7 +92,7 @@ _HOST = re.compile(r"(\[[0-9a-f:.]+\]|[a-z0-9.-]+)(?::([0-9]{1,5}))?")
 
 def create_app(settings: Settings, *, worker: bool = False, web_dir: Path = WEB_DIST) -> FastAPI:
     auth = settings.auth
-    mapping = roles_sha256(auth and auth.oidc)
+    mapping = roles_sha256(None if auth is None else auth.oidc)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -144,9 +144,10 @@ def create_app(settings: Settings, *, worker: bool = False, web_dir: Path = WEB_
         app.include_router(routes.router, prefix="/v1")
     app.state.templates = {}  # route -> its /v1 path template, which authz.denied rows name
     for route in iter_route_contexts(app.routes):
-        if isinstance(route.original_route, APIRoute) and route.path.startswith("/v1/"):
-            app.state.templates[id(route.original_route)] = route.path
-            unlisted = {(method, route.path) for method in route.methods} - PUBLIC
+        path, methods = route.path, route.methods or set()  # an APIRoute's are both set
+        if isinstance(route.original_route, APIRoute) and path is not None and path.startswith("/v1/"):
+            app.state.templates[id(route.original_route)] = path
+            unlisted = {(method, path) for method in methods} - PUBLIC
             if unlisted and not _guarded(route.dependant):
                 raise RuntimeError(f"route {sorted(unlisted)} declares no principal")
     if web_dir.is_dir():
@@ -409,7 +410,8 @@ async def _internal(request: Request, exc: Exception) -> Response:
     return _error(500, "internal error", headers=headers)
 
 
-_HANDLERS = {
+# Each handler takes the exceptions of its key's type, which no one parameter type spells.
+_HANDLERS: dict[type[Exception], Callable[[Request, Any], Awaitable[Response]]] = {
     HTTPException: _http_error,
     RequestValidationError: _invalid_request,
     SpecError: _invalid_spec,

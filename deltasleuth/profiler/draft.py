@@ -33,7 +33,17 @@ from deltasleuth.core.spec.keys import key_matches
 from deltasleuth.core.types import JSON, Side
 from deltasleuth.profiler.align import Alignment, align
 from deltasleuth.profiler.keys import MAX_NESTED_MULTISETS, ArrayDecision, suggest_arrays
-from deltasleuth.profiler.model import ROOT, DraftSpec, EvidenceRow, Path, ProfilerError, node_at, render
+from deltasleuth.profiler.model import (
+    ROOT,
+    DraftSpec,
+    EvidenceRow,
+    Path,
+    ProfilerError,
+    Score,
+    names,
+    node_at,
+    render,
+)
 from deltasleuth.profiler.profile import LEAF_KINDS, MAP, SideProfile, profile_side
 from deltasleuth.profiler.schema import annotated_schema
 from deltasleuth.profiler.sidemap import side_b_map
@@ -129,7 +139,7 @@ def infer_key_type(keys: Sequence[str]) -> str:
     return "integer" if all(_INTEGER_KEY.fullmatch(k) for k in keys) else "string"
 
 
-class _FlowList(list):  # type: ignore[type-arg]
+class _FlowList(list[str | int]):
     """A scalar list written inline (``[sortCode, accountNo]``)."""
 
 
@@ -231,11 +241,12 @@ class _SideRun:
 
     def select_row(self) -> EvidenceRow:
         rendered, dropped = render(self.select.path), ", ".join(self.select.dropped)
-        paths = (rendered, None) if self.side is Side.A else (None, rendered)
+        path_a, path_b = (rendered, None) if self.side is Side.A else (None, rendered)
         scores = {"selected_docs": len(self.docs), "leaf_share": self.select.leaf_share}
         return EvidenceRow(
             "select",
-            *paths,
+            path_a,
+            path_b,
             rendered,
             scores,
             len(self.raw),
@@ -270,17 +281,18 @@ def _key_block(
         "key.class is identifier (fail-closed: keys are tokenised in results); set business_code if "
         "keys are not personal data.",
     ]
+    kind = infer_key_type(matching)
     block = {
         "name": key_name,
-        "type": infer_key_type(matching),
+        "type": kind,
         "pattern": pattern,
         "class": "identifier",
         "source": {"kind": "list", "keys": matching},
     }
-    scores = {
+    scores: dict[str, Score] = {
         "keys": len(keys),
         "matching": len(matching),
-        "type": block["type"],
+        "type": kind,
         "inferred": key_pattern is None,
     }
     origin = "derived from the keys' character classes" if key_pattern is None else "given"
@@ -334,7 +346,7 @@ def _annotations(
     for d in decisions.values():
         a[d.path_a].update({"x-ds-array-mode": d.mode, **({"x-ds-array-keys": list(d.key)} if d.key else {})})
         if d.path_b is not None:
-            keys_b = {"x-ds-array-keys": [".".join(k) for k in d.key_b]} if d.key_b else {}
+            keys_b = {"x-ds-array-keys": [".".join(names(k)) for k in d.key_b]} if d.key_b else {}
             b[d.path_b].update({"x-ds-array-mode": d.mode, **keys_b})
     for s in suggestions:
         a[s.path_a]["x-ds-normalize"] = b[s.path_b]["x-ds-normalize"] = list(s.chain)

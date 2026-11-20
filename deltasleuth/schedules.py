@@ -124,7 +124,7 @@ def _local(at: datetime, time_zone: str) -> str | None:
 
 
 def _when(at: datetime | None, time_zone: str) -> dict[str, Any] | None:
-    return at and {"utc": cron.utc(at), "local": _local(at, time_zone)}
+    return None if at is None else {"utc": cron.utc(at), "local": _local(at, time_zone)}
 
 
 def _span(seconds: float) -> str:
@@ -151,6 +151,11 @@ def line(outcome: str, detail: Mapping[str, Any], *, at: datetime | None = None,
         return f"started run {d['run_id']} {late}"
     if outcome == "rezone":
         return f"its times moved with the time zone data ({d['tzdata']}): next due {d['to']}, was {d['from']}"
+    return _missed(d, at=at, held=held)
+
+
+def _missed(d: Mapping[str, Any], *, at: datetime | None, held: bool) -> str:
+    """``line``'s text of a ``schedule.missed`` row: why its time started no run."""
     reason, code, due, count = d["reason"], d["code"], d["due"], d["count"]
     if count is not None and reason not in ("late", "superseded"):  # a standing refusal's later times
         chained = ", chained as one row within 24 h" if held else ""
@@ -166,7 +171,8 @@ def line(outcome: str, detail: Mapping[str, Any], *, at: datetime | None = None,
         case "late", "down" if several:
             why = f"{several} passed while no worker could start them: a schedule never runs a backlog"
         case "late", "down":
-            passed = _span((at - datetime.fromisoformat(due)).total_seconds())  # type: ignore[operator]
+            assert at is not None  # a missed time's row says when it was written
+            passed = _span((at - datetime.fromisoformat(due)).total_seconds())
             why = (
                 f"its time {due} passed {passed} before a worker could start it, over the {within} min the"
                 " schedule allows (no worker that fires schedules ran, the store was down, or the clock"
@@ -485,7 +491,8 @@ async def _checked(
     if spec_id is not None:
         stored = await repo.get_spec(conn, spec_id)
     else:
-        stored = await repo.newest_spec(conn, spec_name)  # type: ignore[arg-type]
+        assert spec_name is not None  # one of the two, as checked above
+        stored = await repo.newest_spec(conn, spec_name)
     if stored is None:
         missing = f"spec {spec_id} not found" if spec_id is not None else f"no spec is named {spec_name}"
         raise Refused(404, missing)
@@ -595,12 +602,13 @@ async def create(ctx: Context, body: Mapping[str, Any], who: Principal) -> tuple
             schedule |= {"schedule_id": repo.new_schedule_id(), "created_by": who.actor, "anchor_at": now}
             row = await repo.insert_schedule(conn, schedule | {"next_due": _next(schedule, now)})
             shown = await repo.get_schedule(conn, row["schedule_id"])
+            assert shown is not None  # written above, in this transaction
             await audit(who, "schedule.create", row["schedule_id"], _saved(row))
     except errors.UniqueViolation:  # another create took the name meanwhile
         async with ctx.pool.connection() as conn:
             await _taken(conn, str(name))
         raise
-    return shown, warnings  # type: ignore[return-value]
+    return shown, warnings
 
 
 async def replace(
@@ -623,8 +631,8 @@ async def replace(
             if schedule["name"] != row["name"]:
                 await _taken(conn, schedule["name"])
             anchor = max(now, row["anchor_at"])
-            next_due = _next(schedule, anchor)  # refused when the body leaves no time
-            next_due = None if row["state"] == "paused" else next_due
+            due = _next(schedule, anchor)  # refused when the body leaves no time
+            next_due = None if row["state"] == "paused" else due
             chained, last, _ = settle_due(row, now, "update", next_due)
             schedule |= {"anchor_at": anchor, "next_due": next_due}
             saved = await repo.replace_schedule(
@@ -632,6 +640,7 @@ async def replace(
             )
             assert saved is not None  # its row is locked
             shown = await repo.get_schedule(conn, schedule_id)
+            assert shown is not None  # written above, in this transaction
             for detail in chained:
                 await audit(who, "schedule.missed", schedule_id, detail)
             changed = [name for name in _SAVED if saved[name] != row[name]]
@@ -640,7 +649,7 @@ async def replace(
         async with ctx.pool.connection() as conn:
             await _taken(conn, str(body.get("name")))
         raise
-    return shown, warnings  # type: ignore[return-value]
+    return shown, warnings
 
 
 async def pause(ctx: Context, ident: str, who: Principal) -> repo.Row:
@@ -658,10 +667,11 @@ async def pause(ctx: Context, ident: str, who: Principal) -> repo.Row:
         )
         assert saved is not None  # its row is locked
         shown = await repo.get_schedule(conn, schedule_id)
+        assert shown is not None  # written above, in this transaction
         for detail in chained:
             await audit(who, "schedule.missed", schedule_id, detail)
         await audit(who, "schedule.pause", schedule_id, {"revision": saved["revision"], "next_due": None})
-    return shown  # type: ignore[return-value]
+    return shown
 
 
 async def pause_all(ctx: Context, who: Principal) -> int:
@@ -698,9 +708,10 @@ async def resume(ctx: Context, ident: str, who: Principal) -> tuple[repo.Row, li
         saved = await repo.resume_schedule(conn, schedule_id, anchor_at=anchor, next_due=next_due)
         assert saved is not None  # its row is locked
         shown = await repo.get_schedule(conn, schedule_id)
+        assert shown is not None  # written above, in this transaction
         detail = {"revision": saved["revision"], "next_due": next_due and cron.utc(next_due)}
         await audit(who, "schedule.resume", schedule_id, detail)
-    return shown, [] if next_due is not None else [_ended(row)]  # type: ignore[return-value]
+    return shown, [] if next_due is not None else [_ended(row)]
 
 
 async def delete(ctx: Context, ident: str, who: Principal) -> repo.Row:

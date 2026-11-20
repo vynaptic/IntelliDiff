@@ -109,7 +109,12 @@ def to_wire(request: LLMRequest, *, model: str, caching: bool) -> dict[str, Any]
         "messages": _merge_turns([_turn(m) for m in messages[lead:]]),
     }
     if lead:
-        body["system"] = [{"type": "text", "text": p.text} for m in messages[:lead] for p in m.parts]
+        body["system"] = [  # a system message holds text parts only (``Message`` checks each role's)
+            {"type": "text", "text": p.text}
+            for m in messages[:lead]
+            for p in m.parts
+            if isinstance(p, TextPart)
+        ]
     if request.tools:
         body["tools"] = [
             {"name": t.name, "description": t.description, "input_schema": dict(t.input_schema)}

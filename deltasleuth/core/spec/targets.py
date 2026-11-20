@@ -415,6 +415,7 @@ def _database(
     """An engine target's endpoint; its problems are added to ``issues``."""
     engine, host = entry["engine"], entry["host"]
     traits = ENGINES[engine]
+    assert traits.port is not None  # the schema admits only endpoint engines here, each with a default port
     own, other = ("database", "service") if traits.names == "database" else ("service", "database")
     dn, name = entry.get("tls_server_dn"), entry.get("tls_verify_name", True)
     plain = entry.get("allow_unencrypted", False)

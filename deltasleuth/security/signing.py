@@ -16,6 +16,7 @@ import re
 from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.types import PrivateKeyTypes
 
 from deltasleuth.core.secrets import read_secret_bytes
 from deltasleuth.errors import Invalid
@@ -35,7 +36,7 @@ class PackSigner:
 
     __slots__ = ("_key", "fingerprint", "public_pem")
 
-    def __init__(self, key: ec.EllipticCurvePrivateKey) -> None:
+    def __init__(self, key: PrivateKeyTypes) -> None:  # an EC P-256 key, else refused
         if not isinstance(key, ec.EllipticCurvePrivateKey) or not isinstance(key.curve, ec.SECP256R1):
             raise SigningKeyError(EXPECTED)
         self._key = key
@@ -55,7 +56,7 @@ class PackSigner:
             key = serialization.load_pem_private_key(data, password=None)
         except (ValueError, TypeError, UnsupportedAlgorithm):  # not PEM, encrypted, or unsupported
             raise SigningKeyError(EXPECTED) from None
-        return cls(key)  # type: ignore[arg-type]
+        return cls(key)
 
     def sign(self, data: bytes) -> bytes:
         """The DER signature of ``data`` (ECDSA P-256 over its SHA-256, RFC 6979)."""

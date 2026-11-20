@@ -555,7 +555,7 @@ async def run_csv(ctx: Context, run_id: str, cycle: int | None = None) -> bytes:
             raise NotFound(f"run {run_id} not found")
         name = run["spec_name"]
         ended = await repo.get_cycle(conn, run_id, cycle or run["cycle"])
-        before = ended and (ended["ended_at"], run_id, ended["cycle"] + 1)
+        before = None if ended is None else (ended["ended_at"], run_id, ended["cycle"] + 1)
         points = await repo.readiness_points(conn, [name], before=before, limit=RUN_ROWS)
     rows = _trend_rows(name, gates.policy(ctx.settings.readiness, name), points)
     return render_csv(TRENDS, rows).encode()

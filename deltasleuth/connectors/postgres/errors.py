@@ -62,7 +62,8 @@ def wrapped(exc: psycopg.Error, *, said: bool = False, figure: bool = False) -> 
     base = _base(exc, figure=figure)
     if base is TargetTempSpace:  # a pre-check records the server's code of it
         return TargetTempSpace(exc.sqlstate or type(exc).__name__)
-    error = _class(type(exc).__name__, base)(type(exc).__name__)
+    # A class is hashable, but typeshed's cache asks for Hashable, which mypy finds no class to be.
+    error = _class(type(exc).__name__, base)(type(exc).__name__)  # type: ignore[arg-type]
     if said:
         error.said = (str(exc).splitlines() or [type(exc).__name__])[0][:300]
     if isinstance(error, TargetUnreachable) and not isinstance(error, StatementTimeout):

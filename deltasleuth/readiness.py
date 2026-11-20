@@ -189,7 +189,7 @@ async def judged(
             log.warning("readiness: pair %s could not be evaluated: %s", name, type(exc).__name__)
             item = gates.unevaluated(name, policies[name], type(exc).__name__, now)
         recorded = row is not None and row["detail"]["to"] == item["state"]
-        items[name] = item | {"since": row["since"] if recorded else None}  # type: ignore[index]
+        items[name] = item | {"since": row["since"] if row is not None and recorded else None}
     counts = owed["cycles"], owed["backfill"]
     return Judged(now, items, policies, series, governance, last, unmeasured, *counts)
 
@@ -324,7 +324,7 @@ def notes(found: Judged | None, config: str, worker: str | None) -> list[str]:
 async def worker_config(conn: repo.Conn) -> str | None:
     """The settings hash the worker last recorded (``readiness.config``); None until it recorded one."""
     row = await repo.last_audit(conn, "readiness.config")
-    return row and row["detail"]["sha256"]
+    return None if row is None else row["detail"]["sha256"]
 
 
 def _position(cursor: str | None) -> tuple[int, str]:
@@ -386,7 +386,7 @@ async def overview(
     return {
         "definition": gates.DEFINITION, "now": now, "as_of": at, "config_sha256": config,
         "worker_config_sha256": worker, "notes": notes(found, config, worker),
-        "programmes": gates.programmes([{"open": True} | item for item in picked]),
+        "programmes": gates.programmes([{"open": True, **item} for item in picked]),
         "entities": entities(picked),
         "items": [listed(item) if at is None else item for item in page[:size]],
         "next_cursor": f"{STATES.index(page[size - 1]['state'])}.{page[size - 1]['pair']}" if more else None,
@@ -487,6 +487,7 @@ async def brief(ctx: Context, name: str, *, whole: bool = False, most: int | Non
         points = gates.marked(rows, policy.gates.tier)[-gates.BRIEF_CYCLES :]
         picked = next((point for point in reversed(points) if point["complete"]), None)
         cycle = causes = None
+        said: str | None
         if picked is None:
             said = gates.unreported(name, rows[: gates.BRIEF_CYCLES])
         else:

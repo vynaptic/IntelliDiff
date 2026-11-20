@@ -31,7 +31,7 @@ _UNSAFE_PART = re.compile(r"[^A-Za-z0-9._-]")
 
 def expand(granted: Iterable[str]) -> frozenset[str]:
     """``granted`` with every lower role added."""
-    top = max((ROLES.index(role) for role in granted), default=-1)  # type: ignore[arg-type]
+    top = max((ROLES.index(role) for role in granted), default=-1)
     return frozenset(ROLES[: top + 1])
 
 

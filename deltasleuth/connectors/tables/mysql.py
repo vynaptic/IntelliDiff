@@ -299,7 +299,8 @@ def _shut(handle: socket.socket) -> None:
 
 class _Connection(pymysql.connections.Connection):
     """PyMySQL's connection, refusing a packet whose 16 MiB parts join to more than ``MAX_PACKET``: the
-    driver joins them without a limit, whatever a server sends."""
+    driver joins them without a limit, whatever a server sends. types-PyMySQL describes none of the
+    driver's private members this class and ``_Stream`` use, nor ``server_version``."""
 
     _joined = 0
 
@@ -310,9 +311,9 @@ class _Connection(pymysql.connections.Connection):
     def _read_bytes(self, num_bytes: int) -> Any:
         self._joined += num_bytes
         if self._joined > MAX_PACKET:
-            self._force_close()
+            self._force_close()  # type: ignore[attr-defined]  # PyMySQL's, unstubbed
             raise pymysql.err.OperationalError(2020, "a packet over the limit")  # CR_NET_PACKET_TOO_LARGE
-        return super()._read_bytes(num_bytes)
+        return super()._read_bytes(num_bytes)  # type: ignore[misc]  # PyMySQL's, unstubbed
 
 
 class _Opened:
@@ -358,7 +359,7 @@ class _Opened:
             # With a context PyMySQL requires TLS: a server whose greeting offers none is refused (2026)
             # before any authentication packet, so the password never meets a peer that stripped it.
             conn.connect(sock)
-            _refuse_version(self.target, conn.server_version)
+            _refuse_version(self.target, conn.server_version)  # type: ignore[attr-defined]  # unstubbed
             cipher = _query(conn, "SHOW SESSION STATUS LIKE 'Ssl_cipher'")
             encrypted = bool(cipher and cipher[0][1])
             if self.context is not None and not encrypted:  # the session's own report: a second check
@@ -374,7 +375,7 @@ class _Opened:
         expiry.cancel()
         # A statement's own timeout comes first; a scan has none and relies on the socket's keepalive.
         # PyMySQL takes a read timeout only when it is built, and the handshake needed another.
-        conn._read_timeout = timeout_s + 30 if timeout_s else None
+        conn._read_timeout = timeout_s + 30 if timeout_s else None  # type: ignore[attr-defined]  # unstubbed
         return conn, handle, encrypted
 
 
@@ -430,9 +431,9 @@ class _Stream(SSCursor):
 
     def abandon(self) -> None:
         """Forget the rows not read, so nothing reads them when the cursor is collected."""
-        if self._result is not None:
-            self._result.unbuffered_active = False
-        self.connection = None
+        if self._result is not None:  # type: ignore[attr-defined]  # PyMySQL's, unstubbed
+            self._result.unbuffered_active = False  # type: ignore[attr-defined]
+        self.connection = None  # type: ignore[assignment]  # as the driver's close does; its stub says never
 
 
 class _Session:
@@ -480,7 +481,7 @@ class _Session:
     async def open(self) -> None:
         def opening() -> None:
             self._conn, self._sock, self.encrypted = self._opened.open(self._timeout_s)
-            self.version = self._conn.server_version
+            self.version = self._conn.server_version  # type: ignore[attr-defined]  # unstubbed
 
         await self._run(opening)
 
@@ -493,7 +494,8 @@ class _Session:
         statement is sent now; what the server answers it with is raised at the first fetch."""
 
         def start() -> _Stream:
-            self._stream = self._conn.cursor(_Stream)  # type: ignore[union-attr]
+            assert self._conn is not None  # opened before any statement
+            self._stream = self._conn.cursor(_Stream)
             self._stream.execute(statement)
             return self._stream
 
@@ -513,9 +515,11 @@ class _Session:
         return batches()
 
     def _kill(self) -> None:
+        assert self._conn is not None  # a session that holds its connection
+        thread = self._conn.thread_id()
         conn, handle, _ = self._opened.open()
         try:
-            conn.query(f"KILL QUERY {self._conn.thread_id():d}")  # type: ignore[union-attr]
+            conn.query(f"KILL QUERY {thread:d}")
         finally:
             handle.close()
             conn.close()
@@ -531,12 +535,13 @@ class _Session:
                     await asyncio.wait_for(asyncio.to_thread(self._kill), CONNECT_S)
             _shut(handle)
             handle.close()
+            held = self._conn
 
             def closed() -> None:
                 # execute() may still be assigning its result to the cursor. Abandon it only once the
                 # shutdown-woken call has returned, on the same thread, before closing the connection.
                 self._ended()
-                self._conn.close()  # type: ignore[union-attr]
+                held.close()
 
             self._thread.submit(closed)
         self._thread.shutdown(wait=False)

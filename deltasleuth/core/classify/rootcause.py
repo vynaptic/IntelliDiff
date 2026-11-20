@@ -85,7 +85,7 @@ def members(
     found = []
     for f in result.findings:
         bug = _bug_rule(f)
-        if f.severity.rank <= 0 or (f.suppressed and bug is None):
+        if f.classified_severity.rank <= 0 or (f.suppressed and bug is None):
             continue
         if f.key not in masked:
             masked[f.key] = mask_key(f.key, spec, tokeniser)
@@ -107,7 +107,7 @@ def members(
                 path_pattern=pattern,
                 change_type=f.change_type,
                 direction=f.direction,
-                severity=f.severity,
+                severity=f.classified_severity,
                 value_class=f.value_class,
                 taxonomy_code=f.taxonomy_code,
                 ref=ref(f),

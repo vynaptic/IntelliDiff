@@ -62,7 +62,7 @@ async def test_a_key_view_is_audited_once_its_result_is_built(
     async def unwritable(*_: Any, **__: Any) -> Any:
         raise RuntimeError("the audit log is away")
 
-    monkeypatch.setattr(repo, "insert_audit", unwritable)  # no row, no result
+    monkeypatch.setattr(repo.audit, "insert_audit", unwritable)  # no row, no result
     assert await ask(ctx, VIEWER, "get_observations", asked) == (
         f"internal error: request {VIEWER.request_id} names it in the server log", True,
     )  # fmt: skip
@@ -104,9 +104,9 @@ async def test_mcp_read_once_an_hour_per_caller_tool_and_run(
     async def unwritable(*_: Any, **__: Any) -> Any:
         raise RuntimeError("the audit log is away")
 
-    monkeypatch.setattr(repo, "insert_audit", unwritable)
+    monkeypatch.setattr(repo.audit, "insert_audit", unwritable)
     assert await read(VIEWER, "get_run_summary")  # the row cannot be written: the call fails
-    monkeypatch.setattr(repo, "insert_audit", insert)
+    monkeypatch.setattr(repo.audit, "insert_audit", insert)
     assert not await read(VIEWER, "get_run_summary")  # and the next read is due it
     assert (await rows())[-1] == (
         VIEWER.actor,
@@ -140,7 +140,7 @@ async def test_a_read_waits_for_the_row_that_covers_it(
     def reading() -> asyncio.Task[tuple[Any, bool]]:
         return asyncio.create_task(ask(ctx, VIEWER, "get_findings", {"run_id": world.run_id}, limits=limits))
 
-    monkeypatch.setattr(repo, "insert_audit", held)
+    monkeypatch.setattr(repo.audit, "insert_audit", held)
     first = reading()
     await writing.wait()
     second, third = reading(), reading()

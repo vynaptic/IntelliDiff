@@ -260,10 +260,10 @@ async def test_a_new_stores_first_cycle_is_drawn_without_a_nested_loop_and_its_l
             (list(links), list(links.values())),
         )
         await end(conn, run_id, counters(1))
-    monkeypatch.setattr(repo, "_rows", explained)
+    monkeypatch.setattr(repo.accuracy, "_rows", explained)
     async with pool.connection() as conn:
         drawn = await repo.labelling_draw(conn, run_id, 1, salt=SALT, timeout_s=30, **SIZES)
-    monkeypatch.setattr(repo, "_rows", rows)
+    monkeypatch.setattr(repo.accuracy, "_rows", rows)
     assert "Nested Loop" not in _nodes(plans[0]) and "Hash Join" in _nodes(plans[0])
     uniform = sorted((r for r in drawn if r["kind"] == "uniform"), key=lambda r: r["digest"])
     assert [(r["key_masked"], r["cause"]) for r in uniform if r["population"] == "discrepant"] == (

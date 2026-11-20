@@ -167,7 +167,7 @@ def parse_csv(
             raise Invalid(f"{name} has more than {max_columns:,} columns")
         if check_header is not None:
             check_header(header)
-        rows = []
+        rows: list[dict[str, str]] = []
         for line_no, cells in enumerate(reader, start=2):
             if not any(cell.strip() for cell in cells):
                 continue
@@ -208,6 +208,7 @@ async def stream_csv(
         raise ValueError(f"unknown CSV export {kind!r}; one of {', '.join(KINDS)}")
     data = await load_run(ctx, run_id, cycle, results=False)
     pages: Callable[[], AsyncIterator[list[Row]]] | None = None  # the rows read a page at a time
+    header: tuple[str, ...]
     if kind == "graph":
         gone = () if keyed else _MEMBERS
         rows = [r | {"detail": {n: v for n, v in r["detail"].items() if n not in gone}} for r in data.graph]

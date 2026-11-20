@@ -198,7 +198,7 @@ async def _specs(conn: repo.Conn, body: Mapping[str, Any]) -> tuple[list[repo.Ro
                 " name them with spec_names or spec_ids",
             )
         return rows, len(stored_) - len(rows), {"all_specs": True}
-    given: Sequence[Any] = names if ids is None else ids
+    given: Sequence[Any] = (names or ()) if ids is None else ids  # names, then, as both are not None
     member, by = ("spec_names", "name") if ids is None else ("spec_ids", "spec_id")
     found = {row[by]: row for row in await repo.precheck_specs(conn, spec_ids=ids, names=names)}
     for asked in given:
@@ -325,7 +325,7 @@ def _paired(body: Mapping[str, Any], level: str, listed: Mapping[str, Sequence[s
     pairs = []
     for n, label in enumerate(sorted(held["a"].keys() | held["b"].keys(), key=str.encode), 1):
         found = {side: held[side].get(label, []) for side in "ab"}
-        pair = {"n": n, "spec_id": None, "label": label}
+        pair: dict[str, Any] = {"n": n, "spec_id": None, "label": label}
         for side in "ab":
             one = found[side][0] if len(found[side]) == 1 else None
             pair |= {f"target_{side}": body[side]["target"], f"relation_{side}": one}

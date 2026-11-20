@@ -44,6 +44,7 @@ from deltasleuth.store import repo
 
 router = APIRouter()
 NOTE_CHARS = 1000  # ds.note
+type Covered = list[tuple[tuple[str | int, ...], Any]]  # what a scope covers: (where, its value) each
 REASON_CHARS = 200  # a revoke's reason, as a hold's
 
 
@@ -197,7 +198,7 @@ async def _masked(ctx: Context, conn: repo.Conn, stored: repo.Row) -> dict[str, 
 def _needed(body: Mapping[str, Any], scopes: Sequence[str]) -> list[dict[str, Any]]:
     """What each scope covers in a spec body, by JSON pointer."""
     security, compare = body.get("security", {}), body.get("compare", {})
-    filters = [
+    filters: Covered = [
         (("sides", side, "table", name), entry["table"][name])
         for side, entry in body.get("sides", {}).items()
         for name in ("where", "columns")
@@ -213,15 +214,15 @@ def _needed(body: Mapping[str, Any], scopes: Sequence[str]) -> list[dict[str, An
         for name in ("include", "exclude", "valueFilter")
         if compare.get(name) not in (None, [])
     ]
-    unlisted = [(("security", "unlisted"), "clear")] if security.get("unlisted") == "clear" else []
-    transforms = [  # each side's map, and its select unless that is the whole answer
+    unlisted: Covered = [(("security", "unlisted"), "clear")] if security.get("unlisted") == "clear" else []
+    transforms: Covered = [  # each side's map, and its select unless that is the whole answer
         (("sides", side, name), entry[name])
         for side, entry in body.get("sides", {}).items()
         for name in ("select", "map")
         if entry.get(name) is not None and (name == "map" or normalise_query(entry[name]) != ROOT_PATTERN)
     ]
     source = body.get("key", {}).get("source", {})
-    found: dict[str, list[tuple[tuple[str | int, ...], Any]]] = {
+    found: dict[str, Covered] = {
         "clear": [(("security", "clear", i), path) for i, path in enumerate(security.get("clear", []))],
         "unlisted_clear": unlisted,
         "known_diffs": [
@@ -431,11 +432,11 @@ async def decide(ctx: Ctx, who: RuleApprover, approval_id: str, body: DecisionIn
             else:
                 if await repo.decide_approval(conn, approval_id, who.actor, approve=False, note=note) is None:
                     raise await _moved(conn, approval_id)
-                decided = await repo.get_approval(conn, approval_id)
+                decided = need(await repo.get_approval(conn, approval_id), f"approval {approval_id}")
                 await audit(who, "approval.reject", approval_id, {"kind": row["kind"], "cascade_of": None})
     except repo.ApprovalRefused as exc:
         raise await _refused(ctx, exc, approval_id, who) from None
-    return ok(_item(decided))  # type: ignore[arg-type]
+    return ok(_item(decided))
 
 
 async def _approve(

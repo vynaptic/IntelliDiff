@@ -152,7 +152,8 @@ async def new_run(ctx: Ctx, who: Operator, body: RunIn) -> Response:
     from deltasleuth.runner.runs import create_run
 
     with _runner_errors():
-        run_id = await create_run(ctx, body.spec_id, body.mode, keys=body.keys, soak=body.soak, who=who)
+        soak: dict[str, bool] | None = None if body.soak is None else dict(body.soak.items())
+        run_id = await create_run(ctx, body.spec_id, body.mode, keys=body.keys, soak=soak, who=who)
     async with ctx.pool.connection() as conn:
         created = await run_of(conn, run_id)
     return ok({"run_id": run_id, "warnings": drift.warnings(created)}, 202)
@@ -198,7 +199,7 @@ async def run(ctx: Ctx, who: Viewer, run_id: str) -> Response:
         found = await run_of(conn, run_id)
         scheduled = await schedules.of_run(conn, found)
         kept = await repo.cycle_retention(conn, run_id, **days(ctx))
-        newest, _ = await repo.cycle_page(conn, run_id, limit=SHOWN, **days(ctx))
+        newest, _ = await repo.cycle_page(conn, run_id, limit=SHOWN, cursor=None, **days(ctx))
         approval = await run_approval(conn, found)
         signoffs = await repo.pages(repo.list_approvals, conn, kind="signoff", run_id=run_id)
         evidence = await _evidence(ctx, conn, found, newest[::-1], signoffs, who)

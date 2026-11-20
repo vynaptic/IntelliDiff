@@ -1052,7 +1052,10 @@ async def test_stale_spill_swept_at_open_and_hourly(tmp_path: Path) -> None:
             def connection(self) -> Any:
                 raise OSError("the store is down")
 
-        await _Worker(SimpleNamespace(settings=settings, pool=Pool()))._purge()  # type: ignore[arg-type]
+        purging = _Worker(SimpleNamespace(settings=settings, pool=Pool())).supervisor.purge  # type: ignore[arg-type]
+        await purging.act([])
+        assert purging.task is not None
+        await purging.task
         assert sorted(p.name for p in spill.iterdir()) == sorted([mine.name, live.name, "not-a-spill"])
     finally:
         holder.communicate("")

@@ -412,8 +412,8 @@ def test_only_the_named_engine_modules_do_io(repo_root: Path) -> None:
 
 def test_the_stores_sql_is_written_in_the_store_package_alone(repo_root: Path) -> None:
     """Every statement over the store's schema ``ds``, and every session lock of the store, is in
-    deltasleuth/store (``repo.py``, one function a use case): no call of ``execute`` outside it is given
-    one, and no string outside it is one, whoever passes it on."""
+    deltasleuth/store (the ``repo`` package, one function a use case): no call of ``execute`` outside it is
+    given one, and no string outside it is one, whoever passes it on."""
     package = repo_root / "deltasleuth"
     offenders = []
     for path in sorted(package.rglob("*.py")):

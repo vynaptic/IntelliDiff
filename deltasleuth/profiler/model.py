@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -12,6 +13,15 @@ Score = float | int | str | bool | None
 # A path below a side's select root: member names, None for every element or map value ([*]).
 Path = tuple[str | None, ...]
 ROOT: Path = ()
+
+
+def names(path: Path) -> tuple[str, ...]:
+    """The member names of a path that steps into no element or map value (a member below its own
+    array's element, say); ``ValueError`` for one that does."""
+    found = tuple(name for name in path if name is not None)
+    if len(found) != len(path):
+        raise ValueError("the path steps into an element or a map value")
+    return found
 
 
 class ProfilerError(ValueError):
@@ -26,7 +36,7 @@ class EvidenceRow:
     path_a: str | None
     path_b: str | None
     decision: str
-    scores: dict[str, Score] = field(default_factory=dict)
+    scores: Mapping[str, Score] = field(default_factory=dict)
     sample_count: int = 0
     note: str = ""
 

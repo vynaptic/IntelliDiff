@@ -44,13 +44,16 @@ _RULE_PATHS = """
     compare/arrays/*/path compare/fields/*/path compare/include/* compare/exclude/*
     security/tokenize/*/path security/clear/* sides/*/rawClear/* noise/masks/*/path
 """.split()
-_CEL_PATHS = {
+_CEL_PATHS: dict[str, CelKind] = {
     "knownDiffs/*/when": "known_diff",
     "compare/valueFilter": "value_filter",
     "sides/*/notFound/when": "not_found",
     "sampling/strata/*/cel": "sampling_stratum",
 }
-_KEY_SOURCE_CEL_PATHS = {"signoffStratum": "signoff_stratum", "strata/*/cel": "stratum_dimension"}
+_KEY_SOURCE_CEL_PATHS: dict[str, CelKind] = {
+    "signoffStratum": "signoff_stratum",
+    "strata/*/cel": "stratum_dimension",
+}
 # String literals compared with the ``path`` variable of a predicate.
 _PATH_LITERALS = (
     re.compile(r"""(?<![\w.])path\s*(?:==|!=)\s*(['"])([^'"\\]*)\1"""),
@@ -154,7 +157,7 @@ def _expressions(doc: dict[str, Any]) -> Iterator[SpecIssue]:
     for pattern, kind in _KEY_SOURCE_CEL_PATHS.items():
         predicates += [(kind, found) for found in _key_source_strings(doc, pattern)]
     for kind, (at, source) in predicates:
-        if problem := cel_error(source, kind):  # type: ignore[arg-type]
+        if problem := cel_error(source, kind):
             yield _error(at, "invalid_cel", problem)
     for at, pattern in _strings(doc, "key/pattern"):
         if problem := regex_error(pattern):
@@ -350,7 +353,7 @@ def _key_pattern(doc: dict[str, Any]) -> Iterator[SpecIssue]:
 def _domain_pack(doc: dict[str, Any]) -> Iterator[SpecIssue]:
     pack = doc.get("domainPack")
     name = pack.get("name") if isinstance(pack, dict) else None
-    if not isinstance(name, str) or not SLUG.fullmatch(name):
+    if not isinstance(pack, dict) or not isinstance(name, str) or not SLUG.fullmatch(name):
         return  # absent, or a schema error
     schema = pack_schema(name)
     if schema is None:
@@ -434,8 +437,8 @@ def _tables(doc: dict[str, Any]) -> Iterator[SpecIssue]:
                 continue  # kind, prefix, width, sideType
             if problem := regex_error(pattern):
                 yield _error((*at, "pattern"), "invalid_key_map", problem)
-            elif isinstance(replacement, str) and (message := _replacement_error(pattern, replacement)):
-                yield _error((*at, "replacement"), "invalid_key_map", message)
+            elif isinstance(replacement, str) and (wrong := _replacement_error(pattern, replacement)):
+                yield _error((*at, "replacement"), "invalid_key_map", wrong)
         for at, zone in _strings(side, "typeMap/*/naiveTimezone", base=base):
             try:
                 ZoneInfo(zone)
@@ -497,7 +500,7 @@ def _file(owner: Parts, side: dict[str, Any], file: dict[str, Any]) -> Iterator[
     if (file.get("format") == "csv" and not csv_ok) or (file.get("format") == "parquet" and csv is not None):
         found.append(("csv" if csv is not None else "format", _L10["format"]))
     csv = csv if isinstance(csv, dict) else {}
-    columns = csv.get("columns") if isinstance(csv.get("columns"), list) else []
+    columns = listed if isinstance(listed := csv.get("columns"), list) else []
     if len(set(map(str, columns))) != len(columns) or not all(_COLUMN.fullmatch(str(c)) for c in columns):
         found.append(("csv", _L10["columns"]))
     marks = {member: csv[member] for member in ("delimiter", "quote", "escape") if member in csv}
@@ -509,7 +512,7 @@ def _file(owner: Parts, side: dict[str, Any], file: dict[str, Any]) -> Iterator[
         if member in csv and csv[member] not in allowed:
             found.append(("csv", _L10[member]))
     keyed = {k if isinstance(k, str) else _get(k, "name") for k in _get(side, "table/keyColumns") or []}
-    keys = csv.get("keys") if isinstance(csv.get("keys"), dict) else {}
+    keys = typed if isinstance(typed := csv.get("keys"), dict) else {}
     for column, spec in keys.items():
         scaled = isinstance(spec, dict) and set(spec) == {"as", "scale"} and spec["as"] == "decimal"
         if column not in keyed or not (spec in _CSV_KEYS or (scaled and spec["scale"] in range(39))):
@@ -523,7 +526,7 @@ def _file(owner: Parts, side: dict[str, Any], file: dict[str, Any]) -> Iterator[
             parse_duration(age)
         except ValueError:
             found.append(("maxAge", _L10["maxAge"]))
-    partitions = file.get("partitions") if isinstance(file.get("partitions"), list) else []
+    partitions = parted if isinstance(parted := file.get("partitions"), list) else []
     named = [p for p in partitions if isinstance(p, str) and _COLUMN.fullmatch(p) and p not in columns]
     if len(set(named)) != len(partitions):
         found.append(("partitions", _L10["partitions"]))
@@ -554,9 +557,9 @@ def _graph(doc: dict[str, Any]) -> Iterator[SpecIssue]:
         yield _error("graph", UNSUPPORTED, f"not supported: {why}")
     if sum("table" in side for _, side in _sides(doc)) < 2 or _get(doc, "key/type") != "composite":
         yield _error("graph", "invalid_graph", "graph parity needs two table sides and a composite key")
-    elif all(isinstance(x, list) for x in (members, groups, parts)):
-        named = [*members, *groups]  # type: ignore[misc]
-        if sorted(named) != sorted(parts) or len(set(named)) != len(named):  # type: ignore[arg-type]
+    elif isinstance(members, list) and isinstance(groups, list) and isinstance(parts, list):
+        named = [*members, *groups]
+        if sorted(named) != sorted(parts) or len(set(named)) != len(named):
             yield _error("graph", "invalid_graph", "members and groups must split key.parts between them")
 
 
@@ -676,87 +679,112 @@ def _like_tests(node: where.Node) -> set[str | None]:
 
 def _gating(doc: dict[str, Any]) -> Iterator[SpecIssue]:
     """``unsupported`` for every feature the product does not run yet; ``ignored`` for accepted no-ops."""
+    tables = [side for _, side in _sides(doc) if "table" in side]
+    sampled, parts = _get(doc, "key/source/kind") == "hash_sample", _key_parts(doc)
+    yield from _gated_tables(doc, tables)
+    yield from _gated_key_sources(doc, tables, sampled, parts)
+    yield from _gated_templates(doc, sampled, parts)
+    yield from _gated_settings(doc, tables)
 
-    def unsupported(at: Parts | str, feature: str) -> SpecIssue:
-        return _error(at, UNSUPPORTED, f"not supported: {feature}")
 
+def _unsupported(at: Parts | str, feature: str) -> SpecIssue:
+    return _error(at, UNSUPPORTED, f"not supported: {feature}")
+
+
+def _gated_tables(doc: dict[str, Any], tables: list[dict[str, Any]]) -> Iterator[SpecIssue]:
+    """Graph mode, and what a table side does not run: deferred members, a key column's part, a lookup key
+    map, key.normalize, and a valueFilter that reads side between two tables."""
     if _get(doc, "canonical/mode") == "graph":
-        yield unsupported("canonical/mode", "graph mode")
+        yield _unsupported("canonical/mode", "graph mode")
     for base, side in _tabled(doc):
         for path, feature in _TABLE_DEFERRED.items():
-            yield from (unsupported(at, feature) for at, _ in _find(side, path, base))
+            yield from (_unsupported(at, feature) for at, _ in _find(side, path, base))
         for at, column in _find(side, "table/keyColumns/*", base):
             if isinstance(column, dict) and "part" in column:
-                yield unsupported((*at, "part"), "a key column's part; list key columns in key.parts order")
+                yield _unsupported((*at, "part"), "a key column's part; list key columns in key.parts order")
             if _get(column, "keyMap/kind") == "lookup":
-                yield unsupported((*at, "keyMap"), "a lookup key map, which needs SQL templates")
-    tables = [side for _, side in _sides(doc) if "table" in side]
+                yield _unsupported((*at, "keyMap"), "a lookup key map, which needs SQL templates")
     if tables and _get(doc, "key/normalize"):
-        yield unsupported("key/normalize", "key.normalize with a table side; keys are the tables' values")
+        yield _unsupported("key/normalize", "key.normalize with a table side; keys are the tables' values")
     predicate = _get(doc, "compare/valueFilter")
     if len(tables) == 2 and isinstance(predicate, str) and reads(predicate, "value_filter", "side"):
         # The scan counts identical rows as matched; a filter by side could tell them apart.
-        yield unsupported("compare/valueFilter", "a valueFilter that reads side, between two tables")
-    sampled, frame = _get(doc, "key/source/kind") == "hash_sample", {at for at, _ in _frame(doc)}
+        yield _unsupported("compare/valueFilter", "a valueFilter that reads side, between two tables")
+
+
+def _gated_key_sources(
+    doc: dict[str, Any], tables: list[dict[str, Any]], sampled: bool, parts: list[Any]
+) -> Iterator[SpecIssue]:
+    """The key sources a spec may not use where it uses them, and a hash sample beside two tables or with a
+    composite key."""
+    frame = {at for at, _ in _frame(doc)}
     for at, source in _key_sources(doc):
         kind, outside = source.get("kind"), not sampled or len(at) == 2
         if kind in ("csv", "sql", "run_keys"):
             advice = "use list, paginated_endpoint or a key table"
-            yield unsupported((*at, "kind"), f"key source {kind!r}; {advice}")
+            yield _unsupported((*at, "kind"), f"key source {kind!r}; {advice}")
         elif kind == "list" and at in frame:
             why = "sample a side's table or key listing"
-            yield unsupported((*at, "kind"), f"hash_sample over an inline list; {why}")
+            yield _unsupported((*at, "kind"), f"hash_sample over an inline list; {why}")
         elif kind == "table" and _own_table(source):  # a key table: key.source itself, a service side's
             if len(at) > 2:
                 why = "a frame's table is a side's"
-                yield unsupported((*at, "kind"), f"a key table inside hash_sample; {why}")
+                yield _unsupported((*at, "kind"), f"a key table inside hash_sample; {why}")
             elif len(tables) == 2:
                 why = "their scan compares every row"
-                yield unsupported((*at, "kind"), f"a key table between two table sides; {why}")
+                yield _unsupported((*at, "kind"), f"a key table between two table sides; {why}")
             if _get(source, "table/columns") is not None:
-                yield unsupported((*at, "table", "columns"), "columns in a key table; it gives keys only")
+                yield _unsupported((*at, "table", "columns"), "columns in a key table; it gives keys only")
         elif kind == "table" and outside:
             why = "a table side's keys are scanned, or checked against it"
-            yield unsupported((*at, "kind"), f"a table key source outside hash_sample ({why})")
+            yield _unsupported((*at, "kind"), f"a table key source outside hash_sample ({why})")
         elif kind == "union" and outside:
-            yield unsupported((*at, "kind"), "a union outside hash_sample; wrap it in a hash_sample")
+            yield _unsupported((*at, "kind"), "a union outside hash_sample; wrap it in a hash_sample")
     if sampled and len(tables) == 2:
         why = "their scan compares every row"
-        yield unsupported("key/source/kind", f"hash_sample between two table sides: {why}")
-    parts = _key_parts(doc)
+        yield _unsupported("key/source/kind", f"hash_sample between two table sides: {why}")
     if sampled and parts:
-        yield unsupported("key/source/kind", "hash_sample with a composite key beside a service side")
+        yield _unsupported("key/source/kind", "hash_sample with a composite key beside a service side")
+
+
+def _gated_templates(doc: dict[str, Any], sampled: bool, parts: list[Any]) -> Iterator[SpecIssue]:
+    """A sample's predicate over its strata, and the placeholders no request renders."""
     for at, predicate, kind in _predicates(doc) if sampled else ():
         if reads(predicate, kind, "stratum") or reads(predicate, kind, "strata"):
             why = "strata label a sample's keys, not their findings"
-            yield unsupported(at, f"a predicate over stratum or strata; {why}")
+            yield _unsupported(at, f"a predicate over stratum or strata; {why}")
     for base, request in _side_requests(doc):
         for at, text in _template_strings(request, base):
             for name in _placeholders(text):
                 # a multi-part key's parts are rendered beside the joined key
                 rendered = name in RENDERED_PLACEHOLDERS or (parts and name.startswith("keyParts."))
                 if not rendered and _known_placeholder(doc, name):
-                    yield unsupported(at, f"the placeholder {{{{ {name} }}}}")
+                    yield _unsupported(at, f"the placeholder {{{{ {name} }}}}")
     for base, source in _key_sources(doc):  # a listing is walked once, for no one key
-        request = source.get("request") if isinstance(source.get("request"), dict) else {}
+        request = given if isinstance(given := source.get("request"), dict) else {}
         for at, text in _template_strings(request, (*base, "request")):
             if any(n.startswith("keyParts.") and _known_placeholder(doc, n) for n in _placeholders(text)):
-                yield unsupported(at, "a keyParts placeholder in a key listing's request")
+                yield _unsupported(at, "a keyParts placeholder in a key listing's request")
+
+
+def _gated_settings(doc: dict[str, Any], tables: list[dict[str, Any]]) -> Iterator[SpecIssue]:
+    """Time modes, watermarks, skew budgets, sampling modes and schema-drift pauses the product does not
+    run, the deferred members, and the ignored ones."""
     if isinstance(mode := _get(doc, "time/mode"), str) and mode != "live":
-        yield unsupported("time/mode", f"time.mode {mode!r}; both sides are read live")
+        yield _unsupported("time/mode", f"time.mode {mode!r}; both sides are read live")
     elif _get(doc, "time/watermark") is not None:
         # A response without its declared watermark must be INCOMPLETE; nothing reads watermarks yet.
-        yield unsupported("time/watermark", "time.watermark")
+        yield _unsupported("time/watermark", "time.watermark")
     elif _get(doc, "time/skewBudget") is not None:
         why = "the gap between the two reads is not checked, so a pair is never DRIFT(skew_exceeded)"
         yield _warning("time/skewBudget", IGNORED, f"/time/skewBudget is not applied: {why}")
     if isinstance(sampling := _get(doc, "sampling/mode"), str) and sampling != "all":
-        yield unsupported("sampling/mode", f"sampling.mode {sampling!r}; every key is compared")
+        yield _unsupported("sampling/mode", f"sampling.mode {sampling!r}; every key is compared")
     if _get(doc, "schemaDrift/mode") == "pause" and not tables:
-        yield unsupported("schemaDrift/mode", "pausing a run on schema drift between two service sides")
+        yield _unsupported("schemaDrift/mode", "pausing a run on schema drift between two service sides")
     for path, feature in _DEFERRED.items():
         if _get(doc, path):
-            yield unsupported(path, feature)
+            yield _unsupported(path, feature)
     for path, why in _IGNORED.items():
         for at, value in _find(doc, path):
             if value is not None:
@@ -809,7 +837,8 @@ def _sampling(doc: dict[str, Any]) -> Iterator[SpecIssue]:
         message = f"the longest stratum label these dimensions make holds {longest} characters, over 256"
         yield _error((*base, "strata"), "stratum_label_long", message)
     for at, name, bucket, size in sizes if sample.get("method") == "bottom_k" else ():
-        tier = bucket.get("riskTier") if bucket.get("riskTier") in sampling.TARGETS else "standard"
+        risk = bucket.get("riskTier")
+        tier = risk if isinstance(risk, str) and risk in sampling.TARGETS else "standard"
         target = sampling.TARGETS[tier]
         if size < (need := sampling.zero_failure_n(target)):
             message = (
@@ -896,7 +925,7 @@ def _frame(doc: dict[str, Any]) -> list[tuple[Parts, dict[str, Any]]]:
         return []
     if frame.get("kind") != "union":
         return [(("key", "source", "source"), frame)]
-    members = frame.get("sources") if isinstance(frame.get("sources"), list) else []
+    members = sources if isinstance(sources := frame.get("sources"), list) else []
     return [
         (("key", "source", "source", "sources", i), m) for i, m in enumerate(members) if isinstance(m, dict)
     ]

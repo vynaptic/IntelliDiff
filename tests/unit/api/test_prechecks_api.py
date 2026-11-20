@@ -11,6 +11,7 @@ import re
 import time
 from collections.abc import Callable
 from contextlib import AbstractContextManager
+from types import ModuleType
 from typing import Any, get_args
 
 import pytest
@@ -384,7 +385,9 @@ def test_the_list_and_a_pre_check_read_no_result(
             sent.append(sql)
             return await rows(conn, sql, params)
 
-        monkeypatch.setattr(repo, "_rows", recorded)
+        for module in vars(repo).values():  # each query module calls the ``_rows`` it imported
+            if isinstance(module, ModuleType) and hasattr(module, "_rows"):
+                monkeypatch.setattr(module, "_rows", recorded)
         listed = client.get("/v1/prechecks?limit=1").json()
         first = client.get(f"/v1/prechecks/{precheck_id}?limit=3").json()
         rest = client.get(f"/v1/prechecks/{precheck_id}?limit=3&cursor={first['next_cursor']}").json()

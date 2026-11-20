@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Sequence
-from re import _constants as _sre
-from re import _parser
+from re import _constants as _sre  # type: ignore[attr-defined]  # typeshed omits re's private modules
+from re import _parser  # type: ignore[attr-defined]  # as above
 from typing import Any
 
 from deltasleuth.core.canonical.errors import ExpressionError

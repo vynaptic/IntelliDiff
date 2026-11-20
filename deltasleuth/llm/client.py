@@ -187,9 +187,9 @@ class LLMClient:
                 ("max_tool_calls", budgets.max_tool_calls, turn.tool_calls),
                 ("max_wall_s", budgets.max_wall_s, turn.elapsed_s),
             ]
-        for name, limit, requested in checks:
-            if requested > limit:
-                raise BudgetExceeded(name, limit, requested)
+        for name, bound, asked in checks:
+            if asked > bound:
+                raise BudgetExceeded(name, bound, asked)
         caps = self.effective
         if caps.max_output is not None and request.max_output_tokens > caps.max_output:
             raise BadRequest("max_output_tokens exceeds the profile's declared max_output")

@@ -482,7 +482,7 @@ def _matched(root: str, base: str, rest: list[str], walk: _Walk) -> None:
     if "*" not in segment:
         walk.visit()
         found = _entry(here, segment)
-        names = [] if found is None else [(segment, found)]
+        names: Iterable[tuple[str, os.stat_result]] = [] if found is None else [(segment, found)]
     else:
         names = (
             (entry.name, entry.stat(follow_symlinks=False))
@@ -1207,7 +1207,8 @@ async def pin(
                 raise Invalid(
                     f"{who}: its files could not be read while the run was planned ({type(exc).__name__})"
                 ) from None
-            if _key(opened) != _key(candidate.stat):  # type: ignore[arg-type]
+            assert candidate.stat is not None  # a file's: the walk refused any other
+            if _key(opened) != _key(candidate.stat):
                 raise _changed(who, n, len(found))
             if not (read_only or target.allow_writable):  # a mount below the root's, which step 1 judged
                 raise Invalid(
@@ -1294,7 +1295,8 @@ async def verify(
     for n, (candidate, name, pinned) in enumerate(zip(found, files, pins, strict=True), 1):
         if candidate.kind != "file":
             raise changed("link" if candidate.kind == "link" else "replaced", n)
-        now = _key(candidate.stat)  # type: ignore[arg-type]
+        assert candidate.stat is not None  # a file's
+        now = _key(candidate.stat)
         if candidate.path != name or now[3] != pinned[3]:
             raise changed("replaced", n)
         for why, at in (("size", 0), ("modified", 1), ("changed", 2)):

@@ -24,7 +24,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, NoReturn, TypeGuard
 from urllib.parse import quote, urlencode, urlsplit
 
 import aiohttp
@@ -94,7 +94,7 @@ def _utf8(text: Any) -> bytes | None:
         return None
 
 
-def _number(value: Any) -> bool:
+def _number(value: Any) -> TypeGuard[int | float]:
     return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
 
 

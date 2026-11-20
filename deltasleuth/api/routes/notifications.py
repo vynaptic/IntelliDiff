@@ -77,7 +77,7 @@ async def test(request: Request, ctx: Ctx, who: Operator, channel: str) -> Respo
 @router.post("/channels/{channel}/retry")
 async def retry(ctx: Ctx, who: Operator, _: On, channel: str, body: RetryIn | None = None) -> Response:
     """The channel's deliveries that died since ``since``, tests aside, pending again: how many."""
-    count, _ = await notifications.retry(ctx, channel, body and body.since, who)
+    count, _since = await notifications.retry(ctx, channel, None if body is None else body.since, who)
     return ok({"count": count})
 
 

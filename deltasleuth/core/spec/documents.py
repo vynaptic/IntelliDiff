@@ -39,15 +39,17 @@ _TOO_DEEP = f"the document nests deeper than {MAX_DEPTH} levels"
 class _Loader(yaml.SafeLoader):
     """SafeLoader with YAML 1.2 core-schema scalars; remembers which scalars carry an explicit tag."""
 
-    yaml_implicit_resolvers: ClassVar[dict[Any, Any]] = {}
+    # types-PyYAML declares the resolver table, a class attribute, as an instance variable
+    yaml_implicit_resolvers: ClassVar[dict[Any, Any]] = {}  # type: ignore[misc]
 
     def __init__(self, stream: str) -> None:
         super().__init__(stream)
         self.tagged_scalars: set[int] = set()
 
-    def compose_scalar_node(self, anchor: str | None) -> ScalarNode:
+    # types-PyYAML types the anchor as a dict of nodes; PyYAML passes the event's anchor name
+    def compose_scalar_node(self, anchor: str | None) -> ScalarNode:  # type: ignore[override]
         tagged = self.peek_event().tag not in (None, "!")
-        node: ScalarNode = super().compose_scalar_node(anchor)
+        node: ScalarNode = super().compose_scalar_node(anchor)  # type: ignore[arg-type]
         if tagged:
             self.tagged_scalars.add(id(node))
         return node

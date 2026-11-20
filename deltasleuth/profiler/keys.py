@@ -368,7 +368,7 @@ def _scalar_mode(
     """Multiset when instance pairs hold the same values in a different order, else ordered."""
     array_b = alignment.matches.get(array_a)
     b_seqs: dict[int, list[list[str | None]]] = {}
-    for inst in pb.arrays.get(array_b, []):  # none when b's counterpart is a valueless leaf
+    for inst in pb.arrays.get(array_b, []) if array_b is not None else ():  # none for a valueless leaf
         b_seqs.setdefault(inst.doc, []).append(list(map(light_token, inst.elements)))
     same = differs = 0
     for inst in pa.arrays[array_a]:

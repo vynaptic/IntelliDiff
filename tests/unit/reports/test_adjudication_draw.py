@@ -11,6 +11,7 @@ import math
 from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
 from fractions import Fraction
+from types import ModuleType
 from typing import Any
 
 import pytest
@@ -298,7 +299,9 @@ async def test_a_draw_and_a_score_read_fewer_rows_than_the_cycle_holds_findings(
         returned[phase] += len(rows)
         return rows
 
-    monkeypatch.setattr(repo, "_rows", counted)
+    for module in vars(repo).values():  # each query module calls the ``_rows`` it imported
+        if isinstance(module, ModuleType) and hasattr(module, "_rows"):
+            monkeypatch.setattr(module, "_rows", counted)
     drawn = await store_draw(ctx, cycle, 1, limit=50, who=TESTER)
     phase = "score"
     await store_score(ctx, drawn["adjudication_id"], reviewed(drawn["sheet"]), who=TESTER)

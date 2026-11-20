@@ -85,7 +85,10 @@ def _pack_validator(name: str) -> Draft202012Validator:
     # Pack schemas $ref the core $defs by the core schema's $id.
     core = core_schema()
     registry: Registry = Registry().with_resource(core["$id"], Resource.from_contents(core))
-    return Draft202012Validator(pack_schema(name), registry=registry, format_checker=FORMAT_CHECKER)
+    schema = pack_schema(name)
+    if schema is None:
+        raise ValueError(f"domain pack {name!r} is not installed")
+    return Draft202012Validator(schema, registry=registry, format_checker=FORMAT_CHECKER)
 
 
 def pack_config_issues(name: str, config: Any, base: Parts) -> list[SpecIssue]:
@@ -130,7 +133,10 @@ def _required_alternatives(error: ValidationError, branches: list[list[Validatio
             or failure.absolute_path != error.absolute_path
         ):
             return []
-        missing = [name for name in failure.validator_value if name not in failure.instance]
+        required, instance = failure.validator_value, failure.instance
+        if not isinstance(required, list) or not isinstance(instance, dict):
+            return []
+        missing = [name for name in required if name not in instance]
         if len(missing) != 1:
             return []
         names.append(missing[0])
@@ -182,7 +188,7 @@ def _message(error: ValidationError) -> str:
         case "const":
             return f"must be {value!r}"
         case "pattern":
-            shown = f" {value}" if len(value) <= 80 else ""
+            shown = f" {value}" if isinstance(value, str) and len(value) <= 80 else ""
             return f"does not match the required pattern{shown}{_about(error.schema)}"
         case "format":
             return f"is not a valid {value}"

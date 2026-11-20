@@ -118,7 +118,7 @@ def mcp_loggers() -> Iterator[None]:
     for logger, (handlers, propagate, level) in zip(loggers, kept, strict=True):
         logger.handlers, logger.propagate = handlers, propagate
         logger.setLevel(level)
-    root.handlers = [h for h in root.handlers if type(h).__module__ != "deltasleuth.cli.main"]
+    root.handlers = [h for h in root.handlers if type(h).__module__ != "deltasleuth.cli.common"]
     root.propagate = True
     root.setLevel(root_level)
 
@@ -128,7 +128,7 @@ def a_free_port_and_a_built_ui(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     """``ds serve`` as on a machine whose port is free and whose UI is built: these tests serve on 8000,
     which a developer's machine may hold, and a checkout need not hold ``web/dist``. The tests of the two
     checks put them back."""
-    monkeypatch.setattr("deltasleuth.cli.main._bindable", lambda host, port: None)
+    monkeypatch.setattr("deltasleuth.cli.service._bindable", lambda host, port: None)
     monkeypatch.setattr("deltasleuth.api.app.WEB_DIST", tmp_path)
 
 
@@ -187,6 +187,43 @@ def test_no_help_text_loses_words_to_markup() -> None:
     assert {path: text for path, text in written.items() if Text.from_markup(text).plain != text} == {}
 
 
+DRIVERS = ("psycopg", "pymysql", "oracledb")
+LOADED = f"""\
+import sys
+from deltasleuth.cli.main import app
+try:
+    app()
+except SystemExit as done:
+    print(done.code, sorted(set({DRIVERS!r}) & set(sys.modules)))
+"""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [("--help",), ("spec", "validate", "spec.yaml", "--targets", "targets.yaml")],
+    ids=["help", "spec validate"],
+)
+def test_a_command_that_reads_no_database_loads_no_database_driver(
+    repo_root: Path, command: tuple[str, ...]
+) -> None:
+    """Each command module imports the store, the runner and the database drivers inside the command that
+    uses them: ``ds --help`` and ``ds spec validate`` of a files spec, here in an interpreter of their own,
+    load none of the drivers."""
+    files = repo_root / "examples" / "tables" / "files"
+    argv = [sys.executable, "-c", LOADED, *command]
+    done = subprocess.run(argv, cwd=files, capture_output=True, text=True, check=False, timeout=120)
+    assert (done.returncode, done.stdout.splitlines()[-1]) == (0, "0 []"), done.stderr
+
+
+def test_the_schedule_options_default_as_the_schedules_do() -> None:
+    """The defaults of ``ds schedules add --start-within`` and ``ds schedules next --count`` are the
+    schedules module's, which the command module does not import."""
+    from deltasleuth import schedules
+    from deltasleuth.cli import schedules as command
+
+    assert (command.START_WITHIN, command.PREVIEW) == (schedules.START_WITHIN, schedules.PREVIEW)
+
+
 @pytest.mark.parametrize(
     ("tier", "failures", "said"),
     [
@@ -234,7 +271,7 @@ def test_failures_exit_with_their_code(monkeypatch: pytest.MonkeyPatch, raised: 
     def load(_: Any) -> None:
         raise raised
 
-    monkeypatch.setattr("deltasleuth.cli.main.load_settings", load)
+    monkeypatch.setattr("deltasleuth.cli.service.load_settings", load)
     exit_code, out = ds("init")
     assert exit_code == code and said in out
 
@@ -256,12 +293,12 @@ def test_a_fault_exits_3_naming_its_type_and_place_never_its_text(
     def load(_: Any) -> None:
         raise raised
 
-    monkeypatch.setattr("deltasleuth.cli.main.load_settings", load)
+    monkeypatch.setattr("deltasleuth.cli.service.load_settings", load)
     exit_code, out = ds("init")
     assert exit_code == 3 and "K40045123" not in out
     assert "Traceback (most recent call last):" in out
     assert out.splitlines()[-1].startswith(
-        f"internal error: a bug in DeltaSleuth ({type(raised).__name__} at cli/main.py:"
+        f"internal error: a bug in DeltaSleuth ({type(raised).__name__} at cli/service.py:"
     )
 
 
@@ -355,8 +392,8 @@ def test_fail_on_diff_exits_1_while_keys_are_outstanding(monkeypatch: pytest.Mon
     counters = dict.fromkeys(("compared", "match", "different", "indeterminate", "cancelled"), 0)
     ended = {"total": 1, "outstanding": 1, "by_outcome": {"MISMATCH": 1}} | counters  # owed its recheck
     row = {"status": "completed_with_issues", "counters": ended, "stop_reason": "stop_condition:maxKeys"}
-    monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda *_: (row | {"error": None}, None))
-    monkeypatch.setattr("deltasleuth.cli.main._local", lambda _: None)
+    monkeypatch.setattr("deltasleuth.cli.runs._in_context", lambda *_: (row | {"error": None}, None))
+    monkeypatch.setattr("deltasleuth.cli.runs._local", lambda _: None)
     assert ds("run", "spec.yaml", "--fail-on-diff")[0] == 1
 
 
@@ -364,8 +401,8 @@ def test_a_run_its_frame_refused_prints_why_and_exits_2(monkeypatch: pytest.Monk
     refused = "the key listing of target svc-a was not read completely (HTTP 503: page 2: HTTP 503)"
     row = {"status": "paused", "stop_reason": "run_paused_draw", "error": None, "counters": {}}
     row["draw"] = {"due": "2026-09-30T00:00:00+00:00", "error": refused, "at": "2026-09-30T00:00:01Z"}
-    monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda *_: (row, None))
-    monkeypatch.setattr("deltasleuth.cli.main._local", lambda _: None)
+    monkeypatch.setattr("deltasleuth.cli.runs._in_context", lambda *_: (row, None))
+    monkeypatch.setattr("deltasleuth.cli.runs._local", lambda _: None)
     assert ds("run", "spec.yaml") == (2, f"paused (run_paused_draw)\n  {refused}\nerror: the run is paused\n")
 
 
@@ -383,9 +420,9 @@ def test_a_sampled_run_prints_each_stratum_its_cycle_s_end_judged(monkeypatch: p
                "frame_keys": 1204331, "n": 3009, "x": 0, "unresolved": 2, "ub95_one_sided": "0.0009951",
                "verdict": "passed"}  # fmt: skip
     monkeypatch.setattr(
-        "deltasleuth.cli.main._in_context", lambda *_: (row, {"sample": {"strata": [stratum]}})
+        "deltasleuth.cli.runs._in_context", lambda *_: (row, {"sample": {"strata": [stratum]}})
     )
-    monkeypatch.setattr("deltasleuth.cli.main._local", lambda _: None)
+    monkeypatch.setattr("deltasleuth.cli.runs._local", lambda _: None)
     code, out = ds("run", "spec.yaml")
     assert code == 0 and out.splitlines()[-1] == (
         "  stratum degree=d0 (standard, ≤ 0.1%): 3,011 drawn of 1,204,331, 3,009 compared, 0 discrepant, 2"
@@ -459,7 +496,7 @@ def test_serve_leaves_proxy_headers_to_the_app_and_sign_in_queries_out_of_the_lo
     monkeypatch.setattr(access, "filters", [])  # restored after the test
     ran: dict[str, Any] = {}
     monkeypatch.setattr("uvicorn.run", lambda app, **options: ran.update(options))
-    monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda *_, **__: None)
+    monkeypatch.setattr("deltasleuth.cli.service._in_context", lambda *_, **__: None)
     (tmp_path / "ds.yaml").write_text(SETTINGS)
     code, _ = ds("serve", "--config", tmp_path / "ds.yaml")
     assert (code, ran["proxy_headers"], audit_logger.propagate) == (0, False, False)
@@ -472,9 +509,9 @@ def test_serve_refuses_a_taken_port_before_it_opens_the_store(
 ) -> None:
     """The last refusal before the store is opened, so no ``system.start``
     row is written and no worker starts; the driver's own exit would be 3, with a traceback."""
-    monkeypatch.setattr("deltasleuth.cli.main._bindable", _bindable)
+    monkeypatch.setattr("deltasleuth.cli.service._bindable", _bindable)
     monkeypatch.setattr(
-        "deltasleuth.cli.main._in_context", lambda *_, **__: pytest.fail("the store must not open")
+        "deltasleuth.cli.service._in_context", lambda *_, **__: pytest.fail("the store must not open")
     )
     monkeypatch.setattr("uvicorn.run", lambda *_, **__: pytest.fail("the server must not start"))
     (tmp_path / "ds.yaml").write_text(SETTINGS)
@@ -503,7 +540,7 @@ def test_serve_warns_when_the_ui_is_not_built(tmp_path: Path, monkeypatch: pytes
     """On stderr, and the server starts all the same."""
     ran: list[Any] = []
     monkeypatch.setattr("uvicorn.run", lambda *_, **__: ran.append(1))
-    monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda *_, **__: None)
+    monkeypatch.setattr("deltasleuth.cli.service._in_context", lambda *_, **__: None)
     (tmp_path / "ds.yaml").write_text(SETTINGS)
     built = run("serve", "--config", tmp_path / "ds.yaml")
     dist = tmp_path / "web" / "dist"
@@ -525,7 +562,7 @@ def test_serve_runs_the_worker_in_its_process_unless_told_not_to(
 ) -> None:
     made: dict[str, Any] = {}
     monkeypatch.setattr("uvicorn.run", lambda app, **options: None)
-    monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda *_, **__: None)
+    monkeypatch.setattr("deltasleuth.cli.service._in_context", lambda *_, **__: None)
     monkeypatch.setattr("deltasleuth.api.create_app", lambda settings, **options: made.update(options))
     (tmp_path / "ds.yaml").write_text(SETTINGS)
     code, _ = ds("serve", *option, "--config", tmp_path / "ds.yaml")
@@ -1137,7 +1174,7 @@ def test_target_check_reads_an_oracle_target(tmp_path: Path, oracle_server: Orac
 def test_the_worker_copies_audit_rows_to_stdout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, audit_logger: logging.Logger
 ) -> None:
-    monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda *_, **__: None)
+    monkeypatch.setattr("deltasleuth.cli.service._in_context", lambda *_, **__: None)
     (tmp_path / "ds.yaml").write_text(SETTINGS)
     assert ds("worker", "--config", tmp_path / "ds.yaml")[0] == 0
     assert [h.stream for h in audit_logger.handlers] == ["stdout"] and not audit_logger.propagate  # type: ignore[attr-defined]
@@ -1347,7 +1384,7 @@ def test_only_the_services_open_the_store_to_apply_migrations(
         opened.append(options.get("apply_migrations", True))
         raise ContextError("opened")
 
-    monkeypatch.setattr("deltasleuth.cli.main.Context.open", recorded)
+    monkeypatch.setattr("deltasleuth.context.Context.open", recorded)
     (tmp_path / "t.yaml").write_text(TARGETS)
     (tmp_path / "ds.yaml").write_text(SETTINGS)
     refused = run(*command, "--config", tmp_path / "ds.yaml")
@@ -2414,7 +2451,7 @@ def test_serve_and_auth_check_warn_when_no_idp_group_maps_to_rule_approver(
     tmp_path: Path, idp: FakeIdp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("uvicorn.run", lambda *_, **__: None)
-    monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda *_, **__: None)
+    monkeypatch.setattr("deltasleuth.cli.service._in_context", lambda *_, **__: None)
     (tmp_path / "oidc_secret").write_text(CLIENT_SECRET + "\n")
     oidc = idp.settings(
         client_secret_ref=f"file:{tmp_path / 'oidc_secret'}", roles={"spec_author": ["G-author"]}
@@ -4240,8 +4277,8 @@ def test_fail_on_judges_the_worst_pair_and_a_cancel(
         "finished_at": datetime.now(UTC), "cancelled_at": datetime.now(UTC) if cancelled else None,
         "banners": [], "totals": "the totals", "items": pairs,
     }  # fmt: skip
-    monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda *_: found)
-    monkeypatch.setattr("deltasleuth.cli.main._local", lambda _: None)
+    monkeypatch.setattr("deltasleuth.cli.prechecks._in_context", lambda *_: found)
+    monkeypatch.setattr("deltasleuth.cli.prechecks._local", lambda _: None)
     result = run("precheck", "run", "--all-specs", *(["--fail-on", fail_on] if fail_on else []))
     assert result.exit_code == code and result.stdout.splitlines()[-1] == f"{len(pairs)}  accounts  a line"
 
@@ -4346,7 +4383,7 @@ def test_mcp_refuses_in_one_line_before_it_serves(tmp_path: Path, monkeypatch: p
     def unreachable(*_: Any, **__: Any) -> Any:
         raise psycopg.OperationalError("connection to db.internal.example failed: Dsn-Passw0rd-Canary")
 
-    monkeypatch.setattr("deltasleuth.cli.main.Context.open", unreachable)
+    monkeypatch.setattr("deltasleuth.context.Context.open", unreachable)
     assert ds("mcp", "--config", mcp_settings(tmp_path, TOKENISED)) == (
         2, "error: the database is unreachable (OperationalError); check database_dsn_ref\n",
     )  # fmt: skip
@@ -4425,7 +4462,7 @@ def test_a_fault_of_the_mcp_stream_leaves_its_type_alone(
     assert [line for line in failed.stderr.splitlines() if not line.startswith(("{", "mcp: serving"))] == [
         "internal error: the MCP stream failed (RuntimeError)"
     ]
-    monkeypatch.setattr("deltasleuth.cli.main.local", early)
+    monkeypatch.setattr("deltasleuth.cli.mcp.local", early)
     bug = run("mcp", "--config", config)
     assert bug.exit_code == 3 and "Traceback" in bug.stderr and "before it serves" in bug.stderr
 
@@ -4470,7 +4507,7 @@ def test_mcp_keeps_one_idle_store_connection(
 ) -> None:
     """An editor starts a server per window, so each idles on one connection, not the pool's four."""
     opened: list[Any] = []
-    monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda _, work, pool: opened.append(pool))
+    monkeypatch.setattr("deltasleuth.cli.mcp._in_context", lambda _, work, pool: opened.append(pool))
     block = TOKENISED | ({} if concurrency is None else {"concurrency": concurrency})
     assert ds("mcp", "--config", mcp_settings(tmp_path, block)) == (0, "")
     assert opened == [pool]
@@ -4489,7 +4526,8 @@ def test_the_services_log_once_each_line_with_its_time_level_and_logger(
     its own line on stdout, printed once. ``ds mcp`` adds none: its stdout is the protocol's, and its stderr
     names a logger and a level alone."""
     monkeypatch.setattr("uvicorn.run", lambda *_, **__: None)
-    monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda *_, **__: None)
+    for module in ("service", "mcp"):
+        monkeypatch.setattr(f"deltasleuth.cli.{module}._in_context", lambda *_, **__: None)
     config = mcp_settings(tmp_path, TOKENISED)
     for _ in range(2):  # a second start adds no second handler
         assert run(entry, "--config", config).exit_code == 0
@@ -4523,7 +4561,8 @@ def test_the_mcp_loggers_are_the_entry_point_s(
     other logger's, the driver's words for the store among them, through the root logger, which ``ds serve``
     leaves as it was."""
     monkeypatch.setattr("uvicorn.run", lambda *_, **__: None)
-    monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda *_, **__: None)
+    for module in ("service", "mcp"):
+        monkeypatch.setattr(f"deltasleuth.cli.{module}._in_context", lambda *_, **__: None)
     config = mcp_settings(tmp_path, TOKENISED | {"http": True})
     assert run(entry, "--config", config).exit_code == 0
     library, own = logging.getLogger("mcp.server.lowlevel.server"), logging.getLogger("deltasleuth.mcp")
@@ -4549,7 +4588,7 @@ def test_the_mcp_loggers_are_the_entry_point_s(
     for name in ("mcp", "deltasleuth.mcp"):  # neither is left to the root logger or the last-resort handler
         assert not logging.getLogger(name).propagate and len(logging.getLogger(name).handlers) == 1
     assert logging.getLogger("mcp").level == logging.WARNING
-    own_root = [h for h in logging.getLogger().handlers if type(h).__module__ == "deltasleuth.cli.main"]
+    own_root = [h for h in logging.getLogger().handlers if type(h).__module__ == "deltasleuth.cli.common"]
     assert len(own_root) == (entry == "mcp")
 
 
@@ -4571,7 +4610,7 @@ def test_serve_says_what_it_serves_over_mcp(
 ) -> None:
     """With ``mcp.http``, on stderr; and a server that does not serve it leaves the loggers alone."""
     monkeypatch.setattr("uvicorn.run", lambda *_, **__: None)
-    monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda *_, **__: None)
+    monkeypatch.setattr("deltasleuth.cli.service._in_context", lambda *_, **__: None)
     served = run("serve", "--config", mcp_settings(tmp_path, block))
     assert served.exit_code == 0
     assert [line for line in served.stderr.splitlines() if "mcp" in line] == said

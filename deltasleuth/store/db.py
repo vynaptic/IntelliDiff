@@ -75,7 +75,7 @@ def checksum(sql: bytes) -> str:
     parts two words or two operator characters, every quoted literal and name kept as written. A change to a
     comment or to the layout keeps it; any other change does not. A dollar-quoted body is read as the code
     it is in these files (a function's or a DO block's), so its comments and layout are free too."""
-    text, out, at, spaced = sql.decode(), [], 0, False
+    text, out, at, spaced = sql.decode(), list[str](), 0, False
     while at < len(text):
         char = text[at]
         if text.startswith("--", at):
@@ -184,7 +184,7 @@ async def _applied(conn: repo.Conn, files: dict[int, Path], *, legacy: bool = Tr
     cur = await conn.execute(
         "SELECT version, to_jsonb(v)->>'checksum' FROM ds.schema_version v ORDER BY version"
     )  # the column exists from 019 on
-    held: dict[int, str | None] = dict(await cur.fetchall())  # type: ignore[arg-type]
+    held: dict[int, str | None] = dict(await cur.fetchall())
     if unknown := [version for version in held if version not in files]:
         raise MigrationError(NEWER.format(versions=", ".join(map(str, unknown)), newest=max(files)))
     changed = [
@@ -196,7 +196,9 @@ async def _applied(conn: repo.Conn, files: dict[int, Path], *, legacy: bool = Tr
         raise MigrationError(CHANGED.format(names=", ".join(changed)))
     if legacy and held and SEALED - 1 not in held:
         query = _PLAINTEXT + (_SCAN_POINTS if 4 in held else b"")  # 004 added ds.scans
-        if (await (await conn.execute(query)).fetchone())[0]:  # type: ignore[index]
+        found = await (await conn.execute(query)).fetchone()
+        assert found is not None  # EXISTS: one row
+        if found[0]:
             raise MigrationError(LEGACY)
     return set(held)
 
@@ -207,7 +209,9 @@ async def pending(pool: AsyncConnectionPool) -> list[int]:
     files = _files()
     async with pool.connection() as conn:
         cur = await conn.execute("SELECT to_regclass('ds.schema_version')")
-        if (await cur.fetchone())[0] is None:  # type: ignore[index]
+        found = await cur.fetchone()
+        assert found is not None  # one row: the table, or NULL
+        if found[0] is None:
             return list(files)
         done = await _applied(conn, files)
     return [version for version in files if version not in done]
@@ -247,7 +251,9 @@ async def migrate(pool: AsyncConnectionPool, *, upto: int | None = None) -> list
             await audit(MIGRATION, "spec.rehash", "specs", {"spec_ids": rehashed})
         if LICENCES in applied:
             cur = await conn.execute("SELECT installation_id FROM ds.installation")
-            (made,) = await cur.fetchone()  # type: ignore[misc]
+            installed = await cur.fetchone()
+            assert installed is not None  # the licences migration made it
+            (made,) = installed
             await audit(MIGRATION, "installation.created", made, {"installation_id": made})
         if applied and applied[-1] >= AUDITED:
             await audit(MIGRATION, "system.migrate", "schema", {"versions": applied})

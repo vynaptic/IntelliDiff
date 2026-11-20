@@ -382,7 +382,7 @@ async def store_draw(
         "as_of": f"{as_of}",
         "names_side": names_side(source, spec, run["params"].get("tables")),
     }
-    listed = [
+    listed: list[dict[str, Any]] = [
         {"item": n, "key": key, "population": population, "root_cause_id": cause, "selected_for": why}
         for n, (population, key, cause, why) in enumerate(items, start=1)
     ]
@@ -450,7 +450,10 @@ def _check_rows(rows: Sequence[Mapping[str, str]], drawn: Sequence[Mapping[str, 
             f"engine columns differ from the labelling's items (lines {_lines(edited)}) (import the key"
             " column as text: a spreadsheet drops leading zeros)"
         )
-    said = [(n, *(row[c].strip().upper() for c in ("label", "basis", "reason"))) for n, row in numbered]
+    said = [
+        (n, row["label"].strip().upper(), row["basis"].strip().upper(), row["reason"].strip().upper())
+        for n, row in numbered
+    ]
     if wrong := [n for n, label, _, _ in said if label not in LABELS]:
         raise AdjudicationError(f"label must be one of {', '.join(LABELS)} (lines {_lines(wrong)})")
     undecidable = LABELS[-1]
@@ -473,7 +476,7 @@ def _labelled(drawn: Sequence[Mapping[str, str]], rows: Sequence[Mapping[str, st
     said = {
         row["item"].strip(): {c: row[c].strip().upper() for c in ("label", "basis", "reason")} for row in rows
     }
-    return render_csv(SHEET_COLUMNS, [row | said[row["item"]] | {"notes": ""} for row in drawn])
+    return render_csv(SHEET_COLUMNS, [{**row, **said[row["item"]], "notes": ""} for row in drawn])
 
 
 def keyless(sheet: str) -> str:

@@ -200,20 +200,21 @@ async def test_the_worker_purges_hourly_once_seven_days_passed_since_006(
     run_id = await finished(harness, service, KEYS[:1])
     await aged(harness, run_id, 91)
     worker = _Worker(harness.ctx)
+    job = worker.supervisor.purge
     await worker._sweep_once()
-    assert worker.purging is not None
-    await worker.purging  # within the grace: nothing
-    assert (await counts(harness, run_id))["results"] == 1 and worker.swept_at < 0
+    assert job.task is not None
+    await job.task  # within the grace: nothing
+    assert (await counts(harness, run_id))["results"] == 1 and job.swept_at < 0
     await rows(
         harness, "UPDATE ds.schema_version SET applied_at = now() - interval '8 days' WHERE version = 6"
     )
     await worker._sweep_once()
-    assert worker.purging is None  # the hour has not passed
-    worker.purged_at -= PURGE_EVERY_S
+    assert job.task is None  # the hour has not passed
+    job.purged_at -= PURGE_EVERY_S
     await worker._sweep_once()
-    assert worker.purging is not None
-    await worker.purging
-    assert (await counts(harness, run_id))["results"] == 0 and worker.swept_at > 0  # orphans swept too
+    assert job.task is not None
+    await job.task
+    assert (await counts(harness, run_id))["results"] == 0 and job.swept_at > 0  # orphans swept too
     await worker.close()
     actors = {
         row["actor"]

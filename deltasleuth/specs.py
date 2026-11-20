@@ -48,7 +48,7 @@ async def store(
                 if gated:
                     await approvals.gate(ctx, conn, found["spec_id"], spec)
                 active = await repo.active_spec_approval(conn, found["spec_id"])
-                return Stored(found["spec_id"], spec, active and active["approval_id"])
+                return Stored(found["spec_id"], spec, None if active is None else active["approval_id"])
         if approvals.needs(spec):
             raise approvals.ApprovalRequired(
                 f"spec {spec.name} {spec.version} has no approved upload: upload it on the Specs screen,"
@@ -60,4 +60,4 @@ async def store(
             raise Invalid(problem)  # rolls the upload back
         active = await repo.active_spec_approval(conn, spec_id)
         await audit(who, "spec.create", str(spec_id), {"content_hash": spec.content_hash})
-    return Stored(spec_id, spec, active and active["approval_id"])
+    return Stored(spec_id, spec, None if active is None else active["approval_id"])

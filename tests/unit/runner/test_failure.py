@@ -55,7 +55,7 @@ def test_the_innermost_frames_of_the_package_come_first_three_at_most() -> None:
     async def fetch(*args: Any, **kwargs: Any) -> Any:
         raise KeyError(VALUE)
 
-    assert re.fullmatch(r"KeyError at store/repo\.py:\d+ in pages", cycle.recorded(raised(deep, 5)))
+    assert re.fullmatch(r"KeyError at store/repo/base\.py:\d+ in pages", cycle.recorded(raised(deep, 5)))
     assert cycle.FRAMES == 3 and len(cycle.where(_nested(5)).split(", from ")) == 3
 
 

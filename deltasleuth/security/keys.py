@@ -65,8 +65,8 @@ async def start(pool: AsyncConnectionPool, keyring: Keyring, *, rewrap: bool = F
                 moved[row["kek"]] += 1
         rows = await repo.data_keys(conn)
         store = [_load(keyring, row) for row in rows if not row["scope"].startswith("R-")]  # runs': lazily
-        for key in created:
-            await audit(MIGRATION, "keys.created", key.scope, {"kek": key.kek})
+        for made in created:
+            await audit(MIGRATION, "keys.created", made.scope, {"kek": made.kek})
         for old, count in moved.items():
             await audit(MIGRATION, "keys.rewrap", "keys", {"from": old, "to": keyring.current, "rows": count})
     missing = Counter(row["kek"] for row in rows if row["kek"] not in keyring.ids)

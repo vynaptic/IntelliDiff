@@ -157,7 +157,7 @@ async def test(ctx: Context, name: str, who: Principal) -> dict[str, Any]:
     doc = events.payload(
         event, channel, delivery_id=delivery_id, event_id=event_id, occurred_at=now,
         installation={"id": installation, "label": notify.label}, audit=None, fired={}, bounds={},
-        suppressed=0, public_url=auth and auth.public_url,
+        suppressed=0, public_url=None if auth is None else auth.public_url,
     )  # fmt: skip
     body = events.body(channel.kind, doc, at=now)
     sender = Sender(notify)
@@ -267,9 +267,10 @@ async def digest(conn: repo.Conn, run: Mapping[str, Any], c: int, bug_rules: lis
     started, leaves its facts null and listed in ``unavailable``."""
     run_id = run["run_id"]
     ended = await repo.get_cycle(conn, run_id, c)
+    assert ended is not None  # the digest is of a cycle that ended
     before = await repo.get_cycle(conn, run_id, c - 1) if c > 1 else None
     source = run["params"].get("keys_source")
-    sampled, purging = source == "hash_sample" and c > 1, ended["purging_at"] is not None  # type: ignore[index]
+    sampled, purging = source == "hash_sample" and c > 1, ended["purging_at"] is not None
     previous_kept = c == 1 or (before is not None and before["purging_at"] is None)
     unavailable: list[str] = []
 
@@ -284,7 +285,7 @@ async def digest(conn: repo.Conn, run: Mapping[str, Any], c: int, bug_rules: lis
             unavailable.extend(names)
             return None
 
-    k = ended["counters"]  # type: ignore[index]
+    k = ended["counters"]
     causes = await fact(
         ("new_root_causes", "gone_root_causes"), lambda: repo.root_cause_changes(conn, run_id, c)
     )

@@ -128,8 +128,10 @@ def _absence(
             why = f"HTTP status {obs.http_status} is not a declared not-found for this side"
             return SideState.incomplete("absence_unconfirmed", why)
         return None
-    why = _unconfirmed(obs, caps, doc)
-    return SideState.absent() if why is None else SideState.incomplete("absence_unconfirmed", why)
+    unconfirmed = _unconfirmed(obs, caps, doc)
+    if unconfirmed is None:
+        return SideState.absent()
+    return SideState.incomplete("absence_unconfirmed", unconfirmed)
 
 
 def _declared_not_found(obs: Observation, rule: NotFoundRule | None, doc: Any) -> bool:

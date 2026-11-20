@@ -28,7 +28,7 @@ import threading
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from decimal import Decimal
-from typing import Any, BinaryIO, NoReturn
+from typing import IO, Any, BinaryIO, NoReturn
 
 REQUEST_MAX = 64 * 2**20  # a request's body
 ANSWER_MAX = 16 * 2**20  # an answer's
@@ -144,7 +144,9 @@ def pack_rows(number: int, rows: Sequence[tuple[Any, ...]], most: int) -> bytes:
         if kind is bool:
             body.append(b"o" + bytes(2 if value is None else value for value in column))
             continue
-        values = [None if value is None else str(value) for value in column] if kind is int else column
+        values: Sequence[Any] = column
+        if kind is int:
+            values = [None if value is None else str(value) for value in column]
         held = [value for value in values if value is not None]
         joined = b"".join(held) if kind is bytes else "".join(held).encode()
         lengths = [-1 if value is None else len(value) for value in values]
@@ -169,7 +171,7 @@ def unpack_rows(
         raise ValueError("rows")
     if count and wide != ((len(tags) if tags else width) or wide or -1):  # or rows without a column
         raise ValueError("width")
-    at, columns = _ROWS.size, []
+    at, columns = _ROWS.size, list[list[Any]]()
     for n in range(wide):
         tag, at = body[at : at + 1], at + 1
         if tags and count and tag not in (b"n", tags[n].encode()):
@@ -205,7 +207,7 @@ def unpack_rows(
     return number, list(zip(*columns, strict=True))
 
 
-def read(source: BinaryIO, limits: Mapping[bytes, int]) -> tuple[bytes, bytes] | None:
+def read(source: IO[bytes], limits: Mapping[bytes, int]) -> tuple[bytes, bytes] | None:
     """``source``'s next frame, its kind and body; None at its end, a frame cut short too. ``ValueError``
     for a kind that is not in ``limits`` or a body past its kind's limit, which is not read."""
     head = source.read(_HEAD.size)
@@ -331,12 +333,7 @@ def connect(spill: str, roots: Sequence[str], memory_mib: int, spill_mib: int, t
     ``INSTALL`` is refused; and before the caches are set, one of which is the Parquet reader's own."""
     import duckdb
 
-    # The allocator flushes what it keeps at a quarter of the memory limit, and on any bulk free past the
-    # limit: by default it keeps up to 128 and 512 MiB, which, where it is jemalloc (Linux x86_64), held the
-    # reader's resident memory far above its limit while it streamed.
-    config = {
-        "allocator_flush_threshold": f"{max(memory_mib // 4, 1)}MiB",
-        "allocator_bulk_deallocation_flush_threshold": f"{memory_mib}MiB",
+    config: dict[str, str | bool | int | float | list[str]] = {
         "threads": threads, "memory_limit": f"{memory_mib}MiB", "temp_directory": os.path.join(spill, "temp"),
         "home_directory": os.path.join(spill, "home"),
         "extension_directory": os.path.join(spill, "extensions"),
@@ -437,7 +434,7 @@ class _Held:
 
     def __init__(self) -> None:
         self.cursor: Any = None
-        self.lock, self.rest, self.closed = threading.Lock(), [], False
+        self.lock, self.rest, self.closed = threading.Lock(), list[tuple[Any, ...]](), False
         self.ahead: tuple[Any, ...] | None = None
         self.drops = 0
         self.done, self.halting = threading.Event(), threading.Lock()

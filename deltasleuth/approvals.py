@@ -222,7 +222,7 @@ async def run_approval(conn: repo.Conn, run: Mapping[str, Any], cycle: int | Non
             approval_id = ended["approval_id"]
         elif cycle < (record or {}).get("from_cycle", 0):
             approval_id = None
-    before = run["created_at"] < await repo.applied_at(conn, APPROVALS)  # type: ignore[operator]
+    before = run["created_at"] < await repo.applied_at(conn, APPROVALS)
     if before:
         record = None
     approval = None if before or approval_id is None else await repo.get_approval(conn, approval_id)
@@ -264,7 +264,7 @@ def label(approval: Mapping[str, Any]) -> str:
     if state in ("approved", "revoked"):
         revoked = (approval["revoked_at"], approval["revoked_by_name"], approval["reason"])
         text = _decided("Spec approval", approval["approval_id"], approval["deciders"], revoked)
-        if state == "approved" and (started := _STARTED.get(approval.get("mode"))):  # never signed off
+        if state == "approved" and (started := _STARTED.get(approval.get("mode") or "")):  # never signed off
             text += f" {NOT_EVIDENCE[:-1]}: the run started in {started}."
         return text
     if state == "not_needed":
@@ -332,14 +332,14 @@ async def signoff_problems(
         problems.append("a one-shot run is not signed off")
     elif run["params"].get("samples_dir") is not None:
         problems.append(f"run {run_id} read captured samples: only a live run is signed off")
-    if run["created_at"] < await repo.applied_at(conn, APPROVALS):  # type: ignore[operator]
+    if run["created_at"] < await repo.applied_at(conn, APPROVALS):
         # never signed off, so its cycles, whose counters may predate their current shape, are not judged
         return [*problems, f"run {run_id} started before approvals (008): only later runs are signed off"]
     started = (run["params"].get("approval") or {}).get("mode")  # its creation's, which a resume keeps
     if started != "oidc":
         problems.append(
-            f"run {run_id} started in {MODES.get(started, 'an unknown mode')}: only a run started under SSO"
-            " is signed off"
+            f"run {run_id} started in {MODES.get(started or '', 'an unknown mode')}: only a run started"
+            " under SSO is signed off"
         )
     at = f"cycle {cycle} of run {run_id}"
     ended = await repo.get_cycle(conn, run_id, cycle)
@@ -451,7 +451,7 @@ async def _format_1(
             {name: getattr(rule, name) for name in _RULE_FIELDS} | {"keys": keys.get(rule.rule_id, 0)}
             for rule in spec.known_diffs
         ],
-        "census": census.of_cycle(run, ended, scan, spec),  # type: ignore[arg-type]
+        "census": census.of_cycle(run, ended, scan, spec),
         "adjudication": attested,
         "claim": "observed",
     }
@@ -488,8 +488,10 @@ async def _format_3(
     score = labelling["accuracy"]
 
     def counted(found: Mapping[str, Any] | None, *sizes: str) -> dict[str, Any] | None:
-        labels = found and {label: s["x"] for label, s in found["labels"].items()}
-        return found and {name: found[name] for name in sizes} | {"labels": labels}
+        if found is None:
+            return None
+        labels = {label: s["x"] for label, s in found["labels"].items()}
+        return {name: found[name] for name in sizes} | {"labels": labels}
 
     discrepant = counted(score["discrepant"], "items", "uniform", "census")
     names = ("labelling_id", "salt", "selection_sha256", "labels_sha256", "score_sha256", "drawn_by",
@@ -519,6 +521,8 @@ async def _facts(
         raise NotFound(f"cycle {cycle} of run {run_id} has not ended")
     causes = await repo.list_root_causes(conn, run_id, cycle)
     scan = await repo.get_scan(conn, run_id, cycle)
+    stored = await repo.get_spec(conn, run["spec_id"])
+    assert stored is not None  # a run's spec version is never deleted
     facts = {
         "run_id": run_id,
         "cycle": cycle,
@@ -527,7 +531,7 @@ async def _facts(
         "keys_source": run["params"].get("keys_source"),
         "scan": None if scan is None else {name: scan[name] for name in _SCAN_FIELDS},
         "spec_id": run["spec_id"],
-        "content_hash": (await repo.get_spec(conn, run["spec_id"]))["content_hash"],  # type: ignore[index]
+        "content_hash": stored["content_hash"],
         "spec_approval_id": await _cited(conn, run, ended, spec),
         "created_by": run["created_by"],
         "ended_at": utc_iso(ended["ended_at"]),

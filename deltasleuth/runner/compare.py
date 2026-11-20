@@ -512,4 +512,5 @@ async def save_passes(
 
 def _sealed_headers(sealer: Sealer, cycle: int, obs: Observation) -> bytes:
     headers = jsonio.dumps(repo.storable(obs.headers)).encode()
-    return sealer.seal("headers", cycle, obs.obs_id, headers)  # type: ignore[arg-type]  # identify set it
+    assert obs.obs_id is not None  # identify set it
+    return sealer.seal("headers", cycle, obs.obs_id, headers)

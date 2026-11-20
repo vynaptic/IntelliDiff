@@ -187,6 +187,7 @@ async def _listed(
         raise Invalid("the key listing is not a JSON document") from None
     if duplicate:  # RFC 8259 leaves a repeated name undefined: which keys were listed is unknown
         raise Invalid("the key listing repeats a member name, so its keys are ambiguous")
+    assert side.pagination is not None  # a listing's side always has its pagination
     try:  # off the event loop: a filter's pattern may run up to its bound for each item
         items, keys = await asyncio.to_thread(_keys_of, listing, side.pagination.items_path, source, spec)
     except CanonicalError as exc:  # its message is ours and quotes no data

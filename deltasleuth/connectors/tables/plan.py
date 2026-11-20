@@ -123,7 +123,7 @@ async def key_plan(targets: TargetRegistry, cfg: SideConfig) -> Plan:
     table side's plan refuses is refused in its words, ``the key source`` where its side stands."""
     target, table, name, who = targets.live(cfg.target), cfg.table, cfg.side.value, "the key source"
     assert table is not None
-    engine, refused = of(target), []
+    engine, refused = of(target), list[str]()
     try:
         async with engine.planning():
             session = await _connected(engine, target, who)
@@ -247,7 +247,9 @@ def _planned(
         a, b = found["a"]["columns"], found["b"]["columns"]
         for name, other, own, theirs in (("a", "b", a, b), ("b", "a", b, a)):
             missing = [c for c in own if c not in theirs]
-            if tables[name].table.columns is not None:  # type: ignore[union-attr]
+            table = tables[name].table
+            assert table is not None  # a table side's
+            if table.columns is not None:
                 refused += [f"side {name}: column {c!r} has no counterpart on side {other}" for c in missing]
             result[f"only_{name}"] = missing
         if refused:
@@ -328,7 +330,7 @@ def _side_plan(
         why = "LIKE and ILIKE match text in a deterministic collation: compare a view that casts it"
         _refuse(refused, f"side {side}: column {unlike!r} cannot be matched: {why}")  # else only on a row
     if engine.percent_placeholder:  # compared columns once they are known
-        _readable_names(side, [schema, name, *keys, *filter_columns], refused)
+        _readable_names(side, [n for n in (schema, name, *keys, *filter_columns) if n is not None], refused)
     listed = list(columns.values()) if table.columns is not None else []
     read = [c for c in [*keys, *filter_columns, *listed] if c in present]
     _granted(side, shown, read, readable, refused)
@@ -506,9 +508,9 @@ def _paired(found: Mapping[str, Plan], engines: Mapping[str, str], refused: list
             if family_a != family_b and fielded and (as_ := _AS.get(read["ba"[fielded[0] == "b"]][0])):
                 own, other = fielded[0], "ba"[fielded[0] == "b"]
                 theirs = f"{_a(read[other][0])} ({read[other][1]})"
-                mapped = f"typeMap {{{read[own][2]}: {{as: {as_}}}}} on side {own}"
+                declare = f"typeMap {{{read[own][2]}: {{as: {as_}}}}} on side {own}"
                 text = f"side {own}: column {canonical!r} is text (a CSV field) and side {other}'s {theirs}"
-                refused.append(f"{text}: declare {mapped}")
+                refused.append(f"{text}: declare {declare}")
             elif family_a != family_b:
                 both = f"is {_a(family_a)} ({declared_a}) and side b's {_a(family_b)}"
                 refused.append(f"side a: column {canonical!r} {both}: {_bridge(read)}")

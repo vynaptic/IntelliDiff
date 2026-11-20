@@ -427,7 +427,9 @@ class _Frame:
 
 async def _session(ctx: Context) -> psycopg.AsyncConnection:
     """The draw's own autocommit session on the store, with its temporary table of frame keys."""
-    conn = await psycopg.AsyncConnection.connect(ctx.pool.conninfo, autocommit=True)
+    address = ctx.pool.conninfo
+    assert isinstance(address, str)  # the store's address, as the pool was given it
+    conn = await psycopg.AsyncConnection.connect(address, autocommit=True)
     try:
         await repo.create_frame_keys(conn, ctx.settings.sampling.temp_buffers)
     except BaseException:
@@ -555,7 +557,7 @@ def judged(
         counters.count_groups, live=True, recheck_outcomes=RecheckPolicy.from_spec(spec.raw).outcomes
     )
     by_stratum: defaultdict[str | None, list[Mapping[str, Any]]] = defaultdict(list)
-    contrast = []
+    contrast: list[Mapping[str, Any]] = []
     for g in groups:
         (by_stratum[g["stratum"]] if g["member"] else contrast).append(g)
     times = spec.sample.resolve.times
@@ -702,8 +704,9 @@ def _unordered(rows: Sequence[repo.Row], draw_id: str) -> list[str]:
     ]
 
 
-def _closed_before(draw: Mapping[str, Any], seq: int) -> bool:
-    return draw["close_seq"] is not None and draw["close_seq"] < seq
+def _closed_before(draw: Mapping[str, Any], seq: int | None) -> bool:
+    """Whether the draw was closed before the chain row ``seq``; never before a draw without one."""
+    return seq is not None and draw["close_seq"] is not None and draw["close_seq"] < seq
 
 
 def _day(at: datetime) -> str:
@@ -794,7 +797,8 @@ async def _later(
             what = f"ended on {_day(d['ended_at'])} without a judgement"
         elif status == "live":
             stored = await repo.get_spec(conn, d["spec_id"])
-            now = await judge(conn, d, compile_spec(stored["body"]))  # type: ignore[index]
+            assert stored is not None  # a draw's spec version is never deleted
+            now = await judge(conn, d, compile_spec(stored["body"]))
             if certain := [s["label"] for s in now["strata"] if s["verdict"] == "failed"]:
                 what = f"has failed {_strata(certain)} for certain"
         why = what and (
@@ -891,12 +895,14 @@ async def close(conn: repo.Conn, audit: repo.Audit, spec_name: str, note: str, w
     found = compile_spec(stored["body"]).sample
     rows = await repo.ledger(conn, found.population) if found else []
     due = [d for d in rows if blocking(d)]
-    if due:  # checked as revoke reasons are, against each spec whose later sign-offs could attest it
-        sharing = {d["spec_name"] for d in rows} | await _sharing(conn, found.population)  # type: ignore[union-attr]
+    if due and found is not None:  # checked as revoke reasons are, against each spec that could attest it
+        sharing = {d["spec_name"] for d in rows} | await _sharing(conn, found.population)
         names = sorted(sharing - {spec_name})
         versions = [stored, *[await repo.newest_spec(conn, name) for name in names]]
         versions += [await repo.get_spec(conn, spec_id) for spec_id in sorted({d["spec_id"] for d in due})]
-        if any(rawvalues.key_shaped(compile_spec(v["body"]), note) for v in versions):  # type: ignore[index]
+        held = [v for v in versions if v is not None]
+        assert len(held) == len(versions)  # stored versions are never deleted
+        if any(rawvalues.key_shaped(compile_spec(v["body"]), note) for v in held):
             raise SampleRefused(422, NOTE_KEY_SHAPED)
     closed = await repo.close_draws(conn, [d["draw_id"] for d in due], who.actor, note) if due else []
     if not closed:
@@ -917,8 +923,9 @@ async def _sharing(conn: repo.Conn, population: Sequence[str]) -> set[str]:
     names, shared = {row["name"] for row in await repo.list_specs(conn)}, set()
     for name in names:
         stored = await repo.newest_spec(conn, name)
+        assert stored is not None  # a listed name's
         try:
-            sample = compile_spec(stored["body"]).sample  # type: ignore[index]
+            sample = compile_spec(stored["body"]).sample
         except SpecError:  # a version that no longer compiles signs nothing off
             continue
         if sample is not None and set(sample.population) & set(population):

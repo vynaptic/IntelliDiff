@@ -79,7 +79,7 @@ async def draw(ctx: Ctx, who: Viewer, draw_id: str) -> Response:
         extra: dict[str, Any]
         if found["status"] == "live":
             extra = {"nonce": None, "progress": await sample.progress(conn, found, spec)}
-        elif (await repo.get_cycle(conn, run["run_id"], found["cycle"]))["purging_at"]:  # type: ignore[index]
+        elif need(await repo.get_cycle(conn, run["run_id"], found["cycle"]), "its cycle")["purging_at"]:
             extra = {"precheck": None}
         else:
             extra = {"precheck": await sample.problems(conn, run, found["cycle"], spec)}

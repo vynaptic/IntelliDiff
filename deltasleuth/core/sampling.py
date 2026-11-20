@@ -237,8 +237,8 @@ class Drawn:
 
     key: str
     seq: int
-    stratum: str
-    signoff: str
+    stratum: str | None  # None, as the sign-off stratum, for a rate sample without strata
+    signoff: str | None
     member: bool
 
 
@@ -281,15 +281,15 @@ class Selector:
         self._label_error: str | None = None
         signoff = sample.signoff_stratum
         memo = signoff is not None and not any(reads(signoff, "signoff_stratum", v) for v in ("key", "row"))
-        self._signoffs: dict[tuple[str, str], Any] | None = {} if memo else None
+        self._signoffs: dict[tuple[str | None, str], str | None] | None = {} if memo else None
         self._counts: Counter[str] = Counter()  # frame keys per sign-off stratum (N_h)
         self._tiers: dict[str, str] = {}
         self._own: dict[str, int] = {}  # a rate stratum's own threshold
-        self._heaps: dict[str, list[tuple[int, bytes, str, str, int]]] = {
+        self._heaps: dict[str, list[tuple[int, bytes, str, str | None, int]]] = {
             label: [] for label, b in self._buckets.items() if b.target_size and sample.method == "bottom_k"
         }
         # (u, key, stratum, sign-off stratum, the bound that chose it, member): chosen by a rate
-        self._chosen: list[tuple[int, str, str, str, int, bool]] | None = []
+        self._chosen: list[tuple[int, str, str | None, str | None, int, bool]] | None = []
         self._chosen_count = 0
         self._failures: dict[tuple[str, ...], list[int]] = {}  # [count, source, first position]
         self._labels_named: dict[str, set[str]] = {"unsized": set(), "standard": set(), "foreign": set()}
@@ -388,7 +388,7 @@ class Selector:
                 hit = value is not None and any(_same(value, v) for v in bucket.values)
             elif bucket.min is not None or bucket.max is not None:
                 hit = number is not None and (bucket.min is None or bucket.min <= number)
-                hit = hit and (bucket.max is None or number <= bucket.max)
+                hit = hit and number is not None and (bucket.max is None or number <= bucket.max)
             else:
                 hit = True  # a catch-all
             if hit:
@@ -517,7 +517,7 @@ class Selector:
 
     # -- ranks
 
-    def _rank(self, key: str, value: int, stratum: str, signoff: str, threshold: int) -> None:
+    def _rank(self, key: str, value: int, stratum: str | None, signoff: str, threshold: int) -> None:
         """Keep the key if it is among its sign-off bucket's targetSize smallest (u, key bytes): a max-heap
         of (-u, the key bytes inverted), keys holding no NUL."""
         heap, size = self._heaps[signoff], self._buckets[signoff].target_size or 0
@@ -528,7 +528,7 @@ class Selector:
             elif entry > heap[0]:
                 heapq.heapreplace(heap, entry)
 
-    def _choose(self, entry: tuple[int, str, str, str, int, bool]) -> None:
+    def _choose(self, entry: tuple[int, str, str | None, str | None, int, bool]) -> None:
         """A key a rate chose: kept until they are over ``LIMIT``, then only counted."""
         self._chosen_count += 1
         if self._chosen is not None:
@@ -540,7 +540,9 @@ class Selector:
         """The sample ordered by (⌊u·2^64/m⌋, key), m the bound that chose each key, so every stratum
         advances at the same pace; and the strata records."""
         assert self._chosen is not None  # at most LIMIT
-        rows, members, contrast, u_max = [], Counter[str](), Counter[str](), {}
+        # (rank, key, stratum, sign-off stratum, member)
+        rows: list[tuple[int, str, str | None, str | None, bool]] = []
+        members, contrast, u_max = Counter[str](), Counter[str](), {}
         for label, heap in self._heaps.items():
             census = self._counts[label] <= (self._buckets[label].target_size or 0)
             u_max[label] = top = max(-entry[0] for entry in heap)
@@ -552,6 +554,8 @@ class Selector:
             if key in ranked:
                 continue
             rows.append((value * _ALL // bound, key, stratum, signoff, member))
+            if signoff is None:  # a rate sample without strata: no stratum record counts it
+                continue
             (members if member else contrast)[signoff] += 1
             if member:
                 u_max[signoff] = max(value, u_max.get(signoff, 0))

@@ -53,6 +53,12 @@ dev = [
     "ruff>=0.12",
     "httpx>=0.28",
     "pip-audit>=2.10.1",
+    "mypy>=2.4.1",
+    "types-pymysql>=1.2.0.20260923",
+    "types-pyyaml>=6.0.12.20261103",
+    "types-jsonschema>=4.26.0.20261006",
+    "types-regex>=2026.9.29.20261030",
+    "types-reportlab>=5.0,<5.1",  # the stubs of the reportlab release the lock holds
 ]
 
 [build-system]
@@ -82,13 +88,34 @@ addopts = "-m 'not live_llm and not live_public' --import-mode=importlib"
 # the opt-in measurements an hour).
 timeout = 600
 
+[tool.mypy]
+python_version = "3.13"
+files = ["deltasleuth"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+check_untyped_defs = true
+no_implicit_optional = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = ["deltasleuth", "deltasleuth.*"]
+disallow_untyped_defs = true
+
+# Libraries that ship no types and have no small stub package.
+[[tool.mypy.overrides]]
+module = ["cel_expr_python", "cel_expr_python.*", "genson", "genson.*", "jsonata", "jsonata.*", "scipy.*"]
+ignore_missing_imports = true
+
 [tool.ruff]
 line-length = 110
 target-version = "py313"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "S", "RUF"]
+select = ["E", "F", "W", "I", "B", "UP", "S", "RUF", "C901"]
 ignore = ["S101"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 29  # no function may pass it: the most complex one's (scan, in runner/scan.py)
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S603", "S607"]  # tests start local helper processes (docker, mock servers)

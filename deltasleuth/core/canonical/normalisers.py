@@ -204,7 +204,8 @@ def _instant(text: str, digits: int, rounding: str) -> datetime | None:
         return None
     offset = timedelta(hours=hours, minutes=minutes) * (-1 if tz[0] == "-" else 1)
     try:
-        local = datetime(*(int(g[k] or 0) for k in ("y", "mo", "d", "h", "mi", "s")))
+        year, month, day, hour, minute, second = (int(g[k] or 0) for k in ("y", "mo", "d", "h", "mi", "s"))
+        local = datetime(year, month, day, hour, minute, second)
         return local + timedelta(microseconds=int(fraction.scaleb(6))) - offset
     except (ValueError, OverflowError):
         return None

@@ -172,8 +172,9 @@ def shape(relation: Any) -> dict[str, Any]:
     return {"kind": relation.facts["kind"], "key": relation.facts.get("key"), "columns": columns}
 
 
-def sha256(held: Mapping[str, Any]) -> str:
-    """A shape's hash: two relations of one hash hold the same columns, whatever their order."""
+def sha256(held: Mapping[str, Any] | None) -> str:
+    """A shape's hash: two relations of one hash hold the same columns, whatever their order. None, the
+    shape of a relation that is gone or unreadable, has a hash of its own."""
     return sha256_hex(jsonio.dumps(held, sort_keys=True))
 
 
@@ -381,7 +382,9 @@ def wanted(level: str, plan: Plan, relations: Mapping[str, Any]) -> dict[str, li
     if level == "schema":
         return found
     for side in "ab":
-        found[side] = [("rows", None)] + [("null_keys", None)] * bool(plan[side]["keys"])
+        found[side] = [("rows", None)]
+        if plan[side]["keys"]:
+            found[side].append(("null_keys", None))
     if level == "counts":
         return found
     held = _held(relations)
@@ -506,7 +509,7 @@ def clause(entry: Mapping[str, Any], plan: Plan) -> str:
         both = f"{_cut(a['declared'])} on side a and {_cut(b['declared'])} on side b"
         return f"key column {column} is {both}: {why}, so no key of one side is found on the other: {_CASTS}"
     if code.startswith("key_"):  # a key column's class, size or NULLs, worded as a column's
-        return f"key column {clause(entry | {'code': code[4:]}, plan)}"
+        return f"key column {clause({**entry, 'code': code[4:]}, plan)}"
     if code.startswith("alike_"):
         lowered = _cut(entry["column"].lower())
         return f"{column} and another column of side {code[-1]} both compare as {lowered}: {_RENAME}"
@@ -727,7 +730,7 @@ def _figure(of: _Column, figure: str, pair: Pair) -> dict[str, Any]:
         return _bound(of, figure)
     if figure == "length":  # a side without a value has no length
         spans = [[int(of.texts[s][f]) for f in _READ["length"] if of.texts[s][f] is not None] for s in "ab"]
-        found = {"a": spans[0] or None, "b": spans[1] or None, "verdict": _same(*spans)}
+        found: dict[str, Any] = {"a": spans[0] or None, "b": spans[1] or None, "verdict": _same(*spans)}
     else:
         a, b = (int(of.texts[s][figure]) for s in "ab")
         found = {"a": a, "b": b, "verdict": _same(a, b)}
@@ -801,8 +804,8 @@ def _side(relation: Any, read: Mapping[str, Any]) -> dict[str, Any]:
 
 def _apart(sides: Mapping[str, Mapping[str, Any]]) -> int | None:
     """The seconds between the two sides' reads."""
-    at = [side.get("at") for side in sides.values()]
-    if None in at:
+    at = [moment for side in sides.values() if (moment := side.get("at")) is not None]
+    if len(at) < len(sides):
         return None
     return abs(round((datetime.fromisoformat(at[1]) - datetime.fromisoformat(at[0])).total_seconds()))
 

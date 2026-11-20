@@ -225,10 +225,10 @@ class Context:
         # One connection per worker slot, plus a few for the API, two for the notifier and one per MCP call.
         size = settings.worker.concurrency + 4 + (2 if settings.notify is not None else 0)
         size += settings.mcp.concurrency if settings.mcp is not None and settings.mcp.http else 0
-        sizes = {"max_size": size} if pool is None else {"min_size": pool[0], "max_size": pool[1]}
+        low, high = (4, size) if pool is None else pool  # 4: psycopg_pool's own min_size
         dsn = read_secret(settings.database_dsn_ref)
         await admitted(dsn)  # a refused user, password or database name ends here, not after the wait
-        opened = AsyncConnectionPool(dsn, open=False, **sizes)
+        opened = AsyncConnectionPool(dsn, open=False, min_size=low, max_size=high)
         try:
             with opening():
                 await opened.open(wait=True, timeout=WAIT)

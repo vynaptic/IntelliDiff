@@ -278,7 +278,9 @@ def unrepresented(records: Sequence[Row], chosen: Mapping[str, str]) -> dict[str
 def _left_out(tallies: Tallies, picked: Sequence[tuple[Row, str]]) -> dict[str, list[str]]:
     """``unrepresented`` from the cycle's ``tallies`` and the chosen keys' result rows with why each was
     chosen (``picked``): a root cause more keys hold than chosen ones is held elsewhere."""
-    seen = {why.removeprefix(_ROOT_CAUSE) for _, why in picked if why.startswith(_ROOT_CAUSE)}
+    seen: set[str | None] = {
+        why.removeprefix(_ROOT_CAUSE) for _, why in picked if why.startswith(_ROOT_CAUSE)
+    }
     seen |= {primary_root_cause(r) for r, _ in picked}
     inside = Counter(rc for r, _ in picked for rc in root_causes_of(r))
     return {

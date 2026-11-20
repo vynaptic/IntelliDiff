@@ -88,7 +88,7 @@ async def record_config(ctx: Context) -> None:
     raises: a failure is logged."""
     notify = ctx.settings.notify
     try:
-        routing = notify and ctx.tokeniser.token(
+        routing = None if notify is None else ctx.tokeniser.token(
             "notify_routing", jsonio.dumps(_canonical(notify), sort_keys=True)
         )
         async with repo.audited(ctx.pool) as (conn, audit):
@@ -242,13 +242,12 @@ class Notifier:
             obj = row["detail"]["run_id"]
         if obj.startswith("A-"):
             approval = await repo.get_approval(conn, obj)
-            return Seen(spec=approval and approval["spec_name"], approval=approval)
+            return Seen(spec=None if approval is None else approval["spec_name"], approval=approval)
         if obj.startswith("readiness:"):
             name = obj.removeprefix("readiness:")
             stored = await repo.newest_spec(conn, name)  # none: a name only the settings list
-            return Seen(
-                spec=name, unlabelled=stored and _unlabelled(await self._spec(conn, stored["spec_id"]))
-            )
+            compiled = None if stored is None else await self._spec(conn, stored["spec_id"])
+            return Seen(spec=name, unlabelled=None if compiled is None else _unlabelled(compiled))
         if not obj.startswith("R-"):
             return Seen()
         run = await repo.get_run(conn, obj)
@@ -298,7 +297,7 @@ class Notifier:
             for channel in rule.channels:
                 if not (event.kind == "notify.dead" and channel == event.facts["channel"]):
                     by_channel.setdefault(channel, {})[rule.name] = (rule, fired)
-        seq = audit and audit["seq"]
+        seq = None if audit is None else audit["seq"]
         for channel, fired_rules in by_channel.items():
             await self._insert(
                 conn,
@@ -330,7 +329,9 @@ class Notifier:
     ) -> str:
         """Render and store the delivery of ``event`` to channel ``name``: suppressed when muted, a duplicate
         or, but an alert, over the channel's hourly rate (a test never is); its id."""
-        notify, channel = self.notify, self.notify.channels[name]  # type: ignore[union-attr]
+        notify, installation = self.notify, self._installation
+        assert notify is not None and installation is not None  # the feed and housekeeping read both first
+        channel = notify.channels[name]
         fired = {rule: f for rule, (_, f) in fired_rules.items()}
         bounds: dict[str, str] = {}
         for rule, f in fired_rules.values():
@@ -339,7 +340,7 @@ class Notifier:
         dedup_key = events.dedup(event, key)
         run_id = (event.run or {}).get("run_id")
         held = any(f.held or f.crossed for f in fired.values())
-        hours, among = notify.dedup_hours, events.superseded(event)  # type: ignore[union-attr]
+        hours, among = notify.dedup_hours, events.superseded(event)
         found = await repo.held_back(conn, name, dedup_key, hours, among=among)
         why = mute_id = None
         if not test:
@@ -347,15 +348,15 @@ class Notifier:
                 why = "muted"
             elif found["duplicate"]:
                 why = "duplicate"
-            elif events.severity(event, held) != "alert" and found["last_hour"] >= notify.rate_per_hour:  # type: ignore[union-attr]
+            elif events.severity(event, held) != "alert" and found["last_hour"] >= notify.rate_per_hour:
                 why = "rate_limited"
         delivery_id = repo.new_delivery_id()
         auth = self.ctx.settings.auth
         doc = events.payload(
             event, channel, delivery_id=delivery_id, event_id=event_id, occurred_at=at,
-            installation={"id": self._installation, "label": notify.label},  # type: ignore[union-attr, dict-item]
+            installation={"id": installation, "label": notify.label},
             audit=audit, fired=fired, bounds=bounds, suppressed=0 if why else found["suppressed"],
-            public_url=auth and auth.public_url,
+            public_url=None if auth is None else auth.public_url,
         )  # fmt: skip
         text = events.body(channel.kind, doc, at=now)
         await repo.insert_delivery(conn, {
@@ -368,9 +369,11 @@ class Notifier:
 
     async def _digest(self, conn: repo.Conn, event: Event) -> dict[str, Any]:
         """The cycle's digest (``notifications.digest``)."""
-        run = await repo.get_run(conn, event.run["run_id"])  # type: ignore[index]
-        bug = approvals.bug_rules(await self._spec(conn, run["spec_id"]))  # type: ignore[index]
-        return await notifications.digest(conn, run, event.facts["cycle"], bug)  # type: ignore[arg-type]
+        assert event.run is not None  # a cycle's end names its run
+        run = await repo.get_run(conn, event.run["run_id"])
+        assert run is not None  # a run's cycle ended: its row stays until the run is purged
+        bug = approvals.bug_rules(await self._spec(conn, run["spec_id"]))
+        return await notifications.digest(conn, run, event.facts["cycle"], bug)
 
     # -- delivery ----------------------------------------------------------------------------------
 
@@ -385,9 +388,11 @@ class Notifier:
 
     async def _send(self, name: str) -> None:
         """Send the channel's heads in order while one is due, each recorded before the next."""
+        sender, notify = self.sender, self.notify
+        assert sender is not None and notify is not None  # sends run under a notify block alone
         try:
             while (head := await self._claim(name)) is not None:
-                outcome = await self.sender.send(self.notify.channels[name], head)  # type: ignore[union-attr]
+                outcome = await sender.send(notify.channels[name], head)
                 await self._record(name, head, outcome)
         except Exception as exc:
             _cancelled(exc)
@@ -439,7 +444,8 @@ class Notifier:
                                         status=outcome.status, due_in=delay)  # fmt: skip
             else:  # a retried code at max_attempts: one poisoned delivery cannot hold its channel
                 error = "retries_exhausted" if outcome.state == "retry" else outcome.error
-                await self._dead(conn, audit, name, head, error, status=outcome.status, attempts=attempts)  # type: ignore[arg-type]
+                assert error is not None  # a dead outcome names its error
+                await self._dead(conn, audit, name, head, error, status=outcome.status, attempts=attempts)
 
     async def _dead(
         self,

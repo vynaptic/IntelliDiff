@@ -125,17 +125,18 @@ async def _evaluate(ctx: Context, state: State) -> None:
             state.seq = await repo.chain_head(conn)
         entered = await repo.readiness_entered(conn, state.seq, TRIGGERS)
         recorded = None if state.configured else await repo.last_audit(conn, "readiness.config")
-        was = recorded and recorded["detail"]["sha256"]
+        was = None if recorded is None else recorded["detail"]["sha256"]
         config = not state.configured and was != readiness.config_sha256(settings)
         due = state.measured or waited >= (READINESS_MIN_S if entered["seq"] else READINESS_EVERY_S)
         if due and not await repo.backfill_owed(conn):
             found = await judging.judged(ctx, conn)
         if config:
             await _configured(conn, audit, settings, was)
-        for name, item in found.items.items() if found is not None else ():
-            if name not in found.waiting:  # judged on the pass that measures its cycles
-                judged = readiness.as_of(found.policies[name], found.now)
-                await _changed(audit, item, found.last.get(name), judged, config=config)
+        if found is not None:
+            for name, item in found.items.items():
+                if name not in found.waiting:  # judged on the pass that measures its cycles
+                    judged = readiness.as_of(found.policies[name], found.now)
+                    await _changed(audit, item, found.last.get(name), judged, config=config)
     state.configured = True
     if found is not None:
         state.seq, state.evaluated_at, state.measured = entered["head"], started, False
@@ -252,8 +253,8 @@ async def _measured(
         said = problem or census.described(counted["a"])
     elif not late:  # a scan read to its end counts both sides, with or without its graph parity (L2)
         whole = scan is not None and scan["done"] and cut is None
-        if whole:  # with or without its graph parity; but a file side a with lines that were not rows
-            side_a = census.scanned("a", params["tables"]["a"], scan, spec)  # type: ignore[arg-type]
+        if whole and scan is not None:  # with or without its graph parity; but a file side a with lines
+            side_a = census.scanned("a", params["tables"]["a"], scan, spec)  # that were not rows
             if side_a.get("rejected"):  # is no census
                 counted = {"cycle": cycle, "a": side_a, "b": None}
                 problem = census_problem(run, cycle, spec, counted, scan, ended, None)
@@ -273,8 +274,8 @@ async def _measured(
             changes = await repo.cycle_changes(conn, run_id, cycle)
     if not late and spec.raw.get("graph"):
         counts = await repo.graph_counts(conn, run_id, cycle)
-        graph = {"computed": scan is not None and scan.get("graph") is not None}
-        graph |= {code: counts.get(code, 0) for code in readiness.GRAPH_CODES}
+        computed: dict[str, bool | int] = {"computed": scan is not None and scan.get("graph") is not None}
+        graph = computed | {code: counts.get(code, 0) for code in readiness.GRAPH_CODES}
     critical = results = None
     if not late:
         bug_rules = approvals.bug_rules(spec)

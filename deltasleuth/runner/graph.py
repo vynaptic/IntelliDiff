@@ -71,7 +71,7 @@ class _Forest:
         return True
 
     def members(self) -> list[str]:
-        return [node[1] for node in self._parent if node[0] == "m"]  # type: ignore[index]
+        return [node[1] for node in self._parent if isinstance(node, tuple) and node[0] == "m"]  # ("m", name)
 
 
 async def analyse(ctx: Context, spec: CompiledSpec, tables: pg.Plan, state: Row) -> tuple[Row, list[Row]]:
@@ -148,7 +148,8 @@ async def _group_sets(
     streams = {s: _stream(conns[s], *pg.group_sets_sql(tables[s], members, groups)) for s in "ab"}
     heads = {s: await anext(streams[s], None) for s in "ab"}
     summary = {"groups_a": 0, "groups_b": 0, "groups_equal": 0, "groups_different": 0}
-    differing, hot = [], {"a": set(), "b": set()}
+    differing: list[tuple[str, int, int]] = []
+    hot: dict[str, set[str]] = {"a": set(), "b": set()}
     while any(heads.values()):
         group = min(h[0] for h in heads.values() if h)
         rows = {s: h[1:] if h and h[0] == group else None for s, h in heads.items()}
@@ -199,7 +200,7 @@ async def _explore(
     """The side's components around ``seeds``: members lead to their groups, groups to their members,
     until each component is closed or holds more than ``cap`` members (or a hot group). Returns the
     forest, holding every member reached, and the roots of the oversized components."""
-    forest, seen_groups, reached = _Forest(), set(), set()
+    forest, seen_groups, reached = _Forest(), set[str](), set[str]()
     frontier = set(seeds)
     while frontier:
         reached |= frontier

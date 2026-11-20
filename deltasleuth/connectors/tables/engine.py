@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 import socket
 import ssl
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -82,18 +82,15 @@ class Relation:
     facts: dict[str, Any]
 
 
-class Engine(Protocol):
-    """One database engine's sessions and statements. ``side`` is a table side of a run's plan. Every
-    engine of the registry declares every member: nothing branches on an engine's name."""
+class Engine[S: Session](Protocol):
+    """One database engine's sessions (``S``) and statements. ``side`` is a table side of a run's plan.
+    Every engine of the registry declares every member: nothing branches on an engine's name."""
 
     name: str  # postgresql, for one; request_url is <name>://<target_id>/<relation>
     traits: EngineTraits  # what a targets file and a spec may declare of it: its row of ``core.engines``
     arms: int  # keys per per-key statement
-    unfit: tuple[type[BaseException], ...]  # a key the column cannot hold
-    fold: Callable[[str], str] | None  # how its catalogue folds an unquoted name; None: any case matches
     hides: bool  # its catalogue lists only the columns the role holds a privilege on
     grant: str  # the privilege a role reads a relation by
-    sum_digits: int | None  # the digits its sum of numbers holds; None: every digit
     empty_null: bool  # it stores an empty string as NULL
     retry_alone: bool  # a batch past its timeout is read again key by key: not a file side's
     # Its server renders a row's document and hashes it: a pair of its sides alone is planned with no
@@ -110,8 +107,27 @@ class Engine(Protocol):
     # Its server hashes a text in its database's character sets: two sides of it hash a column alike only
     # where both sets agree.
     hash_charsets: bool
-    observed: str | None  # the release (major.minor) it was observed on; ``ds target check`` notes another
-    full_charset: str | None  # the character set a run takes its text keys whole in; check notes another
+
+    # Read only: each engine declares a narrower type.
+    @property
+    def unfit(self) -> tuple[type[BaseException], ...]:
+        """A key the column cannot hold."""
+
+    @property
+    def fold(self) -> Callable[[str], str] | None:
+        """How its catalogue folds an unquoted name; None: any case matches."""
+
+    @property
+    def sum_digits(self) -> int | None:
+        """The digits its sum of numbers holds; None: every digit."""
+
+    @property
+    def observed(self) -> str | None:
+        """The release (major.minor) it was observed on; ``ds target check`` notes another."""
+
+    @property
+    def full_charset(self) -> str | None:
+        """The character set a run takes its text keys whole in; ``ds target check`` notes another."""
 
     def planning(self) -> AbstractAsyncContextManager[None]:
         """What the creation of a run holds while its sides on this engine are planned."""
@@ -121,58 +137,58 @@ class Engine(Protocol):
         text, any other's rendering; None where no statement is built of a declared type. The
         schema guard compares two declared types'."""
 
-    async def connect(self, target: Target, *, timeout_s: float = 0) -> Session:
+    async def connect(self, target: Target, *, timeout_s: float = 0) -> S:
         """A read-only session; ``timeout_s`` bounds each statement (0: no bound)."""
 
-    def snapshot(self, target: Target, *, timeout_s: float = 0) -> AbstractAsyncContextManager[Session]:
+    def snapshot(self, target: Target, *, timeout_s: float = 0) -> AbstractAsyncContextManager[S]:
         """A session whose statements all see the same data."""
 
-    async def server(self, session: Session) -> dict[str, Any]:
+    async def server(self, session: S) -> dict[str, Any]:
         """What the session says of its server, which ``ds target check`` alone prints: its full
         ``version``, its ``charset`` and whether the session is encrypted (``tls``)."""
 
-    def release(self, session: Session) -> str:
+    def release(self, session: S) -> str:
         """The major and minor version of the session's server, as a plan's ``server``."""
 
     async def describe(
-        self, session: Session, schema: str | None, name: str, *, side: Any = None
+        self, session: S, schema: str | None, name: str, *, side: Any = None
     ) -> Relation | None:
         """The relation as the catalogue holds it; None when it is missing or not visible. ``side`` is what a
         file side is described by: its ``SideConfig`` when a run is planned, its
         stored plan afterwards; every other engine ignores it."""
 
-    async def probe(self, session: Session, side: Plan) -> None:
+    async def probe(self, session: S, side: Plan) -> None:
         """Plan and bind the side's key maps and filter, reading no row."""
 
     def large(self, side: Plan) -> bool:
         """Whether a per-key row of the side may hold a large value: its keys are read few at a time."""
 
-    async def rows(self, session: Session, side: Plan, asked: Asked) -> list[Row]:
+    async def rows(self, session: S, side: Plan, asked: Asked) -> list[Row]:
         """Each asked key's rows, at most two: its position, the row's document, whether the filter
         selects it."""
 
-    async def scan(self, session: Session, side: Plan, after: Sequence[bytes] | None) -> AsyncIterator[Rows]:
+    async def scan(self, session: S, side: Plan, after: Sequence[bytes] | None) -> AsyncIterator[Rows]:
         """The population's (key parts..., digest) in key order after ``after``, in fetched batches; its
         statement is sent before it returns, so both sides of a scan are pinned when they are opened."""
 
-    def census(self, session: Session, side: Plan) -> AsyncIterator[Rows]:
+    def census(self, session: S, side: Plan) -> AsyncIterator[Rows]:
         """The population's (key parts...) in key order, in fetched batches."""
 
-    def frame(self, session: Session, side: Plan) -> AsyncIterator[Rows]:
+    def frame(self, session: S, side: Plan) -> AsyncIterator[Rows]:
         """The population's (key parts..., strata JSON) in key order, in fetched batches."""
 
-    async def null_keys(self, session: Session, side: Plan) -> int:
+    async def null_keys(self, session: S, side: Plan) -> int:
         """Rows of the filtered population that have no key."""
 
-    async def relations(self, session: Session, schema: str | None) -> list[tuple[str, str]]:
+    async def relations(self, session: S, schema: str | None) -> list[tuple[str, str]]:
         """Each table and view of the schema the role may read, by name: its name and its kind."""
 
-    async def figures(self, session: Session, side: Plan, wanted: Sequence[Figure]) -> list[str | None]:
+    async def figures(self, session: S, side: Plan, wanted: Sequence[Figure]) -> list[str | None]:
         """Each figure of ``wanted`` over the side's filtered rows, those without a key among them, in one
         statement that reads no value: a count, a length, or a sum, a minimum or a maximum rendered as
         text."""
 
-    async def duplicates(self, session: Session, side: Plan) -> tuple[int, int]:
+    async def duplicates(self, session: S, side: Plan) -> tuple[int, int]:
         """The keys of the population that several rows hold, and the rows that hold them."""
 
 
@@ -340,23 +356,23 @@ def tls_context(database: DatabaseTarget) -> ssl.SSLContext | None:
 
 
 
-def of(target: Target) -> Engine:
+def of(target: Target) -> Engine[Any]:
     """The engine of a database target."""
     return ENGINES[target.engine or ""]
 
 
-def engine_name(side: Plan) -> str:
+def engine_name(side: Mapping[str, Any]) -> str:
     """The name of the engine a table side was planned for: a plan without ``engine`` (a pair of PostgreSQL
     tables) is the native engine's."""
     return side.get("engine") or next(name for name, engine in ENGINES.items() if engine.native)
 
 
-def named(side: Plan) -> Engine:
+def named(side: Mapping[str, Any]) -> Engine[Any]:
     """The engine a table side was planned for (``engine_name``)."""
     return ENGINES[engine_name(side)]
 
 
-def planned(side: str, plan: Plan, target: Target) -> Engine:
+def planned(side: str, plan: Plan, target: Target) -> Engine[Any]:
     """``named(plan)``, for a run's side ``side`` on ``target``; refused when the target's engine is no
     longer the one the run was planned for."""
     wanted = engine_name(plan)
@@ -372,7 +388,7 @@ from deltasleuth.connectors.tables import duck as _files  # noqa: E402
 from deltasleuth.connectors.tables import mysql as _mysql  # noqa: E402
 from deltasleuth.connectors.tables import oracle as _oracle  # noqa: E402
 
-ENGINES: dict[str, Engine] = {
+ENGINES: dict[str, Engine[Any]] = {  # each engine of its own session type
     "postgresql": _postgresql.PostgreSQL(),
     "mysql": _mysql.MySQL(),
     "oracle": _oracle.Oracle(),

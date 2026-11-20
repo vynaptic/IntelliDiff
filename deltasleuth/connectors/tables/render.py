@@ -247,7 +247,7 @@ def parsed(side: Plan, text: str) -> dict[str, JSON]:
     if classes:
         for name, column in side["columns"].items():
             of, rule = _POSTGRESQL.get(classes[column], (None, None))
-            if rule is not None and isinstance(row.get(name), of):
+            if of is not None and rule is not None and isinstance(row.get(name), of):
                 row[name] = rule(row[name])
     return row
 

@@ -32,8 +32,8 @@ from collections.abc import Callable, Sequence
 from contextvars import ContextVar
 from decimal import Decimal
 from functools import cache, lru_cache, partial
-from re import _compiler, _parser
-from re import _constants as _sre
+from re import _compiler, _parser  # type: ignore[attr-defined]  # typeshed omits re's private modules
+from re import _constants as _sre  # type: ignore[attr-defined]  # as above
 from typing import Any
 
 import jsonata

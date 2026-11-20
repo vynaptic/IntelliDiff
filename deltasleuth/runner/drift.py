@@ -183,10 +183,11 @@ def _against(
     (one from before the guard, one it adopted, or one whose look at its creation failed), against which
     only the columns it compared are judged."""
     sides, against, baseline = {}, {}, _baseline(basis)
+    assert planned.plan is not None  # its relations are its plan's
     for side, relation in planned.relations.items():
-        plan = planned.plan[side]  # type: ignore[index]
+        plan = planned.plan[side]
         sides[side] = _held(spec, side, plan, precheck.shape(relation))
-        was = basis["guard"].get(side) if baseline else None  # type: ignore[index]
+        was = basis["guard"].get(side) if basis is not None and baseline else None
         if basis is not None and not baseline and (basis["tables"] or {}).get(side):
             was = {"planned": None, "roles": precheck.roles(basis["tables"][side])}
         if was is not None:
@@ -225,7 +226,8 @@ def _created(
     found = [change for side in against.values() for change in side]
     what = precheck.verdict(mode(spec), found, creation=True)
     if what == "refused":
-        named, of = f"spec {spec_id} ({spec.name} {spec.version})", basis["run_id"]  # type: ignore[index]
+        assert basis is not None  # a refusal is of changes against it
+        named, of = f"spec {spec_id} ({spec.name} {spec.version})", basis["run_id"]
         narrowing = _listed([_narrowing(c, of) for c in found if c["breaking"]])
         raise Refused(
             422,
@@ -237,7 +239,7 @@ def _created(
     guard["checked"] = _checked(1, "creation")
     if not found:
         return guard, None
-    was = basis["guard"] if _baseline(basis) else {}  # type: ignore[index]
+    was = basis["guard"] if basis is not None and _baseline(basis) else {}
     moved = {
         side: _counted(against.get(side, ()), (was.get(side) or {}).get("sha256"), held["sha256"])
         for side, held in sides.items()
@@ -360,7 +362,7 @@ async def check(
         if held is None or held["cycle"] != run["cycle"]:
             return False  # the run moved on to another cycle: its start is looked at afresh
         try:
-            guard, moved = _looked(run | {"guard": held["guard"]}, spec, relations, where)
+            guard, moved = _looked({**run, "guard": held["guard"]}, spec, relations, where)
             stops, fault = _stops(guard, breaking), None
         except Exception as exc:
             stops, fault = False, exc

@@ -85,14 +85,19 @@ def _listed(spec: tools.ToolSpec) -> types.Tool:
 
 
 def build(
-    ctx: Context, settings: McpSettings, *, who: Principal | None = None, denials: Throttle | None = None
+    ctx: Context | None,
+    settings: McpSettings,
+    *,
+    who: Principal | None = None,
+    denials: Throttle | None = None,
 ) -> Server[Any]:
     """The server of one process over ``ctx``, under its ``mcp`` block. ``who`` is stdio's caller
     (``tools.caller``'s), each of whose calls gets a request id of its own; without it each request
     names its own. ``denials`` is the throttle of ``authz.denied`` rows ``ds serve``'s routes share.
     Its calls read the store through ``_Pool``."""
     limits = tools.Limits(settings, denials=denials)
-    ctx = ctx and replace(ctx, pool=_Pool(ctx.pool))  # type: ignore[arg-type]  # None: the self-test's
+    if ctx is not None:  # None: the self-test's server, which calls no tool
+        ctx = replace(ctx, pool=_Pool(ctx.pool))  # type: ignore[arg-type]  # a proxy standing in for the pool
 
     def asking(asked: ServerRequestContext[Any, Any]) -> Principal | None:
         if who is not None:
@@ -119,6 +124,7 @@ def build(
         if (caller := asking(asked)) is None:
             text, failed = tools.refused(params.name, unnamed(asked)), True
         else:
+            assert ctx is not None  # the self-test's server lists its tools alone
             text, failed = await tools.call(ctx, limits, caller, params.name, params.arguments or {})
         return types.CallToolResult(content=[types.TextContent(type="text", text=text)], is_error=failed)
 
@@ -174,8 +180,10 @@ def selftest() -> None:
     """The release's smoke step: the server built without a store, every data class and the work tool
     served, lists its tools and says its instructions to the library's own client, as an operator, in both
     protocol eras. Prints what it saw; raises on any failure."""
-    settings = McpSettings((tools.AGGREGATES, tools.TOKENISED, tools.CLEAR), work=("compare_key",))
-    server = build(None, settings, who=tools.caller(dev(), tools.STDIO))  # type: ignore[arg-type]
+    settings = McpSettings(
+        ("aggregates", "production_tokenised", "production_clear_declared"), work=("compare_key",)
+    )  # every data class
+    server = build(None, settings, who=tools.caller(dev(), tools.STDIO))  # without a store: no tool is called
     print(asyncio.run(_selftested(server)))
 
 

@@ -234,8 +234,9 @@ async def verify(
                 lost = "it was not written by DeltaSleuth, or the SIEM lost it"
                 raise ChainBroken(f"{name} has no SIEM line: {lost}", seq)
         rows += len(page)
-    if (row := await repo.unchained_audit_row(conn)) is not None:
-        raise ChainBroken(f"the audit row with id {row['id']} ({_name(row)}) has no chain entry: {ALTERED}")
+    if (unchained := await repo.unchained_audit_row(conn)) is not None:
+        named = f"{unchained['id']} ({_name(unchained)})"
+        raise ChainBroken(f"the audit row with id {named} has no chain entry: {ALTERED}")
     if unseen := sorted(set(by_seq) - seen):
         seq = unseen[0]
         where = f"row {seq} ({_name(by_seq[seq])})"

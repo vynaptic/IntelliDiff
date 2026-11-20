@@ -128,7 +128,7 @@ async def fire(
     if await _rezone(ctx, row) or (found := decide(row, now)) is None:
         return None
     if found.older or found.closed:
-        row = await _late(ctx, row, found, queued)  # type: ignore[assignment]
+        row = await _late(ctx, row, found, queued)
         if row is None or found.closed:
             return None
         tried = 0  # the count was an older time's

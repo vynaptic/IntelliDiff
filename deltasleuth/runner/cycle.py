@@ -144,7 +144,10 @@ async def finish_cycle(
     if going_on:
         keys, cut, walk = ({}, None, None) if rescan else await _rolled(ctx, spec, run)
     attach = going_on and _unapproved(ctx, spec, run)
-    stopped = await licence.stopped(ctx, run, spec, next_at) if going_on else None  # its reason wins
+    stopped = None  # why the licence stops the soak: its reason wins
+    if going_on:
+        assert next_at is not None  # a soak that goes on has its next cycle's start
+        stopped = await licence.stopped(ctx, run, spec, next_at)
     async with repo.audited(ctx.pool) as (conn, audit):
         # The approval is read FOR SHARE before the run's row lock.
         attached = await _attached(ctx, conn, spec, run) if attach else None
@@ -152,6 +155,7 @@ async def finish_cycle(
         if not await repo.set_run_status(conn, run_id, run["status"], when=[run["status"]]):
             return
         latest = await repo.get_run(conn, run_id)
+        assert latest is not None  # its row lock is held
         if latest["cycle"] != run["cycle"]:
             return
         erased = latest["stop_reason"] == ERASURE  # its data is erased next: ending it so needs no key
@@ -165,6 +169,7 @@ async def finish_cycle(
             await repo.set_run_status(conn, run_id, ended)
             await audit(who, "run.finished", run_id, {"status": ended, "reason": latest["stop_reason"]})
         elif going_on:
+            assert next_at is not None
             scan = new_scan() | {"due": next_at.isoformat()} if rescan else None
             sealed = None
             if keys is not None:  # off the event loop: a rolled key set may hold a million keys
@@ -192,11 +197,12 @@ async def finish_cycle(
             read = {"key_source": walk} if walk is not None and walk["basis"] == "key_table" else {}
             await audit(who, "run.cycle", run_id, {"cycle": cycle} | read)
             if why is not None:
-                detail = {"reason": why, "approval_id": attached}
+                detail: dict[str, Any] = {"reason": why, "approval_id": attached}
                 if stopped is not None:
                     detail["licence"] = stopped  # the refusal as data: its message is logged
                 if why == sample.SAMPLE_PAUSE:
-                    detail["draw_id"] = drawn["draw_id"]  # type: ignore[index]
+                    assert drawn is not None  # only a drawn cycle's draw pauses the run
+                    detail["draw_id"] = drawn["draw_id"]
                 await audit(WORKER, "paused", run_id, detail)
         else:
             status = final_status(counters)

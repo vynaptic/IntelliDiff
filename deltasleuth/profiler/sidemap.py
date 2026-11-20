@@ -11,7 +11,7 @@ import re
 from collections.abc import Sequence
 
 from deltasleuth.profiler.align import Alignment
-from deltasleuth.profiler.model import ROOT, Path
+from deltasleuth.profiler.model import ROOT, Path, names
 from deltasleuth.profiler.profile import LEAF, OBJECT_ARRAY, OPAQUE, RECORD, SCALAR_ARRAY, SideProfile
 
 _INDENT = "  "
@@ -84,14 +84,14 @@ class _Builder:
         b_path = self.matches.get(a_path)
         if b_path is None:
             return None
-        ref = jsonata_ref(ctx, b_path[len(b_ctx) :])
+        ref = jsonata_ref(ctx, names(b_path[len(b_ctx) :]))
         if kind in (LEAF, OPAQUE):
             return ref
         if kind == SCALAR_ARRAY:
             return f'$type({ref}) = "array" ? [{ref}] : {ref}'
         if kind == OBJECT_ARRAY:
-            inner = self.emit((*a_path, None), (*b_path, None), "", level) or "{}"
-            step = inner if inner.startswith("{") else f"({inner})"
+            member = self.emit((*a_path, None), (*b_path, None), "", level) or "{}"
+            step = member if member.startswith("{") else f"({member})"
             return f'$type({ref}) = "array" ? [{ref}.{step}] : {ref}'
         var, key = f"$v{level}", f"$k{level}"  # a map: rebuilt member by member, keys stay data
         inner = self.emit((*a_path, None), (*b_path, None), var, level + 1)

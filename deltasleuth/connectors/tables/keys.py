@@ -38,7 +38,8 @@ def side_values(key: str, side: Plan) -> list[list[str]] | None:
         except UnicodeEncodeError:
             raise KeyRejectedError("the key has no UTF-8 form") from None
     values = [to_side(part, key_map) for part, key_map in zip(parts, key_maps(side), strict=True)]
-    return None if any(v is None for v in values) else values  # type: ignore[return-value]
+    mapped = [v for v in values if v is not None]
+    return mapped if len(mapped) == len(values) else None
 
 
 def _engine(side: Plan) -> Any:
@@ -50,25 +51,27 @@ def _engine(side: Plan) -> Any:
 
 def to_side(part: str, key_map: Mapping[str, Any] | None) -> list[str] | None:
     """The values a side may store for one canonical key part, or None."""
-    kind = key_map["kind"] if key_map else "identity"
+    if not key_map:  # none: the identity
+        return [part]
+    kind = key_map["kind"]
     if kind == "prefix_pad":  # exactly the values that prefix || lpad(v, width, '0') (never cut) maps here
-        prefix, width = key_map["prefix"], key_map["width"]  # type: ignore[index]
+        prefix, width = key_map["prefix"], key_map["width"]
         digits = part[len(prefix) :] if part.startswith(prefix) else ""
         if not (digits.isascii() and digits.isdigit()) or len(digits) < width:
             return None
         # Padded exactly to the width, the value may be stored with fewer (or no) leading zeros.
         suffixes = range(len(digits)) if len(digits) == width else range(1)
         values = [digits[i:] for i in suffixes if not digits[:i].strip("0")]
-        if key_map["sideType"] == "integer":  # type: ignore[index]
+        if key_map["sideType"] == "integer":
             values = [v for v in values if v == "0" or not v.startswith("0")]
         return values or None
     if kind == "regex":
-        rule = key_map["toSide"]  # type: ignore[index]
+        rule = key_map["toSide"]
         match = re.fullmatch(rule["pattern"], part)
         if match is None:
             return None
         value = match.expand(re.sub(r"\$([0-9]+)", r"\\g<\1>", rule["replacement"].replace("\\", "\\\\")))
         # an integer column renders no leading zero and no -0
-        integral = key_map["sideType"] != "integer" or re.fullmatch("0|-?[1-9][0-9]*", value)  # type: ignore[index]
+        integral = key_map["sideType"] != "integer" or re.fullmatch("0|-?[1-9][0-9]*", value)
         return [value] if integral else None
     return [part]

@@ -13,7 +13,7 @@ The agent acts for the asker: the model is offered only the tools the asker's ro
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -157,6 +157,7 @@ def taken(args: Mapping[str, Any]) -> dict[str, Any]:
 async def _run_summary(ctx: Context, scope: Scope) -> Any:
     async with ctx.pool.connection() as conn:
         run = await repo.get_run(conn, scope.run_id)
+        assert run is not None  # a chat's run outlives the chat
         causes = await repo.list_root_causes(conn, scope.run_id)
         progress = await repo.cycle_counts(conn, scope.run_id)
         sampled = run["params"].get("keys_source") == "hash_sample"
@@ -204,10 +205,21 @@ def _top(score: Mapping[str, Any]) -> dict[str, Any]:
 
 
 async def _findings(
-    ctx: Context, scope: Scope, key: str | None = None, limit: int = DEFAULT_FINDINGS, **filters: str
+    ctx: Context,
+    scope: Scope,
+    key: str | None = None,
+    limit: int = DEFAULT_FINDINGS,
+    *,
+    root_cause_id: str | None = None,
+    taxonomy_code: str | None = None,
+    path_pattern: str | None = None,
+    severity: str | None = None,
 ) -> Any:
     async with ctx.pool.connection() as conn:
-        rows, more = await repo.list_findings(conn, scope.run_id, key_masked=key, limit=limit, **filters)
+        rows, more = await repo.list_findings(
+            conn, scope.run_id, key_masked=key, limit=limit, root_cause_id=root_cause_id,
+            taxonomy_code=taxonomy_code, path_pattern=path_pattern, severity=severity,
+        )  # fmt: skip
     return {"findings": _picks(rows, (*_FINDING, "key_masked")), "more": more is not None}
 
 
@@ -316,7 +328,7 @@ def _picks(rows: Iterable[Mapping[str, Any]], fields: tuple[str, ...]) -> list[d
     return [_pick(row, fields) for row in rows]
 
 
-_IMPLS = {
+_IMPLS: dict[str, Callable[..., Awaitable[Any]]] = {  # each tool's own arguments, as its schema admits
     "get_run_summary": _run_summary,
     "get_findings": _findings,
     "get_observations": _observations,

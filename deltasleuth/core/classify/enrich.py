@@ -98,9 +98,9 @@ def _rule_code(f: Finding, spec: CompiledSpec) -> tuple[str | None, Severity | N
                 missing = f.change_type is ChangeType.MISSING_IN_B
                 return (r.taxonomy_missing_in_b if missing else r.taxonomy_extra_in_b), r.severity
     if f.change_type is ChangeType.VALUE_CHANGED:
-        for r in spec.compare.fields:
-            if segments(r.path) == segs:
-                return r.taxonomy_code, r.severity
+        for rule in spec.compare.fields:
+            if segments(rule.path) == segs:
+                return rule.taxonomy_code, rule.severity
     return None, None
 
 

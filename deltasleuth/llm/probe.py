@@ -137,8 +137,9 @@ async def _tool_roundtrip(call: Callable[[LLMRequest], Awaitable[LLMResponse]]) 
         first = await call(ask)
         calls = [c for c in first.tool_calls if c.name == VALUE_TOOL.name]
         if not calls:
-            evidence = (f"call 1: no get_probe_value call (stop={first.stop_reason})",)
-            return CheckResult("tool_roundtrip", "fail", evidence)
+            return CheckResult(
+                "tool_roundtrip", "fail", (f"call 1: no get_probe_value call (stop={first.stop_reason})",)
+            )
         evidence = [
             f"call 1: stop={first.stop_reason}, get_probe_value called, "
             f"arguments_valid={calls[0].arguments_valid}"

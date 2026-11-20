@@ -64,7 +64,7 @@ async def health(ctx: Ctx) -> Response:
         "last_sweep_at": swept["swept_at"],
         "age_s": round(max(swept["age_s"], 0.0), 3),
     }
-    stale = worker.stalled(ctx, swept and swept["age_s"])
+    stale = worker.stalled(ctx, None if swept is None else swept["age_s"])
     body = {"status": "stale" if stale else "ok", "ai": ctx.llm is not None, "auth": ctx.settings.auth_mode}
     return ok(body | {"worker": sweep}, 503 if stale else 200)
 

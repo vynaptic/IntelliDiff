@@ -279,10 +279,10 @@ def stated(text: str) -> list[tuple[str, Decimal]]:
     for run in WORDS.finditer(words):
         if run[0].lower() == "one":
             continue
-        for start, end, value in _spelt(run):
+        for start, end, spelt in _spelt(run):
             written = " ".join(text[start:end].split())
             if written.lower() != "two" or not _PAIR.match(text, end):
-                found[start] = written, Decimal(value)
+                found[start] = written, Decimal(spelt)
     return [found[start] for start in sorted(found)]
 
 

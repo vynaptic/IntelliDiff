@@ -67,11 +67,11 @@ def compare_pair(
             attrs=attrs,
         )
     if side_a.kind is _ABSENT:
-        findings = [_document_finding(key, Side.B, side_b.canonical)]
+        findings = [_document_finding(key, Side.B, _canonical(side_b))]
     elif side_b.kind is _ABSENT:
-        findings = [_document_finding(key, Side.A, side_a.canonical)]
+        findings = [_document_finding(key, Side.A, _canonical(side_a))]
     else:
-        findings = list((differ or diff)(side_a.canonical, side_b.canonical, spec, key=key))
+        findings = list((differ or diff)(_canonical(side_a), _canonical(side_b), spec, key=key))
         if side_a.selected != side_b.selected:  # the key left one side's filtered population
             findings.append(_membership_finding(key, side_a.selected, side_b.selected))
     errors: list[dict[str, str]] = []
@@ -102,8 +102,15 @@ def _inconclusive_reason(a: SideState, b: SideState) -> str | None:
 
 def _nothing_compared(a: SideState, b: SideState) -> bool:
     """Both COMPLETE, and select, map or filters left neither document a value (a null root none)."""
-    docs = [s.canonical.doc for s in (a, b) if s.kind is _COMPLETE]
+    docs = [_canonical(s).doc for s in (a, b) if s.kind is _COMPLETE]
     return len(docs) == 2 and not any(doc is not None and _holds_value(doc) for doc in docs)
+
+
+def _canonical(side: SideState) -> Canonical:
+    """The document of a COMPLETE side, the only kind that holds one."""
+    if side.canonical is None:
+        raise ValueError(f"a side of kind {side.kind.value} holds no document")
+    return side.canonical
 
 
 def _holds_value(node: JSON) -> bool:
@@ -153,7 +160,7 @@ def _membership_finding(key: str, selected_a: bool, selected_b: bool) -> Finding
 
 
 def _outcome(a: SideState, b: SideState, findings: list[Finding]) -> Outcome:
-    discrepant = [f for f in findings if f.severity.rank > 0]
+    discrepant = [f for f in findings if f.classified_severity.rank > 0]
     if any(not f.suppressed for f in discrepant):
         outcome = Outcome.MISMATCH
     elif not discrepant:

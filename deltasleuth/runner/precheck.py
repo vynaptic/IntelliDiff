@@ -229,7 +229,7 @@ async def _read(
             found = [await ask(a, a.session)]
             found += [await ask(b, a.session)] if found == [None] else []
         else:
-            found = await asyncio.gather(ask(a, a.session), ask(b, b.session))
+            found = list(await asyncio.gather(ask(a, a.session), ask(b, b.session)))
         refused.extend(text for text in found if text is not None)
 
     async def fetch(side: _Side) -> None:

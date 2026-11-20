@@ -44,25 +44,26 @@ class TaxonomyCode:
 
 
 _C, _H, _M, _I = Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.INFO
+_CORE: tuple[tuple[str, Severity, Presence, str], ...] = (
+    ("FIELD_MISSING", _M, "missing", "Field present in A, absent in B."),
+    ("FIELD_EXTRA", _M, "extra", "Field present in B, absent in A."),
+    ("VALUE_MISMATCH", _M, "none", "Value differs."),
+    ("TYPE_MISMATCH", _M, "none", "JSON type differs."),
+    ("ORDER_MISMATCH", _M, "none", "Order of an ordered array differs."),
+    ("NORMALIZATION_ONLY", _I, "none", "Raw values differ but canonical values are equal."),
+    ("MISSING_DOCUMENT", _C, "missing", "Document present in A, authoritatively absent in B."),
+    ("EXTRA_DOCUMENT", _C, "extra", "Document present in B, authoritatively absent in A."),
+    ("MISSING_NODE", _H, "missing", "Graph mode: typed node present in A, absent in B."),
+    ("EXTRA_NODE", _H, "extra", "Graph mode: typed node present in B, absent in A."),
+    ("MISSING_EDGE", _H, "missing", "Graph mode: edge present in A, absent in B."),
+    ("EXTRA_EDGE", _H, "extra", "Graph mode: edge present in B, absent in A."),
+    ("FILTER_MEMBERSHIP", _M, "none", "The selection predicate is true on one side only."),
+    ("SCHEMA_DRIFT", _I, "none", "An observation violates the approved schema on unselected paths."),
+    ("INTERNAL_INCONSISTENCY", _H, "none", "A side contradicts itself."),
+)
 CORE_CODES: dict[str, TaxonomyCode] = {
     code: TaxonomyCode(code, "core", severity, presence, None, description)
-    for code, severity, presence, description in (
-        ("FIELD_MISSING", _M, "missing", "Field present in A, absent in B."),
-        ("FIELD_EXTRA", _M, "extra", "Field present in B, absent in A."),
-        ("VALUE_MISMATCH", _M, "none", "Value differs."),
-        ("TYPE_MISMATCH", _M, "none", "JSON type differs."),
-        ("ORDER_MISMATCH", _M, "none", "Order of an ordered array differs."),
-        ("NORMALIZATION_ONLY", _I, "none", "Raw values differ but canonical values are equal."),
-        ("MISSING_DOCUMENT", _C, "missing", "Document present in A, authoritatively absent in B."),
-        ("EXTRA_DOCUMENT", _C, "extra", "Document present in B, authoritatively absent in A."),
-        ("MISSING_NODE", _H, "missing", "Graph mode: typed node present in A, absent in B."),
-        ("EXTRA_NODE", _H, "extra", "Graph mode: typed node present in B, absent in A."),
-        ("MISSING_EDGE", _H, "missing", "Graph mode: edge present in A, absent in B."),
-        ("EXTRA_EDGE", _H, "extra", "Graph mode: edge present in B, absent in A."),
-        ("FILTER_MEMBERSHIP", _M, "none", "The selection predicate is true on one side only."),
-        ("SCHEMA_DRIFT", _I, "none", "An observation violates the approved schema on unselected paths."),
-        ("INTERNAL_INCONSISTENCY", _H, "none", "A side contradicts itself."),
-    )
+    for code, severity, presence, description in _CORE
 }
 
 # The generic code of each change type, when no field or array rule claims a finding.

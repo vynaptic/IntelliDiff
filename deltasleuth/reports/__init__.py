@@ -68,5 +68,5 @@ async def downloaded(ctx: Context, who: Principal, run_id: str, name: str, cycle
     async with repo.audited(ctx.pool) as (conn, audit):
         if not cycle:
             run = await repo.get_run(conn, run_id)
-            cycle = run and run["cycle"]
+            cycle = None if run is None else run["cycle"]
         await audit(who, "report.download", run_id, {"name": name, "cycle": cycle})

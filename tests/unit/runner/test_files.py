@@ -839,7 +839,7 @@ async def test_a_run_whose_reader_dies_three_times_fails_with_f12(
     assert {key: r["outcome"] for key, r in found.items()} == SEEDED
     said = [record.getMessage() for record in caplog.records]
     scan_lines = [line for line in said if line.startswith(f"scan of run {scan_id}")]
-    assert scan_lines[:2] == [f"scan of run {scan_id} paused: Died"] * 2 and len(scan_lines) == 3
+    assert scan_lines[:2] == [f"scan of run {scan_id} paused: Died"] * 2 and len(scan_lines) == 3, scan_lines
     assert re.fullmatch(re.escape(f"scan of run {scan_id} failed: {f12}") + AT, scan_lines[2])
     ended = (
         f"the file reader's process ended ({faults.QUIET.name}) while only one side's files were being read:"

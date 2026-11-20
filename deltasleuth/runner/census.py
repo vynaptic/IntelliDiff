@@ -14,6 +14,7 @@ it is stored on the run for its current cycle and copied to the cycle's tombston
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -29,7 +30,9 @@ Key = tuple[bytes, ...]  # a key's parts, as the census orders them
 log = logging.getLogger(__name__)
 
 
-def of_cycle(run: repo.Row, ended: repo.Row, scan: repo.Row | None, spec: CompiledSpec) -> dict[str, Any]:
+def of_cycle(
+    run: Mapping[str, Any], ended: repo.Row, scan: repo.Row | None, spec: CompiledSpec
+) -> dict[str, Any]:
     """The ended cycle's census (``ended``, its ``ds.cycles`` row; ``scan``, its scan state; ``spec``, the
     run's version, which names each side's target). A table scan counts both sides once it read each
     table to its end, graph parity (L2) included for a graph spec, uncut by maxKeys; any other run has
@@ -119,12 +122,11 @@ async def record(ctx: Context, run_id: str, *, who: Principal = WORKER) -> dict[
     async with ctx.pool.connection() as conn:
         run = await repo.get_run(conn, run_id)
         sides = [] if run is None else pending(run)
-        if not sides:
+        if run is None or not sides:
             return None
         # Not checked against today's targets: a target removed or changed since fails its side's count
         # below, which is recorded.
-        spec = await ctx.spec(conn, run["spec_id"])  # type: ignore[index]
-    assert run is not None
+        spec = await ctx.spec(conn, run["spec_id"])
     cycle, tables = run["cycle"], run["params"]["tables"]
     try:
         async with ctx.pool.connection() as conn:

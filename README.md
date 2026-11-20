@@ -46,6 +46,7 @@ Then follow [the user guide](docs/user-guide.md): the first comparison takes abo
 uv sync
 uv run pytest -q
 uv run ruff check deltasleuth mocks tests examples tools
+uv run mypy
 (cd web && npm ci && npm test && npm run build)
 ```
 

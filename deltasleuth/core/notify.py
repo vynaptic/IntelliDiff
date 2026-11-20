@@ -846,7 +846,8 @@ def fires(rule: RuleSettings, event: Event) -> Fired | None:
         name for name, fact in CHANGES.items()
         if (bound := getattr(when, name)) is not None and f[fact] is not None and f[fact] >= bound
     )  # fmt: skip
-    crossed, recovered = [], []
+    crossed: list[str] = []
+    recovered: list[str] = []
     for name, (fact, _, _) in LEVELS.items():
         if (bound := getattr(when, name)) is None or f["levels"][fact] is None:
             continue
@@ -903,7 +904,7 @@ _FINISHED = {
     "cancelled": "cancelled",
 }
 # Why a schedule's time started no run, one closed clause per reason and code.
-_MISSED = {
+_MISSED: dict[tuple[str, str | None], str] = {
     ("late", "down"): "no worker could start a run in time (none that fires schedules ran, the store was"
     " down, or the clock moved); a schedule never runs a backlog",
     ("late", "busy"): "its window closed while the worker was still starting other schedules (two at a time)",
@@ -965,7 +966,8 @@ def _who(event: Event) -> str:
 
 
 def _cycle_text(event: Event, bounds: Mapping[str, str], fired: Fired) -> tuple[str, str]:
-    f, run_id = event.facts, event.run["run_id"]  # type: ignore[index]
+    assert event.run is not None  # a cycle's event names its run
+    f, run_id = event.facts, event.run["run_id"]
     c, k = f["cycle"], f["counters"]
     title = f"{_who(event)}: cycle {c} of run {run_id} ended"
     lines = [
@@ -1007,7 +1009,8 @@ def _cycle_text(event: Event, bounds: Mapping[str, str], fired: Fired) -> tuple[
 
 
 def _run_text(event: Event) -> tuple[str, str]:
-    f, run_id, who = event.facts, event.run["run_id"], _who(event)  # type: ignore[index]
+    assert event.run is not None  # a run's event names it
+    f, run_id, who = event.facts, event.run["run_id"], _who(event)
     match event.kind:
         case "run.paused":
             title = f"{who}: run {run_id} paused"
@@ -1243,7 +1246,7 @@ def payload(
         link, withheld["link"] = None, "links_off"
     union = Fired(*(tuple(dict.fromkeys(x for f in fired.values() for x in getattr(f, part)))
                     for part in ("held", "crossed", "recovered")))  # fmt: skip
-    seq = audit and audit["seq"]
+    seq = None if audit is None else audit["seq"]
     title, words = text(shown, label=installation["label"], installation=installation["id"], seq=seq,
                         bounds=bounds, fired=union)  # fmt: skip
     if suppressed:

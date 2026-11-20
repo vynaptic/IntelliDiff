@@ -207,7 +207,8 @@ async def create_run(
             await audit(who, "schedule.fire", schedule.schedule_id, fired)
         if drifted is not None:
             if drifted["paused"]:
-                hashes = {side: (guard.get(side) or {}).get("sha256") for side in "ab"}  # type: ignore[union-attr]
+                assert guard is not None  # held whenever the tables drifted
+                hashes = {side: (guard.get(side) or {}).get("sha256") for side in "ab"}
                 row = await audit(who, "paused", run_id, {"reason": SCHEMA_PAUSE, "schema": hashes})
                 drifted |= {"paused_seq": row["chain"]["seq"]}  # one dedup key: one delivery a channel
             await audit(who, "schema.drift", run_id, drifted)
@@ -362,7 +363,7 @@ async def compare_one(ctx: Context, spec_id: int, key: str, *, who: Principal) -
     key, masked = next(iter(taken.items()))
     planned = await tables.planning(ctx.targets, spec)
     plan = planned.plan
-    reader = LiveReader(ctx, spec, tables.pins(plan, planned.pinned) if planned.pinned else plan)
+    reader = LiveReader(ctx, spec, tables.pins(plan, planned.pinned) if plan and planned.pinned else plan)
     params = {
         "keys_source": "explicit",
         "capabilities": ctx.declared(spec),
@@ -381,6 +382,7 @@ async def compare_one(ctx: Context, spec_id: int, key: str, *, who: Principal) -
             retention=retention(spec), data_key=(kek, wrapped), approval_id=approval_id,
         )  # fmt: skip
         run = await repo.get_run(conn, run_id)
+        assert run is not None  # created above, in this transaction
         warnings = drift.compared(spec, planned, await repo.guard_basis(conn, spec_id, run_id))
         detail = {"spec_id": spec_id, "approval_id": approval_id, "approval": approval}
         detail["licence"] = params["licence"]
@@ -413,6 +415,7 @@ async def compare_one(ctx: Context, spec_id: int, key: str, *, who: Principal) -
     if not completed and approval_id is not None:
         async with ctx.pool.connection() as conn:
             stopped = await repo.get_run(conn, run_id)
+        assert stopped is not None  # a one-shot run is never deleted
         if stopped["stop_reason"] == approvals.APPROVAL_REVOKED:  # its result is no evidence
             raise approvals.revoked(spec_id, spec, approval_id)
     result.attrs["run_id"], result.attrs["warnings"] = run_id, warnings

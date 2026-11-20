@@ -69,22 +69,25 @@ Around a run: schedules start runs by cron; table pre-checks compare counts and 
 read; the schema guard pauses a run whose table changed; sign-off sampling draws a stratified sample of a
 population too large to compare in full; bulk graph parity compares groups and components over two link
 tables; readiness turns ended cycles into named gates per pair; the notifier sends webhook, e-mail, Slack
-and Teams messages from the audit chain.
+and Teams messages from the audit chain. The worker's slots lease, read, judge and save keys; its sweep gives
+each job (cancellations, cycle ends, scans, censuses, draws, the schema guard, schedules, pre-checks, purge,
+the licence watch, the notifier, readiness, the sweep record, the audit anchor) its turn every poll. A job's
+failure is logged by type and place and costs that job's turn alone; only an unreachable store fails a sweep.
 
 ## 4. Code map
 
 | Path | What it holds |
 |---|---|
 | `deltasleuth/api` | The public HTTP API v1 (FastAPI), one router per resource in `routes/`, and the UI it serves. |
-| `deltasleuth/cli` | The `ds` command line (`main.py`). |
+| `deltasleuth/cli` | The `ds` command line: `main.py` builds it from one module per command group, and `common.py` holds what they share. A command imports the store and the runner inside itself, so `ds --help` loads no database driver. |
 | `deltasleuth/core/spec` | Spec loading, validation and compilation, `spec.schema.json`, and the target registry. |
 | `deltasleuth/core/canonical` | Observe, select and map, projection, normalisers, array rewriting, canonical encoding. |
 | `deltasleuth/core/diff`, `deltasleuth/core/classify` | The structural diff; outcomes, taxonomy, value classes, signatures, known differences, root causes. |
 | `deltasleuth/core/*.py` | Shared types and pure logic: exact JSON, masking (the tokenisation policy, the keyed tokeniser and masked renditions, `masking.py`), what targets and specs may declare of each database engine (`engines.py`), sampling, cron, readiness, pre-checks, notification events. |
 | `deltasleuth/connectors` | The connector protocol, REST calls, paging, templating, retries, the breaker, the network guard, captured samples, and the notification senders (webhook and e-mail). |
 | `deltasleuth/connectors/tables`, `deltasleuth/connectors/postgres` | The engine seam, the column plan and per-key reads; PostgreSQL, MySQL, Oracle and the DuckDB file reader. Each engine declares its behaviour as members of `Engine`, and its adapter turns its driver's errors into the seam's `TableError` classes. |
-| `deltasleuth/runner` | Runs, key sets, the worker, table scans, rechecks, stop conditions, cycle ends, sampling, purge, schedules, the notifier. |
-| `deltasleuth/store` | Every SQL query (`repo.py`), the migrations (`migrations/*.sql`, applied by `db.py`, each stored with its SHA-256, comments and layout aside: a start refuses a newer database or a changed file, and only `ds serve`, `ds worker` and `ds migrate` apply them) and the audit chain check. |
+| `deltasleuth/runner` | Runs, key sets, the worker (the lock in `worker.py`, its slots in `slots.py`, its sweep and jobs in `supervisor.py` and `jobs.py`), table scans, rechecks, stop conditions, cycle ends, sampling, purge, schedules, the notifier. |
+| `deltasleuth/store` | Every SQL query (the `repo` package: one module per kind of object, such as `runs.py` and `audit.py`, the helpers they share in `base.py`, every name re-exported as `repo.<name>`), the migrations (`migrations/*.sql`, applied by `db.py`, each stored with its SHA-256, comments and layout aside: a start refuses a newer database or a changed file, and only `ds serve`, `ds worker` and `ds migrate` apply them) and the audit chain check. |
 | `deltasleuth/evidence` | The encrypted, content-addressed evidence store. |
 | `deltasleuth/reports` | CSV exports, the PDF report, evidence packs, and the measuring and adjudication sheets. |
 | `deltasleuth/agent`, `deltasleuth/llm`, `deltasleuth/mcp` | The cited chat agent; the model port and its dialect adapters; the MCP server. |
@@ -201,8 +204,8 @@ The AI layer is optional. Without an LLM profiles file it is off, and everything
 | End to end | `tests/e2e` | The API, the CLI and the worker against the mock pairs, tables, files, soak runs, kill and resume, and MCP. |
 | UI | `web/test` | The UI's logic modules. |
 
-`.github/workflows/checks.yml` runs ruff, every test with `DS_REQUIRE_DB=1`, and the UI's tests and build on each
-push to `main` and each pull request. A test fails after 600 s (pytest-timeout; an hour under `DS_PERF` or
+`.github/workflows/checks.yml` runs ruff and mypy, every test with `DS_REQUIRE_DB=1`, and the UI's tests and
+build on each push to `main` and each pull request. A test fails after 600 s (pytest-timeout; an hour under `DS_PERF` or
 `DS_IMAGE`), and the release tool stops each check after its own limit.
 
 The two mock pairs are in `mocks/`: `linker` (an entity and its linked entities, in an old and a new shape)

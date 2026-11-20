@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from deltasleuth import approvals, licence
 from deltasleuth.connectors.tables import named, relation
@@ -218,7 +218,7 @@ async def observations(ctx: Context, data: RunData) -> list[Observation]:
     """Every observation of the cycle with its body from the evidence store."""
     from deltasleuth.runner.compare import body_of
 
-    source = "live" if data.live else "file"
+    source: Literal["live", "file"] = "live" if data.live else "file"
     async with ctx.pool.connection() as conn:
         rows = await repo.list_observations(conn, data.run["run_id"], data.cycle)
         sealer = await ctx.sealer(conn, data.run["run_id"])

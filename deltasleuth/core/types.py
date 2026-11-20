@@ -610,7 +610,7 @@ class SideState:
 # ---------------------------------------------------------------------------------------------
 
 
-class KeyedMap(dict):  # type: ignore[type-arg]
+class KeyedMap(dict[str, list[JSON]]):
     """A keyed / set / multiset array: member key (str) -> list of members.
 
     Keyed: key = canonical encoding of the member's key fields; list sorted by canonical form;
@@ -668,6 +668,13 @@ class Finding:
     @property
     def suppressed(self) -> bool:
         return self.rule_id is not None or self.mask_id is not None
+
+    @property
+    def classified_severity(self) -> Severity:
+        """The severity classification set: an unclassified finding has none to rank."""
+        if self.severity is None:
+            raise ValueError("an unclassified finding has no severity")
+        return self.severity
 
 
 @dataclass

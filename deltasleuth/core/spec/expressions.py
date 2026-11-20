@@ -17,7 +17,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from re import _constants, _parser
+from re import _constants, _parser  # type: ignore[attr-defined]  # typeshed omits re's private modules
 from typing import Literal
 
 import jsonata

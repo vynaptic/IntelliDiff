@@ -125,6 +125,7 @@ class TableConnector:
         observed_at = utc_now_iso()
 
         def observation(key: str, **fields: object) -> Observation:
+            # ``fields`` are Observation's own, by name: a keyword dict of objects cannot type each
             return Observation(
                 key=key,
                 side=side_cfg.side,

@@ -182,6 +182,11 @@ def _mtime_iso(path: Path) -> str:
     return utc_iso(datetime.fromtimestamp(path.stat().st_mtime, UTC))
 
 
+def _loaded(sample: Sample) -> Callable[[], Sample]:
+    """The loader of a sample read already."""
+    return lambda: sample
+
+
 def _read_at_most(path: Path, max_bytes: int) -> bytes | None:
     """The file's bytes, or None when it holds more than ``max_bytes`` (then it is not read)."""
     if path.stat().st_size > max_bytes:
@@ -325,7 +330,7 @@ class FileSampleSource:
                     if line.strip():
                         where = f"{path.name} line {line_no}"
                         sample = self._record(line, where, observed_at)
-                        self._add(sample.observation.key, sample.observation.side, lambda s=sample: s, where)
+                        self._add(sample.observation.key, sample.observation.side, _loaded(sample), where)
 
     def _record(self, line: bytes, where: str, observed_at: str) -> Sample:
         record = _parse_object(line, where, _RECORD_FIELDS, capture_envelope=True)

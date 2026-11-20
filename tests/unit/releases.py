@@ -218,7 +218,7 @@ if tool == "grype":
 if tool == "uv":
     if args[0] == "export":
         done(scenario["exported"])
-    check = "pytest" if "pytest" in args else "ruff"
+    check = "pytest" if "pytest" in args else "mypy" if "mypy" in args else "ruff"
     if check == "pytest" and scenario.get("commit_during_checks"):
         import subprocess
 

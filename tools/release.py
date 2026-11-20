@@ -100,6 +100,7 @@ for d in m.distributions():
 CHECKS = (
     (("uv", "run", "--frozen", "pytest", "-q", "-p", "no:cacheprovider"), 5400),
     (("uv", "run", "--frozen", "ruff", "check", "deltasleuth", "mocks", "tests", "examples", "tools"), 600),
+    (("uv", "run", "--frozen", "mypy"), 900),
     (("npm", "--prefix", "web", "ci"), 1800),
     (("npm", "--prefix", "web", "test"), 900),
 )

@@ -81,10 +81,10 @@ def data_classes(spec: CompiledSpec) -> frozenset[DataClass]:
 def open_client(ctx: Context) -> LLMClient:
     """A client of the configured chat profile, under this environment's egress policy and the
     profile's limits, which every question shares."""
-    if ctx.llm is None:
-        raise AIDisabled("AI disabled")
     settings = ctx.settings
     pid = settings.llm_profile
+    if ctx.llm is None or pid is None:  # the context loads profiles only with the profile they name
+        raise AIDisabled("AI disabled")
     egress = EgressPolicy(settings.llm_environment, settings.llm_external_data_classes)
     return LLMClient.from_profile(ctx.llm.get(pid), egress=egress, gate=ctx.llm.gate(pid))
 
@@ -102,6 +102,7 @@ async def answer(
                 raise NotFound(f"no chat session {session_id}")
             sealer = await ctx.sealer(conn, session["run_id"])
             run = await repo.get_run(conn, session["run_id"])
+            assert run is not None  # a chat session's run outlives it
             carried = data_classes(await ctx.spec(conn, run["spec_id"]))
             client.prior = await repo.chat_tokens(conn, session["run_id"], who.actor)
         session["messages"] = [sealer.open_row(m) for m in session["messages"]]

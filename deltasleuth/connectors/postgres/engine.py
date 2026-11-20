@@ -222,9 +222,11 @@ class PostgreSQL:
     async def null_keys(self, conn: psycopg.AsyncConnection, side: Plan) -> int:
         statement, params = queries.null_keys_sql(side)
         try:
-            return (await (await conn.execute(statement, params)).fetchone())[0]  # type: ignore[index]
+            found = await (await conn.execute(statement, params)).fetchone()
         except psycopg.Error as exc:
             raise errors.wrapped(exc) from None
+        assert found is not None  # a count: one row
+        return found[0]
 
     async def relations(self, conn: psycopg.AsyncConnection, schema: str | None) -> list[tuple[str, str]]:
         try:
@@ -240,16 +242,20 @@ class PostgreSQL:
         # Without a parameter the driver reads no placeholder: a plan made of a catalogue alone, which
         # has neither filter nor key map, may name a column that holds a %.
         try:
-            return list(await (await conn.execute(statement, params or None)).fetchone())  # type: ignore[arg-type]
+            found = await (await conn.execute(statement, params or None)).fetchone()
         except psycopg.Error as exc:  # a pre-check's
             raise errors.wrapped(exc, figure=True) from None
+        assert found is not None  # aggregates: one row
+        return list(found)
 
     async def duplicates(self, conn: psycopg.AsyncConnection, side: Plan) -> tuple[int, int]:
         statement, params = queries.duplicates_sql(side)
         try:
-            keys, rows = await (await conn.execute(statement, params or None)).fetchone()  # type: ignore[misc]
+            found = await (await conn.execute(statement, params or None)).fetchone()
         except psycopg.Error as exc:  # a pre-check's
             raise errors.wrapped(exc, figure=True) from None
+        assert found is not None  # aggregates: one row
+        keys, rows = found
         return keys, int(rows)
 
 

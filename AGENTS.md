@@ -9,7 +9,7 @@ packages.
 DeltaSleuth compares two sources key by key and reports every difference. A source is a REST service, a
 database table or view, or a directory of CSV or Parquet files. The backend is Python (`deltasleuth/`:
 FastAPI, PostgreSQL), the UI is React and TypeScript (`web/`), and `ds` is the command line
-(`deltasleuth/cli/main.py`).
+(`deltasleuth/cli`).
 
 ## Commands
 
@@ -22,6 +22,7 @@ uv run pytest tests/unit/core/test_cron.py -q                # one file
 uv run pytest tests/unit/core/test_cron.py::test_name -q     # one test
 uv run pytest tests/golden -k arrays-set -q                  # one golden case, by its file name
 uv run ruff check deltasleuth mocks tests examples tools     # lint
+uv run mypy                                                  # type check (settings in pyproject.toml)
 
 npm --prefix web ci
 npm --prefix web test                                        # the UI's logic tests
@@ -71,9 +72,13 @@ a group's observations, results and findings in one transaction.
   engine's name.
 - `deltasleuth/runner` runs the work: runs, key sets, the worker (one active worker per database, by an
   advisory lock, with leased keys), rechecks, cycle ends and schedules.
-- `deltasleuth/store/repo.py` holds every SQL query, one async function per use case, each taking an open
-  connection. The schema is the numbered files in `store/migrations`, each applied once. A schema change
-  is a new numbered file.
+- `deltasleuth/store/repo/` holds every SQL query, one async function per use case, each taking an open
+  connection: one module per kind of object (`runs.py`, `results.py`, `audit.py` and so on), the helpers
+  they share in `base.py`. Its `__init__.py` re-exports every name, so callers write `repo.<name>`; a new
+  query goes in its module and in the imports and `__all__` of `__init__.py`. A query calls what its own
+  module imported, so a test that patches one of its callees patches that module (`repo.audit`), not the
+  package. The schema is the numbered files in `store/migrations`, each applied once. A schema change is a
+  new numbered file.
 - `deltasleuth/context.py` defines `Context`: the pool, the target registry, the tokeniser, the evidence
   store, the keyring and one gate per target. The API, the CLI, the worker and the MCP server each open
   one and call the same code. The modules at the package's top level (`approvals.py`, `schedules.py`,
@@ -81,6 +86,11 @@ a group's observations, results and findings in one transaction.
   hold the logic those entry points share.
 - `deltasleuth/api` is FastAPI with one router per resource in `routes/`. Every `/v1` route declares the
   role that may call it (`require` in `api/deps.py`). The app serves the built UI from `web/dist`.
+- `deltasleuth/cli` is `ds`: `main.py` builds `app` from one module per command group (`runs.py`,
+  `schedules.py` and so on), and `common.py` holds the options, exit codes and helpers they share. A command
+  module imports the store, the runner, the connectors and the reports inside the command that uses them,
+  so `ds --help` and `ds spec validate` load no database driver. A test that patches a name a command calls
+  patches the command's module (`deltasleuth.cli.runs._in_context`), not `main`.
 - `web/src` is a hash-routed single page. A screen is a `.tsx` file. Logic lives in plain `.ts` modules,
   and only those are tested (`web/test`, Node's test runner, no browser).
 - `mocks/` holds two service pairs with planted differences and an `expected.json` each, the ground truth
@@ -118,8 +128,9 @@ Where a new connector, database engine, model dialect, domain pack or report for
 
 ## Conventions
 
-- Ruff with line length 110; the rule set is in `pyproject.toml`. `ruff check` is the gate. Do not reformat
-  a file you did not change.
+- Ruff with line length 110; the rule set, with its complexity ceiling (`max-complexity`), is in
+  `pyproject.toml`. `ruff check` and `mypy` are the gates: every function of `deltasleuth` is annotated,
+  and a `# type: ignore` names its error code and says why. Do not reformat a file you did not change.
 - Prose and identifiers use British spelling (`licence`, `normaliser`, `tokenise`). Spec members are
   camelCase as the schema spells them (`normalizerVersion`).
 - Comments, docstrings and messages say what the code does. They do not cite document sections, ticket

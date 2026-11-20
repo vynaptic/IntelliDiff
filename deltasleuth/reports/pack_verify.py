@@ -122,9 +122,11 @@ def _readable(manifest: dict[str, Any]) -> bool:
     subject = manifest.get("subject")
     if not isinstance(subject, dict) or not isinstance(subject.get("sides"), dict):
         return False
+    if not isinstance(issued_at := manifest.get("issued_at"), str):
+        return False
     try:
-        issued = datetime.fromisoformat(manifest.get("issued_at"))
-    except (TypeError, ValueError):
+        issued = datetime.fromisoformat(issued_at)
+    except ValueError:
         return False
     return (
         isinstance(manifest.get("pack_id"), str)

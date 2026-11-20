@@ -39,6 +39,8 @@ jobs:
         run: uv sync --frozen
       - name: Lint
         run: uv run --frozen ruff check deltasleuth mocks tests examples tools
+      - name: Type check
+        run: uv run --frozen mypy
       - name: Python tests
         # typer draws its help as a coloured terminal when GITHUB_ACTIONS is set; the tests read plain text
         run: env -u GITHUB_ACTIONS uv run --frozen pytest -q -p no:cacheprovider

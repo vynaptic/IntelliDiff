@@ -309,9 +309,9 @@ async def try_side(ctx: Ctx, who: SpecAuthor, sent: Request) -> Response:
     if not (target and isinstance(target, str) and isinstance(request, dict) and request.get("path")):
         raise HTTPException(422, f"side {side} needs a target and a path")
     other = "b" if side == "a" else "a"
-    there = sides.get(other)
+    there = sides.get(other) if isinstance(sides, dict) else None  # a dict: ``here`` was read from it
     filled = isinstance(there, dict) and "table" not in there and not isinstance(there.get("request"), dict)
-    if filled:  # whatever target the other side names: it has nothing to send yet
+    if filled and isinstance(there, dict):  # whatever target the other side names: it has nothing to send yet
         there |= {"target": target, "request": request}
     try:
         spec = compile_spec(doc, targets=ctx.targets)

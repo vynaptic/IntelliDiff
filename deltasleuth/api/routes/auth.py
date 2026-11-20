@@ -106,7 +106,7 @@ async def login(
                 request.app.state.roles_sha256,
                 idle_minutes=auth.session_idle_minutes,
             )
-        replaces = found and found["session_id"]
+        replaces = None if found is None else found["session_id"]
     started = Login.new(next_, reauth=reauth, replaces=replaces)
     try:
         url = await oidc.authorization_url(started)
@@ -320,7 +320,8 @@ async def me(request: Request, ctx: Ctx, who: Anyone) -> Response:
     csrf = "dev" if ctx.settings.auth is None else None
     if who.session_id is not None and cookie is not None:
         csrf = sessions.csrf_of(cookie)
-    display_name, expires_at = user and user["display_name"], ending and ending["expires_at"]
+    display_name = None if user is None else user["display_name"]
+    expires_at = None if ending is None else ending["expires_at"]
     return ok(_me(ctx, who, display_name=display_name, csrf=csrf, expires_at=expires_at))
 
 
@@ -485,7 +486,10 @@ async def audit_log(
 ) -> Response:
     """Audit rows newest first, each filter exact; the read is audited with its filters."""
     given = {"actor": actor, "action": action, "object": obj, "session_id": session_id}
-    given |= {"since": since and since.isoformat(), "until": until and until.isoformat()}
+    given |= {
+        "since": None if since is None else since.isoformat(),
+        "until": None if until is None else until.isoformat(),
+    }
     filters = {name: value for name, value in given.items() if value is not None}
     try:
         async with repo.audited(ctx.pool) as (conn, audit):

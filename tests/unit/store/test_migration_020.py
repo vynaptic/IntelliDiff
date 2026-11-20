@@ -27,7 +27,7 @@ async def _plan(conn: repo.Conn, monkeypatch: pytest.MonkeyPatch) -> str:
         return await rows(conn, sql, params)
 
     with monkeypatch.context() as patch:
-        patch.setattr(repo, "_rows", kept)
+        patch.setattr(repo.retention, "_rows", kept)
         assert len(await repo.gc_due(conn, 500)) == 500
     cur = await conn.execute(b"EXPLAIN " + sent["sql"].encode(), sent["params"])
     return "\n".join(line for (line,) in await cur.fetchall())

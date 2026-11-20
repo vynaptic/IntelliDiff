@@ -125,7 +125,9 @@ async def refuse_chat(conn: repo.Conn, run: repo.Row) -> None:
 async def _sole(ctx: Context) -> AsyncIterator[None]:
     """Hold the purge lock for the block, on a connection of its own closed however the block ends
     (which frees the lock); PurgeBusy while another purger holds it."""
-    async with await psycopg.AsyncConnection.connect(ctx.pool.conninfo, autocommit=True) as lock:
+    address = ctx.pool.conninfo
+    assert isinstance(address, str)  # the store's address, as the pool was given it
+    async with await psycopg.AsyncConnection.connect(address, autocommit=True) as lock:
         if not await repo.try_purge_lock(lock):
             raise PurgeBusy(BUSY)
         yield
@@ -199,7 +201,8 @@ async def _abandon(ctx: Context, who: Principal, row: repo.Row) -> bool:
         if not stopped:
             return False
         await repo.cancel_keys(conn, run_id)
-        ended: repo.Row = await repo.get_run(conn, run_id)  # type: ignore[assignment]
+        ended = await repo.get_run(conn, run_id)
+        assert ended is not None  # its row lock is held
         _, judgement = await sample.ending(ctx, conn, ended)
         await repo.end_cycle(conn, run_id, row["updated_at"], sample=judgement)
         await audit(who, "cancelling", run_id, {"reason": ABANDONED})
@@ -221,6 +224,7 @@ async def _purge_cycle(
             if run is not None and run["hold_reason"] is not None:
                 done.held += 1
             return
+        assert run is not None  # the cycle being purged is the run's
         signoffs = await repo.approval_history(conn, run_id=run_id, cycle=cycle)
         for signoff in signoffs:
             # Approved: its hold was released, or the cycle would not be due.
@@ -229,7 +233,7 @@ async def _purge_cycle(
         detail = {
             "cycle": cycle,
             "reason": row["purge_reason"],  # an interrupted purge's own
-            "retention": run["retention"],  # type: ignore[index]
+            "retention": run["retention"],
             "ended_at": row["ended_at"].isoformat(),
         }
         await audit(who, "retention.expire", run_id, detail)
@@ -290,7 +294,7 @@ async def _orphans(ctx: Context) -> int:
             await repo.lock_blobs(conn, exclusive=True)
             kept = await repo.referenced(conn, batch) | await repo.queued_blobs(conn, batch)
             for address in batch:
-                if address not in kept and await asyncio.to_thread(ctx.evidence.delete, address):
+                if address not in kept and await asyncio.to_thread(ctx.evidence.delete, address) > 0:
                     deleted += 1
     return deleted + await asyncio.to_thread(ctx.evidence.delete_stale_temps, ORPHAN_AGE_S)
 
@@ -384,7 +388,8 @@ async def _end_for_erasure(ctx: Context, who: Principal, run: repo.Row) -> None:
             raise _in_flight(run_id)
         if await repo.set_run_status(conn, run_id, "cancelled", when=("cancelling",)):
             await repo.cancel_keys(conn, run_id)
-            stopped: repo.Row = await repo.get_run(conn, run_id)  # type: ignore[assignment]
+            stopped = await repo.get_run(conn, run_id)
+            assert stopped is not None  # its row lock is held
             _, judgement = await sample.ending(ctx, conn, stopped)
             await repo.end_cycle(conn, run_id, sample=judgement)
             await audit(

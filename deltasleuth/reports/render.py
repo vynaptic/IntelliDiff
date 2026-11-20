@@ -21,7 +21,16 @@ import jinja2
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.platypus import KeepInFrame, KeepTogether, Paragraph, SimpleDocTemplate, Table, TableStyle
+from reportlab.lib.units import inch
+from reportlab.platypus import (
+    Flowable,
+    KeepInFrame,
+    KeepTogether,
+    Paragraph,
+    SimpleDocTemplate,
+    Table,
+    TableStyle,
+)
 
 _TABLE_STYLE = TableStyle([("GRID", (0, 0), (-1, -1), 0.25, colors.grey), ("VALIGN", (0, 0), (-1, -1), "TOP"),
                            ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke)])  # fmt: skip
@@ -85,18 +94,21 @@ def _pdf_text(value: Any) -> str:
 def render_pdf(doc: Document) -> bytes:
     styles = getSampleStyleSheet()
     body, cell = styles["BodyText"], styles["BodyText"].clone("cell", fontSize=7, leading=8.5)
-    title, heading, margins = styles["Title"], styles["Heading2"], {}
+    title, heading, margin = styles["Title"], styles["Heading2"], inch  # reportlab's default margin
     if doc.compact:  # 7pt lines without space between them, a bold line a section, 24pt margins
         body = cell.clone("line", spaceBefore=0)
         title = title.clone("brief", fontSize=11, leading=13, spaceAfter=2)
         heading = heading.clone("part", fontSize=7, leading=8.5, spaceBefore=4, spaceAfter=0)
-        margins = dict.fromkeys(("leftMargin", "rightMargin", "topMargin", "bottomMargin"), 24)
+        margin = 24
     out = io.BytesIO()
-    pdf = SimpleDocTemplate(out, pagesize=landscape(A4), title=doc.title, **margins)
-    story = [Paragraph(_pdf_text(doc.title), title), Paragraph(_pdf_text(doc.meta), body)]
+    pdf = SimpleDocTemplate(
+        out, pagesize=landscape(A4), title=doc.title,
+        leftMargin=margin, rightMargin=margin, topMargin=margin, bottomMargin=margin,
+    )  # fmt: skip
+    story: list[Flowable] = [Paragraph(_pdf_text(doc.title), title), Paragraph(_pdf_text(doc.meta), body)]
     story += [Paragraph(f"<b>{_pdf_text(doc.warning)}</b>", body)] if doc.warning else []
     for number, section in enumerate(doc.sections, 1):
-        part = [Paragraph(_pdf_text(f"{number}. {section.title}"), heading)]
+        part: list[Flowable] = [Paragraph(_pdf_text(f"{number}. {section.title}"), heading)]
         part += [Paragraph(_pdf_text(line), body) for line in section.lines]
         if section.header:
             rows = [[Paragraph(_pdf_text(c), cell) for c in row] for row in (section.header, *section.rows)]

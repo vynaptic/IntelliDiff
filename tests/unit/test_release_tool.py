@@ -618,6 +618,10 @@ REFUSALS: dict[str, tuple[Setup, str]] = {
         "ruff said this\nerror: checks failed: uv run --frozen ruff check deltasleuth mocks tests examples"
         " tools (exit 1)",
     ),
+    "failing mypy": (
+        _scenario(checks={"mypy": 1}),
+        "mypy said this\nerror: checks failed: uv run --frozen mypy (exit 1)",
+    ),
     "failing web tests": (
         _scenario(checks={"npm test": 3}),
         "npm test said this\nerror: checks failed: npm --prefix web test (exit 3)",

@@ -37,6 +37,7 @@ from deltasleuth.runner import (
     outcome_changes,
     resume_run,
     run_worker,
+    slots,
     worker,
 )
 from deltasleuth.runner import keys as key_sets
@@ -183,7 +184,8 @@ async def test_a_recheck_waits_its_delay_on_the_store_s_clock_whatever_the_proce
         def now(cls, tz: Any = None) -> Any:
             return datetime.now(tz) - timedelta(hours=1)
 
-    monkeypatch.setattr("deltasleuth.runner.worker.datetime", Behind)
+    monkeypatch.setattr("deltasleuth.runner.slots.datetime", Behind)
+    monkeypatch.setattr("deltasleuth.runner.jobs.datetime", Behind)
     service.both("K001", doc("K001", status="OLD"), doc("K001", status="NEW"))  # differs: a recheck is due
     spec = spec_text(["K001"]).replace("recheck: {delay: 0s,", "recheck: {delay: 1s,")
     await _run(harness, spec)
@@ -384,7 +386,7 @@ async def test_a_bug_fails_the_run_naming_its_type_and_place_never_its_message(
     async def broken(*_: Any, **__: Any) -> None:
         raise RuntimeError("K001 Alice Secretname")  # a message may hold keys and values
 
-    monkeypatch.setattr("deltasleuth.runner.worker.evaluate_many", broken)
+    monkeypatch.setattr("deltasleuth.runner.slots.evaluate_many", broken)
     run_id, run = await _run(harness, spec_text(KEYS))
     assert run["status"] == "failed" and re.fullmatch("RuntimeError" + AT, run["error"])
     assert " in _passed" in run["error"] and "K001" not in run["error"] and "Secretname" not in run["error"]
@@ -465,7 +467,7 @@ async def test_the_sweep_isolates_a_run_the_store_refuses(
         await finish(ctx, run_id, **options)
 
     monkeypatch.setattr(cycle, "summarise", refusing)
-    monkeypatch.setattr("deltasleuth.runner.worker.finish_cycle", together)
+    monkeypatch.setattr("deltasleuth.runner.jobs.finish_cycle", together)
     assert (await harness.finish(other, timeout=20))["status"] == "completed"
     failed = await harness.run(refused)  # each end is a task of its own: the refused one fails its run only
     assert failed["status"] == "failed" and re.fullmatch("CheckViolation" + AT, failed["error"])
@@ -722,7 +724,7 @@ async def test_critical_findings_saved_before_a_worker_restart_still_count(
             await asyncio.Event().wait()
         return await evaluate(*args, **kw)
 
-    monkeypatch.setattr("deltasleuth.runner.worker.evaluate_many", stalling)
+    monkeypatch.setattr("deltasleuth.runner.slots.evaluate_many", stalling)
     async with open_harness(TARGETS.format(base="http://127.0.0.1:9", rate=500), concurrency=1) as h:
         spec = spec_text(KEYS[:4], execution="concurrency: 1, stop: {maxUnexplainedCritical: 2}")
         run_id = await create_run(h.ctx, await h.spec(spec), "batch", samples_dir=samples, who=TESTER)
@@ -798,7 +800,7 @@ async def test_a_spec_s_own_breaker_governs_its_run_whoever_called_the_target_fi
     """A target keeps a breaker for each ``execution.circuitBreaker`` declared (``TargetGate.breaker``). It
     kept one, with the settings of the first spec that called it: after a run of a spec that declares none,
     a later spec's breaker never opened, and its run tried every key of a service that was down."""
-    monkeypatch.setattr(worker, "REFUSALS", 0)  # a refused key is judged at once: which breaker refuses
+    monkeypatch.setattr(slots, "REFUSALS", 0)  # a refused key is judged at once: which breaker refuses
     _serve(service, down=False)
     _, run = await _run(harness, spec_text(KEYS))
     assert run["counters"]["match"] == len(KEYS)
@@ -819,7 +821,7 @@ async def test_an_open_breaker_refuses_no_call_of_a_spec_that_declares_none(
     """The breaker a spec declares is that declaration's. Open, it refused every other spec's runs on the
     same targets, those of a spec without one too: their keys came back ``circuit_open`` from a service that
     was up again, until the app was restarted."""
-    monkeypatch.setattr(worker, "REFUSALS", 0)  # a refused key is judged at once: which breaker refuses
+    monkeypatch.setattr(slots, "REFUSALS", 0)  # a refused key is judged at once: which breaker refuses
     _serve(service, down=True)
     await _run(harness, GUARDED)
     assert sum(service.calls.values()) == 20  # its breaker is open on both targets, for a minute

@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import psycopg
@@ -331,7 +332,7 @@ async def test_renewing_a_lease_reads_the_leased_index(
         )
         assert len(await repo.lease_due(conn, "w1", 3, 60)) == 3
         await conn.execute("ANALYZE ds.runs, ds.run_keys")  # as autovacuum would: plans follow statistics
-        monkeypatch.setattr(repo, "_changed", explained)
+        monkeypatch.setattr(repo.keys, "_changed", explained)
         assert await repo.renew_lease(conn, "w1", 60) and not await repo.renew_lease(conn, "w2", 60)
     assert len(plans) == 2 and all("run_keys_leased_idx" in plan for plan in plans)
     assert not any("Seq Scan on run_keys" in plan for plan in plans)
@@ -434,7 +435,9 @@ def _explained(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
         plans.append(found[0][0]["Plan"])  # type: ignore[index]
         return await rows(conn, sql, params)
 
-    monkeypatch.setattr(repo, "_rows", explained)
+    for module in vars(repo).values():  # each query module calls the ``_rows`` it imported
+        if isinstance(module, ModuleType) and hasattr(module, "_rows"):
+            monkeypatch.setattr(module, "_rows", explained)
     return plans
 
 

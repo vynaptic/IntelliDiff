@@ -54,7 +54,8 @@ async def report_document(ctx: Context, run_id: str, cycle: int | None = None) -
     data = await load_run(ctx, run_id, cycle, results=False)
     async with ctx.pool.connection() as conn:
         previous = await repo.previous_run(conn, run_id)
-        changes, changed = [], 0
+        changes: list[repo.Row] = []
+        changed = 0
         if data.run["mode"] == "soak":  # the cycle's first changes; counted only when it has more
             changes, more = await repo.list_outcome_changes(conn, run_id, data.cycle, limit=TOP_CHANGES)
             changed = await repo.count_outcome_changes(conn, run_id, data.cycle) if more else len(changes)

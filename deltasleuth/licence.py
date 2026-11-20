@@ -216,10 +216,11 @@ def _read(text: str, name: str) -> Licence:
     check(issued := _issued(values["issued"]), "issued is not a UTC time (YYYY-MM-DDTHH:MM:SSZ)")
     check(_KEY.fullmatch(values["key"]), "key is not a fingerprint (64 of 0-9 and a-f)")
     check(signature := _base64(values["signature"]), "signature is not base64")
+    assert issued is not None and signature is not None
     pairs = values["pairs"]
     return Licence(
         values["licence"], values["customer"], values["order"], values["installation"], values["tier"],
-        None if pairs == "unlimited" else int(pairs), starts, ends, issued, values["key"], signature, text,  # type: ignore[arg-type]
+        None if pairs == "unlimited" else int(pairs), starts, ends, issued, values["key"], signature, text,
     )  # fmt: skip
 
 
@@ -675,7 +676,9 @@ async def admit(
         if name in current.seats:
             return current.record(), None
     if name in current.names:
-        raise _refuse(current.unseated(name))  # type: ignore[arg-type]
+        refusal = current.unseated(name)
+        assert refusal is not None  # a pair the licence counts that holds no seat
+        raise _refuse(refusal)
     if len(current.names) >= limit:
         raise _refuse(current.full(name))
     found, targets = current.licence, await repo.pair_targets(conn, [name])
@@ -854,21 +857,24 @@ def file_name(run: Mapping[str, Any], name: str) -> str:
 async def shown(ctx: Context, say: Callable[[str], None] = log.warning) -> tuple[Standing | None, list[str]]:
     """The standing and its warnings as a process starts, each given to ``say`` (logged; the CLI prints
     them); never raises: when the standing cannot be read, None and one warning, the failure logged."""
+    current: Standing | None = None
     try:
         async with ctx.pool.connection() as conn:
-            current = await standing(ctx, conn)
+            read = await standing(ctx, conn)
     except Exception as exc:  # startup never fails for the licence
         log.warning("licence status unavailable", exc_info=True)
-        current, lines = None, [_UNAVAILABLE.format(type(exc).__name__)]
+        lines = [_UNAVAILABLE.format(type(exc).__name__)]
     else:
-        lines = current.warnings()
+        current, lines = read, read.warnings()
     for line in lines:
         say(line)
     return current, lines
 
 
 def _shown(found: Licence | None) -> dict[str, Any] | None:
-    return found and {name: value for name, value in found.fields().items() if name != "installation_id"}
+    if found is None:
+        return None
+    return {name: value for name, value in found.fields().items() if name != "installation_id"}
 
 
 def _installed(current: Standing, row: repo.Row) -> dict[str, Any]:

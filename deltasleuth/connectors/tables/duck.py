@@ -364,7 +364,7 @@ def _accounted(instance: Instance, flights: Sequence[Cursor | None]) -> None:
         held = list(instance._cursors.values())
     flying = dict.fromkeys([*flights, *(cursor for cursor in held if cursor._ahead)])
     reading = [by for by in flying if by and by._key] or [by for by in held if by._unread and by._key]
-    keys = {by._key for by in reading}
+    keys = {by._key for by in reading if by._key is not None}
     ended = f"the file reader's process ended ({instance.cause}{instance._fault})"
     if not keys:
         manifest.log.warning("%s with no statement in flight", ended)
@@ -376,9 +376,10 @@ def _accounted(instance: Instance, flights: Sequence[Cursor | None]) -> None:
             "%s with %d statements in flight: each one's files are read apart next", ended, len(reading)
         )
     elif instance.cause != DEADLINE or _answers(reading[0]._root):
+        [key] = keys
         with _build:
-            count = min(_charged.get(reading[0]._key, (0, ""))[0] + 1, DEATHS)
-            _noted(_charged, reading[0]._key, (count, instance.cause))
+            count = min(_charged.get(key, (0, ""))[0] + 1, DEATHS)
+            _noted(_charged, key, (count, instance.cause))
         manifest.log.error(
             "%s while only one side's files were being read: %d of the %d after which they are read no more",
             ended, count, DEATHS,
@@ -789,7 +790,8 @@ class Cursor:
         except manifest.Busy:
             raise _condemned(self._key, self._who) or manifest.Busy("Died") from None
         try:
-            found = _checked(request, *answer, None if op == "execute" else self._width, tags)
+            kind, body = answer
+            found = _checked(request, kind, body, None if op == "execute" else self._width, tags)
             self._unread = op != "fetch" or bool(found)
             self._ahead = bool(members.get("ahead")) and len(found) >= members["rows"]
             if op == "execute":
@@ -1318,7 +1320,8 @@ class _Primitives:
 
     def after(self, orders: Sequence[str], bound: Sequence[bytes], binds: compose.Binds) -> str:
         """(o1 > a) OR (o1 = a AND o2 > b), each part bound as bytes."""
-        arms, equal = [], []
+        arms: list[str] = []
+        equal: list[str] = []
         for order, part in zip(orders, bound, strict=True):
             value = _bind(binds, part)
             arms.append(f"({' AND '.join([*equal, f'{order} > {value}'])})")
@@ -1445,7 +1448,7 @@ async def _verify(target: Target, side: Plan, *, full: bool = False, planning: b
     file, pinned = side["file"], side["pinned"]
     pins = [tuple(pin) for pin in pinned["pins"]]
     await manifest.verify(
-        target, file["path"], pinned["side"], pinned["files"], pins, full=full,  # type: ignore[arg-type]
+        target, file["path"], pinned["side"], pinned["files"], pins, full=full,
         partitions=file.get("partitions", ()), planning=planning,
     )  # fmt: skip
 
@@ -1812,7 +1815,7 @@ def _parquet_type(
     cut = (
         ("a nanosecond time", nanos and logical.startswith("TimeType"), "string", "its text"),
         ("a UTC nanosecond timestamp", nanos and "isAdjustedToUTC=1" in logical, "timestamp", "microseconds"),
-        ("an INT96 timestamp", bool(row) and row[7] == "INT96", "timestamp", "microseconds"),
+        ("an INT96 timestamp", bool(row and row[7] == "INT96"), "timestamp", "microseconds"),
     )  # fmt: skip
     what, _, as_, compared = next((found for found in cut if found[1]), ("", False, declared, ""))
     if declared != as_:
@@ -1839,8 +1842,8 @@ async def _footers(session: _Session, side: Plan, cfg: SideConfig, who: str) -> 
     assert table is not None
     timeout = _left(side)
     try:
-        columns = f"SELECT * FROM {_relation(side)} LIMIT 0"  # noqa: S608 (constants)
-        await session.send(side, columns, {}, files=files[:1], timeout_s=timeout)
+        heading = f"SELECT * FROM {_relation(side)} LIMIT 0"  # noqa: S608 (constants)
+        await session.send(side, heading, {}, files=files[:1], timeout_s=timeout)
         assert session.cursor is not None
         read = await session.cursor.columns(timeout_s=timeout)
         rows = await session.rows(side, _SCHEMA, {}, timeout_s=timeout, tags=_SCHEMA_TAGS)
@@ -1939,7 +1942,7 @@ async def _count(session: _Session, side: Plan, who: str) -> dict[str, Any]:
     as the plan's walk read them (``manifest.Pinned.footed``): no statement reads a footer's figures or its
     statistics as text.
     Then the first ``FLOOD`` rows of file 1 converted by csv.keys and typeMap."""
-    file, binds = side["file"], {}
+    file, binds = side["file"], compose.Binds()
     keys = compose._keys(PRIMITIVES, side, binds)
     condition = compose._filter(PRIMITIVES, side, binds)
     worker = compose.worker_columns(side) if file["format"] == "csv" else []
@@ -1955,12 +1958,12 @@ async def _count(session: _Session, side: Plan, who: str) -> dict[str, Any]:
         for column, text, mapped in zip(side["keys"], keys, key_maps(side), strict=True)
         if side["classes"][column] == "date" and not mapped
     ]
-    counted = (
+    tallies = (
         "count(*), count(*) FILTER (WHERE s), count(*) FILTER (WHERE s AND k), sum(b) FILTER (WHERE s AND k)"
     ) + "".join(f", count(*) FILTER (WHERE s AND NOT d{n})" for n in range(len(dated)))
     read = "".join(f", {form} AS d{n}" for n, (_, form) in enumerate(dated))
     counting = (
-        f"SELECT {counted} FROM (SELECT ({condition or 'TRUE'}) IS TRUE AS s, {keyed} AS k,"  # noqa: S608
+        f"SELECT {tallies} FROM (SELECT ({condition or 'TRUE'}) IS TRUE AS s, {keyed} AS k,"  # noqa: S608
         f" {sized} AS b{read} FROM {_relation(side, more)})"
     )
     started = time.monotonic()
@@ -2343,7 +2346,7 @@ async def check(
     if listed or (count and packed):  # as a plan pins them: a compressed stream is read whole
         stream = "parquet" if form == "parquet" else packed
         pinned = await manifest.pin(target, path, who, files, stream=stream)
-    held = {"side": "a", "files": names, "pins": [[*manifest._key(stat), ""] for stat in stats]}
+    held: Plan = {"side": "a", "files": names, "pins": [[*manifest._key(stat), ""] for stat in stats]}
     side: Plan = {"file": {"path": path, "format": form}, "pinned": held}
     held["end"] = time.monotonic() + files.plan_s
     session, footers = _Session(target, files.plan_s), []

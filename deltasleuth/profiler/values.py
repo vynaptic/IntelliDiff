@@ -44,7 +44,9 @@ def parse_timestamp(text: str) -> Timestamp | None:
         return None
     *fields, fraction, zone = m.groups()
     try:
-        instant = datetime(*(int(f or 0) for f in fields), int((fraction or "0")[:6].ljust(6, "0")))
+        year, month, day, hour, minute, second = (int(f or 0) for f in fields)
+        micro = int((fraction or "0")[:6].ljust(6, "0"))
+        instant = datetime(year, month, day, hour, minute, second, micro)
         if zone and zone.upper() != "Z":
             digits = zone[1:].replace(":", "")
             hours, minutes = int(digits[:2]), int(digits[2:4] or 0)

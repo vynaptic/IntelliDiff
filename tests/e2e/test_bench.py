@@ -316,7 +316,7 @@ async def test_million_keys(
             ticks.append(time.monotonic())
             await asyncio.sleep(0.05)
 
-    monkeypatch.setattr(repo, "_insert_keys", counted)
+    monkeypatch.setattr(repo.runs, "_insert_keys", counted)
     async with make_stack(yaml.safe_dump({"targets": targets})).context() as ctx:
         spec_id = await store_spec(ctx, table_spec(sides=sides, key=key))
         ticker = asyncio.create_task(tick())

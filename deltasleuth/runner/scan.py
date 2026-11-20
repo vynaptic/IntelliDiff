@@ -207,11 +207,13 @@ async def scan(ctx: Context, run_id: str) -> str | None:
     """
     async with ctx.pool.connection() as conn:
         run = await repo.get_run(conn, run_id)
+        assert run is not None  # a run is never deleted while it is scanned
         if run["scan"] is None or run["scan"]["done"]:
             return None  # finished by the scanner the sweep saw running when it read the run
         spec = await ctx.spec(conn, run["spec_id"], live=True)
         sealer = await ctx.sealer(conn, run_id)
     tables, state, cycle = unsealed(sealer, run["params"]), dict(run["scan"]), run["cycle"]
+    assert tables is not None  # a scanned run is of two table sides
     conditions = StopConditions.from_spec(spec.raw)
     # The seconds a key found waits for its per-key read; none where both sides read fixed files.
     policy = RecheckPolicy.from_spec(spec.raw)
@@ -323,9 +325,9 @@ async def scan(ctx: Context, run_id: str) -> str | None:
             if verified := getattr(stream.session, "verified_at", None):  # a fixed side's closing hash
                 state[f"verified_{side}"] = verified
     if spec.raw.get("graph"):  # L2: the structure the facts make, before the scan is done
-        state["graph"], rows = await graph.analyse(ctx, spec, tables, state)
+        state["graph"], diffs = await graph.analyse(ctx, spec, tables, state)
         async with ctx.pool.connection() as conn:
-            await repo.replace_graph_diffs(conn, run_id, cycle, rows)
+            await repo.replace_graph_diffs(conn, run_id, cycle, diffs)
     await _save(ctx, sealer, run_id, cycle, state, found, saved, wait, done=True)
     return None
 

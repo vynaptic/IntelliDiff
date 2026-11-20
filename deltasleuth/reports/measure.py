@@ -161,6 +161,8 @@ def _not_found_shapes(
 ) -> list[_NotFound]:
     shapes: dict[tuple[int, str, frozenset[str]], _NotFound] = {}
     for obs in filter(_is_not_found, found):
+        status = obs.http_status
+        assert status is not None  # a not-found answer has its status
         label, value = body_shape(obs.body)
         names = tuple(sorted(value)) if isinstance(value, dict) else ()
         matches: frozenset[str] = frozenset()
@@ -170,7 +172,7 @@ def _not_found_shapes(
         # Grouped by what the body matched too: a predicate may test values, so equal member names
         # do not make equal answers.
         entry = shapes.setdefault(
-            (obs.http_status, label, matches), _NotFound(obs.http_status, label, names, matches=matches)
+            (status, label, matches), _NotFound(status, label, names, matches=matches)
         )
         entry.count += 1
         entry.known_missing += obs.key in missing
@@ -392,7 +394,7 @@ def propose_truncation(pairs: Pairs, declared: TargetCapabilities) -> dict[str, 
         )
         return _proposal("truncation_indicators", None, evidence or ["no count member counts an array"],
                          [tracking] if plausible else [])  # fmt: skip
-    flags = []
+    flags: list[str] = []
     for items, count in exceeding:
         when = sorted({returned for returned, total in pairs[(items, count)] if total > returned})
         if len(when) > 1:
@@ -444,7 +446,8 @@ def measure(
     declared ``capabilities`` (by target id); ``missing_keys`` are raw keys known not to exist, the
     only evidence an absence proposal without declared shapes rests on."""
     found, missing = list(found), frozenset(missing_keys)
-    sides, proposals = {}, defaultdict(list)
+    sides: dict[str, Any] = {}
+    proposals: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
     for side, cfg in spec.sides.items():
         own = [o for o in found if o.side is side]
         sides[side.value], proposed = _measure_side(own, spec, side, capabilities[cfg.target], missing)

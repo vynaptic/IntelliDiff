@@ -54,6 +54,7 @@ def _adapters() -> dict[str, dict[str, Any]]:
             continue
         spec = importlib.util.find_spec(f"{adapters.__name__}.{module.name}")
         assert spec is not None and spec.loader is not None
+        # typeshed's Loader has no get_source; a module file's loader, an InspectLoader, has it
         source = spec.loader.get_source(spec.name)  # type: ignore[attr-defined]
         found[module.name] = {
             target.id: ast.literal_eval(node.value)
@@ -67,7 +68,7 @@ def _adapters() -> dict[str, dict[str, Any]]:
 
 _ADAPTERS = _adapters()
 DIALECTS: tuple[str, ...] = tuple(_ADAPTERS)  # one adapter module per dialect
-Dialect = Literal[DIALECTS]  # type: ignore[valid-type]
+Dialect = Literal[DIALECTS]  # type: ignore[valid-type]  # read from the adapters at import: no static form
 Environment = Literal["dev", "test", "eval", "staging", "prod"]
 ENVIRONMENTS: tuple[str, ...] = get_args(Environment)
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})

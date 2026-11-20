@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import unicodedata
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from decimal import Context, Decimal
 
@@ -50,7 +51,7 @@ _DIRECTION = {MISSING: Direction.A_ONLY, EXTRA: Direction.B_ONLY}
 _EXACT = Context(prec=2 * MAX_EXPONENT + 100, Emax=MAX_EXPONENT * 4, Emin=-MAX_EXPONENT * 4)
 # Scores in [0, 1] compared as computed (scaling to 100 and back can lose the last bit). token_set
 # scores the sorted words: word order is ignored, a dropped or added word never is.
-_SIMILARITY = {
+_SIMILARITY: dict[str, Callable[[str, str], float]] = {
     "token_set": lambda a, b: fuzz.token_sort_ratio(a, b) / 100,
     "jaro_winkler": JaroWinkler.normalized_similarity,
     "levenshtein_ratio": lambda a, b: fuzz.ratio(a, b) / 100,  # normalised Indel similarity
@@ -218,6 +219,7 @@ class _Walk:
         if mode is None:
             return False
         if mode.mode == "similarity":
+            assert mode.threshold is not None  # the loader gives every similarity mode its threshold
             texts = isinstance(a, str) and isinstance(b, str)
             return texts and _SIMILARITY[mode.method](a, b) >= mode.threshold
         x, y = read_decimal(a), read_decimal(b)

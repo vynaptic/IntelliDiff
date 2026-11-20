@@ -81,7 +81,7 @@ async def test_a_cycle_is_measured_once_stored_and_audited_in_one_transaction(
     async def refused(*args: Any) -> Any:
         raise RuntimeError("the audit row is refused")
 
-    monkeypatch.setattr(repo, "insert_audit", refused)
+    monkeypatch.setattr(repo.audit, "insert_audit", refused)
     with caplog.at_level(logging.WARNING, logger="deltasleuth.runner.readiness"):
         await measure(harness)  # never raises
     assert caplog.messages == [
@@ -91,7 +91,7 @@ async def test_a_cycle_is_measured_once_stored_and_audited_in_one_transaction(
     assert (
         await measures(harness, run_id) is None and await audited(harness) == []
     )  # neither without the other
-    monkeypatch.setattr(repo, "insert_audit", insert)
+    monkeypatch.setattr(repo.audit, "insert_audit", insert)
     await measure(harness)
     record = await measures(harness, run_id)
     assert record is not None and record.pop("measured_at").startswith(f"{datetime.now(UTC):%Y-%m-%d}")
@@ -767,11 +767,11 @@ async def test_the_series_keeps_what_is_behind_its_unknown_points(
     )
     # A pair without evidence: its newest point, and its cycles counted up to the cap and one more.
     assert repo.COUNTED == readiness.COUNTED == 100
-    monkeypatch.setattr(repo, "COUNTED", 2)
+    monkeypatch.setattr(repo.readiness, "COUNTED", 2)
     async with harness.ctx.pool.connection() as conn:
         found = (await repo.readiness_series(conn, [asked | {"pair": "unit-other"}]))["unit-other"]
     assert (named(found)["newest"], found["cycles"], found["versions"]) == ((other, 4), 3, [])
-    assert readiness.counted(found["cycles"], repo.COUNTED) == "over 2"
+    assert readiness.counted(found["cycles"], repo.readiness.COUNTED) == "over 2"
 
 
 async def test_governance_reads_the_candidates_stored_facts(harness: Harness) -> None:

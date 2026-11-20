@@ -174,7 +174,7 @@ class _Resolver(AbstractResolver):
         return None
 
 
-class _Guarded:
+class _Guarded(smtplib.SMTP):
     """smtplib against one vetted address, under one deadline (``time.monotonic``): each command's socket
     timeout is the budget left; ``abort`` shuts the socket down, ending a slow drip, and ends the budget."""
 
@@ -196,11 +196,11 @@ class _Guarded:
 
     def send(self, s: Any) -> None:
         self._budget()
-        super().send(s)  # type: ignore[misc]
+        super().send(s)
 
     def getreply(self) -> tuple[int, bytes]:
         self._budget()
-        return super().getreply()  # type: ignore[misc]
+        return super().getreply()
 
     def abort(self) -> None:
         self.aborted = True
@@ -211,7 +211,7 @@ class _Guarded:
                 pass
 
 
-class _GuardedSMTP(_Guarded, smtplib.SMTP):
+class _GuardedSMTP(_Guarded):
     def __init__(self, host: str, address: str, deadline: float) -> None:
         self.address, self.deadline = address, deadline
         super().__init__(local_hostname=LOCAL_NAME)
@@ -243,7 +243,9 @@ def _deliver(
     """One mail on the mail thread: connect, STARTTLS unless implicit or none, AUTH, the message; the
     recipients refused."""
     try:
-        code, greeting = smtp.connect(channel.smtp_host, channel.smtp_port)  # type: ignore[arg-type]
+        host, port = channel.smtp_host, channel.smtp_port
+        assert host is not None and port is not None  # an email channel's settings hold both
+        code, greeting = smtp.connect(host, port)
         if code != 220:
             raise smtplib.SMTPConnectError(code, greeting)
         if channel.tls == "starttls":
@@ -337,7 +339,9 @@ class Sender:
     async def _post(self, channel: ChannelSettings, delivery_id: str, body: bytes) -> Delivery:
         notify = self.notify
         try:
-            url = channel.url or read_secret(channel.url_ref)  # type: ignore[arg-type]
+            if not (url := channel.url):
+                assert channel.url_ref is not None  # a webhook's settings hold its url or url_ref
+                url = read_secret(channel.url_ref)
             if (parts := secure(url, channel.host if channel.url_ref else None, channel.proxy)) is None:
                 return Delivery("dead", "url_mismatch")  # the URL is never shown
             headers = {"Content-Type": "application/json", "User-Agent": self._agent}
@@ -378,8 +382,8 @@ class Sender:
 
     async def _mail(self, channel: ChannelSettings, stored: str, deadline: float) -> Delivery:
         loop = asyncio.get_running_loop()
-        host = channel.smtp_host
-        assert host is not None
+        host, port = channel.smtp_host, channel.smtp_port
+        assert host is not None and port is not None  # an email channel's settings hold both
         try:
             password = read_secret(channel.password_ref) if channel.password_ref else None
             message = email.message_from_string(stored, policy=SMTP)
@@ -388,7 +392,7 @@ class Sender:
             left = deadline - time.monotonic()
             literal = _literal(host)
             addresses = (
-                [literal] if literal else await asyncio.wait_for(self._resolve(host, channel.smtp_port), left)
+                [literal] if literal else await asyncio.wait_for(self._resolve(host, port), left)
             )
             global_ = any(refusal(address, False) is None for address in addresses)
             if not all(_allowed(a, channel.allow_private_network) for a in addresses) or (

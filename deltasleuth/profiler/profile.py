@@ -150,14 +150,12 @@ class SideProfile:
     def evidence(self) -> list[EvidenceRow]:
         rows = []
         for path, st in self.stats.items():
-            paths = (render(path), None) if self.side is Side.A else (None, render(path))
+            a, b = (render(path), None) if self.side is Side.A else (None, render(path))
             if path and st.kind in LEAF_KINDS:
-                rows.append(EvidenceRow("profile", *paths, st.kind, st.fingerprint(), st.docs))
+                rows.append(EvidenceRow("profile", a, b, st.kind, st.fingerprint(), st.docs))
             elif path and (d := st.map_decision):
                 rows.append(
-                    EvidenceRow(
-                        "map", *paths, "map" if d.is_map else "record", d.scores, d.instances, d.reason
-                    )
+                    EvidenceRow("map", a, b, "map" if d.is_map else "record", d.scores, d.instances, d.reason)
                 )
         return rows
 
