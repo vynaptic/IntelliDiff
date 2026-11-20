@@ -1,0 +1,13 @@
+description: >
+  A regular expression in a map reads at most 10,000 characters of one string: side b pads the code past
+  that before its regex reads it, and is INCOMPLETE, never a match. Side a's ordinary regex maps as before.
+sides:
+  a: {map: "{'id': $replace(code, /^ORG-0*/, '')}"}
+  b: {map: "{'id': $replace($pad(code, 10001, '0'), /^ORG-0*/, '')}"}
+a:
+  body: '{"code": "ORG-000123"}'
+b:
+  body: '{"code": "ORG-000123"}'
+expect:
+  a: COMPLETE
+  b: INCOMPLETE unparseable

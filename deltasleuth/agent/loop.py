@@ -31,6 +31,7 @@ from deltasleuth.agent.validate import Evidence, check
 from deltasleuth.auth.principal import Principal
 from deltasleuth.context import Context
 from deltasleuth.core.types import CompiledSpec
+from deltasleuth.errors import NotFound, Refused
 from deltasleuth.evidence.store import EvidenceKeyError
 from deltasleuth.llm.client import LLMClient
 from deltasleuth.llm.model import (
@@ -47,7 +48,6 @@ from deltasleuth.llm.model import (
 from deltasleuth.llm.policy import EgressPolicy
 from deltasleuth.llm.profiles import STANDING
 from deltasleuth.runner.compare import EvidenceMissing
-from deltasleuth.runner.purge import CyclePurged
 from deltasleuth.security.crypto import KeyringError, Sealer
 from deltasleuth.store import repo
 
@@ -56,7 +56,7 @@ DATA_CLASSES = frozenset({DataClass.PRODUCTION_TOKENISED})
 MAX_OUTPUT_TOKENS = 2048  # unless the profile declares its max_output
 INCOMPLETE = ("max_tokens", "content_filter", "refusal")  # stop reasons that leave nothing to check
 # A failed tool call the model reads in the failure's own words: any other is a fault, told as one.
-REFUSALS = (ToolError, CyclePurged, EvidenceMissing)
+REFUSALS = (ToolError, Refused, EvidenceMissing)  # a purged cycle's is a Refused too
 FACTS = "get_root_cause"  # the call, and its id, whose result gives a fixed question's root cause
 log = logging.getLogger("deltasleuth.agent")
 
@@ -99,7 +99,7 @@ async def answer(
         async with ctx.pool.connection() as conn:
             session = await repo.get_chat_session(conn, session_id)
             if session is None:
-                raise LookupError(f"no chat session {session_id}")
+                raise NotFound(f"no chat session {session_id}")
             sealer = await ctx.sealer(conn, session["run_id"])
             run = await repo.get_run(conn, session["run_id"])
             carried = data_classes(await ctx.spec(conn, run["spec_id"]))

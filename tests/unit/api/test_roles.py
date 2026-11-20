@@ -49,6 +49,7 @@ ROUTES = {  # "anyone": any principal
     ("GET", "/v1/runs/{run_id}/root-causes"): "viewer",
     ("GET", "/v1/runs/{run_id}/changes"): "viewer",
     ("GET", "/v1/runs/{run_id}/graph"): "viewer",
+    ("GET", "/v1/runs/{run_id}/cycles"): "viewer",
     ("GET", "/v1/runs/{run_id}/keys/{key}"): "viewer",
     ("GET", "/v1/runs/{run_id}/reports/{name}"): "viewer",
     ("POST", "/v1/chat/sessions"): "viewer",

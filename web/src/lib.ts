@@ -1,6 +1,7 @@
 /** Data hooks, the hash router, who is signed in and the licence. */
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { qs, type Licence, type Me, type Page, type Query } from './api';
+import { poll, sameDeps, shownState } from './loading.ts';
 
 export const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -28,21 +29,31 @@ export function useRoute(): { parts: string[]; query: URLSearchParams } {
   return { parts: path.split('/').filter(Boolean).map(decodeURIComponent), query: new URLSearchParams(query) };
 }
 
-/** The latest result of `load`, run again when `deps` change or on `reload()`; `loading` until the first answer. */
+/** The latest result of `load`, run again when `deps` change or on `reload()`, whose promise settles once that
+ *  load has answered. An answer is shown only while `deps` are those it was loaded for: once they change, there
+ *  is no data and `loading` until the new answer (`shownState`). A reload's failure keeps the data shown. */
 export function useLoad<T>(load: () => Promise<T>, deps: unknown[]) {
-  const [state, setState] = useState<{ data?: T; error?: string }>({});
+  const [state, setState] = useState<{ data?: T; error?: string; deps?: unknown[] }>({});
   const [tick, setTick] = useState(0);
+  const waiting = useRef<(() => void)[]>([]); // the reloads the next load answers
   useEffect(() => {
     let live = true; // a late answer to an earlier request must not overwrite a newer one
-    load().then(
-      (data) => live && setState({ data }),
-      (e) => live && setState((s) => ({ ...s, error: message(e) })),
-    );
+    const answered = waiting.current.splice(0);
+    load()
+      .then(
+        (data) => live && setState({ data, deps }),
+        (e) => live && setState((s) => ({ data: sameDeps(s.deps, deps) ? s.data : undefined, error: message(e), deps })),
+      )
+      .finally(() => answered.forEach((done) => done()));
     return () => {
       live = false;
     };
   }, [...deps, tick]);
-  return { ...state, loading: !state.data && !state.error, reload: useCallback(() => setTick((t) => t + 1), []) };
+  const reload = useCallback(
+    () => new Promise<void>((done) => (waiting.current.push(done), setTick((t) => t + 1))),
+    [],
+  );
+  return { ...shownState(state, deps), reload };
 }
 
 /** Pages of `load` accumulated by `more()`, restarted when `deps` change. */
@@ -63,10 +74,8 @@ export function usePaged<T>(load: (cursor?: string) => Promise<Page<T>>, deps: u
   return { ...state, loading, more: next && state.query === query ? () => fetchPage(next) : undefined };
 }
 
-export function usePoll(tick: () => void, ms: number, active: boolean): void {
-  useEffect(() => {
-    if (!active) return;
-    const timer = setInterval(tick, ms);
-    return () => clearInterval(timer);
-  }, [tick, ms, active]);
+/** `tick` every `ms` while `active`: each call waits for the answer to the one before (a promise `tick`
+ *  returns, a `reload`'s), and backs off from a slow answer (`poll`). */
+export function usePoll(tick: () => unknown, ms: number, active: boolean): void {
+  useEffect(() => (active ? poll(tick, ms) : undefined), [tick, ms, active]);
 }

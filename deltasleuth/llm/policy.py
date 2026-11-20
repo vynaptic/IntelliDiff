@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from deltasleuth.errors import Invalid
 from deltasleuth.llm.model import DataClass, EgressDenied
 from deltasleuth.llm.profiles import ENVIRONMENTS, LLMProfile, Trust
 
@@ -25,7 +26,7 @@ class EgressPolicy:
 
     def __post_init__(self) -> None:
         if self.environment not in ENVIRONMENTS:
-            raise ValueError(f"environment must be one of {ENVIRONMENTS}")
+            raise Invalid(f"environment must be one of {ENVIRONMENTS}")
         object.__setattr__(
             self, "external_extra_classes", frozenset(DataClass(c) for c in self.external_extra_classes)
         )

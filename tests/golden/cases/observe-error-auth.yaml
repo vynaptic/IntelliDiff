@@ -5,3 +5,4 @@ b:
 expect:
   a: ERROR error_a
   b: COMPLETE
+  outcome: INCONCLUSIVE error_a

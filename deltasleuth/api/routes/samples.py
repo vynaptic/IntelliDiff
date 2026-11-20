@@ -99,9 +99,6 @@ async def close(ctx: Ctx, who: Operator, body: CloseIn) -> Response:
         raise HTTPException(403, "closing draws needs a signed-in person")
     note = checked(body.note)
     assert note is not None
-    try:
-        async with repo.audited(ctx.pool) as (conn, audit):
-            closed = await sample.close(conn, audit, body.spec_name, note, who)
-    except LookupError as exc:
-        raise HTTPException(404, str(exc)) from None
+    async with repo.audited(ctx.pool) as (conn, audit):
+        closed = await sample.close(conn, audit, body.spec_name, note, who)
     return ok({"closed": closed})

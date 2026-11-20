@@ -23,6 +23,7 @@ from typer.testing import CliRunner
 from deltasleuth import licence, schedules
 from deltasleuth.cli.main import app
 from deltasleuth.core import jsonio
+from deltasleuth.errors import Invalid
 from deltasleuth.runner import create_run, notify, recheck, runs, schedule, worker
 from deltasleuth.store import repo
 from tests.conftest import TESTER, licensed
@@ -114,6 +115,30 @@ async def test_slots_that_meet_a_run_together_load_it_once(
     finally:
         await sweeper.close()
     assert counted == [run_id] and all(run is loaded[0] for run in loaded)
+
+
+async def test_two_runs_share_the_slots(harness: Harness, service: ScriptedService) -> None:
+    """A free slot leases a key of the run with the fewest groups in flight. A run whose
+    ``execution.concurrency`` matched the worker's took every slot until it ended, as its keys fell due
+    first: one created after it read nothing meanwhile."""
+    first, second = [f"K{n:03d}" for n in range(1, 41)], ["K101", "K102", "K103"]
+    for key in first + second:
+        service.both(key, doc(key), doc(key))
+    service.slow = 0.05
+    spec_id = await harness.spec(spec_text(first + second, execution="concurrency: 4"))
+    made = [await create_run(harness.ctx, spec_id, "batch", keys=k, who=TESTER) for k in (first, second)]
+    stop = asyncio.Event()
+    working = asyncio.create_task(worker.run_worker(harness.ctx, stop=stop))
+    try:
+        for run_id in made:
+            await harness.wait(run_id)
+    finally:
+        stop.set()
+        await working
+    reads = [key for side, key, _ in service.log if side == "a"]
+    assert sorted(reads) == sorted(first + second)
+    # Beside the first, not after it: once each slot held a key of the first, its last read was the 41st.
+    assert max(reads.index(key) for key in second) < 20
 
 
 async def test_a_group_that_lost_some_leases_hands_back_the_rest(
@@ -502,6 +527,75 @@ async def test_no_raw_key_reaches_a_payload(
     assert len(stored) >= 2 and not [key for key in keys for text in texts if key in text]
 
 
+async def test_a_slow_cycle_end_holds_up_no_other_run_s_end_or_a_schedule(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each run's cycle end is a task of its own, one a run: one held up for seconds (a rolling soak reading
+    its key table again) delays neither another run's end nor a schedule's firing, nor the sweep."""
+    spec_id = await harness.spec(spec_text())
+    slow, quick = [await create_run(harness.ctx, spec_id, "batch", who=TESTER) for _ in range(2)]
+    for run_id in (slow, quick):
+        await runs.stop_run(harness.ctx, run_id, "cancelled", who=TESTER)  # the sweep ends their cycles
+    row = await scheduled(harness, spec_id, await minute(harness))
+    held, ends, fired = asyncio.Event(), [], []
+    finish = worker.finish_cycle
+
+    async def finishing(ctx: Any, run_id: str, **kwargs: Any) -> None:
+        ends.append(run_id)
+        if run_id == slow:
+            await held.wait()
+        await finish(ctx, run_id, **kwargs)
+
+    async def fire(ctx: Any, schedule_id: str, **_: Any) -> None:
+        fired.append(schedule_id)
+        await schedules.pause(ctx, schedule_id, TESTER)
+
+    monkeypatch.setattr(worker, "finish_cycle", finishing)
+    monkeypatch.setattr(schedule, "fire", fire)
+    sweeper = worker._Worker(harness.ctx)
+    try:
+        for _ in range(3):
+            await asyncio.wait_for(sweeper._sweep_once(), 2)  # never waits for the held end
+            others = [task for run_id, task in sweeper.ending.items() if run_id != slow]
+            await asyncio.gather(*sweeper.firing.values(), *others)
+        assert (await harness.run(quick))["status"] == "cancelled" and fired == [row["schedule_id"]]
+        assert (await harness.run(slow))["status"] == "cancelling" and list(sweeper.ending) == [slow]
+        assert ends.count(slow) == 1  # one task a run: later sweeps start no second end of it
+        held.set()
+        await asyncio.gather(*sweeper.ending.values())
+        assert (await harness.run(slow))["status"] == "cancelled" and sweeper.ending == {}
+    finally:
+        held.set()
+        await sweeper.close()
+
+
+async def test_a_failed_cycle_end_is_logged_by_type_and_place_and_fails_its_run_only(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    spec_id = await harness.spec(spec_text())
+    broken, fine = [await create_run(harness.ctx, spec_id, "batch", who=TESTER) for _ in range(2)]
+    for run_id in (broken, fine):
+        await runs.stop_run(harness.ctx, run_id, "cancelled", who=TESTER)
+    finish = worker.finish_cycle
+
+    async def finishing(ctx: Any, run_id: str, **kwargs: Any) -> None:
+        if run_id == broken:
+            raise RuntimeError("a bug at a cycle end")
+        await finish(ctx, run_id, **kwargs)
+
+    monkeypatch.setattr(worker, "finish_cycle", finishing)
+    sweeper = worker._Worker(harness.ctx)
+    try:
+        with caplog.at_level(logging.WARNING):
+            await sweeper._sweep_once()
+            await asyncio.gather(*sweeper.ending.values())
+    finally:
+        await sweeper.close()
+    assert [(await harness.run(r))["status"] for r in (broken, fine)] == ["failed", "cancelled"]
+    said = re.escape(f"run {broken} cannot end its cycle: RuntimeError") + AT
+    assert [m for m in caplog.messages if re.fullmatch(said, m)] and sweeper.ending == {}
+
+
 # -- schedules ----------------------------------------------------------------
 
 
@@ -578,7 +672,7 @@ async def test_a_count_of_tries_is_its_due_time_s_own(
 
     async def unlisted(*_: Any, **__: Any) -> Any:
         attempts.append(schedule_id)
-        raise ValueError("the source is down")
+        raise Invalid("the source is down")  # a key listing's refusal: the run is not started
 
     async def swept() -> None:
         sweeper.waiting.pop(schedule_id, None)  # its wait is over

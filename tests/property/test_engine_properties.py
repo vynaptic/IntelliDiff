@@ -1,4 +1,5 @@
-"""Engine properties: source-swap symmetry, determinism, order invariance, encoding stability.
+"""Engine properties: source-swap symmetry, determinism, order invariance, encoding stability, what
+the canonical hashes tell apart, and the per-key outcome under a swap of the sources.
 
 Documents follow one small canonical shape that exercises every array mode, normalisers on key
 fields and nested keyed members. Alphabets are tiny on purpose, so independently drawn sides
@@ -10,6 +11,8 @@ from __future__ import annotations
 import copy
 import json
 from collections import Counter
+from dataclasses import replace
+from datetime import date
 from decimal import Decimal
 from typing import Any
 
@@ -18,10 +21,13 @@ from hypothesis import strategies as st
 
 from deltasleuth.core.canonical.canonicalise import canonicalise
 from deltasleuth.core.canonical.encoding import canonical_json, exact_json
+from deltasleuth.core.canonical.observe import observe
+from deltasleuth.core.classify.outcome import compare_pair
 from deltasleuth.core.diff.differ import diff
 from deltasleuth.core.jsonio import dumps, parse_json
 from deltasleuth.core.types import (
     ArrayRule,
+    AuthoritativeAbsence,
     ChangeType,
     CompareConfig,
     CompiledSpec,
@@ -30,9 +36,16 @@ from deltasleuth.core.types import (
     FieldRule,
     Finding,
     KeyConfig,
+    KeyResult,
+    KnownDiffRule,
     Normalizer,
+    NotFoundRule,
+    Observation,
+    Outcome,
+    RuleClassification,
     Side,
     SideConfig,
+    TargetCapabilities,
 )
 
 TEXT = st.text(alphabet="aAbB ~/@\u00e9\u0301", max_size=4)  # incl. a combining accent (NFC)
@@ -86,6 +99,30 @@ def documents(draw: Any) -> dict[str, Any]:
         if draw(st.booleans()):
             doc[name] = draw(strategy)
     return doc
+
+
+@st.composite
+def pairs(draw: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Two documents: drawn apart, or the second a copy of the first in another raw form (padding and
+    case the normalisers remove, ruled arrays reordered, a null member), with at most one real change.
+    Independent draws seldom agree once normalised, where the hashes and the walks part ways."""
+    doc_a = draw(documents())
+    if draw(st.booleans()):
+        return doc_a, draw(documents())
+    doc_b = shuffle_ruled_arrays(doc_a, draw(st.randoms(use_true_random=False)))
+    if isinstance(doc_b.get("name"), str) and draw(st.booleans()):
+        doc_b["name"] = f" {doc_b['name'].swapcase()} "
+    if isinstance(doc_b.get("codes"), list):
+        doc_b["codes"] = [code.lower() if isinstance(code, str) else code for code in doc_b["codes"]]
+    for member in doc_b.get("accounts") or []:
+        if draw(st.booleans()):
+            member["id"] = f" {member['id'].lower()}"
+    if draw(st.booleans()):
+        doc_b["nullable"] = None
+    change = draw(st.sampled_from([None, "extra", "amount"]))
+    if change is not None:
+        doc_b[change] = draw(JSON_VALUES if change == "extra" else NUMBERS)
+    return doc_a, doc_b
 
 
 def property_spec(*, null_equals_absent: bool = False, value_filter: str | None = None) -> CompiledSpec:
@@ -197,10 +234,10 @@ def test_diff_is_deterministic(doc_a: dict, doc_b: dict) -> None:
 
 
 @PROPERTY
-@given(documents(), documents())
-def test_equal_hashes_mean_no_normalised_findings(doc_a: dict, doc_b: dict) -> None:
+@given(pairs())
+def test_equal_hashes_mean_no_normalised_findings(pair: tuple[dict, dict]) -> None:
     spec = property_spec()
-    a, b = sides(doc_a, doc_b, spec)
+    a, b = sides(*pair, spec)
     findings = diff(a, b, spec, key="K")
     if a.hash == b.hash:
         assert all(f.taxonomy_code == "NORMALIZATION_ONLY" for f in findings)
@@ -216,6 +253,125 @@ def test_pointers_are_unique_per_key(doc_a: dict, doc_b: dict) -> None:
     pointers = [f.json_pointer for f in findings]
     assert len(pointers) == len(set(pointers))
     assert all(canonical_json(f.path_pattern) for f in findings)
+
+
+@PROPERTY
+@given(pairs())
+def test_different_hashes_mean_a_finding(pair: tuple[dict, dict]) -> None:
+    """The converse of the property above: documents either hash tells apart give at least one finding,
+    normalised or raw, so the differ's equal-hash shortcut never hides a difference."""
+    spec = property_spec()
+    a, b = sides(*pair, spec)
+    if (a.hash, a.raw_hash) != (b.hash, b.raw_hash):
+        assert diff(a, b, spec, key="K")
+
+
+def without_null_members(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: without_null_members(v) for k, v in value.items() if v is not None}
+    if isinstance(value, list):
+        return [without_null_members(v) for v in value]
+    return value
+
+
+@PROPERTY
+@given(pairs())
+def test_null_equals_absent_hides_only_null_members(pair: tuple[dict, dict]) -> None:
+    """With nullEqualsAbsent a null member equals an absent one: documents that still differ once their
+    null members are dropped give a finding. The plain hashes do not apply the option."""
+    doc_a, doc_b = pair
+    spec = property_spec(null_equals_absent=True)
+    findings = diff(*sides(doc_a, doc_b, spec), spec, key="K")
+    a, b = sides(without_null_members(doc_a), without_null_members(doc_b), property_spec())
+    if (a.hash, a.raw_hash) != (b.hash, b.raw_hash):
+        assert findings
+
+
+# -- outcome properties -------------------------------------------------------------------------------
+
+# What a side may answer instead of its document, as (HTTP status, body, error class): an authoritative
+# not-found, a status outside success, a fetch that timed out, a body that is not JSON.
+UNREAD = [
+    (404, '{"error": "not found"}', None),
+    (503, "{}", None),
+    (None, None, "timeout"),
+    (200, '{"p": ', None),
+]
+
+
+@st.composite
+def responses(draw: Any) -> tuple[tuple, tuple]:
+    """The two sides' responses, each its document (most often) or one of ``UNREAD``."""
+    doc_a, doc_b = draw(pairs())
+
+    def answer(doc: dict[str, Any]) -> tuple:
+        return draw(st.sampled_from([(200, dumps(doc), None)] * 3 + UNREAD))
+
+    return answer(doc_a), answer(doc_b)
+
+
+ABSENCE = TargetCapabilities(authoritative_absence=AuthoritativeAbsence((404,)))
+# Symmetric in the sides, so it holds whichever source is A.
+AMOUNT_RULE = KnownDiffRule(
+    "KD-0001", "path == '$.amount'", RuleClassification.ACCEPTED, "Amounts are rounded apart.", "ORG-1001"
+)
+_MIRROR_OUTCOME = {Outcome.NOT_FOUND_A: Outcome.NOT_FOUND_B, Outcome.NOT_FOUND_B: Outcome.NOT_FOUND_A}
+_MIRROR_REASON = {"error_a": "error_b", "error_b": "error_a"}
+_MIRROR_CODE = {
+    "FIELD_MISSING": "FIELD_EXTRA",
+    "FIELD_EXTRA": "FIELD_MISSING",
+    "MISSING_DOCUMENT": "EXTRA_DOCUMENT",
+    "EXTRA_DOCUMENT": "MISSING_DOCUMENT",
+}
+
+
+def outcome_spec(null_equals_absent: bool) -> CompiledSpec:
+    spec = property_spec(null_equals_absent=null_equals_absent)
+    return replace(
+        spec,
+        sides={side: replace(cfg, not_found=NotFoundRule((404,))) for side, cfg in spec.sides.items()},
+        known_diffs=(AMOUNT_RULE,),
+    )
+
+
+def judge(response_a: tuple, response_b: tuple, spec: CompiledSpec) -> KeyResult:
+    """The key's result when side a gives ``response_a`` and side b ``response_b``."""
+    states = []
+    for side, (status, body, error) in ((Side.A, response_a), (Side.B, response_b)):
+        obs = Observation(
+            key="K",
+            side=side,
+            http_status=status,
+            body=None if body is None else body.encode(),
+            observed_at="2026-09-24T00:00:00Z",
+            error_class=error,
+        )
+        states.append(observe(obs, spec.sides[side], spec, ABSENCE))
+    return compare_pair("K", *states, spec, today=date(2026, 9, 24))
+
+
+def classified_row(f: Finding, *, mirrored: bool = False) -> tuple:
+    change = _MIRROR.get(f.change_type, f.change_type) if mirrored else f.change_type
+    direction = _MIRROR_DIRECTION.get(f.direction, f.direction) if mirrored else f.direction
+    code = _MIRROR_CODE.get(f.taxonomy_code or "", f.taxonomy_code) if mirrored else f.taxonomy_code
+    return (f.json_pointer, f.path_pattern, change, direction, code, f.severity, f.rule_id)
+
+
+@PROPERTY
+@given(responses(), st.booleans())
+def test_swapping_the_sources_mirrors_the_outcome(pair: tuple[tuple, tuple], nulls: bool) -> None:
+    """MATCH, MISMATCH, KNOWN_DIFF and INCONCLUSIVE stay; NOT_FOUND_A and NOT_FOUND_B, a side's error
+    reason, missing and extra members and documents trade places."""
+    response_a, response_b = pair
+    spec = outcome_spec(nulls)
+    forward, backward = judge(response_a, response_b, spec), judge(response_b, response_a, spec)
+    assert backward.outcome is _MIRROR_OUTCOME.get(forward.outcome, forward.outcome)
+    reason = forward.inconclusive_reason
+    assert backward.inconclusive_reason == _MIRROR_REASON.get(reason or "", reason)
+    assert Counter(classified_row(f, mirrored=True) for f in backward.findings) == Counter(
+        classified_row(f) for f in forward.findings
+    )
+    assert backward.suppressed_count == forward.suppressed_count
 
 
 # -- canonicalisation properties ------------------------------------------------------------------

@@ -60,6 +60,13 @@ class CircuitBreaker:
                 if sum(self._outcomes) / len(self._outcomes) >= self._error_rate:
                     self._open()
 
+    def closed_for(self) -> float:
+        """Seconds until the circuit admits a call again: what is left of the cooldown while it is open, a
+        whole cooldown while its probe is out (a failed probe opens it again), else 0."""
+        if self.state == "open":
+            return max(self._opened_at + self._cooldown_s - self._clock(), 0.0)
+        return self._cooldown_s if self.state == "half_open" and self._probing else 0.0
+
     def release(self, ticket: Ticket) -> None:
         """Forget an admitted call that ended without an outcome (cancelled, or never sent)."""
         if ticket == "probe":

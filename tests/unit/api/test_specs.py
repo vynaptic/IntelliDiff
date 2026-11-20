@@ -13,6 +13,7 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager
 from decimal import Decimal
+from functools import partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -1094,3 +1095,39 @@ def test_profile_takes_the_pairs_file_the_mock_fixtures_write(
     assert len(body["evidence"]) == len(filed.evidence) > 0
     assert body["unmatched"] == {side.value: paths for side, paths in filed.unmatched.items()}
     assert set(body["unmatched"]) == {"a", "b"} and all(body["unmatched"].values())
+
+
+def test_one_store_keeps_uploads_and_under_sso_runs_only_approved_ones(
+    open_client: OpenClient, spec_yaml: str
+) -> None:
+    """``specs.store`` is the upload route's and the CLI's. Under SSO an upload is stored (its approval is
+    asked for after), while a spec stored to be run is found by its content and gated (a pre-check's is
+    not), and one that needs an approval and was never uploaded is refused, storing nothing; a version
+    found is not stored again. A body the store would not keep as written is Invalid, storing nothing."""
+    from deltasleuth import specs
+    from deltasleuth.approvals import ApprovalRequired
+    from deltasleuth.errors import Invalid
+    from tests.conftest import TESTER
+
+    from .conftest import OIDC, approved
+
+    doc = parse_yaml_text(spec_yaml)
+    with open_client(auth={"oidc": OIDC}) as client:
+        ctx = client.app.state.ctx
+
+        def store(body: Any = doc, **options: Any) -> Any:
+            return client.portal.call(partial(specs.store, ctx, body, TESTER, **options))
+
+        with pytest.raises(ApprovalRequired, match=r"^spec api-demo 1\.0\.0 has no approved upload: "):
+            store(to_run=True)
+        with pytest.raises(Invalid, match=r"^spec body holds NUL at /metadata/owner, "):
+            store(doc | {"metadata": doc["metadata"] | {"owner": "te\x00sts"}})
+        assert audited(client, "spec.create") == []
+        uploaded = store()
+        assert (uploaded.spec.name, uploaded.approval_id) == ("api-demo", None)
+        with pytest.raises(ApprovalRequired, match="needs a four-eyes approval of clear"):
+            store(to_run=True)
+        assert store(to_run=True, gated=False).spec_id == uploaded.spec_id
+        approval_id = approved(client, uploaded.spec_id)
+        assert (store(to_run=True).spec_id, store(to_run=True).approval_id) == (uploaded.spec_id, approval_id)
+        assert len(audited(client, "spec.create")) == 1

@@ -1,5 +1,5 @@
 """What the reports say of the licence: report.pdf's title block states the licence
-a run was made under, and the P0 summary's warning an evaluation's or a grace's; the plan a pack hashes
+a run was made under, and the contract report's warning an evaluation's or a grace's; the plan a pack hashes
 records it without the customer; the raw-value gate reads the licence's ids as DeltaSleuth's and skips its
 fixed words, and a soak paused for the licence keeps its packs under an integer key pattern."""
 

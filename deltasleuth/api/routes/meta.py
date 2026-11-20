@@ -10,6 +10,8 @@ from fastapi import APIRouter, HTTPException, Response
 from deltasleuth import licence
 from deltasleuth import targets as product
 from deltasleuth.api.deps import Ctx, Declarer, Payload, Viewer, declarer, ok
+from deltasleuth.runner import worker
+from deltasleuth.store import repo
 
 public = APIRouter()
 router = APIRouter()
@@ -45,15 +47,26 @@ class TargetIn(Payload):
 async def health(ctx: Ctx) -> Response:
     """Up when the database answers, else 503: at once when a pooled connection fails, or after the three
     seconds the pool is given to hand one out, under the image health check's four. The statement itself
-    is not bounded. ``ai`` and ``auth`` tell the UI what to offer."""
+    is not bounded. ``ai`` and ``auth`` tell the UI what to offer. ``worker`` is the worker's last sweep,
+    whichever process holds the worker lock: when it ran and its age in seconds, null before any (which
+    process holds it, a host name and a process id, is the worker's log line's, not an open answer's); a
+    process that runs its own worker answers 503, ``status: stale``, once no sweep has run for longer than
+    ``worker.stale_after`` (a ``--no-worker`` one only shows it)."""
     try:
         async with ctx.pool.connection(timeout=3) as conn:
             await conn.execute("SELECT 1")
+            swept = await repo.last_sweep(conn)
     except psycopg.OperationalError:  # the pool's timeout among them
         raise HTTPException(
             503, "the database is not answering, or the pool gave no connection in 3 s"
         ) from None
-    return ok({"status": "ok", "ai": ctx.llm is not None, "auth": ctx.settings.auth_mode})
+    sweep = swept and {
+        "last_sweep_at": swept["swept_at"],
+        "age_s": round(max(swept["age_s"], 0.0), 3),
+    }
+    stale = worker.stalled(ctx, swept and swept["age_s"])
+    body = {"status": "stale" if stale else "ok", "ai": ctx.llm is not None, "auth": ctx.settings.auth_mode}
+    return ok(body | {"worker": sweep}, 503 if stale else 200)
 
 
 @router.get("/targets")

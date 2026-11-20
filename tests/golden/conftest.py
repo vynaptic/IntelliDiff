@@ -1,12 +1,13 @@
 """Golden-case loader: YAML case files -> engine types.
 
-Cases are written in the spec DSL's own shapes (camelCase), and the compare block and side
-members are validated against spec.schema.json, so the corpus also checks that the engine reads
-the DSL as the schema defines it. Layout::
+Cases are written in the spec DSL's own shapes (camelCase), and the compare block, the side
+members and the known-difference rules are validated against spec.schema.json, so the corpus also
+checks that the engine reads the DSL as the schema defines it. Layout::
 
     description: why this case exists
     key: K1                                  # optional
     compare: {arrays, fields, include, exclude, valueFilter, nullEqualsAbsent}
+    knownDiffs: [{id, when, classification, reason, ticket, expires, active}]       # optional
     sides: {a: {select, map, notFound, success, truncation, pagination}, b: {...}}   # optional
     targets: {a: {authoritativeAbsence, absenceShapes, truncationIndicators,
                   stableOrdering, maxDepth}, b: {...}}                               # optional
@@ -15,15 +16,25 @@ the DSL as the schema defines it. Layout::
     expect:
       a: COMPLETE | ABSENT | "INCOMPLETE <reason>" | "ERROR <reason>"
       b: ...
-      findings:                              # when both sides are COMPLETE (default [])
+      outcome: MATCH | MISMATCH | KNOWN_DIFF | NOT_FOUND_A | NOT_FOUND_B | "INCONCLUSIVE <reason>"
+      findings:                              # default []
         - [json_pointer, path_pattern, change_type, taxonomy or null]
-        - {finding: [...], value_class: ..., member_key: ..., direction: ..., raw_only: ...}
+        - {finding: [...], value_class: ..., member_key: ..., direction: ..., raw_only: ...,
+           taxonomy: [code, severity], rule: rule id}
+
+``findings`` are the differ's when both sides are COMPLETE: the fourth member is the code the differ
+presets (NORMALIZATION_ONLY, FILTER_MEMBERSHIP), else null. ``outcome`` is optional; with it the case
+also runs the per-key comparison (the differ, classification and the known-difference rules, on
+``TODAY``) and asserts the key's outcome. Each finding then needs ``taxonomy``, its code and severity
+after classification, and ``rule`` names the rule that suppresses it (no rule when omitted). A key
+with one ABSENT side lists its one document finding, with the document code as the fourth member.
 """
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -32,6 +43,7 @@ import jsonschema
 import pytest
 import yaml
 
+from deltasleuth.core.spec.expressions import cel_error
 from deltasleuth.core.types import (
     ArrayRule,
     AuthoritativeAbsence,
@@ -40,10 +52,12 @@ from deltasleuth.core.types import (
     FieldCompare,
     FieldRule,
     KeyConfig,
+    KnownDiffRule,
     Normalizer,
     NotFoundRule,
     Observation,
     Pagination,
+    RuleClassification,
     Severity,
     Side,
     SideConfig,
@@ -52,9 +66,14 @@ from deltasleuth.core.types import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-_DEFS = json.loads((REPO_ROOT / "deltasleuth/core/spec/spec.schema.json").read_text())["$defs"]
-_TOP_LEVEL = {"description", "key", "compare", "sides", "targets", "a", "b", "expect"}
+TODAY = date(2026, 9, 24)  # the day of every observation: known-difference rules expire against it
+_SCHEMA = json.loads((REPO_ROOT / "deltasleuth/core/spec/spec.schema.json").read_text())
+_DEFS = _SCHEMA["$defs"]
+_TOP_LEVEL = {"description", "key", "compare", "knownDiffs", "sides", "targets", "a", "b", "expect"}
+_EXPECT = {"a", "b", "outcome", "findings"}
 _SIDE_MEMBERS = ("select", "map", "notFound", "success", "truncation", "pagination")
+DIFFER_ATTRIBUTES = ("value_class", "member_key", "array_path", "direction", "raw_only", "severity")
+_FINDING_MEMBERS = {"finding", *DIFFER_ATTRIBUTES, "taxonomy", "rule"}
 
 
 @dataclass
@@ -67,6 +86,7 @@ class GoldenCase:
     observations: dict[Side, Observation]
     expect_states: dict[Side, tuple[str, str | None]]
     expect_findings: list[dict[str, Any]]
+    expect_outcome: tuple[str, str | None] | None = None
 
 
 def load_case(path: Path) -> GoldenCase:
@@ -83,11 +103,19 @@ def load_case(path: Path) -> GoldenCase:
         key=KeyConfig(name="code"),
         sides={s: _side(s, sides.get(s.value) or {}) for s in Side},
         compare=_compare(raw.get("compare") or {}),
+        known_diffs=_known_diffs(path.name, raw.get("knownDiffs") or []),
     )
     expect = raw["expect"]
+    if unknown := set(expect) - _EXPECT:
+        raise ValueError(f"{path.name}: unknown expect members {sorted(unknown)}")
     findings = [
         item if isinstance(item, dict) else {"finding": item} for item in expect.get("findings") or []
     ]
+    for item in findings:
+        if unknown := set(item) - _FINDING_MEMBERS:
+            raise ValueError(f"{path.name}: unknown finding members {sorted(unknown)}")
+        if ("outcome" in expect) != ("taxonomy" in item) or ("rule" in item and "outcome" not in expect):
+            raise ValueError(f"{path.name}: taxonomy and rule go with expect.outcome, on every finding")
     return GoldenCase(
         name=path.stem,
         description=raw["description"],
@@ -97,6 +125,7 @@ def load_case(path: Path) -> GoldenCase:
         observations={s: _observation(key, s, raw[s.value]) for s in Side},
         expect_states={s: _state(expect[s.value]) for s in Side},
         expect_findings=[{**item, "finding": tuple(item["finding"])} for item in findings],
+        expect_outcome=_state(expect["outcome"]) if "outcome" in expect else None,
     )
 
 
@@ -109,11 +138,32 @@ def _validate_against_schema(name: str, raw: dict[str, Any]) -> None:
 
     if "compare" in raw:
         check(raw["compare"], {"$ref": "#/$defs/compare"}, "compare")
+    if "knownDiffs" in raw:
+        check(raw["knownDiffs"], _SCHEMA["properties"]["knownDiffs"], "knownDiffs")
     for side_name, members in (raw.get("sides") or {}).items():
         for member, value in members.items():
             if member not in _SIDE_MEMBERS:
                 raise ValueError(f"{name}: side member {member!r} is not used by the engine")
             check(value, _DEFS["serviceSide"]["properties"][member], f"sides.{side_name}.{member}")
+
+
+def _known_diffs(name: str, raw: list[dict[str, Any]]) -> tuple[KnownDiffRule, ...]:
+    """The active rules, each predicate compiled as the spec loader compiles it."""
+    for entry in raw:
+        if (error := cel_error(entry["when"], "known_diff")) is not None:
+            raise ValueError(f"{name}: knownDiffs {entry['id']} does not compile: {error}")
+    return tuple(
+        KnownDiffRule(
+            rule_id=entry["id"],
+            when=entry["when"],
+            classification=RuleClassification(entry["classification"]),
+            reason=entry["reason"],
+            ticket=entry["ticket"],
+            expires=entry.get("expires"),
+        )
+        for entry in raw
+        if entry.get("active", True)
+    )
 
 
 def _number(value: Any) -> Decimal | None:

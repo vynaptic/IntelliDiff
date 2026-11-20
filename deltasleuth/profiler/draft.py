@@ -369,8 +369,9 @@ def _notes(
         )
     notes += [
         "truncation is left out: declare sides.<side>.truncation or the target's truncation_indicators "
-        "before a live run (loader rule X33).",
-        "notFound [404] must be declared in each target's authoritative_absence (loader rule X2).",
+        "before a live run: a spec with neither does not validate.",
+        "notFound [404] must be declared in each target's authoritative_absence, or the spec does not"
+        " validate.",
     ]
     if unmatched_a:
         notes.append(

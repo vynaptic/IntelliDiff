@@ -35,6 +35,7 @@ from deltasleuth.core.canonical.encoding import sha256_hex
 from deltasleuth.core.classify.patterns import segments
 from deltasleuth.core.sampling import percent
 from deltasleuth.core.types import CompiledSpec
+from deltasleuth.errors import NotFound
 from deltasleuth.reports.adjudicate import (
     MAX_UPLOAD,
     AdjudicationConflict,
@@ -327,7 +328,7 @@ async def store_draw(
     async with ctx.pool.connection() as conn:
         run = await repo.get_run(conn, run_id)
         if run is None:
-            raise LookupError(f"run {run_id} not found")
+            raise NotFound(f"run {run_id} not found")
         spec = await ctx.spec(conn, run["spec_id"])
         if rawvalues.key_shaped(spec, source):
             raise AdjudicationError(
@@ -688,7 +689,7 @@ async def store_labels(ctx: Context, labelling_id: str, data: bytes, *, who: Pri
     async with ctx.pool.connection() as conn:
         found = await repo.get_labelling(conn, labelling_id)
         if found is None:
-            raise LookupError(f"labelling {labelling_id} not found")
+            raise NotFound(f"labelling {labelling_id} not found")
         run_id, cycle = found["run_id"], found["cycle"]
         await _unfrozen(conn, run_id, cycle, "labelling")
         if found["labelled_at"] is not None:

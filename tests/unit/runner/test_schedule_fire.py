@@ -28,6 +28,7 @@ from deltasleuth.context import Context
 from deltasleuth.core import cron, notify
 from deltasleuth.core.canonical.encoding import sha256_hex
 from deltasleuth.core.types import Target
+from deltasleuth.errors import Invalid, NotFound
 from deltasleuth.runner import create_run, pause_run, purge, runs, schedule
 from deltasleuth.runner.schedule import RETRY_S, RETRY_SLOW_S, Retry
 from deltasleuth.schedules import Refused
@@ -1149,10 +1150,10 @@ async def test_not_started_three_tries(harness: Harness, monkeypatch: pytest.Mon
     row = await scheduled(harness, await harness.spec(spec_text()), due)
     left = failing(
         monkeypatch,
-        ValueError(f"key {CANARY} is not listed"),
+        Invalid(f"key {CANARY} is not listed"),
         psycopg.OperationalError(f"connection refused for {CANARY}"),  # a side or the store: not told apart
-        LookupError(f"no target for {CANARY}"),
-        ValueError(CANARY),
+        NotFound(f"no target for {CANARY}"),
+        Invalid(CANARY),
     )
     assert await fire(harness, row) == Retry(RETRY_SLOW_S, 1, due)
     assert await fire(harness, row, due + 5 * MINUTE, tried=1) == Retry(RETRY_SLOW_S, 2, due)
@@ -1160,10 +1161,10 @@ async def test_not_started_three_tries(harness: Harness, monkeypatch: pytest.Mon
     assert await fire(harness, row, due + 10 * MINUTE, tried=2) is None  # the third settles it
     (detail,) = await missed(harness, row)
     assert reasons([detail]) == [("not_started", None, cron.utc(due), None, None)]
-    assert (detail["error_type"], detail["run_id"]) == ("LookupError", None)
+    assert (detail["error_type"], detail["run_id"]) == ("NotFound", None)
     # A try whose next would fall outside the window settles the time with its reason at once.
     assert await fire(harness, row, due + DAY + 56 * MINUTE) is None
-    assert [d["error_type"] for d in await missed(harness, row)] == ["LookupError", "ValueError"]
+    assert [d["error_type"] for d in await missed(harness, row)] == ["NotFound", "Invalid"]
     assert await started(harness, row) == [] and left == []
 
 
@@ -1261,7 +1262,7 @@ async def test_a_try_is_judged_on_the_clock_after_the_attempt(
 
     async def listing(*_: Any, **__: Any) -> Any:
         clock[0] += took.pop(0)  # the listing ran this long before it failed
-        raise ValueError(f"key {CANARY} is not listed")
+        raise Invalid(f"key {CANARY} is not listed")
 
     monkeypatch.setattr(runs, "resolve", listing)
     monkeypatch.setattr(schedule, "monotonic", lambda: clock[0])
@@ -1273,7 +1274,7 @@ async def test_a_try_is_judged_on_the_clock_after_the_attempt(
     assert await fire(harness, row, at, tried=1) is None
     (detail,) = await missed(harness, row)  # settled at once, with its reason: never late, code down
     assert reasons([detail]) == [("not_started", None, cron.utc(due), None, None)]
-    assert detail["error_type"] == "ValueError" and await started(harness, row) == []
+    assert detail["error_type"] == "Invalid" and await started(harness, row) == []
     took.append(120.0)  # a slow failure with time for no other try, on its first attempt
     assert await fire(harness, row, at + DAY) is None
     assert reasons(await missed(harness, row))[1:] == [("not_started", None, cron.utc(due + DAY), None, None)]
@@ -1283,7 +1284,7 @@ async def test_a_newer_time_counts_its_own_tries(harness: Harness, monkeypatch: 
     first = await minute(harness)
     spec_id = await harness.spec(spec_text())
     row = await scheduled(harness, spec_id, first, cron=hourly(first))
-    left = failing(monkeypatch, *(ValueError(CANARY) for _ in range(5)))
+    left = failing(monkeypatch, *(Invalid(CANARY) for _ in range(5)))
     assert await fire(harness, row, first + 10 * SECOND) == Retry(RETRY_SLOW_S, 1, first)
     assert await fire(harness, row, first + 6 * MINUTE, tried=1) == Retry(RETRY_SLOW_S, 2, first)
     # Its window closed at the next time before its third try: that time's tries are its own, three again.
@@ -1448,7 +1449,7 @@ async def test_planted_key_reaches_no_row_log_or_delivery(
         due = await minute(h)
         row = await scheduled(h, await h.spec(spec_text()), due)
         await notifier.feed()
-        failing(monkeypatch, *(ValueError(f"customer {CANARY} has no account") for _ in range(3)))
+        failing(monkeypatch, *(Invalid(f"customer {CANARY} has no account") for _ in range(3)))
         with caplog.at_level(logging.DEBUG):
             for tried in range(3):
                 await fire(h, row, due + tried * 5 * MINUTE, tried=tried)
@@ -1460,7 +1461,7 @@ async def test_planted_key_reaches_no_row_log_or_delivery(
             logged = await repo._rows(conn, "SELECT a::text AS text FROM ds.audit_log a")
             installation = await repo.installation_id(conn)
     schedule_id, at = row["schedule_id"], cron.utc(due)
-    said = f"schedule {schedule_id} did not start a run for {at} (not_started: ValueError)"
+    said = f"schedule {schedule_id} did not start a run for {at} (not_started: Invalid)"
     assert said in caplog.messages  # codes and types only
     texts = [delivery["body"], caplog.text, *(found["text"] for found in [*stored, *logged])]
     assert not any(CANARY in text or "has no account" in text for text in texts)
@@ -1473,17 +1474,17 @@ async def test_planted_key_reaches_no_row_log_or_delivery(
     )
     assert sent["facts"] == {
         "schedule_id": schedule_id, "reason": "not_started", "code": None, "due": at, "to": None,
-        "count": None, "run_id": None, "draw_id": None, "error_type": "ValueError",
+        "count": None, "run_id": None, "draw_id": None, "error_type": "Invalid",
     }  # fmt: skip
     assert sent["run"] is None and "unit-runner" not in delivery["body"]  # and no payload carries them
     seq = sent["audit"]["seq"]
     assert sent["text"] == (
         f"[test] schedule {schedule_id} did not start a run for {at}: the run could not be created"
-        " (ValueError); starting one on the Runs screen shows the cause. Observed by DeltaSleuth"
+        " (Invalid); starting one on the Runs screen shows the cause. Observed by DeltaSleuth"
         f" (installation {installation}); not evidence and not a sign-off. Audit row {seq}."
     )
     assert (
-        detail["error_type"] == "ValueError"
+        detail["error_type"] == "Invalid"
         and sent["title"] == f"schedule {schedule_id} did not start a run"
     )
 
@@ -1687,7 +1688,7 @@ async def test_unreadable_key_table_is_not_started(
         assert await fire(h, row, due + 10 * MINUTE, tried=2) is None  # the third try settles it
         (detail,) = await missed(h, row)
         assert reasons([detail]) == [("not_started", None, cron.utc(due), None, None)]
-        assert (detail["error_type"], detail["run_id"]) == ("ValueError", None)
+        assert (detail["error_type"], detail["run_id"]) == ("Invalid", None)
         engine("census")  # readable again: the next due time starts its run
         assert await fire(h, row, due + DAY) is None
         (run,) = await started(h, row)

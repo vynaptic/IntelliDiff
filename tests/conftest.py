@@ -266,6 +266,15 @@ def receiving_thread(tmp_path: Path) -> Iterator[tuple[Receiver, str, str]]:
 signal.signal(signal.SIGTERM, signal.default_int_handler)
 
 
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """The opt-in measurements (DS_PERF=1, DS_IMAGE=<image>) hold tests that run for many minutes: each
+    test then gets an hour instead of the default ten minutes, unless --timeout says otherwise."""
+    if (os.environ.get("DS_PERF") or os.environ.get("DS_IMAGE")) and config.getoption("timeout") is None:
+        for item in items:
+            if item.get_closest_marker("timeout") is None:
+                item.add_marker(pytest.mark.timeout(3600))
+
+
 @pytest.fixture(scope="session")
 def repo_root() -> Path:
     return REPO_ROOT

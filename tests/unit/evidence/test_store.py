@@ -7,7 +7,9 @@ import hashlib
 import hmac
 import os
 import stat
+import threading
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -237,7 +239,7 @@ class TestIntegrity:
         def truncating_write(path: Path, data: bytes) -> None:
             path.write_bytes(data[:-4])  # storage that truncates what it is given
 
-        monkeypatch.setattr(store_module, "atomic_write", truncating_write)
+        monkeypatch.setattr(store_module, "write_synced", truncating_write)
         with pytest.raises(EvidenceIntegrityError):
             store.put_blob(make_obs())
 
@@ -328,6 +330,61 @@ class TestEnsureDeleteWalk:
         unlinks = [name for kind, name in events if kind == "unlink"]
         assert sorted(unlinks) == sorted(blob[4:6] for blob in sizes)
         assert events[len(unlinks) :] == [("sync", name) for name in sorted(by_directory)]
+
+    def test_a_group_s_blobs_are_each_synced_then_each_directory_once(
+        self, store: EvidenceStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A group's blobs, as a worker saves them: each file written to a temporary file, fsynced and renamed
+        into place, then each directory that gained one fsynced once, after the last rename (the blobs'
+        new directories' parent too): when ``put_all`` returns every blob is durable, at one directory
+        sync a directory, not one a blob."""
+        bodies = [b'{"n": %d}' % n for n in range(60)]
+        named = [store.identify(make_obs(body, key=f"K{n}")) for n, body in enumerate(bodies)]
+        named += [store.identify(make_obs(bodies[0], key="K0", side=Side.B))]  # one body twice: one blob
+        assert all(obs.obs_id and (obs.content_hash or "").startswith("hk1:") for obs in named)
+        assert list(store.walk()) == []  # naming writes nothing
+        events: list[tuple[str, str]] = []
+        fsync, replace = os.fsync, os.replace
+
+        def synced(fd: int) -> None:
+            events.append(("file", ""))
+            fsync(fd)
+
+        def renamed(source: Any, target: Any) -> None:
+            events.append(("rename", Path(target).parent.name))
+            replace(source, target)
+
+        monkeypatch.setattr(os, "fsync", synced)
+        monkeypatch.setattr(os, "replace", renamed)
+        monkeypatch.setattr(store_module, "fsync_dir", lambda folder: events.append(("dir", folder.name)))
+        assert store.put_all(named) == len(bodies)
+        directories = sorted({address(body)[4:6] for body in bodies})
+        files = [kind for kind, _ in events if kind == "file"]
+        renames = [name for kind, name in events if kind == "rename"]
+        assert len(files) == len(renames) == len(bodies)  # each file fsynced, before its rename
+        last = max(i for i, (kind, _) in enumerate(events) if kind == "rename")
+        assert events[last + 1 :] == [("dir", name) for name in [*directories, "hk1"]]
+        assert [store.get_body(obs.content_hash or "") for obs in named] == [*bodies, bodies[0]]
+        events.clear()
+        assert store.put_all(named) == 0 and events == []  # stored and intact: nothing written or synced
+
+    def test_concurrent_writers_of_one_address_leave_one_valid_blob(
+        self, store: EvidenceStore, tmp_path: Path
+    ) -> None:
+        """No lock serialises the writers: a blob is named by its body, so two writers of one address write
+        the same body, each rename leaves a whole blob, and each read-back check passes."""
+        named = store.identify(make_obs())
+        start = threading.Barrier(8)
+
+        def write() -> int:
+            start.wait()
+            return store.put_all([named])
+
+        with ThreadPoolExecutor(8) as pool:
+            written = list(pool.map(lambda _: write(), range(8)))
+        assert 1 <= sum(written) <= 8
+        assert [path.name for path in blob_path(tmp_path).parent.iterdir()] == [blob_path(tmp_path).name]
+        assert store.get_body(address()) == BODY
 
     def test_delete_returns_the_bytes_freed(self, store: EvidenceStore, tmp_path: Path) -> None:
         store.put_blob(make_obs())

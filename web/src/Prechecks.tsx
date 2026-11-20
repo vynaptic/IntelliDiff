@@ -132,7 +132,8 @@ const Made = ({ p }: { p: TablePrecheck }) => (
 export function PrechecksScreen({ query }: { query: URLSearchParams }) {
   const { can } = useWho();
   const [pages, setPages] = useState(1);
-  const found = useLoad(() => listed((cursor) => api.prechecks({ cursor }), pages), [pages]);
+  // More pages extend the list shown, which stays until they come: a reload, not other deps.
+  const found = useLoad(() => listed((cursor) => api.prechecks({ cursor }), pages), []);
   usePoll(found.reload, LIST_MS, true);
   const d = found.data;
 
@@ -154,7 +155,7 @@ export function PrechecksScreen({ query }: { query: URLSearchParams }) {
           <p role="note">{d.not}</p>
           {d.banners.map((line) => <p key={line} className="banner" role="note">{line}</p>)}
           <Table rows={d.items} cols={cols} rowId={(p) => p.precheck_id} empty="No pre-check yet." />
-          {d.next_cursor && <button onClick={() => setPages(pages + 1)}>More</button>}
+          {d.next_cursor && <button onClick={() => (setPages(pages + 1), found.reload())}>More</button>}
         </>
       )}
       {can('operator') && <PrecheckForm key={query.get('spec_id')} specId={query.get('spec_id') ?? undefined} />}

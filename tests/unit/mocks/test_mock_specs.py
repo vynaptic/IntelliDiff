@@ -1,4 +1,5 @@
-"""The mock specs and target registries: parseable, schema-valid, P0-only and mutually consistent.
+"""The mock specs and target registries: parseable, schema-valid, within what the engine runs and
+mutually consistent.
 
 These mirror the spec-loader rules (schema, expression compilation, notFound within the target's
 authoritative statuses, truncation declared) without importing the loader.

@@ -37,6 +37,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from deltasleuth.auth.principal import expand, printable
 from deltasleuth.config import LOOPBACK, OidcSettings
 from deltasleuth.core.secrets import read_secret, read_secret_bytes
+from deltasleuth.errors import Invalid
 
 LOGIN_COOKIE = "__Host-ds_login"  # under https; sessions.named(LOGIN_COOKIE, auth) is the name set and read
 LOGIN_SECONDS = 600
@@ -184,7 +185,7 @@ def load_credential(settings: OidcSettings) -> Credential:
         algorithm = "ES256"
     else:
         path = ref.removeprefix("file:")
-        raise ValueError(
+        raise Invalid(
             f"auth.oidc.client_key_ref: {path} is not a PEM RSA (>= 2048 bits) or EC P-256 private key"
         )
     cert = settings.client_cert_file
@@ -198,14 +199,14 @@ def _thumbprints(path: Path, key: Any) -> dict[str, str]:
     try:
         data = path.read_bytes()
     except OSError as exc:
-        raise ValueError(f"auth.oidc.client_cert_file: cannot read {path}: {exc.strerror}") from None
+        raise Invalid(f"auth.oidc.client_cert_file: cannot read {path}: {exc.strerror}") from None
     try:
         cert = x509.load_pem_x509_certificate(data)
         certified = cert.public_key().public_bytes(serialization.Encoding.DER, _SPKI)
     except (ValueError, UnsupportedAlgorithm):
         certified = None
     if certified != key.public_key().public_bytes(serialization.Encoding.DER, _SPKI):
-        raise ValueError(
+        raise Invalid(
             f"auth.oidc.client_cert_file: {path} is not a PEM certificate of client_key_ref's key"
         )
     der = cert.public_bytes(serialization.Encoding.DER)

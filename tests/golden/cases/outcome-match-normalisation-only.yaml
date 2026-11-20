@@ -1,0 +1,17 @@
+description: >
+  A difference a normaliser removes is a NORMALIZATION_ONLY finding of severity INFO, and INFO
+  findings alone leave the key MATCH.
+compare:
+  fields:
+    - {path: $.name, normalize: [trim, casefold]}
+a:
+  body: '{"code": "ORG-000123", "name": "  Acme Trading "}'
+b:
+  body: '{"code": "ORG-000123", "name": "ACME TRADING"}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  outcome: MATCH
+  findings:
+    - finding: [/name, $.name, value_changed, NORMALIZATION_ONLY]
+      taxonomy: [NORMALIZATION_ONLY, INFO]

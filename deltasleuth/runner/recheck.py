@@ -25,13 +25,16 @@ from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from deltasleuth.core.canonical.encoding import canonical_json, sha256_hex
 from deltasleuth.core.classify.signatures import signature_hash
 from deltasleuth.core.spec import parse_duration
 from deltasleuth.core.types import (
     CompiledSpec,
     Confirmation,
+    Counted,
     DriftReason,
     Finding,
+    KeyedMap,
     KeyResult,
     Outcome,
     Side,
@@ -118,9 +121,30 @@ def _usable(result: KeyResult) -> bool:
     return result.side_a.kind not in _UNUSABLE and result.side_b.kind not in _UNUSABLE
 
 
-def _fingerprint(state: SideState) -> tuple[SideStateKind, str | None, bool]:
-    """A side's read as a recheck compares it; a row entering or leaving its filter changed."""
-    return state.kind, state.canonical.hash if state.canonical is not None else None, state.selected
+def _fingerprint(state: SideState, spec: CompiledSpec) -> tuple[SideStateKind, str | None, bool]:
+    """A side's read as a recheck compares it; a row entering or leaving its filter changed. Under
+    ``nullEqualsAbsent`` a member holding null is no member, as the diff reads it, so a read that only
+    gains or loses one is the same read."""
+    canonical = state.canonical
+    if canonical is None:
+        return state.kind, None, state.selected
+    if not spec.compare.null_equals_absent:
+        return state.kind, canonical.hash, state.selected
+    return state.kind, sha256_hex(canonical_json(_without_nulls(canonical.doc))), state.selected
+
+
+def _without_nulls(node: Any) -> Any:
+    """``node`` with every object member that holds null left out, at every depth; a keyed or set
+    array's members keep their keys."""
+    if isinstance(node, KeyedMap):
+        return KeyedMap({k: [_without_nulls(m) for m in ms] for k, ms in node.items()}, mode=node.mode)
+    if isinstance(node, dict):
+        return {k: _without_nulls(v) for k, v in node.items() if v is not None}
+    if isinstance(node, list | tuple):
+        return [_without_nulls(v) for v in node]
+    if isinstance(node, Counted):
+        return Counted(_without_nulls(node.value), node.n)
+    return node
 
 
 def tag_intermittent(findings: list[Finding], spec: CompiledSpec) -> list[Finding]:
@@ -158,9 +182,9 @@ def confirm(first: KeyResult, recheck: KeyResult, *, spec: CompiledSpec, last: b
         return _judged(
             first, recheck, confirmation=Confirmation.PROVISIONAL if owed else Confirmation.RECHECKED
         )
-    if _fingerprint(recheck.side_a) != _fingerprint(first.side_a):
+    if _fingerprint(recheck.side_a, spec) != _fingerprint(first.side_a, spec):
         return _bare(first, recheck, Outcome.DRIFT, drift_reason=DriftReason.A_CHANGED)
-    if _fingerprint(recheck.side_b) != _fingerprint(first.side_b):
+    if _fingerprint(recheck.side_b, spec) != _fingerprint(first.side_b, spec):
         if not any(_discrepant(f) for f in recheck.findings):
             return _bare(first, recheck, Outcome.DRIFT, drift_reason=DriftReason.B_CONVERGED)
         return _judged(first, recheck, findings=tag_intermittent(recheck.findings, spec))

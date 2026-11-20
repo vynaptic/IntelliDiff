@@ -62,6 +62,7 @@ export function KeyScreen({ runId, keyMasked, query }: { runId: string; keyMaske
         </button>
       )}
       <Err error={error ?? detail.error ?? run.error} />
+      {detail.loading && <p className="muted" role="status">Loading…</p>}
       {now && (
         <section className="panel">
           <h2>

@@ -137,7 +137,7 @@ async def test_migrations_apply_once(pool: AsyncConnectionPool) -> None:
     assert await migrate(pool) == []
     async with pool.connection() as conn:
         cur = await conn.execute("SELECT version FROM ds.schema_version ORDER BY version")
-        assert await cur.fetchall() == [(v,) for v in range(1, 21)]
+        assert await cur.fetchall() == [(v,) for v in range(1, 23)]
 
 
 async def test_a_spec_is_stored_once_per_content_hash(pool: AsyncConnectionPool) -> None:
@@ -167,6 +167,22 @@ async def test_keys_are_leased_completed_and_rechecked(pool: AsyncConnectionPool
         [recheck] = opened(await repo.lease_due(conn, "w2", 10, 60))  # b is not due yet
         assert (recheck["key"], recheck["pass_no"]) == ("c", 2)
         assert not await repo.cycle_done(conn, run_id, 1)
+
+
+async def test_a_free_slot_leases_the_run_with_the_fewest_groups_in_flight(
+    pool: AsyncConnectionPool, make_run: MakeRun
+) -> None:
+    """Runs share the slots in turn (``busy``: the worker's groups in flight, by run); a run's own keys
+    go in its order. Without ``busy``, the key that fell due first comes first, whichever run holds it."""
+    first = await make_run(["a", "b", "c"])
+    second = await make_run(["x", "y"])
+    async with pool.connection() as conn:
+        assert keys(await repo.lease_due(conn, "w1", 1, 60)) == ["a"]
+        assert keys(await repo.lease_due(conn, "w2", 1, 60, busy={first: 1})) == ["x"]
+        assert keys(await repo.lease_due(conn, "w3", 1, 60, busy={first: 1, second: 1})) == ["b"]
+        assert keys(await repo.lease_due(conn, "w4", 1, 60, busy={first: 2, second: 1})) == ["y"]
+        assert keys(await repo.lease_due(conn, "w5", 1, 60, busy={first: 2, second: 2})) == ["c"]
+        assert await repo.lease_due(conn, "w6", 1, 60, busy={first: 3, second: 2}) == []
 
 
 async def test_leases_are_released_and_open_keys_cancelled(
@@ -843,7 +859,7 @@ async def test_migration_4_moves_a_run_s_scan_to_its_current_cycle(pg_dsn: str) 
     pool = AsyncConnectionPool(pg_dsn, open=False)
     await pool.open(wait=True)
     try:
-        assert await migrate(pool) == [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+        assert await migrate(pool) == [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
         async with pool.connection() as conn:
             run = await repo.get_run(conn, "R-" + "0" * 26)
             assert await repo.get_scan(conn, run["run_id"], 1) is None
@@ -880,7 +896,7 @@ async def test_migration_5_keeps_legacy_rows_and_checks_new_ones(pg_dsn: str) ->
     pool = AsyncConnectionPool(pg_dsn, open=False)
     await pool.open(wait=True)
     try:
-        assert await migrate(pool) == [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+        assert await migrate(pool) == [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
         async with pool.connection() as conn:
             run = await repo.get_run(conn, "R-" + "0" * 26)
             cur = await conn.execute("SELECT actor, actor_name FROM ds.audit_log ORDER BY id")

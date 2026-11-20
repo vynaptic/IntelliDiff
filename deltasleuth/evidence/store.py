@@ -8,9 +8,14 @@ evidence key, nonce) and the AES-256-GCM encryption of the body's zstd frame, au
 magic and the address digest: a blob moved to another name fails its tag. The newest evidence key
 writes; every loaded one reads. Reads need no address key.
 
-Evidence first: a blob is written, fsynced and verified before the caller records its observation, so
-a crash leaves at most an unreferenced blob. ``obs_id`` is an HMAC keyed by ``id_key``: it is published
-next to side, observed_at and attempts, and an unkeyed hash of a raw key could be brute-forced.
+Evidence first: a blob is written, fsynced and verified, and its directory entry made durable, before
+the caller records its observation, so a crash leaves at most an unreferenced blob. ``identify`` names an
+observation without writing; ``put_all`` then stores a group's bodies, each file fsynced, then each
+directory that gained one fsynced once. No lock orders the writers: a blob is named by its body, so two
+writers of one address write the same body, each atomic rename leaves a whole blob and each read-back check
+passes; deleting a blob that rows may still name is left to the drain, which holds the blob lock that
+writers of observations share (``repo.lock_blobs``). ``obs_id`` is an HMAC keyed by ``id_key``: it is
+published next to side, observed_at and attempts, and an unkeyed hash of a raw key could be brute-forced.
 """
 
 from __future__ import annotations
@@ -21,7 +26,6 @@ import hashlib
 import hmac
 import os
 import re
-import threading
 import time
 from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
@@ -34,7 +38,7 @@ from cryptography.hazmat.primitives.keywrap import InvalidUnwrap, aes_key_unwrap
 from deltasleuth.core import jsonio
 from deltasleuth.core.canonical.encoding import content_hash as hash_body
 from deltasleuth.core.types import Observation
-from deltasleuth.evidence.fsio import atomic_write, ensure_private_dir, fsync_dir
+from deltasleuth.evidence.fsio import ensure_private_dir, fsync_dir, write_synced
 from deltasleuth.security.crypto import KEY_BYTES, NONCE_BYTES, TAG_BYTES, WRAPPED_BYTES, DataKey
 
 MAGIC = b"DSE\x01"
@@ -107,7 +111,6 @@ class EvidenceStore:
         self._keys = {key.scope: key for key in evidence_keys}
         self._writer = evidence_keys[-1]
         self._max_blob_bytes = max_blob_bytes
-        self._lock = threading.Lock()  # puts may come from worker threads
         for directory in (root, self._blobs.parent, self._blobs):
             ensure_private_dir(directory)
 
@@ -118,10 +121,10 @@ class EvidenceStore:
             raise EvidenceKeyError(f"the evidence address key needs {key.kek}, which the keyring lacks")
         return "hk1:" + hmac.new(key.key, body, hashlib.sha256).hexdigest()
 
-    def put_blob(self, obs: Observation) -> Observation:
-        """Store the body (the caller keeps the metadata); return ``obs`` with obs_id and its ``hk1:``
-        content_hash. ``obs.content_hash`` may be None, the body's ``sha256:`` (a connector's) or its
-        ``hk1:`` (a stored observation's)."""
+    def identify(self, obs: Observation) -> Observation:
+        """``obs`` with its obs_id and its ``hk1:`` content_hash, nothing written (``put_all`` stores the
+        body; the caller keeps the metadata). ``obs.content_hash`` may be None, the body's ``sha256:`` (a
+        connector's) or its ``hk1:`` (a stored observation's)."""
         if obs.body is not None and len(obs.body) > self._max_blob_bytes:
             raise EvidenceIntegrityError(f"body exceeds the store's {self._max_blob_bytes}-byte limit")
         address = None if obs.body is None else self.address(obs.body)
@@ -130,10 +133,27 @@ class EvidenceStore:
         obs_id = observation_id(obs, address, self._id_key)
         if obs.obs_id not in (None, obs_id):
             raise EvidenceIntegrityError("observation carries an obs_id that does not match its identity")
-        if obs.body is not None and address is not None:
-            with self._lock:
-                self._store_blob(obs.body, address)
         return dataclasses.replace(obs, content_hash=address, obs_id=obs_id)
+
+    def put_blob(self, obs: Observation) -> Observation:
+        """``identify`` and ``put_all`` of one observation: its body is durable when it returns."""
+        named = self.identify(obs)
+        self.put_all([named])
+        return named
+
+    def put_all(self, observations: Iterable[Observation]) -> int:
+        """Store the bodies of ``observations``, which ``identify`` named, that the store lacks or holds
+        damaged: each written to a temporary file, fsynced and renamed into place, then each directory that
+        gained one fsynced once (and the parent of a directory made for one). When it returns, every blob
+        they name is durable; the number written."""
+        items = []
+        for obs in observations:
+            if obs.body is None or obs.content_hash is None:
+                continue
+            if self.address(obs.body) != obs.content_hash:
+                raise EvidenceIntegrityError("observation content_hash does not match its body")
+            items.append((obs.body, obs.content_hash))
+        return self._write(items)
 
     def put_body(self, body: bytes) -> str:
         """Store ``body`` without an observation (``ds keys migrate`` moves a legacy blob); its ``hk1:``
@@ -141,8 +161,7 @@ class EvidenceStore:
         if len(body) > self._max_blob_bytes:
             raise EvidenceIntegrityError(f"body exceeds the store's {self._max_blob_bytes}-byte limit")
         address = self.address(body)
-        with self._lock:
-            self._store_blob(body, address)
+        self._write([(body, address)])
         return address
 
     def get_body(self, content_hash: str) -> bytes:
@@ -156,16 +175,14 @@ class EvidenceStore:
     def ensure(self, observations: Iterable[Observation]) -> int:
         """Write again the missing blobs of ``observations``, put earlier with their bodies still in
         memory (a drain may have deleted one meanwhile); the number written."""
-        written = 0
+        missing = []
         for obs in observations:
             if obs.body is None or obs.content_hash is None or self._blob_path(obs.content_hash).exists():
                 continue
             if self.address(obs.body) != obs.content_hash:
                 raise EvidenceIntegrityError("observation content_hash does not match its body")
-            with self._lock:
-                self._store_blob(obs.body, obs.content_hash)
-            written += 1
-        return written
+            missing.append((obs.body, obs.content_hash))
+        return self._write(missing)
 
     def delete(self, address: str) -> int:
         """Unlink the blob at ``address`` and fsync its directory; the bytes freed (0 if it was absent)."""
@@ -176,17 +193,16 @@ class EvidenceStore:
         the bytes each freed (0 for one that was absent). When it returns, every deletion is durable."""
         freed: dict[str, int] = {}
         touched: set[Path] = set()
-        with self._lock:
-            for address in addresses:
-                path = self._blob_path(address)
-                try:
-                    size = path.stat().st_size
-                    path.unlink()
-                except FileNotFoundError:
-                    freed[address] = 0
-                    continue
-                freed[address] = size
-                touched.add(path.parent)
+        for address in addresses:
+            path = self._blob_path(address)
+            try:
+                size = path.stat().st_size
+                path.unlink()
+            except FileNotFoundError:
+                freed[address] = 0
+                continue
+            freed[address] = size
+            touched.add(path.parent)
         for directory in sorted(touched):
             fsync_dir(directory)
         return freed
@@ -235,14 +251,28 @@ class EvidenceStore:
             raise ValueError("content hash must look like hk1:<64 lowercase hex>")
         return self._blobs / match[1][:2] / f"{match[1]}.dse"
 
-    def _store_blob(self, body: bytes, address: str) -> None:
-        path = self._blob_path(address)
-        if self._blob_is_valid(path, address):
-            return  # deduplicated: the same content is stored and intact
-        ensure_private_dir(path.parent)
-        atomic_write(path, self._encode(body, address))
-        if not self._blob_is_valid(path, address):  # storage that cannot hold it must stop the run
-            raise EvidenceIntegrityError("blob failed verification after write")
+    def _write(self, items: Iterable[tuple[bytes, str]]) -> int:
+        """Write each (body, address) whose blob is absent or damaged, then fsync once each directory that
+        gained one, a new directory's parent last; the number written."""
+        written, seen, touched = 0, set(), set()
+        for body, address in items:
+            path = self._blob_path(address)
+            if address in seen:
+                continue
+            seen.add(address)
+            if self._blob_is_valid(path, address):
+                continue  # deduplicated: the same content is stored and intact
+            if not path.parent.is_dir():
+                touched.add(path.parent.parent)  # the new directory's own entry
+            ensure_private_dir(path.parent)
+            write_synced(path, self._encode(body, address))
+            if not self._blob_is_valid(path, address):  # storage that cannot hold it must stop the run
+                raise EvidenceIntegrityError("blob failed verification after write")
+            touched.add(path.parent)
+            written += 1
+        for directory in sorted(touched, key=lambda d: (-len(d.parts), d)):
+            fsync_dir(directory)  # each rename, and each new directory, survives a crash
+        return written
 
     def _blob_is_valid(self, path: Path, address: str) -> bool:
         try:

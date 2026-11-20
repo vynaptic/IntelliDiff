@@ -1,5 +1,5 @@
 /** What the screens say about four-eyes approvals: a run's label and a
- *  cycle's sign-off, in the words of report.pdf, the P0 summary and `ds runs` (deltasleuth/approvals.py); the
+ *  cycle's sign-off, in the words of report.pdf, the contract report and `ds runs` (deltasleuth/approvals.py); the
  *  fresh sign-in an approval step may need; and what a review shows and a decision echoes. */
 // Type imports only, so that Node runs the tests of this module without a bundler.
 import type { ApiError, Approval, ApprovalDetail, Attests, Decider, Decision, Mode, Revoked, RunApproval } from './api';

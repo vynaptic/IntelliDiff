@@ -1,18 +1,29 @@
 """Runs and what they found: create, list, control, results, findings, root causes, keys, soak changes,
-graph parity and report downloads; plus the one-shot compare. Keys are shown masked only. A key view and a
-report download are audited once built, before they are sent. A cycle's routes answer 410 once its purge has
-started. A run shows the licence it was made under (none in an open build), and an unlicensed evaluation's
-reports download under names that say so; one a schedule started shows that schedule and the due time it was
-started for. A run shows what the schema guard holds of its tables as lines only (``schema``), and a run's
-creation and a one-shot compare answer with its ``warnings``."""
+graph parity and report downloads; plus the one-shot compare. Keys are shown masked only. A key view is
+audited once built, before it is sent, and a report download before its first byte: a CSV export is sent a
+page of rows at a time. A cycle's routes answer 410 once its purge has started. A run shows the licence it
+was made under (none in an open build), and an unlicensed evaluation's reports download under names that say
+so; one a schedule started shows that schedule and the due time it was started for. A run shows what the
+schema guard holds of its tables as lines only (``schema``), and a run's creation and a one-shot compare
+answer with its ``warnings``. A run shows its newest SHOWN ended cycles, and the cycles route pages through
+every one; its progress is counted once for all its readers in COUNTED_FOR seconds. A statement of these
+reads that runs past ``api.read_timeout_s`` is cancelled by the store and answered 503 (``SLOW``)."""
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Iterator
-from contextlib import contextmanager
-from typing import Annotated, Any, Literal
+import asyncio
+import time
+from collections.abc import AsyncIterator, Awaitable, Iterator
+from contextlib import asynccontextmanager, contextmanager
+from dataclasses import dataclass
+from functools import partial
+from typing import TYPE_CHECKING, Annotated, Any, Literal
+from weakref import WeakKeyDictionary
 
 from fastapi import APIRouter, HTTPException, Response
+from fastapi.responses import StreamingResponse
+from psycopg.errors import QueryCanceled
+from psycopg_pool import AsyncConnectionPool
 from pydantic import Field, StrictBool
 
 from deltasleuth import licence, schedules
@@ -33,16 +44,23 @@ from deltasleuth.api.routes.packs import adjudication_item
 from deltasleuth.api.routes.samples import withheld
 from deltasleuth.approvals import run_approval
 from deltasleuth.auth.principal import Principal
-from deltasleuth.context import Capabilities, Context
-from deltasleuth.core.types import CompiledSpec, Outcome, Severity
+from deltasleuth.context import Context
+from deltasleuth.core.secrets import SecretError
+from deltasleuth.core.types import Outcome, Severity
 from deltasleuth.reports import accuracy
 from deltasleuth.runner import census, drift
 from deltasleuth.runner.purge import days
-from deltasleuth.security.tokenise import mask_document, mask_key
+from deltasleuth.security.tokenise import mask_key
 from deltasleuth.store import repo
+
+if TYPE_CHECKING:
+    from deltasleuth.runner.runs import KeyView
 
 router = APIRouter()
 LIVE = ("queued", "running", "paused")  # a live run's current cycle may still await its key census
+SHOWN = 20  # the ended cycles a run's answer holds, its newest: the cycles route pages through every one
+COUNTED_FOR = 5.0  # seconds a run's counted progress answers its other readers
+SLOW = "the store did not answer this read within {} s: try again"
 
 
 class RunOptions(Payload):
@@ -65,15 +83,67 @@ class CompareIn(Payload):
 
 @contextmanager
 def _runner_errors() -> Iterator[None]:
-    """The runner's refusals: LookupError for an unknown run or spec, ValueError for bad input."""
+    """A secret the runner cannot read as 422, its message naming the file, never its content. The runner's
+    refusals are ``Refused``, which the app answers with their status; anything else is a fault."""
     try:
         yield
-    except (KeyError, IndexError, drift.Refused):  # a bug, not a refusal; the schema guard's has its status
-        raise
-    except LookupError as exc:
-        raise HTTPException(404, str(exc)) from None
-    except ValueError as exc:
+    except SecretError as exc:
         raise HTTPException(422, str(exc)) from None
+
+
+@asynccontextmanager
+async def _reading(ctx: Context) -> AsyncIterator[repo.Conn]:
+    """A connection for a route's reads, in one transaction whose statements the store cancels past
+    ``api.read_timeout_s``: the route answers 503 (``SLOW``) rather than piling reads up on the pool the
+    worker shares."""
+    limit = ctx.settings.api.read_timeout_s
+    try:
+        async with ctx.pool.connection() as conn:
+            await repo.limit_statements(conn, limit)
+            yield conn
+    except QueryCanceled:
+        raise HTTPException(503, SLOW.format(limit)) from None
+
+
+@dataclass
+class _Count:
+    task: asyncio.Task[dict[str, dict[str, int]]]
+    at: float | None = None  # when it was counted, on time.monotonic's clock; None while it is counted
+
+
+# Each store's counts of runs' progress (pool -> (run id, cycle, status, updated_at) -> its count).
+_counts: WeakKeyDictionary[AsyncConnectionPool, dict[tuple[Any, ...], _Count]] = WeakKeyDictionary()
+
+
+async def progress_of(ctx: Context, run: repo.Row) -> dict[str, dict[str, int]]:
+    """The key states and outcomes of the run's current cycle (``repo.cycle_counts``), counted once for
+    every reader in this process: one that comes while it is counted waits for that count, and one that
+    comes within COUNTED_FOR seconds of its end takes its answer. A run that moved on since (its cycle,
+    status or ``updated_at``) is counted again, and a count that failed is not kept."""
+    counts = _counts.setdefault(ctx.pool, {})
+    now = time.monotonic()
+    stale = [key for key, count in counts.items() if count.at is not None and now - count.at >= COUNTED_FOR]
+    for key in stale:
+        del counts[key]
+    key = (run["run_id"], run["cycle"], run["status"], run["updated_at"])
+    if (count := counts.get(key)) is None:
+        count = counts[key] = _Count(asyncio.create_task(_count(ctx, run)))
+        count.task.add_done_callback(partial(_counted, counts, key))
+    return await asyncio.shield(count.task)  # a reader that leaves does not stop the others' count
+
+
+async def _count(ctx: Context, run: repo.Row) -> dict[str, dict[str, int]]:
+    async with _reading(ctx) as conn:
+        return await repo.cycle_counts(conn, run["run_id"], run["cycle"])
+
+
+def _counted(counts: dict[tuple[Any, ...], _Count], key: tuple[Any, ...], task: asyncio.Task[Any]) -> None:
+    if (count := counts.get(key)) is None or count.task is not task:
+        return
+    if task.cancelled() or task.exception() is not None:
+        del counts[key]  # its readers have its error; the next reader counts again
+    else:
+        count.at = time.monotonic()
 
 
 @router.post("/runs", status_code=202)
@@ -99,7 +169,7 @@ async def runs(
     cursor: str | None = None,
 ) -> Response:
     """Newest first; ``schedule_id``: the runs that schedule started."""
-    async with ctx.pool.connection() as conn:
+    async with _reading(ctx) as conn:
         query = repo.list_runs(
             conn, spec_id=spec_id, status=status, schedule_id=schedule_id, limit=limit, cursor=cursor
         )
@@ -120,27 +190,46 @@ async def _labelled(query: Awaitable[repo.Page]) -> repo.Page:
 @router.get("/runs/{run_id}")
 async def run(ctx: Ctx, who: Viewer, run_id: str) -> Response:
     """The run (with its column plan and table scan, if any), its current cycle's progress (key states and
-    outcomes), its retention, its spec approval, its cycles' sign-offs, each ended cycle's census,
-    adjudications and evidence packs and labellings, a sampled run's current draw and each ended cycle's
-    draw and judgement, its licence, the schedule that started it, if one did, and what the schema guard
-    holds of its tables, as lines (``schema``)."""
-    async with ctx.pool.connection() as conn:
+    outcomes, ``progress_of``), its retention, its spec approval, its cycles' sign-offs, its newest SHOWN
+    ended cycles (oldest first) as the cycles route shows each and how many have ended (``cycles_ended``),
+    a sampled run's current draw, its licence, the schedule that started it, if one did, and what the schema
+    guard holds of its tables, as lines (``schema``)."""
+    async with _reading(ctx) as conn:
         found = await run_of(conn, run_id)
         scheduled = await schedules.of_run(conn, found)
-        progress = await repo.cycle_counts(conn, run_id)
-        cycles = await repo.list_cycles(conn, run_id, **days(ctx))
+        kept = await repo.cycle_retention(conn, run_id, **days(ctx))
+        newest, _ = await repo.cycle_page(conn, run_id, limit=SHOWN, **days(ctx))
         approval = await run_approval(conn, found)
         signoffs = await repo.pages(repo.list_approvals, conn, kind="signoff", run_id=run_id)
-        evidence = await _evidence(ctx, conn, found, cycles, signoffs, who)
+        evidence = await _evidence(ctx, conn, found, newest[::-1], signoffs, who)
         drawing = await _drawing(conn, found)
+    progress = await progress_of(ctx, found)  # on a connection of its own, the request's given back
     pending = census.pending(found) if ctx.settings.packs and found["status"] in LIVE else []
     return ok(
         shown(_licensed(found))
-        | {"progress": progress, "retention": _retention(ctx, found, cycles)}
+        | {"progress": progress, "retention": _retention(ctx, found, kept)}
         | {"approval": approval, "signoffs": [shown(s, "attests") for s in signoffs]}
-        | {"census_pending": pending, "cycles": evidence, "sample": drawing, "schedule": scheduled}
-        | {"schema": drift.told(found)}
+        | {"census_pending": pending, "cycles": evidence, "cycles_ended": len(kept)}
+        | {"sample": drawing, "schedule": scheduled, "schema": drift.told(found)}
     )
+
+
+@router.get("/runs/{run_id}/cycles")
+async def cycles(
+    ctx: Ctx, who: Viewer, run_id: str, limit: Limit = SHOWN, cursor: str | None = None
+) -> Response:
+    """The run's ended cycles newest first, a page at a time, each as the run's ``cycles`` shows it: its
+    census, adjudications, labellings, evidence packs and draw with its judgement. A page's cursor is the
+    oldest cycle it holds; the run's own answer holds the first page."""
+    async with _reading(ctx) as conn:
+        found = await run_of(conn, run_id)
+        try:
+            rows, following = await repo.cycle_page(conn, run_id, limit=limit, cursor=cursor, **days(ctx))
+        except ValueError:  # the repo's answer to a cursor it did not issue
+            raise HTTPException(400, "malformed cursor") from None
+        signoffs = await repo.pages(repo.list_approvals, conn, kind="signoff", run_id=run_id)
+        items = await _evidence(ctx, conn, found, rows, signoffs, who)
+    return ok({"items": items, "next_cursor": following})
 
 
 async def _drawing(conn: repo.Conn, run: repo.Row) -> dict[str, Any] | None:
@@ -174,19 +263,19 @@ async def _evidence(
     signoffs: list[repo.Row],
     who: Principal,
 ) -> list[dict[str, Any]]:
-    """Each ended cycle's census (``census.of_cycle``; none once its purge started, which deletes the scan
-    state a table scan's census is read from), adjudications, labellings (each with the sign-off of
-    ``signoffs`` attesting it), evidence packs and draw (as ``who`` may read it) with its judgement,
-    oldest cycle first."""
+    """Each of the ended ``cycles``' census (``census.of_cycle``; none once its purge started, which deletes
+    the scan state a table scan's census is read from), adjudications, labellings (each with the sign-off of
+    ``signoffs`` attesting it), evidence packs and draw (as ``who`` may read it) with its judgement, in the
+    order of ``cycles``."""
     if not cycles:
         return []
-    run_id = run["run_id"]
+    run_id, numbers = run["run_id"], [c["cycle"] for c in cycles]
     spec = await ctx.spec(conn, run["spec_id"])
-    scans = await repo.run_scans(conn, run_id)
+    scans = await repo.cycle_scans(conn, run_id, numbers)
     drawn = await repo.list_adjudications(conn, run_id)
     labelled, attested = await repo.list_labellings(conn, run_id), accuracy.attesting(signoffs)
     issued = await repo.pages(repo.list_packs, conn, run_id=run_id)
-    samples = {d["cycle"]: d for d in await repo.run_draws(conn, run_id)}  # draws outlive purges
+    samples = {d["cycle"]: d for d in await repo.cycle_draws(conn, run_id, numbers)}  # draws outlive purges
     return [
         {
             "cycle": c["cycle"],
@@ -252,7 +341,7 @@ async def results(
     limit: Limit = 100,
     cursor: str | None = None,
 ) -> Response:
-    async with ctx.pool.connection() as conn:
+    async with _reading(ctx) as conn:
         cycle = await live_cycle(conn, await run_of(conn, run_id), cycle)
         return await page(repo.list_results(conn, run_id, cycle, outcome=outcome, limit=limit, cursor=cursor))
 
@@ -271,7 +360,7 @@ async def findings(
     limit: Limit = 100,
     cursor: str | None = None,
 ) -> Response:
-    async with ctx.pool.connection() as conn:
+    async with _reading(ctx) as conn:
         cycle = await live_cycle(conn, await run_of(conn, run_id), cycle)
         query = repo.list_findings(
             conn, run_id, cycle, key_masked=key, root_cause_id=root_cause_id, taxonomy_code=taxonomy_code,
@@ -282,7 +371,7 @@ async def findings(
 
 @router.get("/runs/{run_id}/root-causes")
 async def root_causes(ctx: Ctx, who: Viewer, run_id: str, cycle: int | None = None) -> Response:
-    async with ctx.pool.connection() as conn:
+    async with _reading(ctx) as conn:
         cycle = await live_cycle(conn, await run_of(conn, run_id), cycle)
         return ok({"items": await repo.list_root_causes(conn, run_id, cycle)})
 
@@ -298,7 +387,7 @@ async def changes(
 ) -> Response:
     """Keys whose outcome changed from the soak cycle before to ``cycle`` (the run's current one by
     default), a page at a time; none when the cycle before is purged."""
-    async with ctx.pool.connection() as conn:
+    async with _reading(ctx) as conn:
         cycle = await live_cycle(conn, await run_of(conn, run_id), cycle)
         return await page(repo.list_outcome_changes(conn, run_id, cycle, limit=limit, cursor=cursor))
 
@@ -313,89 +402,65 @@ async def graph(
     cursor: str | None = None,
 ) -> Response:
     """Graph parity rows, masked when written; none for a run without them."""
-    async with ctx.pool.connection() as conn:
+    async with _reading(ctx) as conn:
         cycle = await live_cycle(conn, await run_of(conn, run_id), cycle)
         return await page(repo.list_graph_diffs(conn, run_id, cycle, limit=limit, cursor=cursor))
 
 
 @router.get("/runs/{run_id}/keys/{key:path}")
 async def key_detail(ctx: Ctx, who: Viewer, run_id: str, key: str, cycle: int | None = None) -> Response:
-    """A key by its masked form: result, findings, observations and the masked canonical A and B."""
-    view = await _key_view(ctx, run_id, key, cycle)
-    async with repo.audited(ctx.pool) as (_, audit):
-        await audit(who, "key.view", run_id, {"key_masked": key, "cycle": view["cycle"]})
-    return ok(view)
+    """A key by its masked form: result, findings, observations and the masked canonical A and B
+    (``runner.runs.key_view``, which audits the view once it is built)."""
+    from deltasleuth.runner.runs import key_view
+
+    return ok(_key_shown(need(await key_view(ctx, run_id, key, cycle, who=who), f"key {key}")))
 
 
-async def _key_view(ctx: Context, run_id: str, key: str, cycle: int | None = None) -> dict[str, Any]:
-    async with ctx.pool.connection() as conn:
-        run = await run_of(conn, run_id)
-        cycle = await live_cycle(conn, run, cycle)
-        detail = need(await repo.get_key_detail(conn, run_id, key, cycle), f"key {key}")
-        spec, caps = await ctx.spec(conn, run["spec_id"]), ctx.capabilities(run)
-        result = detail["result"] or {}  # empty until the key is compared
-        canonical = {
-            s: await _canonical(ctx, conn, run_id, spec, caps, result.get(f"obs_{s}_id")) for s in "ab"
-        }
-    view = shown(detail, "result", "findings", "observations")
-    return view | {
-        "run_id": run_id,
+def _key_shown(view: KeyView) -> dict[str, Any]:
+    detail = view.detail
+    result = detail["result"] or {}  # empty until the key is compared
+    return shown(detail, "result", "findings", "observations") | {
+        "run_id": view.run["run_id"],
         "result": shown(result) if result else None,
         "findings": [shown(f) for f in detail["findings"]],
         "observations": [shown(o, "content_hash") for o in detail["observations"]],
-        "canonical": canonical,
+        "canonical": dict(view.canonical),
     }
-
-
-async def _canonical(
-    ctx: Context, conn: repo.Conn, run_id: str, spec: CompiledSpec, caps: Capabilities, obs_id: str | None
-) -> Any:
-    """The masked canonical document of an observation, re-derived from its evidence with the run's
-    capabilities; None when there is no observation or its side was not COMPLETE."""
-    from deltasleuth.runner.compare import side_state
-
-    found = await side_state(ctx, conn, spec, run_id, obs_id, caps)
-    if found is None or found[1].canonical is None:
-        return None
-    obs, state = found
-    return mask_document(state.canonical.doc, spec, ctx.tokeniser, key=obs.key)
 
 
 @router.get("/runs/{run_id}/reports/{name}")
 async def report(ctx: Ctx, who: Viewer, run_id: str, name: str, cycle: int | None = None) -> Response:
-    """A report of ``reports.FORMATS`` (masked; CSV cells OWASP-escaped), as a download."""
-    from deltasleuth.reports import FORMATS
+    """A report of ``reports.FORMATS`` (masked; CSV cells OWASP-escaped), as a download, audited before its
+    first byte (``reports.download``): a CSV export is sent a page of rows at a time."""
+    from deltasleuth.reports import download
 
-    async with ctx.pool.connection() as conn:
-        run = await run_of(conn, run_id)
-    media, render = need(FORMATS.get(name), f"report {name!r}")
-    content = await render(ctx, run_id, cycle)  # 410 once the cycle's purge has started
-    async with repo.audited(ctx.pool) as (_, audit):
-        await audit(who, "report.download", run_id, {"name": name, "cycle": cycle or run["cycle"]})
-    headers = {"Content-Disposition": f'attachment; filename="{licence.file_name(run, name)}"'}
-    return Response(content, media_type=media, headers=headers)
+    got = await download(ctx, who, run_id, name, cycle)  # 410 once the cycle's purge has started
+    headers = {"Content-Disposition": f'attachment; filename="{got.file_name}"'}
+    if isinstance(got.content, bytes):
+        return Response(got.content, media_type=got.media, headers=headers)
+    return StreamingResponse(got.content, media_type=got.media, headers=headers)
 
 
 @router.post("/compare")
 async def compare(ctx: Ctx, who: Operator, body: CompareIn) -> Response:
     """Compare one key now (a one-shot run, rechecked when discrepant); answer with its key view.
 
-    A key of a run is compared under that run's spec only: another spec would mask it by other
-    rules, and show in clear what the run's own spec tokenises.
+    A key of a run is compared under that run's spec only (``runner.runs.compare_again``): another spec
+    would mask it by other rules, and show in clear what the run's own spec tokenises.
     """
     from deltasleuth.runner.runs import compare_one
 
-    key = body.key
     with _runner_errors():
         async with ctx.pool.connection() as conn:
             spec = await ctx.spec(conn, body.spec_id)
-            if body.run_id is not None:
-                of = await run_of(conn, body.run_id)
-                if of["spec_id"] != body.spec_id:
-                    raise HTTPException(422, "a key of a run is compared under that run's spec")
-                await live_cycle(conn, of)
-                detail = need(await repo.get_key_detail(conn, body.run_id, key), f"key {key}")
-                key = (await ctx.sealer(conn, body.run_id)).open_row(detail)["key"]
-        result = await compare_one(ctx, body.spec_id, key, who=who)
-    view = await _key_view(ctx, result.attrs["run_id"], mask_key(result.key, spec, ctx.tokeniser))
-    return ok(view | {"warnings": result.attrs["warnings"]})
+        if body.run_id is None:
+            result = await compare_one(ctx, body.spec_id, body.key, who=who)
+        else:
+            from deltasleuth.runner.runs import compare_again
+
+            again = await compare_again(ctx, body.run_id, body.key, who=who, spec_id=body.spec_id)
+            result = need(again, f"key {body.key}").result
+    from deltasleuth.runner.runs import key_view
+
+    view = await key_view(ctx, result.attrs["run_id"], mask_key(result.key, spec, ctx.tokeniser))
+    return ok(_key_shown(need(view, f"key {body.key}")) | {"warnings": result.attrs["warnings"]})

@@ -23,6 +23,7 @@ import os
 import re
 import secrets
 import shutil
+import signal
 import subprocess
 import sys
 import tarfile
@@ -30,7 +31,7 @@ import tempfile
 import time
 import tomllib
 from collections.abc import Iterable, Iterator, Mapping
-from contextlib import nullcontext
+from contextlib import nullcontext, suppress
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from importlib.metadata import version as installed
@@ -94,12 +95,15 @@ for d in m.distributions():
         if f.parts[0].endswith(".libs"):
             print(d.metadata["Name"], d.version + "\\t" + f.as_posix())
 """
-CHECKS = (  # after the gate, in the checkout, with DS_REQUIRE_DB=1 DS_REQUIRE_TOOLS=1
-    ("uv", "run", "--frozen", "pytest", "-q", "-p", "no:cacheprovider"),
-    ("uv", "run", "--frozen", "ruff", "check", "deltasleuth", "mocks", "tests", "examples", "tools"),
-    ("npm", "--prefix", "web", "ci"),
-    ("npm", "--prefix", "web", "test"),
+# After the gate, in the checkout, with DS_REQUIRE_DB=1 DS_REQUIRE_TOOLS=1: each command and the seconds
+# it may take before it is stopped and fails the build (pytest also stops a test after its own timeout).
+CHECKS = (
+    (("uv", "run", "--frozen", "pytest", "-q", "-p", "no:cacheprovider"), 5400),
+    (("uv", "run", "--frozen", "ruff", "check", "deltasleuth", "mocks", "tests", "examples", "tools"), 600),
+    (("npm", "--prefix", "web", "ci"), 1800),
+    (("npm", "--prefix", "web", "test"), 900),
 )
+STOP_GRACE_S = 60  # a stopped check's time to unwind (pytest removes its containers) before SIGKILL
 RELEASE = re.compile(r"(\d+)\.(\d+)\.(\d+)(rc\d+)?")  # X.Y.Z or X.Y.ZrcN
 PINNED = re.compile(r"[\w./-]+:[\w.-]+@sha256:[0-9a-f]{64}")  # name:tag@sha256:<64 hex>
 KEY_LINE = re.compile(
@@ -127,13 +131,51 @@ app = typer.Typer(no_args_is_help=True, help="The maintainer's release tool.", p
 KeyOpt = Annotated[str, typer.Option(help="file:PATH of the release key (release keygen).")]
 
 
-def _run(argv: Iterable[str], *, check: bool = True, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+def _run(
+    argv: Iterable[str], *, check: bool = True, timeout: float | None = None, **kwargs: Any
+) -> subprocess.CompletedProcess[str]:
+    """``argv``'s exit and output; with ``check`` a failure fails the build. With ``timeout`` the command
+    runs in a session of its own, and one still running after that many seconds is stopped with every
+    process it started (``uv run`` starts pytest as a child) and fails the build."""
     argv = list(argv)
-    done = subprocess.run(argv, capture_output=True, text=True, check=False, **kwargs)  # noqa: S603
+    if timeout is None:
+        done = subprocess.run(argv, capture_output=True, text=True, check=False, **kwargs)  # noqa: S603
+    else:
+        done = _bounded(argv, timeout, **kwargs)
     if check and done.returncode:
         last = (done.stderr.strip().splitlines() or [""])[-1]
         fail(f"{Path(argv[0]).name} {argv[1]} failed (exit {done.returncode}): {last}")
     return done
+
+
+def _bounded(argv: list[str], timeout: float, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    with subprocess.Popen(  # noqa: S603
+        argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True, **kwargs
+    ) as proc:
+        try:
+            out, err = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            out, err = _stop(proc)
+            typer.echo((out + err).rstrip("\n"), err=True)
+            fail(f"{Path(argv[0]).name} {argv[1]} was stopped after {timeout:g} s")
+        except BaseException:  # Ctrl-C reaches this process, not the command's own session
+            _stop(proc)
+            raise
+    return subprocess.CompletedProcess(argv, proc.returncode, out, err)
+
+
+def _stop(proc: subprocess.Popen[str]) -> tuple[str, str]:
+    """Stop ``proc`` and its session: SIGTERM to ``proc``, which pytest unwinds like Ctrl-C and ``uv run``
+    and npm pass to their child, then SIGKILL to the session after ``STOP_GRACE_S``. The output read."""
+    with suppress(ProcessLookupError):
+        proc.terminate()
+    try:
+        return proc.communicate(timeout=STOP_GRACE_S)
+    except subprocess.TimeoutExpired:
+        with suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
+        proc.wait()
+        return "", ""
 
 
 def _git(*args: str) -> str:
@@ -976,9 +1018,9 @@ def _build(
             if entry["status"] == "not_affected" and (finding.id, finding.purl) in left:
                 fail(f"the VEX did not suppress {finding.id} for {finding.purl}")
     # The checks, then the tree as it was.
-    for argv in CHECKS:
+    for argv, limit in CHECKS:
         required = os.environ | {"DS_REQUIRE_DB": "1", "DS_REQUIRE_TOOLS": "1"}
-        done = _run(argv, check=False, cwd=ROOT, env=required)
+        done = _run(argv, check=False, timeout=limit, cwd=ROOT, env=required)
         if done.returncode:
             typer.echo((done.stdout + done.stderr).rstrip("\n"), err=True)
             fail(f"checks failed: {' '.join(argv)} (exit {done.returncode})")

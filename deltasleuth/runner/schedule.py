@@ -34,6 +34,7 @@ from deltasleuth.connectors.tables import NotReady, TableError
 from deltasleuth.context import Context
 from deltasleuth.core import cron
 from deltasleuth.core.spec.errors import SpecError
+from deltasleuth.errors import NotFound, ours
 from deltasleuth.runner import sample
 from deltasleuth.runner.cycle import failure
 from deltasleuth.runner.runs import Firing, ScheduleMoved, SetterGone, create_run
@@ -44,11 +45,9 @@ RETRY_SLOW_S = 300  # and one whose run could not be created, or whose firing me
 TRIES = 3  # attempts to create a time's run
 HELD = timedelta(hours=24)  # a standing refusal's range is chained this long after its first time
 STANDING = (("mode", None), ("setter", None), ("approval", None), ("sample", "unclosed"))  # and the licence
-# What a run that could not be created raises, a bug aside: bad input, an unknown spec or target, a side or
-# the store that cannot be read.
-NOT_STARTED = (
-    ValueError, LookupError, SpecError, ConnectorError, TableError, psycopg.OperationalError, TimeoutError,
-)  # fmt: skip
+# What a run that could not be created raises, a bug aside: a refusal or an error of the package's own
+# (``errors.ours``: bad input, an unknown spec or target), and a side or the store that cannot be read.
+NOT_STARTED = (SpecError, ConnectorError, TableError, psycopg.OperationalError, TimeoutError)
 log = logging.getLogger("deltasleuth.schedules")
 Why = tuple[str, str | None, dict[str, Any]]  # a closed reason, its code, and the ids, type or mode it names
 Queued = tuple[datetime, datetime]  # a due time the worker left without a slot, and the database's time then
@@ -183,7 +182,7 @@ async def _refused(ctx: Context, conn: repo.Conn, row: repo.Row) -> Why | None:
     if row["last_run_id"] is not None and row["last_run_status"] not in repo.TERMINAL:
         return "overlap", None, {"run_id": row["last_run_id"]}
     if row["runs_spec_id"] is None:
-        raise LookupError(f"no spec is named {row['spec_name']}")
+        raise NotFound(f"no spec is named {row['spec_name']}")
     spec = await ctx.spec(conn, row["runs_spec_id"])
     if spec.sample is not None and spec.sample.method == "bottom_k":  # an unclosed draw, unattended
         for draw in await repo.ledger(conn, spec.sample.population):
@@ -211,14 +210,14 @@ async def _reason(ctx: Context, exc: Exception) -> Why:
         )
     if isinstance(exc, sample.SampleRefused):
         return "sample", "live" if exc.status == 409 else "refused", {}
-    if isinstance(exc, NotReady):  # before ValueError: its closed code, tried until the window closes
+    if isinstance(exc, NotReady):  # before any refusal: its closed code, tried until the window closes
         return "not_started", exc.code, kind
     if (
         isinstance(exc, psycopg.errors.UniqueViolation)
         and exc.diag.constraint_name == "runs_schedule_due_idx"
     ):
         return "late", "fired_already", {}
-    if isinstance(exc, KeyError | IndexError) or not isinstance(exc, NOT_STARTED):  # a bug
+    if not (ours(exc) or isinstance(exc, NOT_STARTED)):  # a bug
         return "error", None, kind
     return "not_started", None, kind
 

@@ -21,12 +21,14 @@ from typing import Any
 import psycopg
 
 from deltasleuth import approvals
+from deltasleuth import errors as refusals
 from deltasleuth.auth.principal import Principal, printable
 from deltasleuth.config import ChannelSettings, NotifySettings, Settings
 from deltasleuth.connectors.notify import Sender
 from deltasleuth.context import Context
 from deltasleuth.core import notify as events
 from deltasleuth.core.notify import Event
+from deltasleuth.errors import NotFound
 from deltasleuth.security import rawvalues
 from deltasleuth.store import repo
 
@@ -38,12 +40,8 @@ REASON_CHARS = 1000  # ds.note
 _RUN = re.compile(r"R-[0-9A-Z]{26}")
 
 
-class Refused(ValueError):
+class Refused(refusals.Refused):
     """A notification act refused: its HTTP status and binding message."""
-
-    def __init__(self, status: int, message: str) -> None:
-        super().__init__(message)
-        self.status = status
 
 
 def on(settings: Settings) -> NotifySettings:
@@ -347,17 +345,17 @@ async def explain(ctx: Context, run_id: str, cycle: int | None) -> dict[str, Any
     async with ctx.pool.connection() as conn:
         run = await repo.get_run(conn, run_id)
         if run is None:
-            raise LookupError(f"run {run_id} not found")
+            raise NotFound(f"run {run_id} not found")
         if cycle is None:
             live = await repo.get_cycle(conn, run_id, run["cycle"]) is None
             cycle = max(run["cycle"] - 1, 1) if live else run["cycle"]
         if not 1 <= cycle <= run["cycle"]:
-            raise LookupError(f"run {run_id} has no cycle {cycle}")
+            raise NotFound(f"run {run_id} has no cycle {cycle}")
         ended = await repo.get_cycle(conn, run_id, cycle)
         if ended is None:
-            raise LookupError(f"cycle {cycle} of run {run_id} has not ended")
+            raise NotFound(f"cycle {cycle} of run {run_id} has not ended")
         if not ended["counters"]:
-            raise LookupError(f"cycle {cycle} of run {run_id} ended without counters: it is never notified")
+            raise NotFound(f"cycle {cycle} of run {run_id} ended without counters: it is never notified")
         bug = approvals.bug_rules(await ctx.spec(conn, run["spec_id"]))
         counters = {name: ended["counters"].get(name) for name in events.COUNTERS}
         facts = {"cycle": cycle, "counters": counters} | await digest(conn, run, cycle, bug)

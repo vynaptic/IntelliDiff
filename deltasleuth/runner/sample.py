@@ -73,6 +73,7 @@ from deltasleuth.core.types import (
     Sample,
     Target,
 )
+from deltasleuth.errors import NotFound, Refused
 from deltasleuth.runner import census, counters
 from deltasleuth.runner.compare import connect
 from deltasleuth.runner.recheck import RecheckPolicy
@@ -97,12 +98,8 @@ log = logging.getLogger(__name__)
 Candidate = tuple[Any, Any]  # a source's raw key and strata row (a table's as JSON text)
 
 
-class SampleRefused(Exception):
+class SampleRefused(Refused):
     """A sampled run refused at creation or resume; ``status`` is the API's answer."""
-
-    def __init__(self, status: int, message: str) -> None:
-        super().__init__(message)
-        self.status = status
 
 
 class _Moved(Exception):
@@ -890,7 +887,7 @@ async def close(conn: repo.Conn, audit: repo.Audit, spec_name: str, note: str, w
     could attest it: the name's newest version, each ledger name's and each closed draw's."""
     stored = await repo.newest_spec(conn, spec_name)
     if stored is None:
-        raise LookupError(f"spec {spec_name} not found")
+        raise NotFound(f"spec {spec_name} not found")
     found = compile_spec(stored["body"]).sample
     rows = await repo.ledger(conn, found.population) if found else []
     due = [d for d in rows if blocking(d)]

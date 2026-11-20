@@ -1,4 +1,4 @@
-"""The P0 onboarding flow through the ``ds`` CLI on a mock pair: init and migrate, profile the samples,
+"""The onboarding flow through the ``ds`` CLI on a mock pair: init and migrate, profile the samples,
 validate the spec, run from the samples and live, measure, adjudicate, score and report, plus a
 one-shot compare. Every file and line the CLI writes is masked, and each report it writes is audited."""
 
@@ -60,7 +60,7 @@ def test_the_p0_flow_from_samples_to_a_passed_exit(serve: Any, make_stack: Any, 
     for row in rows:  # the reviewers agree with the engine on every key
         row["reviewer_verdict"] = row["engine_verdict"]
     (p0 / "adjudication.csv").write_text(render_csv(header, rows), newline="")
-    assert "P0 exit: PASSED" in ds("score", "--out", p0, *config)
+    assert "onboarding exit: PASSED" in ds("score", "--out", p0, *config)
     kinds = ("--kind", "summary", "--kind", "report.pdf", "--kind", "discrepancies.csv")
     ds("report", run_id, "--out", p0, *kinds, *config)
     assert "| 50 adjudicated keys agree with reviewers | pass |" in (p0 / "report.md").read_text()

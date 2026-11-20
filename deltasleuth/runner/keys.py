@@ -32,6 +32,7 @@ from deltasleuth.core.spec import key_table, listing_side
 from deltasleuth.core.spec.errors import UnknownTargetError
 from deltasleuth.core.spec.keys import fit_parts, join_parts, parts_match
 from deltasleuth.core.types import CompiledSpec
+from deltasleuth.errors import Invalid
 from deltasleuth.runner.census import TIMEOUT_S
 from deltasleuth.runner.compare import connect
 from deltasleuth.runner.stop import StopConditions
@@ -52,7 +53,7 @@ ALIKE = (
 )
 
 
-class KeyAuthRefused(ValueError):
+class KeyAuthRefused(Invalid):
     """A key table's target refused the credential: a roll pauses its run for it, as a scan does, and the
     read is not tried again in a loop."""
 
@@ -81,10 +82,10 @@ async def resolve(
         elif source.get("kind") == "paginated_endpoint":
             raw, record = await _listed(ctx, spec, source)
         else:
-            raise ValueError("no keys: pass keys with the run or declare key.source")
+            raise Invalid("no keys: pass keys with the run or declare key.source")
         keys = await asyncio.to_thread(normalise_keys, raw, spec)
     if not keys:
-        raise ValueError("the key set is empty")
+        raise Invalid("the key set is empty")
     return keys, record
 
 
@@ -120,7 +121,7 @@ def _refuse(bad: Sequence[int], spec: CompiledSpec) -> None:
         failed = "do not match key.pattern"
         if n > 1:
             failed = f"are not {n} parts joined by |, or hold a part that fails key.pattern"
-        raise ValueError(
+        raise Invalid(
             f"{len(bad)} key(s) {failed} after key.normalize,"
             f" or are over 1024 bytes or hold NUL (positions {shown})"
         )
@@ -142,7 +143,7 @@ def _refuse_alike(keys: Iterable[str], spec: CompiledSpec) -> None:
     if alike:
         ranked = sorted(alike)
         shown = ", ".join(map(str, ranked[:10])) + (" ..." if len(ranked) > 10 else "")
-        raise ValueError(ALIKE.format(len(ranked), shown))
+        raise Invalid(ALIKE.format(len(ranked), shown))
 
 
 def run_keys(keys: Sequence[str], spec: CompiledSpec, tokeniser: Tokeniser) -> dict[str, str]:
@@ -178,13 +179,16 @@ async def _listed(
         or obs.pagination_unstable
     ):
         problem = obs.error_detail or obs.error_class or "an incomplete or unstable page walk"
-        raise ValueError(f"the key listing was not read completely (HTTP {obs.http_status}: {problem})")
-    listing, duplicate = jsonio.parse_json(obs.body or b"", max_values=LISTING_MAX_VALUES)
+        raise Invalid(f"the key listing was not read completely (HTTP {obs.http_status}: {problem})")
+    try:
+        listing, duplicate = jsonio.parse_json(obs.body or b"", max_values=LISTING_MAX_VALUES)
+    except jsonio.JSONParseError:  # its message may quote the body
+        raise Invalid("the key listing is not a JSON document") from None
     if duplicate:  # RFC 8259 leaves a repeated name undefined: which keys were listed is unknown
-        raise ValueError("the key listing repeats a member name, so its keys are ambiguous")
+        raise Invalid("the key listing repeats a member name, so its keys are ambiguous")
     found = [value for value, _ in find(side.pagination.items_path or "$", listing)]
     if len(found) != 1 or not isinstance(found[0], list):
-        raise ValueError("the key listing's itemsPath does not select one array")
+        raise Invalid("the key listing's itemsPath does not select one array")
     walk = {"basis": "listing", "target": side.target, "items": len(found[0])}
     walk |= {"first_at": first_at, "last_at": last_at}
     path, n = source["keyPath"], len(spec.key_parts)
@@ -216,7 +220,7 @@ async def _tabled(
         async with asyncio.timeout(bound_s):
             plan = await tables.key_plan(ctx.targets, cfg)
             if plan.get("rejected"):  # a CSV file's lines its plan counted: its reader leaves them out
-                raise ValueError(UNROWED.format(plan["rejected"]))
+                raise Invalid(UNROWED.format(plan["rejected"]))
             target = ctx.targets.live(cfg.target)
             gate = ctx.gates.setdefault(cfg.target, TargetGate.for_target(target))
             async with gate.semaphore:  # one slot and one tick of the target's budget for the whole read
@@ -228,7 +232,7 @@ async def _tabled(
                         ranked, unfit = await asyncio.to_thread(_ranked, batch, last, spec, keys, seen)
                         rows, seen, last, bad = rows + len(batch), seen + ranked, batch[-1], bad + unfit
                         if seen > sampling.LIMIT:
-                            raise ValueError(OVER.format(sampling.LIMIT))
+                            raise Invalid(OVER.format(sampling.LIMIT))
                     skipped = await engine.null_keys(session, plan)
         if "selected" in plan and rows + skipped != plan["selected"]:  # a file's rows guard
             read = rows + skipped
@@ -240,7 +244,7 @@ async def _tabled(
     except (*ERRORS, UnsafeTargetError, UnknownTargetError, TimeoutError) as exc:
         raise _unread(exc, bound_s) from None
     if skipped:
-        raise ValueError(KEYLESS.format(skipped))
+        raise Invalid(KEYLESS.format(skipped))
     _refuse(bad, spec)
     await asyncio.to_thread(_refuse_alike, keys, spec)
     record = {"basis": "key_table", "target": cfg.target, "relation": tables.relation(plan)}
@@ -264,7 +268,7 @@ def _unread(exc: BaseException, bound_s: float) -> ValueError:
     if isinstance(exc, tables.TargetAuthRefused):
         return KeyAuthRefused(f"the key source could not be read: the target refused the credential ({code})")
     if isinstance(exc, (*tables.TIMEOUT, TimeoutError)):
-        return ValueError(f"the key source timed out after {bound_s:.0f} s ({code})")
+        return Invalid(f"the key source timed out after {bound_s:.0f} s ({code})")
     if isinstance(exc, tables.SnapshotLost):
-        return ValueError(f"the key source could not be held in one snapshot ({code})")
-    return ValueError(f"the key source could not be read ({code})")
+        return Invalid(f"the key source could not be held in one snapshot ({code})")
+    return Invalid(f"the key source could not be read ({code})")

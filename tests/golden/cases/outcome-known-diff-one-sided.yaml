@@ -1,0 +1,26 @@
+description: >
+  Only a rule explains a one-sided key: a rule matching its document finding makes it KNOWN_DIFF,
+  and the rule reads the present document (a.status).
+sides:
+  b: {notFound: {status: [404]}}
+targets:
+  b: {authoritativeAbsence: {status: [404]}}
+knownDiffs:
+  - id: KD-0006
+    when: "taxonomy_code == 'MISSING_DOCUMENT' && a.status == 'CLOSED'"
+    classification: expected_by_design
+    reason: The new service does not migrate closed organisations.
+    ticket: ORG-1006
+a:
+  body: '{"code": "ORG-000123", "status": "CLOSED"}'
+b:
+  status: 404
+  body: '{"error": "not found"}'
+expect:
+  a: COMPLETE
+  b: ABSENT
+  outcome: KNOWN_DIFF
+  findings:
+    - finding: ["", $, missing_in_b, MISSING_DOCUMENT]
+      taxonomy: [MISSING_DOCUMENT, CRITICAL]
+      rule: KD-0006

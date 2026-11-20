@@ -559,12 +559,9 @@ async def revoke(ctx: Ctx, who: RuleApprover, approval_id: str, body: RevokeIn) 
     carry forever, must hold no raw key-shaped value."""
     reason = checked(body.reason, "reason", REASON_CHARS)
     assert reason is not None
-    try:
-        async with repo.audited(ctx.pool) as (conn, audit):
-            approval = need(await repo.get_approval(conn, approval_id), f"approval {approval_id}")
-            if rawvalues.key_shaped(await ctx.spec(conn, approval["spec_id"]), reason):
-                raise HTTPException(422, rawvalues.KEY_SHAPED)
-            done = await approvals.revoke(conn, audit, approval_id, reason, who=who)
-    except LookupError as exc:
-        raise HTTPException(404, str(exc)) from None
+    async with repo.audited(ctx.pool) as (conn, audit):
+        approval = need(await repo.get_approval(conn, approval_id), f"approval {approval_id}")
+        if rawvalues.key_shaped(await ctx.spec(conn, approval["spec_id"]), reason):
+            raise HTTPException(422, rawvalues.KEY_SHAPED)
+        done = await approvals.revoke(conn, audit, approval_id, reason, who=who)
     return ok(done)

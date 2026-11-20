@@ -28,6 +28,7 @@ from deltasleuth.core.canonical.paths import ROOT_PATTERN
 from deltasleuth.core.spec.assemble import content_hash
 from deltasleuth.core.spec.errors import pointer
 from deltasleuth.core.types import CompiledSpec, RuleClassification
+from deltasleuth.errors import NotFound
 from deltasleuth.store import repo
 from deltasleuth.store.db import APPROVALS
 
@@ -97,7 +98,7 @@ async def gate(
         return None, params
     stored = await repo.get_spec(conn, spec_id)
     if stored is None:
-        raise LookupError(f"spec {spec_id} not found")
+        raise NotFound(f"spec {spec_id} not found")
     if content_hash(stored["body"]) != stored["content_hash"]:
         raise ApprovalRequired(
             f"spec {spec_id}'s stored body does not re-hash to its content hash (edited, or not storable"
@@ -208,11 +209,11 @@ def deciders(approval: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 async def run_approval(conn: repo.Conn, run: Mapping[str, Any], cycle: int | None = None) -> dict[str, Any]:
     """The run's spec approval as ``GET /v1/runs/{id}`` shows it or, given ``cycle``, the one that
-    cycle ran under, as report.pdf and the P0 summary show it: an ended cycle's ``ds.cycles.approval_id``,
-    a live one's the run's (none before ``params["approval"]["from_cycle"]``). Its state
-    (``run_state``), the scopes its version needs and the auth mode it started in, who approved it and
-    when, and who revoked it, when and why. A run from before 008 is unapproved, with neither scopes nor
-    mode, whatever it attached: it is never signed off."""
+    cycle ran under, as report.pdf and the contract report show it: an ended cycle's
+    ``ds.cycles.approval_id``, a live one's the run's (none before ``params["approval"]["from_cycle"]``).
+    Its state (``run_state``), the scopes its version needs and the auth mode it started in, who approved
+    it and when, and who revoked it, when and why. A run from before 008 is unapproved, with neither scopes
+    nor mode, whatever it attached: it is never signed off."""
     record = run["params"].get("approval")
     approval_id = run["approval_id"]
     if cycle is not None:
@@ -257,7 +258,7 @@ def _decided(
 
 
 def label(approval: Mapping[str, Any]) -> str:
-    """What the Run screen (web/src/four-eyes.ts), report.pdf, the P0 summary and ``ds runs`` say of a
+    """What the Run screen (web/src/four-eyes.ts), report.pdf, the contract report and ``ds runs`` say of a
     run's spec approval, from ``run_approval``."""
     state, needed = approval["state"], approval["needs"]
     if state in ("approved", "revoked"):
@@ -279,7 +280,7 @@ def label(approval: Mapping[str, Any]) -> str:
 
 
 def signoff_label(signoffs: Sequence[Mapping[str, Any]]) -> str | None:
-    """What report.pdf and the P0 summary say of a cycle's sign-off, from its requests: the approved one,
+    """What report.pdf and the contract report say of a cycle's sign-off, from its requests: the approved one,
     else the newest revoked one; None when neither exists."""
     found = next((s for s in signoffs if s["status"] == "approved"), None) or next(
         (s for s in signoffs if s["status"] == "revoked"), None
@@ -515,7 +516,7 @@ async def _facts(
     run_id = run["run_id"]
     ended = await repo.get_cycle(conn, run_id, cycle)
     if ended is None:
-        raise LookupError(f"cycle {cycle} of run {run_id} has not ended")
+        raise NotFound(f"cycle {cycle} of run {run_id} has not ended")
     causes = await repo.list_root_causes(conn, run_id, cycle)
     scan = await repo.get_scan(conn, run_id, cycle)
     facts = {
@@ -562,7 +563,7 @@ async def revoke(
     if row is None:
         found = await repo.get_approval(conn, approval_id)
         if found is None:
-            raise LookupError(f"approval {approval_id} not found")
+            raise NotFound(f"approval {approval_id} not found")
         raise ApprovalConflict(f"approval {approval_id} is {found['status']}, not approved")
     paused: list[str] = []
     stopped: list[str] = []

@@ -28,6 +28,7 @@ from deltasleuth.connectors.tables.engine import Column, Relation
 from deltasleuth.core import precheck
 from deltasleuth.core.canonical.encoding import sha256_hex
 from deltasleuth.core.spec import compile_spec
+from deltasleuth.errors import Refused
 from deltasleuth.runner import census, drift
 from deltasleuth.runner import scan as scanning
 from deltasleuth.runner.runs import cancel_run, create_run, resume_run
@@ -253,7 +254,7 @@ async def test_narrowing_is_refused_at_creation_when_the_spec_pauses_on_schema_d
         before = await (await conn.execute("SELECT count(*) FROM ds.audit_log")).fetchone()
     with pytest.raises(drift.Refused) as refused:
         await create_run(ctx, spec_id, "batch", who=TESTER)
-    assert refused.value.status == 422 and isinstance(refused.value, ValueError)
+    assert refused.value.status == 422 and isinstance(refused.value, Refused)
     assert str(refused.value) == (
         f"spec {spec_id} (customers 1.0.0) pauses on schema drift and a run of it would not compare what run"
         f" {first} compared: column 'amount' was compared by run {first} of this version and is not compared"

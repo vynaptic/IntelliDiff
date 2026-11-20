@@ -976,7 +976,7 @@ def test_refusals_by_stage(stubs: Stubs, tmp_path: Path, monkeypatch: pytest.Mon
     hidden.mkdir()
     for folder in (Path("/usr/bin"), Path("/bin")):
         for tool in folder.iterdir():
-            if tool.name != "docker" and not (hidden / tool.name).exists():
+            if tool.name != "docker" and not (hidden / tool.name).is_symlink():  # /bin may be /usr/bin
                 (hidden / tool.name).symlink_to(tool)
     monkeypatch.setenv("PATH", str(hidden))
     assert stubs.bench("--allow-dirty").stderr == (

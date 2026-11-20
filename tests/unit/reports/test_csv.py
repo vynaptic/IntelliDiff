@@ -7,6 +7,7 @@ import io
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -310,3 +311,35 @@ async def test_graph_csv_lists_a_graph_runs_rows_and_only_its_header_for_other_r
         ["0", "GROUP_MEMBERS_DIFFER", "2", "1", "1", "0", "{}"],
         ["1", "CLUSTER_SPLIT", "1", "2", "0", "0", '{"members":2}'],
     ]
+
+
+async def _downloads(ctx: Context) -> list[tuple[str, str, Any]]:
+    """Each ``report.download`` row's actor, object, and the name and cycle of its detail."""
+    async with ctx.pool.connection() as conn:
+        cur = await conn.execute(
+            "SELECT actor, object, detail FROM ds.audit_log WHERE action = 'report.download' ORDER BY id"
+        )
+        rows = await cur.fetchall()
+    return [(actor, run_id, {n: detail[n] for n in ("name", "cycle")}) for actor, run_id, detail in rows]
+
+
+@pytest.mark.db
+async def test_a_download_renders_and_audits_once_before_its_first_byte(ctx: Context) -> None:
+    """``reports.download`` reads what may refuse it, audits ``report.download`` with the cycle it reads (the
+    run's current one by default), then gives the bytes; a refusal is no download."""
+    from deltasleuth.reports import download
+    from tests.conftest import TESTER
+
+    run_id = await seed_run(ctx, {"K004": (doc("K004", status="A"), doc("K004", status="B"))})
+    got = await download(ctx, TESTER, run_id, "discrepancies.csv")
+    assert (got.media, got.file_name) == ("text/csv", f"{run_id}-discrepancies.csv")
+    assert await _downloads(ctx) == [(TESTER.actor, run_id, {"name": "discrepancies.csv", "cycle": 1})]
+    whole = await write_csv(ctx, run_id, None, "discrepancies")
+    assert b"".join([chunk async for chunk in got.content]) == whole
+    pdf = await download(ctx, TESTER, run_id, "report.pdf", 1)
+    assert isinstance(pdf.content, bytes) and pdf.content[:5] == b"%PDF-"
+    with pytest.raises(LookupError, match=r"^report 'keys\.csv' not found$"):
+        await download(ctx, TESTER, run_id, "keys.csv")
+    with pytest.raises(LookupError, match=f"^run R-{'0' * 26} not found$"):
+        await download(ctx, TESTER, f"R-{'0' * 26}", "report.pdf")
+    assert [detail for *_, detail in await _downloads(ctx)][1:] == [{"name": "report.pdf", "cycle": 1}]

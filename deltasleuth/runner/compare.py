@@ -1,10 +1,11 @@
-"""One pass over one key: read both sides, keep the evidence first, observe, compare.
+"""One pass over one key: read both sides, observe, compare, and keep the evidence before the rows.
 
 Reads come from the live endpoints (one connector per side, under its target's gate of the
 process: a service's REST connector, or a table's per-key reads by the run's column plan) or from
-captured samples (file mode). Every read is stored as evidence before it is
-judged, failed calls included. A key that cannot be read is INCONCLUSIVE, never a failure of the
-run: no sample, or a key that cannot be sent, is ``skipped``; a malformed sample is
+captured samples (file mode). Every read, a failed call included, is named as evidence when it is judged
+and stored before its observation is saved: a group's blobs are durable before the transaction that names
+them commits, each directory synced once a group. A key that cannot be read is INCONCLUSIVE, never a
+failure of the run: no sample, or a key that cannot be sent, is ``skipped``; a malformed sample is
 ``unparseable``. Observing and comparing run off the event loop, so a heavy spec map never stalls
 the API or the other keys. A run is observed with the capabilities its targets declared when it
 was created (``Context.capabilities``). Stored observations are opened with the run's sealer, and
@@ -42,6 +43,7 @@ from deltasleuth.core.types import (
     SideState,
     SideStateKind,
 )
+from deltasleuth.errors import Invalid
 from deltasleuth.evidence.store import EvidenceNotFoundError
 from deltasleuth.runner.recheck import tag_intermittent
 from deltasleuth.security.crypto import Sealer
@@ -119,6 +121,17 @@ class LiveReader:
         }
         self._replaced += self._connectors.values()
         self._connectors = fresh
+        self._gates = {side: self._ctx.gates[cfg.target] for side, cfg in self._sides.items()}
+
+    def refused(self, reads: Mapping[Side, Observation]) -> float | None:
+        """Seconds until each side of ``reads`` whose read was refused unsent (``attempts`` 0: its target's
+        breaker was open, or the target asked callers to wait past the call's timeout) may be read again:
+        the longest of their breakers' cooldowns and their targets' pauses; None when no read was refused
+        so. Such a read took no time and observed nothing of the key."""
+        gates = [self._gates[side] for side, obs in reads.items() if obs.attempts == 0]
+        if not gates:
+            return None
+        return max(max(g.paused_for(), g.breaker(self._execution).closed_for()) for g in gates)
 
     @property
     def batches(self) -> bool:
@@ -201,13 +214,13 @@ class FileReader:
         try:
             source = FileSampleSource(samples_dir)
         except SampleError as exc:
-            raise ValueError(str(exc)) from None
+            raise Invalid(str(exc)) from None
         chain, n = [step.name for step in spec.key.normalize], len(spec.key_parts) or 1
         self._raw: dict[str, str] = {}
         for raw in source.keys():
             key = fit_parts(raw, chain, n)
             if key is not None and self._raw.setdefault(key, raw) != raw:
-                raise ValueError("two captured sample keys normalise to the same key (key.normalize)")
+                raise Invalid("two captured sample keys normalise to the same key (key.normalize)")
         self._connector = FileConnector(source)
         self._sides = spec.sides
         self.fixed: frozenset[Side] = frozenset()  # captured samples: no side reads a table
@@ -315,9 +328,10 @@ def _judge(
     states: dict[Side, SideState],
     held: Held,
 ) -> tuple[KeyResult, Reads]:
-    """Keep the evidence first, then observe and compare (off the event loop: a heavy map must not
-    stall the API or the other keys); a side ``held`` keeps is named by its stored observation."""
-    reads = {side: ctx.evidence.put_blob(obs) for side, obs in observations.items()}
+    """Name the evidence (``save_passes`` stores it before its rows), then observe and compare (off the
+    event loop: a heavy map must not stall the API or the other keys); a side ``held`` keeps is named by its
+    stored observation."""
+    reads = {side: ctx.evidence.identify(obs) for side, obs in observations.items()}
     states = states | {side: _observe(spec, caps, obs) for side, obs in reads.items()}
     result = _compare(ctx, spec, key, states[Side.A], states[Side.B])
     ids = {side: obs.obs_id for side, obs in reads.items()} | {side: kept[0] for side, kept in held.items()}
@@ -403,8 +417,9 @@ async def save_passes(
     """``save_pass`` for each (pass_no, result, reads), with one statement per table, in the caller's
     transaction. Each key is saved by its masked form (the foreign keys refuse a mismatch) and each
     observation's headers sealed by the run's ``sealer``; a first pass is a fresh read, a sample's retry
-    replacing a stored result. The blob lock, shared, is taken and every blob
-    ensured first, so a drain cannot delete a blob these rows reference."""
+    replacing a stored result. The blob lock, shared, is taken and the group's blobs are stored first (in a
+    thread: each file fsynced, then each directory that gained one once), so every blob these rows name is
+    durable before they commit, and a drain cannot delete one meanwhile."""
     keys = [mask_key(result.key, spec, ctx.tokeniser) for _, result, _ in passes]
     observations = [
         (pass_no, masked, obs, _sealed_headers(sealer, cycle, obs))
@@ -412,7 +427,7 @@ async def save_passes(
         for obs in reads.values()
     ]
     await repo.lock_blobs(conn)
-    await asyncio.to_thread(ctx.evidence.ensure, [obs for _, _, obs, _ in observations])
+    await asyncio.to_thread(ctx.evidence.put_all, [obs for _, _, obs, _ in observations])
     await repo.insert_observations(conn, run_id, cycle, observations)
     masked = [
         (key, result, [mask_finding(f, spec, ctx.tokeniser) for f in result.findings])
@@ -424,4 +439,4 @@ async def save_passes(
 
 def _sealed_headers(sealer: Sealer, cycle: int, obs: Observation) -> bytes:
     headers = jsonio.dumps(repo.storable(obs.headers)).encode()
-    return sealer.seal("headers", cycle, obs.obs_id, headers)  # type: ignore[arg-type]  # put_blob set it
+    return sealer.seal("headers", cycle, obs.obs_id, headers)  # type: ignore[arg-type]  # identify set it

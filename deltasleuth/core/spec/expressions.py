@@ -1,4 +1,6 @@
-"""Compile checks for the expression languages a spec embeds: CEL, JSONata and key regexes.
+"""Compile checks for the expression languages a spec embeds: CEL, JSONata and key regexes. A JSONata
+expression compiles with the map's regular expression engine, so a regular expression a map may not run is
+refused when the spec loads.
 
 ``CEL_VARIABLES`` is the single source of truth for the names each kind of CEL predicate may use:
 the loader compiles with exactly these, and every engine evaluator binds all of them, so a
@@ -23,6 +25,7 @@ import regex
 from cel_expr_python import cel
 from jsonata.jexception import JException
 
+from deltasleuth.core.canonical.mapping import RegexLimitError, RegexRefused, regex_engine, regex_work
 from deltasleuth.core.spec import _keypattern_process
 
 CelKind = Literal[
@@ -123,9 +126,11 @@ def reads(source: str, kind: CelKind, name: str) -> bool:
 def jsonata_error(source: str) -> str | None:
     """Why ``source`` does not parse as JSONata, or None."""
     try:
-        jsonata.Jsonata(source)
+        jsonata.Jsonata(source, regex_engine)
     except JException as exc:
         return f"{exc.error}: {exc} (at character {exc.location})"
+    except RegexRefused as exc:
+        return str(exc)
     except RecursionError:
         return "the expression nests too deeply"
     return None
@@ -157,31 +162,12 @@ def key_pattern_budget() -> Iterator[None]:
 
 
 def _pattern_work(nodes: _parser.SubPattern) -> int:
-    """Bound finite repeats and nested products using CPython's already validated regex grammar.
-
-    Python is pinned to 3.13. Counting parsed operations preserves escapes, character classes,
-    comments and inline flags; looking for braces in the source would misread those as repeats.
-    """
-    work = 0
-    for op, value in nodes:
-        cost = 1
-        if op in (_constants.MAX_REPEAT, _constants.MIN_REPEAT, _constants.POSSESSIVE_REPEAT):
-            low, high, child = value
-            cost += _pattern_work(child) * (max(1, low) if high == _constants.MAXREPEAT else max(1, high))
-        elif op == _constants.SUBPATTERN:
-            cost += _pattern_work(value[-1])
-        elif op == _constants.BRANCH:
-            cost += sum(_pattern_work(branch) for branch in value[1])
-        elif op in (_constants.ASSERT, _constants.ASSERT_NOT):
-            cost += _pattern_work(value[1])
-        elif op == _constants.ATOMIC_GROUP:
-            cost += _pattern_work(value)
-        elif op == _constants.GROUPREF_EXISTS:
-            cost += _pattern_work(value[1]) + (_pattern_work(value[2]) if value[2] else 0)
-        work += cost
-        if work > MAX_KEY_PATTERN_WORK:
-            raise KeyPatternLimitError("key.pattern exceeds its compilation work limit; simplify its repeats")
-    return work
+    """Bound finite repeats and nested products, as a map's regular expressions are bounded."""
+    try:
+        return regex_work(nodes, MAX_KEY_PATTERN_WORK)
+    except RegexLimitError:
+        message = "key.pattern exceeds its compilation work limit; simplify its repeats"
+        raise KeyPatternLimitError(message) from None
 
 
 def _native_safe(nodes: _parser.SubPattern, flags: int) -> bool:

@@ -725,6 +725,29 @@ async def test_a_crash_after_a_chunk_leaves_the_cycle_purging_and_the_next_pass_
     assert done_row["purging_at"] == cut["purging_at"] and done_row["purged_at"] is not None
 
 
+async def test_a_soak_s_unchanged_reads_share_their_blobs_across_cycles(
+    harness: Harness, service: ScriptedService
+) -> None:
+    """A soak reads its keys again each cycle. A blob is named by its body, so a key read alike names the
+    blobs of its first cycle again: no later cycle writes one, and a purge of the first cycle keeps every
+    blob a later one names. Each read keeps its own observation row: when and how it was read is evidence."""
+    soak = await live_soak(harness, service, KEYS[:3])
+    run_id, ended = soak["run_id"], soak["cycle"] - 1
+    found = await rows(
+        harness, "SELECT cycle, content_hash FROM ds.observations WHERE run_id = %s ORDER BY cycle", run_id
+    )
+    named = {cycle_no: {r["content_hash"] for r in found if r["cycle"] == cycle_no} for cycle_no in (1, 2)}
+    assert ended >= 2 and named[1] == named[2] and len(named[1]) == 3  # a side's body, both sides alike
+    assert len(found) >= 2 * 3 * ended  # an observation row a read
+    assert {address for address, _, _ in harness.ctx.evidence.walk()} == named[1]  # no blob more
+    await aged(harness, run_id, 91, 1)
+    assert (await purge.purge(harness.ctx, TESTER)).cycles == 1
+    await queue_aged(harness, 25)
+    done = await purge.purge(harness.ctx, TESTER)
+    assert (done.blobs_deleted, done.blobs_shared) == (0, 3)  # the next cycles name them
+    assert all(harness.ctx.evidence.get_body(address) for address in named[2])
+
+
 @pytest.mark.parametrize("first", ["drain", "writer"])
 async def test_a_writer_racing_a_drain_keeps_its_blobs(
     harness: Harness, service: ScriptedService, monkeypatch: pytest.MonkeyPatch, first: str

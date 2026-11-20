@@ -4,12 +4,13 @@
  *  a version and the table pre-check form of one. A version's name opens its stored document: read-only, or
  *  for a spec author in the builder, which "New comparison" opens on a starter. */
 import { useState, type FormEvent } from 'react';
-import { ApiError, api, parseExact, type Draft, type Issue, type Pair, type Saved, type Spec } from './api';
+import { ApiError, api, type Draft, type Issue, type Saved, type Spec } from './api';
 import { Builder } from './Builder';
 import { STARTER } from './building';
 import { useDialogs } from './Dialogs';
 import { label } from './labels';
 import { href, message, useLoad, useWho } from './lib';
+import { readPairs } from './profiling';
 import { bySpec, dueLine, listed, specLabel } from './scheduling';
 import { Badge, Err, ISSUE_COLS, Named, Table, When, cell, when, type Col } from './ui';
 
@@ -164,21 +165,6 @@ export function SpecScreen({ id }: { id: string }) {
       {fresh && (author ? <Builder id={id} form={STARTER} /> : <p className="muted">A new comparison needs the spec_author role.</p>)}
     </>
   );
-}
-
-/** Pairs from a JSON array of {key, a, b} or JSON Lines of {key, side, status, body} sample records.
- *  As in `ds profile`, a side has a document only with a 2xx JSON body (a 404 body is not one). */
-function readPairs(text: string): Pair[] {
-  if (text.trimStart().startsWith('[')) return parseExact(text) as Pair[];
-  const pairs = new Map<string, Pair>();
-  for (const line of text.split('\n').filter((l) => l.trim())) {
-    type Sample = { key: string; side: 'a' | 'b'; status?: number; body?: unknown };
-    const { key, side, status = 200, body } = parseExact(line) as Sample;
-    const pair = pairs.get(key) ?? { key, a: null, b: null };
-    pair[side] = status >= 200 && status < 300 ? (body ?? null) : null;
-    pairs.set(key, pair);
-  }
-  return [...pairs.values()];
 }
 
 function Profile({ onDraft }: { onDraft: (draft: Draft) => void }) {

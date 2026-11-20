@@ -20,6 +20,7 @@ from deltasleuth.connectors.tables import relation
 from deltasleuth.context import Context
 from deltasleuth.core import jsonio
 from deltasleuth.core.types import CompiledSpec, Observation, Outcome, Severity
+from deltasleuth.errors import NotFound
 from deltasleuth.reports.render import Section
 from deltasleuth.store import repo
 from deltasleuth.store.repo import Row
@@ -155,7 +156,7 @@ async def load_run(ctx: Context, run_id: str, cycle: int | None = None, *, resul
     async with ctx.pool.connection() as conn:
         run = await repo.get_run(conn, run_id)
         if run is None:
-            raise LookupError(f"run {run_id} not found")
+            raise NotFound(f"run {run_id} not found")
         cycle = cycle or run["cycle"]
         await refuse_purged(conn, run_id, cycle)
         ended = await repo.list_cycles(conn, run_id, **days(ctx))

@@ -19,13 +19,12 @@ from typing import Any
 
 import psycopg
 import pytest
-from fastapi import HTTPException
 
-from deltasleuth.api.routes.runs import _runner_errors
 from deltasleuth.connectors import tables
 from deltasleuth.connectors.files import SampleWriter
 from deltasleuth.connectors.postgres import engine as postgresql
 from deltasleuth.core.types import SideStateKind
+from deltasleuth.errors import Invalid
 from deltasleuth.evidence import store
 from deltasleuth.reports.csv import write_csv
 from deltasleuth.runner import (
@@ -37,6 +36,7 @@ from deltasleuth.runner import (
     outcome_changes,
     resume_run,
     run_worker,
+    worker,
 )
 from deltasleuth.runner import keys as key_sets
 from deltasleuth.runner import runs as running
@@ -310,14 +310,14 @@ async def test_an_evidence_store_that_cannot_write_pauses_the_run_until_resumed(
     room again goes on."""
     for key in KEYS[:2]:
         service.both(key, doc(key), doc(key))
-    atomic_write, full = store.atomic_write, [True]
+    write_synced, full = store.write_synced, [True]
 
     def writing(path: Path, data: bytes) -> None:
         if full[0]:
             raise OSError(errno.ENOSPC, "No space left on device", str(path))
-        atomic_write(path, data)
+        write_synced(path, data)
 
-    monkeypatch.setattr(store, "atomic_write", writing)
+    monkeypatch.setattr(store, "write_synced", writing)
     run_id = await create_run(harness.ctx, await harness.spec(spec_text(KEYS[:2])), "batch", who=TESTER)
     run = await harness.finish(run_id, ("paused", *repo.TERMINAL))
     for _ in range(100):  # the run is paused first, so that no slot leases its keys, then they go back
@@ -328,7 +328,7 @@ async def test_an_evidence_store_that_cannot_write_pauses_the_run_until_resumed(
         await asyncio.sleep(0.05)
     assert (run["status"], run["stop_reason"], run["error"]) == ("paused", running.EVIDENCE_PAUSE, None)
     assert progress == {"keys": {"pending": 2}, "outcomes": {}}  # handed back, nothing saved
-    said = [r.getMessage() for r in caplog.records if run_id in r.getMessage()]
+    said = [r.getMessage() for r in caplog.records if r.name == worker.__name__ and run_id in r.getMessage()]
     assert said and all(re.search(r"not written: OSError" + AT + r" \(ENOSPC\)$", line) for line in said)
     assert not any("space" in line or "blobs" in line for line in said)
     full[0] = False  # room again
@@ -445,9 +445,7 @@ async def test_the_sweep_isolates_a_run_the_store_refuses(
     service.both("K001", doc("K001"), doc("K001"))
     spec_id = await harness.spec(spec_text())
     other = await create_run(harness.ctx, spec_id, "batch", keys=["K001"], who=TESTER)
-    refused = await create_run(
-        harness.ctx, spec_id, "batch", keys=["K001"], who=TESTER
-    )  # the newer: ended first
+    refused = await create_run(harness.ctx, spec_id, "batch", keys=["K001"], who=TESTER)
     summarise, finish, ended = cycle.summarise, cycle.finish_cycle, []
 
     async def refusing(*args: Any) -> dict[str, Any]:
@@ -457,7 +455,7 @@ async def test_the_sweep_isolates_a_run_the_store_refuses(
         return await summarise(*args)
 
     async def together(ctx: Any, run_id: str, **options: Any) -> None:
-        """The first cycle-ending pass waits until both runs' keys are done, so that one sweep ends both."""
+        """Each run's cycle end waits until both runs' keys are done, so that both ends run at once."""
         done = False
         while not done:
             await asyncio.sleep(0.02)
@@ -468,9 +466,9 @@ async def test_the_sweep_isolates_a_run_the_store_refuses(
     monkeypatch.setattr(cycle, "summarise", refusing)
     monkeypatch.setattr("deltasleuth.runner.worker.finish_cycle", together)
     assert (await harness.finish(other, timeout=20))["status"] == "completed"
-    failed = await harness.run(refused)  # by then: that worker's sweep ended it first, and went on
+    failed = await harness.run(refused)  # each end is a task of its own: the refused one fails its run only
     assert failed["status"] == "failed" and re.fullmatch("CheckViolation" + AT, failed["error"])
-    assert ended == [refused, other] and failed["finished_at"] < (await harness.run(other))["finished_at"]
+    assert sorted(ended) == sorted([refused, other])
 
 
 # -- soak, one-shot, file mode ---------------------------------------------------------------------
@@ -589,10 +587,10 @@ ALIKE = ["K\u00c901", "KE\u030101"]  # one invented key, in NFC and in NFD
 async def test_keys_that_mask_alike_are_refused_by_position_naming_none(harness: Harness) -> None:
     tokenised = spec_text().replace('pattern: "^K[0-9]{3}$"', 'pattern: "^K"')
     spec_id = await harness.spec(tokenised.replace("class: business_code", "class: identifier"))
-    with pytest.raises(HTTPException) as refused, _runner_errors():
+    with pytest.raises(Invalid) as refused:  # the API answers its status and its message
         await create_run(harness.ctx, spec_id, "batch", keys=["K001", *ALIKE], who=TESTER)
-    said = refused.value.detail
-    assert refused.value.status_code == 422
+    said = str(refused.value)
+    assert refused.value.status == 422
     assert re.search(r"^2 key\(s\) .*\(positions 2, 3 of the key set\)", said)
     assert not any(key in said for key in ALIKE)
     async with harness.ctx.pool.connection() as conn:
@@ -794,11 +792,12 @@ def _serve(service: ScriptedService, down: bool) -> None:
 
 
 async def test_a_spec_s_own_breaker_governs_its_run_whoever_called_the_target_first(
-    harness: Harness, service: ScriptedService
+    harness: Harness, service: ScriptedService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A target keeps a breaker for each ``execution.circuitBreaker`` declared (``TargetGate.breaker``). It
     kept one, with the settings of the first spec that called it: after a run of a spec that declares none,
     a later spec's breaker never opened, and its run tried every key of a service that was down."""
+    monkeypatch.setattr(worker, "REFUSALS", 0)  # a refused key is judged at once: which breaker refuses
     _serve(service, down=False)
     _, run = await _run(harness, spec_text(KEYS))
     assert run["counters"]["match"] == len(KEYS)
@@ -814,11 +813,12 @@ async def test_a_spec_s_own_breaker_governs_its_run_whoever_called_the_target_fi
 
 
 async def test_an_open_breaker_refuses_no_call_of_a_spec_that_declares_none(
-    harness: Harness, service: ScriptedService
+    harness: Harness, service: ScriptedService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The breaker a spec declares is that declaration's. Open, it refused every other spec's runs on the
     same targets, those of a spec without one too: their keys came back ``circuit_open`` from a service that
     was up again, until the app was restarted."""
+    monkeypatch.setattr(worker, "REFUSALS", 0)  # a refused key is judged at once: which breaker refuses
     _serve(service, down=True)
     await _run(harness, GUARDED)
     assert sum(service.calls.values()) == 20  # its breaker is open on both targets, for a minute
@@ -827,6 +827,68 @@ async def test_an_open_breaker_refuses_no_call_of_a_spec_that_declares_none(
     assert (run["counters"]["match"], sum(service.calls.values())) == (len(KEYS), 2 * len(KEYS))
     _, run = await _run(harness, GUARDED.replace("unit-runner", "guarded-too"))  # declares the same one
     assert (run["counters"]["indeterminate"], sum(service.calls.values())) == (12, 2 * len(KEYS))
+
+
+# A breaker that five failed calls of ten open for one second, rechecking no key it could not read.
+FOURTEEN = [f"K{n:03d}" for n in range(1, 15)]
+BRIEF = spec_text(
+    FOURTEEN, execution="concurrency: 1, circuitBreaker: {errorRate: {rate: 0.5, window: 10}, cooldown: 1s}"
+).replace("recheck: {", "recheck: {outcomes: [MISMATCH, NOT_FOUND_A, NOT_FOUND_B], ")
+
+
+def _opening(service: ScriptedService) -> None:
+    """Every key answered alike on both sides, but side a of the first five by 503: the tenth call on side
+    a opens its breaker for a second."""
+    for key in FOURTEEN:
+        service.both(key, doc(key), doc(key))
+    for key in FOURTEEN[:5]:
+        service.script("a", key, UNAVAILABLE)
+
+
+async def _refusals(h: Harness, run_id: str) -> list[int]:
+    async with h.ctx.pool.connection() as conn:
+        cur = await conn.execute("SELECT refused FROM ds.run_keys WHERE run_id = %s ORDER BY seq", (run_id,))
+        return [refused for (refused,) in await cur.fetchall()]
+
+
+async def test_keys_an_open_breaker_refused_are_read_once_it_lets_calls_through(
+    harness: Harness, service: ScriptedService
+) -> None:
+    """A read the open breaker refused made no call and took no time: its key goes back unjudged, due when
+    the breaker lets a call through, and is read then. It ended INCONCLUSIVE ``circuit_open``, as fast as
+    the store took it, a recheck too, for an outage shorter than the breaker's cooldown."""
+    _opening(service)
+    run_id, run = await _run(harness, BRIEF)
+    results = await harness.results(run_id)
+    assert [(results[key]["outcome"], results[key]["side_a_reason"]) for key in FOURTEEN] == [
+        ("INCONCLUSIVE", "error_a")
+    ] * 5 + [("MATCH", None)] * 9
+    assert [service.calls[("a", key)] for key in FOURTEEN] == [1] * 14  # a refused read sent nothing
+    assert await _refusals(harness, run_id) == [0] * 10 + [1] * 4
+    assert (run["status"], run["counters"]["match"]) == ("completed", 9)
+
+
+async def test_a_key_refused_as_often_as_the_bound_is_judged_as_read(
+    harness: Harness, service: ScriptedService
+) -> None:
+    """No key waits for ever on a breaker that keeps opening: one handed back ``REFUSALS`` times is judged
+    as it was read, INCONCLUSIVE ``circuit_open``; one short of it goes back once more."""
+    _opening(service)
+    keys = FOURTEEN[:12]
+    run_id = await create_run(harness.ctx, await harness.spec(BRIEF), "batch", keys=keys, who=TESTER)
+    async with harness.ctx.pool.connection() as conn:
+        for key, refused in (("K011", worker.REFUSALS - 1), ("K012", worker.REFUSALS)):
+            await conn.execute(
+                "UPDATE ds.run_keys SET refused = %s WHERE run_id = %s AND key_masked = %s",
+                (refused, run_id, key),
+            )
+    run = await harness.finish(run_id)
+    results = await harness.results(run_id)
+    assert [(results[key]["outcome"], results[key]["side_a_reason"]) for key in keys[10:]] == [
+        ("MATCH", None), ("INCONCLUSIVE", "circuit_open"),
+    ]  # fmt: skip
+    assert await _refusals(harness, run_id) == [0] * 10 + [worker.REFUSALS] * 2
+    assert run["status"] == "completed" and service.calls[("a", "K012")] == 0
 
 
 async def test_a_second_worker_waits_for_the_first(
@@ -1147,9 +1209,9 @@ async def test_create_outage_is_422(
     _, harness = on_tables(ITEMS)
     async with harness as h:
         engine("census", psycopg.OperationalError("the server at keys.bank.example closed the connection"))
-        with pytest.raises(HTTPException) as refused, _runner_errors():
+        with pytest.raises(Invalid) as refused:  # the API answers its status and its message
             await _rolling(h, service)
-        assert (refused.value.status_code, refused.value.detail) == (
+        assert (refused.value.status, str(refused.value)) == (
             422,
             "the key source could not be read (OperationalError)",
         )

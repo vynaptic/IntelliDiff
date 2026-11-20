@@ -136,14 +136,21 @@ def rows_sql(side: Plan, keys: Mapping[str, Sequence[Sequence[str]]]) -> tuple[s
 def scan_sql(side: Plan, after: Sequence[bytes] | None) -> tuple[sql.Composed, Params]:
     """The population's canonical key texts, the hash of its plain columns' canonical row and the
     raw row of its digest columns (typeMap), in the UTF-8 byte order of the key texts, which is
-    code-point order in every database encoding; after the key whose parts are ``after``."""
+    code-point order in every database encoding; after the key whose parts are ``after`` (UTF-8).
+
+    In a UTF-8 database (``side["charset"]``, what the session's catalogue says of the server) the "C"
+    collation compares a text's UTF-8 bytes, so the key texts are ordered and bounded as they are: a key
+    column of text or varchar in that collation is then read and resumed by range through its index,
+    unsorted. In any other encoding they are ordered by their UTF-8 bytes, which the server sorts."""
     params: Params = {}
     keys = _canonical_keys(side, params)
-    order = _join([sql.SQL("convert_to({}, 'UTF8')").format(k) for k in keys])
+    text = side.get("charset") == "UTF8"
+    order = _join(keys if text else [sql.SQL("convert_to({}, 'UTF8')").format(k) for k in keys])
     conditions = _population(side, params)
     if after is not None:
-        params |= {f"a{i}": part for i, part in enumerate(after)}
-        bound = _join([sql.Placeholder(f"a{i}") for i in range(len(after))])
+        params |= {f"a{i}": part.decode() if text else part for i, part in enumerate(after)}
+        cast = sql.SQL("{}::text" if text else "{}")
+        bound = _join([cast.format(sql.Placeholder(f"a{i}")) for i in range(len(after))])
         conditions.append(sql.SQL("({}) > ({})").format(order, bound))
     digest = side.get("digest") or []
     plain = {name: col for name, col in side["columns"].items() if name not in digest}

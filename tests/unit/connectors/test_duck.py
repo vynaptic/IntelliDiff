@@ -810,3 +810,21 @@ async def test_a_plan_s_file_work_is_worded_for_its_side(
             raise raised
     assert str(refused.value) == said
     assert isinstance(refused.value, duck.NotReady) == isinstance(raised, StatementTimeout | manifest.Busy)
+
+
+def test_the_reader_flushes_its_allocator_within_its_memory_limit(tmp_path: Path) -> None:
+    """DuckDB's allocator keeps freed memory until a task's peak passes a threshold (128 MiB by default)
+    or a bulk free passes another (512 MiB): where it is jemalloc (Linux x86_64) the reader's resident
+    memory then grew past its memory limit. The reader flushes at a quarter of that limit, and on any
+    bulk free past it."""
+    with locked(tmp_path, memory_mib=64, spill_mib=1) as made:
+        read = dict(
+            made.con.execute(
+                "SELECT name, value FROM duckdb_settings()"
+                " WHERE name IN ('allocator_flush_threshold', 'allocator_bulk_deallocation_flush_threshold')"
+            ).fetchall()
+        )
+    assert read == {
+        "allocator_flush_threshold": "16.0 MiB",
+        "allocator_bulk_deallocation_flush_threshold": "64.0 MiB",
+    }

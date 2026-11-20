@@ -171,9 +171,10 @@ def per_key(sent: list[str]) -> int:
 async def test_mixed_pair_reads_the_file_side_in_groups(
     opened: Opened, service: ScriptedService, exports: Path, statements: list[str]
 ) -> None:
-    """250 keys of a CSV side against a service are two passes over the files (200 keys and 50), not 250;
-    the service reads each key by itself, and again where a recheck is due: the file side's first observation
-    stands, so the recheck names the same observation and sends the files no statement."""
+    """250 keys of a CSV side against a service are one pass over the files (a group holds ``FILE_BATCH``
+    keys, judged and saved 200 at a time), not 250; the service reads each key by itself, and again where a
+    recheck is due: the file side's first observation stands, so the recheck names the same observation and
+    sends the files no statement."""
     numbers = list(range(1, 251))
     (exports / "a" / "export.csv").write_text(HEADER + rows(*numbers))
     for n in numbers:
@@ -186,7 +187,7 @@ async def test_mixed_pair_reads_the_file_side_in_groups(
         run = await h.finish(run_id)
         found = await h.results(run_id)
         observed = await h.observations(run_id, "K009")
-    assert run["status"] == "completed" and per_key(statements) == 2
+    assert run["status"] == "completed" and per_key(statements) == 1
     rechecked = {"K007", "K009", "K207"}
     assert {key for (_, key), calls in service.calls.items() if calls == 2} == rechecked
     assert sum(service.calls.values()) == 253
@@ -740,7 +741,9 @@ async def test_io_error_on_unchanged_bytes_fails_at_the_third_pass(
         with caplog.at_level(logging.WARNING, logger="deltasleuth.runner.worker"):
             run = await h.finish(run_id)
     assert (run["status"], run["error"]) == ("failed", "TargetRefused: IOException")
-    assert len(met) == 3 and run["scan"]["checkpoint"] == 1  # saved by the first pass, which counts too
+    # Each of the three passes meets the bad row: on one side, or on both, which fetch their next batches
+    # at once; the first pass saved a checkpoint, and counts too.
+    assert 3 <= len(met) <= 6 and run["scan"]["checkpoint"] == 1
     said = [record.getMessage() for record in caplog.records if "scan of run" in record.getMessage()]
     assert said[:2] == [f"scan of run {run_id} resumes: IOException"] * 2 and len(said) == 3
     assert re.fullmatch(f"scan of run {run_id} failed: TargetRefused: IOException{AT}", said[2])

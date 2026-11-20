@@ -1,7 +1,7 @@
 """Adjudication in the store: a draw with a server salt, one score per draw that keeps
 no note, the freeze while the cycle has a requested or approved sign-off, the attested adjudication (the
 newest a person scored) and its scorer kept from approving, the trigger's rules, the purge's tombstone and
-the P0 summary reading the attested adjudication."""
+the contract report reading the attested adjudication."""
 
 from __future__ import annotations
 

@@ -34,6 +34,7 @@ from deltasleuth.config import Settings
 from deltasleuth.context import Context
 from deltasleuth.core import jsonio
 from deltasleuth.core.secrets import read_secret
+from deltasleuth.errors import Invalid
 from deltasleuth.evidence.fsio import fsync_dir
 from deltasleuth.evidence.store import EvidenceCorruptedError, EvidenceStore
 from deltasleuth.runner.scan import seal_after
@@ -68,7 +69,7 @@ async def migrate(settings: Settings, who: Principal, *, accept_missing: bool = 
     async with await psycopg.AsyncConnection.connect(dsn, autocommit=True) as lock:
         taken = (await (await lock.execute("SELECT pg_try_advisory_lock(%s)", (LOCK_ID,))).fetchone())[0]
         if not taken:
-            raise ValueError("stop the app first: docker compose stop app")
+            raise Invalid("stop the app first: docker compose stop app")
         if not accept_missing:  # before Context.open, which would already apply 006
             await _refuse_absent(lock, settings.evidence_dir)
         async with Context.open(settings, migrating=True) as ctx:
@@ -113,7 +114,7 @@ async def _refuse_absent(conn: psycopg.AsyncConnection, evidence_dir: Path) -> N
     )
     [named] = await cur.fetchone()  # type: ignore[misc]
     if named and not await asyncio.to_thread(_listed, legacy, 1):
-        raise ValueError(
+        raise Invalid(
             f"observations name legacy blobs, but {legacy} holds none: check evidence_dir, or run 'ds keys"
             " migrate --accept-missing' to record every one as missing"
         )

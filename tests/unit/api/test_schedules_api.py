@@ -25,6 +25,7 @@ from deltasleuth.context import Context
 from deltasleuth.core import cron
 from deltasleuth.core.spec import compile_spec
 from deltasleuth.core.spec.documents import parse_yaml_text
+from deltasleuth.errors import Invalid
 from deltasleuth.runner import schedule as firing
 from deltasleuth.store import repo
 from tests.conftest import TESTER
@@ -867,7 +868,7 @@ def test_never_told(open_client: OpenClient, monkeypatch: pytest.MonkeyPatch) ->
     canary = f"customer {RAW_KEY} has no account"
 
     async def refusing(*_: Any, **__: Any) -> str:
-        raise ValueError(canary)
+        raise Invalid(canary)
 
     with open_client() as client:
         spec_id, late = stored(client), minute(client) - timedelta(minutes=20)
@@ -896,7 +897,7 @@ def test_never_told(open_client: OpenClient, monkeypatch: pytest.MonkeyPatch) ->
         " a schedule never runs a backlog",
     )
     assert refused["text"] == (
-        "not started: the run could not be created (ValueError): starting one on the Runs screen shows the"
+        "not started: the run could not be created (Invalid): starting one on the Runs screen shows the"
         " cause"
     )
     # A firing's text is the started run's id; how it ended is the run's status, beside it.

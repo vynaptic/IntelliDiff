@@ -573,7 +573,8 @@ def _not_found_2xx(doc: dict[str, Any]) -> Iterator[SpecIssue]:
 
 
 def _targets(doc: dict[str, Any], registry: TargetRegistry) -> Iterator[SpecIssue]:
-    """Targets exist; notFound is declared authoritative by the target (X2); truncation is declared (X33)."""
+    """Targets exist; a side takes only the notFound statuses its target declares authoritative; each side
+    or its target declares truncation."""
     for base, source in _key_sources(doc):
         target_id = source.get("target")
         if isinstance(target_id, str) and target_id not in registry:
@@ -612,14 +613,14 @@ def _targets(doc: dict[str, Any], registry: TargetRegistry) -> Iterator[SpecIssu
         absence = capabilities.authoritative_absence
         if absence is None and isinstance(side.get("notFound"), dict):
             message = f"target {target_id!r} declares no authoritative_absence, so the side takes no notFound"
-            yield _error((*at, "notFound"), "not_found_undeclared", message + " (X2)")
+            yield _error((*at, "notFound"), "not_found_undeclared", message)
         elif absence is not None:
             for where, status in _find(side, "notFound/status/*", at):
                 if status not in absence.status:
                     message = f"status {status} is not in target {target_id!r} authoritative_absence.status"
-                    yield _error(where, "not_found_undeclared", f"{message} {list(absence.status)} (X2)")
+                    yield _error(where, "not_found_undeclared", f"{message} {list(absence.status)}")
         if "truncation" not in side and capabilities.truncation_indicators is None:
-            message = f"neither this side nor target {target_id!r} declares truncation indicators (X33)"
+            message = f"neither this side nor target {target_id!r} declares truncation indicators"
             yield _error(at, "truncation_undeclared", message + ", so truncation would go undetected")
     if declared and isinstance(doc.get("graph"), dict):
         why = "graph parity with a MySQL or Oracle side; export the link facts into PostgreSQL"

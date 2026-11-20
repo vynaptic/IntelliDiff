@@ -1,11 +1,12 @@
-/** A run. Its head: progress (polled while it is live), its keys by outcome as a bar, what its spec approval and
- *  its licence say, the schedule that started it, what the schema guard says of its tables (a banner while it
- *  holds the run paused), where its pair stands on the readiness ladder, its controls and its reports. Under it,
- *  one tab at a time: the keys that do not match, by outcome; root causes with an AI draft about one of them or
- *  about the run; findings; all keys; soak changes; a sampled run's draw, each ended cycle's sign-off, its census,
- *  adjudications and evidence packs; and its labelled accuracy. The tab and the filters live in the URL, so
- *  root-cause links and citation chips are plain links. A purged cycle shows a banner instead of its tables,
- *  which would answer 410. */
+/** A run. Its head: progress (polled while it is live, each poll after the answer to the last), its keys by
+ *  outcome as a bar, what its spec approval and its licence say, the schedule that started it, what the schema
+ *  guard says of its tables (a banner while it holds the run paused), where its pair stands on the readiness
+ *  ladder, its controls and its reports. Under it, one tab at a time: the keys that do not match, by outcome; root
+ *  causes with an AI draft about one of them or about the run; findings; all keys; soak changes; a sampled run's
+ *  draw, each ended cycle's sign-off, its census, adjudications and evidence packs; and its labelled accuracy. The
+ *  ended cycles listed are the newest 20 the run holds, and older ones a page at a time when asked for. The tab
+ *  and the filters live in the URL, so root-cause links and citation chips are plain links. A purged cycle shows
+ *  a banner instead of its tables, which would answer 410. */
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import {
   ApiError,
@@ -16,14 +17,12 @@ import {
   type CycleEvidence,
   type DrawnLabelling,
   type Finding,
-  type Graph,
   type Labelling,
   type Pack,
   type Result,
   type RootCause,
   type Run,
   type RunDetail,
-  type Scan,
   type Session,
   type LedgerDraw,
   type Stratum,
@@ -37,10 +36,12 @@ import { label, tone } from './labels';
 import { LICENCE_PAUSE, pausedLine, refusal, reportFile } from './licensing';
 import { href, message, useLicence, useLoad, usePaged, usePoll, useWho } from './lib';
 import { DIFFERING, barOf, changesTitle, noChanges, notMatching, segments, tabOf, tabsOf, type Tab } from './outcomes';
-import { censusLine, censusNote, censusWarnings, fileSide, packsSsoOnly, scoreLine, signedOff, unfrozen } from './packs';
+import { censusLine, censusNote, censusWarnings, packsSsoOnly, scoreLine, signedOff, unfrozen } from './packs';
 import { runLine } from './ready';
 import { controlLabel, guardBanner, guardLines } from './prechecking';
+import { cyclesLine, listedCycles, olderFrom } from './cycles';
 import { chatClosed, isPurged, purgedBanner, retainedLine } from './retention';
+import { graphLine, scanLine } from './scanning';
 import { CLOSE_TITLE, blockedLines, certainFailures, drawLine, drawState, etaLine, frameLine, ledgerLine, percent } from './samples';
 import { Badge, Copy, Err, Menu, MoreRows, Named, OutcomeBar, Stats, Table, Tabs, When, cell, save, when, type Col } from './ui';
 
@@ -132,17 +133,60 @@ function Parts({ run, f, version, viewed, keyLink, ai, reload }: PartsProps) {
         <Changes {...table} viewed={viewed} />
       ) : null}
       {tab === 'evidence' && (
-        <>
-          {!run.sample && !run.cycles.length && !run.retention.cycles.length && !run.retention.purged.length && (
-            <p className="muted">Nothing yet: sign-off and evidence start once a cycle of this run has ended.</p>
+        <Cycles run={run}>
+          {(cycles) => (
+            <>
+              {!run.sample && !run.cycles.length && !run.retention.cycles.length && !run.retention.purged.length && (
+                <p className="muted">Nothing yet: sign-off and evidence start once a cycle of this run has ended.</p>
+              )}
+              {run.sample && <Sample run={run} />}
+              <Signoffs run={run} cycles={cycles} reload={reload} />
+              <Evidence run={run} cycles={cycles} reload={reload} />
+            </>
           )}
-          {run.sample && <Sample run={run} />}
-          <Signoffs run={run} reload={reload} />
-          <Evidence run={run} reload={reload} />
-        </>
+        </Cycles>
       )}
       {tab === 'accuracy' && (
-        run.cycles.length ? <Accuracy run={run} reload={reload} /> : <p className="muted">Nothing yet: a cycle is labelled once it has ended.</p>
+        run.cycles.length ? (
+          <Cycles run={run}>{(cycles) => <Accuracy run={run} cycles={cycles} reload={reload} />}</Cycles>
+        ) : <p className="muted">Nothing yet: a cycle is labelled once it has ended.</p>
+      )}
+    </>
+  );
+}
+
+type Listed = (cycles: CycleEvidence[]) => ReactNode;
+
+/** The run's ended cycles for `children`: the newest its answer holds and, asked for, the older ones a page at
+ *  a time. A run whose newest cycles moved on lists its newest again. */
+function Cycles({ run, children }: { run: RunDetail; children: Listed }) {
+  const from = olderFrom(run);
+  const [asked, setAsked] = useState<string>();
+  if (from && asked === from) return <OlderCycles run={run} from={from}>{children}</OlderCycles>;
+  return (
+    <>
+      {children(run.cycles)}
+      {from && (
+        <p className="muted inline">
+          {cyclesLine(run, run.cycles.length)} <button onClick={() => setAsked(from)}>Show older cycles</button>
+        </p>
+      )}
+    </>
+  );
+}
+
+function OlderCycles({ run, from, children }: { run: RunDetail; from: string; children: Listed }) {
+  const older = usePaged((cursor) => api.cycles(run.run_id, { cursor: cursor ?? from }), [run.run_id, from]);
+  const cycles = listedCycles(run, older.items);
+  return (
+    <>
+      {children(cycles)}
+      <Err error={older.error} />
+      {older.loading && <p className="muted" role="status">Loading…</p>}
+      {cyclesLine(run, cycles.length) && (
+        <p className="muted inline">
+          {cyclesLine(run, cycles.length)} {older.more && <button onClick={older.more}>Show older cycles</button>}
+        </p>
       )}
     </>
   );
@@ -268,37 +312,6 @@ function Header({ run, cycle, viewed, reload }: HeaderProps) {
 }
 
 const num = (v: number) => v.toLocaleString();
-
-/** A table scan, while it runs and after: what it read and what it left, and each table side's engine where
- *  the plan names it; a file side's files in its place. */
-function scanLine(run: Run, scan: Scan): string {
-  const t = run.params.tables;
-  const only = ([['A', t?.only_a ?? []], ['B', t?.only_b ?? []]] as const).filter(([, cols]) => cols.length);
-  const filters = ([['A', t?.a?.where], ['B', t?.b?.where]] as const).filter(([, where]) => where);
-  const engines = ([['A', t?.a], ['B', t?.b]] as const).filter(([, plan]) => plan?.engine);
-  return (
-    `Table scan (${scan.done ? 'done' : run.status}): ${num(scan.rows_a)} rows on A, ${num(scan.rows_b)} on B; ` +
-    `${num(scan.matched)} identical; ${num(scan.candidates)} to compare; ` +
-    `${num(scan.skipped_a + scan.skipped_b)} not compared (NULL, empty or over-long key).` +
-    only.map(([side, cols]) => ` Columns only on ${side}: ${cols.join(', ')}.`).join('') +
-    filters.map(([side, where]) => ` Filter on ${side}: ${where}.`).join('') +
-    engines
-      .map(([side, plan]) =>
-        plan?.engine === 'files'
-          ? fileSide(side, plan, side === 'A' ? scan.repeated_a : scan.repeated_b)
-          : ` Side ${side}: ${plan?.engine} ${plan?.server} (${plan?.consistency}).`,
-      )
-      .join('')
-  );
-}
-
-/** Bulk graph parity: the groups whose members differ and the components that changed. */
-function graphLine(g: Graph): string {
-  return (
-    `Graph: ${num(g.groups_a)} groups on A, ${num(g.groups_b)} on B; ${num(g.groups_different)} differ; ` +
-    `${num(g.split)} split, ${num(g.merge)} merge, ${num(g.rearrange)} rearranged, ${num(g.oversized)} too large to expand.`
-  );
-}
 
 /** A tab's filters, kept in the URL with the cycle and the tab: a select applies at once, the text fields on
  *  Filter. `selects` and `texts` name the query's parameters. */
@@ -687,13 +700,12 @@ function Sample({ run }: { run: RunDetail }) {
 }
 
 /** Each ended cycle's sign-off requests and what they say; under SSO an operator asks for a cycle's here. */
-function Signoffs({ run, reload }: { run: RunDetail; reload: () => void }) {
+function Signoffs({ run, cycles, reload }: { run: RunDetail; cycles: CycleEvidence[]; reload: () => void }) {
   const { can, me } = useWho();
   const { prompt } = useDialogs();
   const [error, setError] = useState<string>();
   const refused = refusal(useLicence(), 'signoff');
-  const { cycles, purged } = run.retention;
-  const ended = [...new Set([...cycles.map((c) => c.cycle), ...purged])].sort((x, y) => x - y);
+  const ended = cycles.map((c) => c.cycle); // a purged one included
   if (!ended.length) return null;
   const of = (cycle: number) => run.signoffs.filter((s) => s.cycle === cycle);
   const open = (cycle: number) =>
@@ -744,13 +756,13 @@ function Signoffs({ run, reload }: { run: RunDetail; reload: () => void }) {
 /** Each ended cycle's census, adjudications and evidence packs. Under SSO an operator
  *  draws a reviewer sheet and scores its reviewed upload before the cycle's sign-off is requested, which then
  *  attests it; a signed-in person issues the signed-off cycle's pack, which anyone who reads the run downloads. */
-function Evidence({ run, reload }: { run: RunDetail; reload: () => void }) {
+function Evidence({ run, cycles, reload }: { run: RunDetail; cycles: CycleEvidence[]; reload: () => void }) {
   const { can, me } = useWho();
   const { confirm, prompt } = useDialogs();
   const [error, setError] = useState<string>();
   const [done, setDone] = useState<string>();
   const refused = refusal(useLicence(), 'packs');
-  if (!run.cycles.length) return null;
+  if (!cycles.length) return null;
   const operator = me?.mode === 'oidc' && can('operator');
 
   async function act(work: () => Promise<string | void>) {
@@ -831,7 +843,7 @@ function Evidence({ run, reload }: { run: RunDetail; reload: () => void }) {
         the site's key register. From 50 per-key results, the sign-off must attest a reviewer sheet a person scored,
         drawn and scored before the sign-off is requested.{me?.mode !== 'oidc' && ` ${packsSsoOnly(me?.mode)}`}
       </p>
-      {run.cycles.map((c) => {
+      {cycles.map((c) => {
         const purged = isPurged(run, c.cycle);
         return (
           <div className="panel" key={c.cycle} id={`evidence-${c.cycle}`}>
@@ -860,12 +872,12 @@ function Evidence({ run, reload }: { run: RunDetail; reload: () => void }) {
 /** Each ended cycle's labelled accuracy, in every auth mode: an operator draws a sample
  *  against a named truth source and uploads its filled sheet once, before the cycle's sign-off is requested, which
  *  attests the newest labelling a person labelled. Every figure, warning and limit shown is the server's text. */
-function Accuracy({ run, reload }: { run: RunDetail; reload: () => void }) {
-  if (!run.cycles.length) return null;
+function Accuracy({ run, cycles, reload }: { run: RunDetail; cycles: CycleEvidence[]; reload: () => void }) {
+  if (!cycles.length) return null;
   return (
     <section>
       <h2>Labelled accuracy</h2>
-      {run.cycles.map((c) => <Labellings key={c.cycle} run={run} cycle={c} reload={reload} />)}
+      {cycles.map((c) => <Labellings key={c.cycle} run={run} cycle={c} reload={reload} />)}
     </section>
   );
 }

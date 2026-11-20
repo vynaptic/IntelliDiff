@@ -11,6 +11,7 @@ import socket
 import time
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ from yarl import URL
 
 from deltasleuth.connectors import http as http_module
 from deltasleuth.connectors.base import Connector, ConnectorConfigError, KeyRejectedError, UnsafeTargetError
+from deltasleuth.connectors.breaker import CircuitBreaker
 from deltasleuth.connectors.http import TargetGate
 from deltasleuth.connectors.rest import RestConnector
 from deltasleuth.core.canonical.encoding import content_hash
@@ -142,13 +144,14 @@ class TestRetries:
     async def test_5xx_then_success(self, start: Start, recorder: Recorder) -> None:
         async def reply(request: web.Request) -> web.Response:
             if recorder.count == 1:
-                await asyncio.sleep(0.3)  # the failed attempt is slow; latency must exclude it
+                await asyncio.sleep(0.6)  # the failed attempt is slow; latency must exclude it
                 return web.Response(status=503)
             return web.json_response({"ok": 1})
 
         obs = await (await start(reply)).fetch("K1", side_config())
         assert (obs.http_status, obs.error_class, obs.attempts) == (200, None, 2)
-        assert obs.latency_ms is not None and obs.latency_ms < 250
+        # A latency that counted the failed attempt would be 600 ms or more.
+        assert obs.latency_ms is not None and obs.latency_ms < 600
 
     @pytest.mark.parametrize(("code", "error_class"), [(500, "http_5xx"), (429, "http_429")])
     async def test_retries_exhausted(
@@ -166,17 +169,21 @@ class TestRetries:
         assert (obs.error_class, obs.attempts, recorder.count) == ("http_5xx", 1, 1)
 
     async def test_429_retry_after_is_waited_in_full(self, start: Start, recorder: Recorder) -> None:
+        arrivals: list[float] = []
+
         def reply(request: web.Request) -> web.Response:
+            arrivals.append(time.monotonic())
             return (
                 web.Response(status=429, headers={"Retry-After": "1"}) if recorder.count == 1 else ok(request)
             )
 
         execution = fast_execution(retries=RetryPolicy(max=2, initial_s=0.001, max_s=0.3))
         conn = await start(reply, execution=execution)
-        started = time.monotonic()
         obs = await conn.fetch("K1", side_config())
         assert (obs.http_status, obs.attempts) == (200, 2)
-        assert 1.0 <= time.monotonic() - started < 1.9  # the full second, although backoff max is 0.3 s
+        # The full second, although backoff max is 0.3 s; the Retry-After pause and the retry delay are one
+        # wait, not two in a row.
+        assert 1.0 <= arrivals[1] - arrivals[0] < 2.0
 
     async def test_timeout(self, start: Start, recorder: Recorder) -> None:
         async def reply(request: web.Request) -> web.Response:
@@ -205,7 +212,7 @@ class TestRetries:
         conn = await start(reply, execution=execution)
         started = time.monotonic()
         assert (await conn.fetch("K1", side_config())).error_class == "timeout"
-        assert time.monotonic() - started < 1.0
+        assert time.monotonic() - started < 1.5  # an uncapped first attempt waits the 2 s reply
 
     async def test_connect_refused(self, make_connector: MakeConnector) -> None:
         obs = await make_connector(f"http://127.0.0.1:{free_port()}/api").fetch("SECRETKEY", side_config())
@@ -546,6 +553,14 @@ BREAKER = fast_execution(
 
 
 class TestCircuitBreaker:
+    @pytest.fixture
+    def clock(self, monkeypatch: pytest.MonkeyPatch) -> list[float]:
+        """The breakers' clock: a test moves it past the cooldown instead of sleeping through it, so a
+        slow machine cannot let a cooldown run out between two calls."""
+        now = [0.0]
+        monkeypatch.setattr(http_module, "CircuitBreaker", partial(CircuitBreaker, clock=lambda: now[0]))
+        return now
+
     async def breaker_server(self, start: Start, state: dict) -> RestConnector:
         async def reply(request: web.Request) -> web.Response:
             await asyncio.sleep(state.get("delay", 0))
@@ -553,7 +568,9 @@ class TestCircuitBreaker:
 
         return await start(reply, execution=BREAKER)
 
-    async def test_opens_then_probe_closes(self, start: Start, recorder: Recorder) -> None:
+    async def test_opens_then_probe_closes(
+        self, start: Start, recorder: Recorder, clock: list[float]
+    ) -> None:
         state = {"status": 500}
         conn = await self.breaker_server(start, state)
         assert [(await conn.fetch(k, side_config())).error_class for k in ("K1", "K2")] == ["http_5xx"] * 2
@@ -567,27 +584,27 @@ class TestCircuitBreaker:
         assert refused.request_url is not None and refused.request_url.endswith("/api/things/K3")
         assert recorder.count == 2  # the refused call never reached the target
         state["status"] = 200
-        await asyncio.sleep(0.35)
+        clock[0] += 0.35
         probe = await conn.fetch("K4", side_config())
         assert (probe.http_status, probe.error_class) == (200, None)
         assert (await conn.fetch("K5", side_config())).http_status == 200
 
-    async def test_failed_probe_reopens(self, start: Start, recorder: Recorder) -> None:
+    async def test_failed_probe_reopens(self, start: Start, recorder: Recorder, clock: list[float]) -> None:
         conn = await self.breaker_server(start, {"status": 503})
         for key in ("K1", "K2"):
             await conn.fetch(key, side_config())
-        await asyncio.sleep(0.35)
+        clock[0] += 0.35
         assert (await conn.fetch("K3", side_config())).error_class == "http_5xx"  # the probe
         assert (await conn.fetch("K4", side_config())).error_class == "circuit_open"
         assert recorder.count == 3
 
-    async def test_one_probe_at_a_time(self, start: Start) -> None:
+    async def test_one_probe_at_a_time(self, start: Start, clock: list[float]) -> None:
         state = {"status": 500}
         conn = await self.breaker_server(start, state)
         for key in ("K1", "K2"):
             await conn.fetch(key, side_config())
         state.update(status=200, delay=0.2)
-        await asyncio.sleep(0.35)
+        clock[0] += 0.35
         first, second = await asyncio.gather(conn.fetch("K3", side_config()), conn.fetch("K4", side_config()))
         assert sorted([first.error_class or "ok", second.error_class or "ok"]) == ["circuit_open", "ok"]
 
@@ -616,7 +633,7 @@ class TestRetryAfterIsHonoured:
         started = time.monotonic()
         obs = await conn.fetch("K1", side_config())
         assert (obs.http_status, obs.error_class, obs.attempts, recorder.count) == (429, "http_429", 1, 1)
-        assert time.monotonic() - started < 0.9  # gave up at once instead of retrying early
+        assert time.monotonic() - started < 2.0  # gave up at once, not after waiting out the 3 s total
 
     async def test_other_workers_pause_for_the_target(self, start: Start) -> None:
         arrivals: list[float] = []
@@ -656,7 +673,8 @@ class TestRetryAfterIsHonoured:
                 None,
             )
             assert "Retry-After" in (skipped.error_detail or "")
-        assert time.monotonic() - started < 0.5 and recorder.count == 1
+        # Neither waited: a call that waited out its 1 s total timeout would take 1 s by itself.
+        assert time.monotonic() - started < 1.0 and recorder.count == 1
         # calls that never reached the target say nothing of its health
         assert gate.breaker(execution).state == "closed"
 

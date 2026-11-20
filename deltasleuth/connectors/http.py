@@ -69,6 +69,10 @@ class TargetGate:
     def for_target(cls, target: Target) -> TargetGate:
         return cls(target.rate_per_s, target.max_concurrency)
 
+    def paused_for(self) -> float:
+        """Seconds left of the target's Retry-After pause, before which nothing is sent; 0 when none."""
+        return max(self.not_before - time.monotonic(), 0.0)
+
     def breaker(self, execution: ExecutionConfig) -> CircuitBreaker:
         """The target's breaker for what ``execution`` declares (rate, window, cooldown), shared by every
         connector that declares the same: a spec's own settings govern its calls, and an open breaker

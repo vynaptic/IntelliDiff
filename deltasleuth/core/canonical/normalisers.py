@@ -62,7 +62,7 @@ _ADDRESS_PUNCTUATION = re.compile(r"[^\w\s#/-]")
 
 
 def _address_std(text: str) -> str:
-    # NFKC, upper case, punctuation to spaces, abbreviations (design Appendix C.2). The schema
+    # NFKC, upper case, punctuation to spaces, abbreviations (ADDRESS_ABBREVIATIONS). The schema
     # allows address_std only with similarity compare.
     upper = unicodedata.normalize("NFKC", unicodedata.normalize("NFKC", text).upper())
     cleaned = _ADDRESS_PUNCTUATION.sub(" ", _APOSTROPHES.sub("", upper))

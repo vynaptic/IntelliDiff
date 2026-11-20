@@ -11,6 +11,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import oracledb
@@ -232,27 +233,29 @@ class TestVetted:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # 192.0.2.1 never answers (a filtered path, a dead node of a pair): it once took the whole
-        # budget, and the address after it a millisecond.
+        # budget, and the address after it a millisecond. The dial's clock is the test's: a silent
+        # address moves it on by the timeout it was given, so no share depends on the machine's speed.
         dialled: list[tuple[str, float]] = []
         connect = socket.create_connection
+        now = [100.0]
 
         def create_connection(address: tuple[str, int], timeout: float) -> socket.socket:
             dialled.append((address[0], timeout))
             if address[0] == "192.0.2.1":
-                time.sleep(timeout)
+                now[0] += timeout
                 raise TimeoutError("timed out")
             return connect(address, timeout)
 
         monkeypatch.setattr(mysql.socket, "create_connection", create_connection)
+        monkeypatch.setattr(mysql, "time", SimpleNamespace(monotonic=lambda: now[0]))
         with socket.create_server(("127.0.0.1", 0)) as server:
-            started = time.monotonic()
-            with mysql._dial(["192.0.2.1", "127.0.0.1"], server.getsockname()[1], started + 0.6) as sock:
+            with mysql._dial(["192.0.2.1", "127.0.0.1"], server.getsockname()[1], now[0] + 0.6) as sock:
                 assert sock.getpeername()[0] == "127.0.0.1"
             with pytest.raises(TimeoutError):  # and three silent ones share it
-                mysql._dial(["192.0.2.1"] * 3, server.getsockname()[1], time.monotonic() + 0.3)
+                mysql._dial(["192.0.2.1"] * 3, server.getsockname()[1], now[0] + 0.3)
         first, second, *thirds = [timeout for _, timeout in dialled]
-        assert 0.25 < first <= 0.3 and 0.15 < second <= 0.3  # half the budget, then what is left of it
-        assert len(thirds) == 3 and all(0.03 < share <= 0.1 for share in thirds)
+        assert (first, second) == pytest.approx((0.3, 0.3))  # half the budget, then what is left of it
+        assert thirds == pytest.approx([0.1, 0.1, 0.1])
 
     async def test_oracle_s_silent_address_leaves_the_next_one_its_share_of_the_budget(
         self, resolved: dict[str, list[str]], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -267,7 +270,7 @@ class TestVetted:
             raise oracledb.OperationalError(failed) from ConnectionRefusedError(61, "refused")
 
         monkeypatch.setattr(oracle.oracledb, "connect_async", connect)
-        monkeypatch.setattr(oracle, "CONNECT_S", 1.0)
+        monkeypatch.setattr(oracle, "CONNECT_S", 2.0)
         (tmp_path / "password").write_text("s3cret-password")
         entry = {
             "engine": "oracle", "host": "crm-db.example", "service": "CRMPDB", "user": "ds_reader",
@@ -279,9 +282,10 @@ class TestVetted:
         started = time.monotonic()
         with pytest.raises(TargetUnreachable) as exc:
             await ENGINES["oracle"].connect(target)
-        # The second address was dialled, after half the budget: its refusal is the answer.
+        # The second address was dialled, after half the budget (1 s of 2): its refusal is the answer.
         assert dialled == ["2606:4700::1", "93.184.216.34"] and str(exc.value) == "ConnectionRefusedError"
-        assert 0.45 < time.monotonic() - started < 0.9
+        assert 0.95 < time.monotonic() - started < 1.8
+        monkeypatch.setattr(oracle, "CONNECT_S", 0.3)
         resolved["crm-db.example"] = ["2606:4700::1"]  # alone, it has the whole budget
         with pytest.raises(TargetUnreachable) as exc:
             await ENGINES["oracle"].connect(target)
@@ -431,6 +435,25 @@ class TestCircuitBreaker:
         breaker = CircuitBreaker(0.5, 2, 1.0)
         breaker.release("call")  # releasing an ordinary call is harmless
         assert breaker.state == "closed"
+
+    def test_closed_for_is_what_is_left_of_the_cooldown(self) -> None:
+        """How long a key whose read the open breaker refused waits before it is read again."""
+        breaker, clock = tripped(cooldown_s=10.0)
+        clock.now += 4
+        assert breaker.closed_for() == 6.0
+        clock.now += 6
+        assert breaker.closed_for() == 0.0
+        assert breaker.admit() == "probe" and breaker.closed_for() == 10.0  # a failed probe opens it again
+        breaker.record("probe", False)
+        assert (breaker.state, breaker.closed_for()) == ("closed", 0.0)
+
+    def test_a_gate_s_pause_is_what_is_left_of_its_retry_after(self) -> None:
+        from deltasleuth.connectors.http import TargetGate
+
+        gate = TargetGate(10, 1)
+        assert gate.paused_for() == 0.0
+        gate.not_before = time.monotonic() + 3600  # Retry-After: 3600, past any call's total timeout
+        assert 3599 < gate.paused_for() <= 3600
 
 
 class TestRetryTiming:

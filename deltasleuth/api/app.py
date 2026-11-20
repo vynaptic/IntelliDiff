@@ -31,7 +31,7 @@ from starlette.exceptions import HTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
-from deltasleuth import licence, notifications, prechecks, readiness, schedules, targets
+from deltasleuth import licence, targets
 from deltasleuth.api.deps import UNSAFE, issues_of, ok, principal
 from deltasleuth.api.routes import approvals, chat, labellings, meta, packs, runs, samples, specs
 from deltasleuth.api.routes import auth as auth_routes
@@ -49,16 +49,14 @@ from deltasleuth.context import Context
 from deltasleuth.core.spec import SpecError, TargetsError
 from deltasleuth.core.spec.errors import pointer
 from deltasleuth.core.spec.expressions import KeyPatternLimitError
+from deltasleuth.errors import Refused
 from deltasleuth.evidence.store import EvidenceKeyError
 from deltasleuth.profiler import ProfilerError
 from deltasleuth.reports.accuracy import DrawTimeout
 from deltasleuth.reports.adjudicate import AdjudicationConflict, AdjudicationError, UploadTooLarge
 from deltasleuth.reports.pack import PackForbidden, PackRefused, PackUnavailable
-from deltasleuth.runner import drift
 from deltasleuth.runner.compare import EvidenceMissing
 from deltasleuth.runner.cycle import located
-from deltasleuth.runner.purge import CyclePurged
-from deltasleuth.runner.sample import SampleRefused
 from deltasleuth.security.crypto import KeyringError
 from deltasleuth.store import repo
 
@@ -355,9 +353,8 @@ async def _invalid_target(_: Request, exc: TargetsError) -> Response:
     return _error(422, "invalid target", issues_of(exc.issues))  # pointers into the targets document
 
 
-async def _target_refused(_: Request, exc: targets.Refused) -> Response:
-    # A target declared in the product: ids, counts and an OS error's text, never a path
-    return _error(exc.status, str(exc))
+async def _declined(_: Request, exc: Refused) -> Response:
+    return _error(exc.status, str(exc))  # every module's refusal, in its words: never a key or a value
 
 
 async def _unprocessable(_: Request, exc: Exception) -> Response:
@@ -374,32 +371,6 @@ async def _refused(_: Request, exc: repo.ApprovalRefused) -> Response:
     if exc.check == "approver":
         return _error(409, "your stored roles lack rule_approver, or your account is disabled; sign in again")
     return _error(409, str(exc).removeprefix("ds.approvals: "))
-
-
-async def _sample_refused(_: Request, exc: SampleRefused) -> Response:
-    return _error(exc.status, str(exc))  # ids, names and population ids
-
-
-async def _notify_refused(_: Request, exc: notifications.Refused) -> Response:
-    return _error(exc.status, str(exc))  # channel names, ids and times
-
-
-async def _readiness_refused(_: Request, exc: readiness.Refused) -> Response:
-    return _error(exc.status, str(exc))  # names, states and counts
-
-
-async def _schedule_refused(_: Request, exc: schedules.Refused) -> Response:
-    return _error(exc.status, str(exc))  # ids, names, cron text, zones and times
-
-
-async def _precheck_refused(_: Request, exc: prechecks.Refused) -> Response:
-    return _error(exc.status, str(exc))  # ids, spec names, versions and counts
-
-
-async def _schema_refused(_: Request, exc: drift.Refused) -> Response:
-    # Ids, a version's name, and the names and declared types of the
-    # columns a run's own page prints
-    return _error(exc.status, str(exc))
 
 
 async def _too_large(_: Request, exc: Exception) -> Response:
@@ -419,7 +390,7 @@ async def _unavailable(_: Request, exc: Exception) -> Response:
 
 
 async def _gone(_: Request, exc: Exception) -> Response:
-    return _error(410, str(exc))  # a purged cycle or a missing blob: ids and dates only
+    return _error(410, str(exc))  # a missing blob: ids and dates only
 
 
 async def _key_missing(_: Request, exc: Exception) -> Response:
@@ -442,7 +413,7 @@ _HANDLERS = {
     RequestValidationError: _invalid_request,
     SpecError: _invalid_spec,
     TargetsError: _invalid_target,
-    targets.Refused: _target_refused,
+    Refused: _declined,
     ProfilerError: _unprocessable,
     KeyPatternLimitError: _unprocessable,
     UnsafeTargetError: _unprocessable,  # the guard's refusal of a service's address: its kind and consent
@@ -451,13 +422,6 @@ _HANDLERS = {
     ApprovalConflict: _conflict,
     repo.ApprovalRefused: _refused,
     PackRefused: _conflict,
-    licence.LicenceRefused: _conflict,
-    SampleRefused: _sample_refused,
-    notifications.Refused: _notify_refused,
-    readiness.Refused: _readiness_refused,
-    schedules.Refused: _schedule_refused,
-    prechecks.Refused: _precheck_refused,
-    drift.Refused: _schema_refused,
     AdjudicationConflict: _conflict,
     UploadTooLarge: _too_large,
     AdjudicationError: _unprocessable,  # a sheet that cannot be scored: lines and ids, never values
@@ -466,7 +430,6 @@ _HANDLERS = {
     PackUnavailable: _unavailable,
     KeyringError: _key_missing,
     EvidenceKeyError: _key_missing,
-    CyclePurged: _gone,
     EvidenceMissing: _gone,
     Exception: _internal,
 }

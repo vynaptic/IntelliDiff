@@ -116,13 +116,10 @@ export function ReadinessScreen({ query }: { query: URLSearchParams }) {
       [items, next] = [[...items, ...page.items], page.next_cursor];
     }
     return { ...first, items, next_cursor: next };
-  }, [asked, pages]);
+  }, [asked]); // more pages extend the list shown, which stays until they come: a reload
   const moves = useLoad(() => api.transitions({ limit: 500 }), []);
   const [error, setError] = useState<string>();
-  const reload = useCallback(() => {
-    found.reload();
-    moves.reload();
-  }, [found.reload, moves.reload]);
+  const reload = useCallback(() => Promise.all([found.reload(), moves.reload()]), [found.reload, moves.reload]);
   usePoll(reload, POLL_MS, true);
   const d = found.data;
   const rows = moves.data?.items ?? [];
@@ -205,7 +202,7 @@ export function ReadinessScreen({ query }: { query: URLSearchParams }) {
             );
           })}
           {!d.programmes.length && <p className="muted">No pair: readiness judges the comparisons with a batch or soak run.</p>}
-          {d.next_cursor && <button onClick={() => setPages(pages + 1)}>More</button>}
+          {d.next_cursor && <button onClick={() => (setPages(pages + 1), found.reload())}>More</button>}
         </>
       )}
     </>

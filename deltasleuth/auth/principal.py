@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, get_args
 
+from deltasleuth.errors import Invalid
+
 Role = Literal["viewer", "operator", "spec_author", "rule_approver", "pii_reader", "admin"]
 ROLES: tuple[Role, ...] = get_args(Role)  # lowest first
 TOKEN_ROLES = frozenset({"viewer", "operator", "spec_author"})  # the only roles an API token can hold
@@ -79,10 +81,10 @@ def local(*, required: bool = False) -> Principal:
     """
     account, operator = _account(), os.environ.get("DS_OPERATOR")
     if required and not operator:
-        raise ValueError("set DS_OPERATOR to your user name")
+        raise Invalid("set DS_OPERATOR to your user name")
     name = operator or account
     if not (1 <= len(name) <= 256 and printable(name)):
-        raise ValueError("DS_OPERATOR must be 1 to 256 characters without control characters")
+        raise Invalid("DS_OPERATOR must be 1 to 256 characters without control characters")
     actor = f"local:{_part(name, 64)}@{_part(socket.gethostname(), 253)}"
     request_id = "C-" + secrets.token_hex(8)
     return Principal(actor, name, frozenset(ROLES), request_id=request_id, os_account=account)

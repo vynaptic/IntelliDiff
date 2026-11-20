@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import tracemalloc
 from collections.abc import AsyncIterator, Callable
@@ -128,7 +129,7 @@ async def test_max_keys_stops_after_duplicate_proof_across_batches(
     harness = _harness(monkeypatch, source, {"maxKeys": 1})
     assert await scanning.scan(harness.ctx, "run") is None
     state = harness.run["scan"]
-    assert max(fetched.values()) <= 2
+    assert max(fetched.values()) <= 3  # the two that prove the duplicate, and one fetched ahead
     assert state["done"] and state["after"] is None and state["candidates"] == 1
     assert harness.run["keys_cut"] == {"taken": 1} and harness.keys == {"key": "key"}
     for which in "ab":
@@ -247,3 +248,29 @@ async def test_a_key_found_waits_its_recheck_delay_unless_both_sides_read_fixed_
         harness.plans[side]["consistency"] = "fixed"
     assert await scanning.scan(harness.ctx, "run") is None
     assert harness.keys == {"key": "key"} and harness.waits == [waits]
+
+
+async def test_a_long_batch_is_merged_in_slices_between_which_the_event_loop_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = 50 * scanning.SLICE
+
+    async def source(which: str, after: Any) -> AsyncIterator[Rows]:
+        yield [(f"k{i:06}", DIGEST) for i in range(rows)]  # one fetched batch a side
+
+    harness = _harness(monkeypatch, source, {})
+    turns = 0
+
+    async def other() -> None:  # whatever else the process serves meanwhile
+        nonlocal turns
+        while True:
+            await asyncio.sleep(0)
+            turns += 1
+
+    serving = asyncio.create_task(other())
+    try:
+        assert await scanning.scan(harness.ctx, "run") is None
+    finally:
+        serving.cancel()
+    assert harness.run["scan"]["matched"] == rows
+    assert turns >= rows // scanning.SLICE

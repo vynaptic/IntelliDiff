@@ -16,7 +16,6 @@ from fastapi import APIRouter, Path, Request, Response
 from pydantic import StrictBool, StrictInt
 
 from deltasleuth.api.deps import Ctx, Operator, Payload, Viewer, need, ok, run_of
-from deltasleuth.api.routes.packs import _not_found
 from deltasleuth.reports import accuracy
 from deltasleuth.runner.purge import refuse_purged
 from deltasleuth.store import repo
@@ -50,8 +49,7 @@ async def draw(ctx: Ctx, who: Operator, run_id: str, cycle: Cycle, body: DrawIn)
     minutes. 409 while the cycle has a requested or approved sign-off, has not ended or lacks a population
     asked for; 504 when the draw was stopped."""
     asked = body.model_dump()
-    with _not_found():
-        row, again = await accuracy.store_draw(ctx, run_id, cycle, who=who, **asked)
+    row, again = await accuracy.store_draw(ctx, run_id, cycle, who=who, **asked)
     names = ("item", "key", "population", "root_cause_id")
     items = [{name: item[name] for name in names} for item in row["selection"]["items"]]
     warnings = [*row["selection"]["warnings"], *([again] if again else [])]
@@ -97,8 +95,7 @@ async def labels(ctx: Ctx, who: Operator, labelling_id: str, request: Request) -
     (``accuracy.store_labels``): the labelling as labelled. 409 while the cycle has a requested or approved
     sign-off, or once it is labelled; 413 over 1 MiB; 422 for a sheet that fails a check."""
     data = await request.body()
-    with _not_found():
-        await accuracy.store_labels(ctx, labelling_id, data, who=who)
+    await accuracy.store_labels(ctx, labelling_id, data, who=who)
     async with ctx.pool.connection() as conn:
         row = await repo.get_labelling(conn, labelling_id)
     assert row is not None

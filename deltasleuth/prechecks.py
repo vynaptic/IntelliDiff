@@ -22,6 +22,7 @@ from datetime import timedelta
 from fnmatch import fnmatchcase
 from typing import Any
 
+from deltasleuth import errors as refusals
 from deltasleuth import licence
 from deltasleuth.auth.principal import WORKER, Principal
 from deltasleuth.connectors import tables
@@ -44,12 +45,8 @@ _ITEM = (
 )  # fmt: skip
 
 
-class Refused(ValueError):
+class Refused(refusals.Refused):
     """A pre-check request refused: its HTTP status and binding message."""
-
-    def __init__(self, status: int, message: str) -> None:
-        super().__init__(message)
-        self.status = status
 
 
 def file_name(row: Mapping[str, Any], name: str) -> str:

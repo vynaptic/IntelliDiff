@@ -1,0 +1,36 @@
+description: >
+  A rule applies up to and including its expiry date, and an inactive rule never applies. One
+  discrepant finding no rule suppresses keeps the key MISMATCH.
+knownDiffs:
+  - id: KD-0001
+    when: "path == '$.segment'"
+    classification: accepted
+    reason: The new service renamed the PRIVATE segment to WEALTH.
+    ticket: ORG-1001
+    expires: "2026-09-24"
+  - id: KD-0002
+    when: "path == '$.status'"
+    classification: accepted
+    reason: The old service reported closures a day late.
+    ticket: ORG-1004
+    expires: "2026-09-23"
+  - id: KD-0003
+    when: "path == '$.status'"
+    classification: expected_by_design
+    reason: Closures are reported at once by the new service.
+    ticket: ORG-1005
+    active: false
+a:
+  body: '{"code": "ORG-000123", "segment": "PRIVATE", "status": "ACTIVE"}'
+b:
+  body: '{"code": "ORG-000123", "segment": "WEALTH", "status": "CLOSED"}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  outcome: MISMATCH
+  findings:
+    - finding: [/segment, $.segment, value_changed, null]
+      taxonomy: [VALUE_MISMATCH, MEDIUM]
+      rule: KD-0001
+    - finding: [/status, $.status, value_changed, null]
+      taxonomy: [VALUE_MISMATCH, MEDIUM]

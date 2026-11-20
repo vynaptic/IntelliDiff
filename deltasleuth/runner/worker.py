@@ -3,10 +3,11 @@
 One worker per database processes keys (it holds a Postgres advisory lock); another waits until it stops, so
 a target's rate budget holds across processes. Each of ``worker.concurrency`` slots leases a group of keys
 of one run, under a lease owner of its own so the group can be handed back alone: ``READ_BATCH`` keys of a
-run whose sides are all tables, read with one statement a side, or one of whose sides reads fixed files, a
-pass over them a group, its service side read key by key in the same slot, else one key; ``LOB_BATCH`` keys
-where a table side's rows may be large, but beside fixed files, whose group stays whole: one pass over the
-files, then the other side read, judged and saved ``LOB_BATCH`` keys at a time. It renews the leases while
+run whose sides are all tables, read with one statement a side; ``FILE_BATCH`` keys of a run one of whose
+sides reads fixed files, one pass over them a group, then the other side read (a service key by key in the
+same slot), judged and saved ``READ_BATCH`` keys at a time; else one key; ``LOB_BATCH`` keys where a table
+side's rows may be large, but beside fixed files ``READ_BATCH``: one pass over the files, then the other
+side read, judged and saved ``LOB_BATCH`` keys at a time. It renews the leases while
 the keys wait and are read: A then B, or B then A on a recheck pass, which ``confirm`` judges against the
 stored first read; a recheck reads no side of fixed files again, whose first observation stands. The group's
 observations, results, masked findings and next states (done, or a recheck due ``recheck.delay`` + jitter
@@ -20,9 +21,10 @@ for each ``execution.circuitBreaker`` its specs declare, so a run is governed by
 a hash of a key) before its next group; no slot leases keys of a run with none of those free, and keys are
 read only if their run still runs. A live 401/403 pauses the run and hands the group back unjudged, to be
 read again once resumed, with the credentials read again; so does a key the keyring lacks (the run's data
-key, or an evidence key); a stop condition stops the run. A sweeper ends cycles, drives cancellations,
-closes the readers of finished runs and runs each due table scan (``runner.scan``, a soak's next one once
-its cycle starts) as a task of its own, cancelled once its run no longer runs: an unreachable database
+key, or an evidence key); a stop condition stops the run. A sweeper ends cycles (each run's end a task of
+its own, so a slow one holds up no other run's, no scan and no schedule), drives cancellations, closes the
+readers of finished runs and runs each due table scan (``runner.scan``, a soak's next one once its cycle
+starts) as a task of its own, cancelled once its run no longer runs: an unreachable database
 pauses a scan for a lease period, a refused login pauses its run (as it does a rolling soak whose key
 table's target refuses it at a roll, until a resume reads it again), a server's code a resume may not meet
 again resumes it, a lease period later when the pass saved no checkpoint, until three passes in a row saved
@@ -112,19 +114,26 @@ from deltasleuth.store import repo
 
 LOCK_ID = 0x44535752  # pg advisory lock "DSWR": the one worker of a database, or ds keys migrate
 READ_BATCH = 200  # keys a slot reads at once from a run that reads in groups (``LiveReader.batches``)
+FILE_BATCH = 2000  # beside fixed files whose rows are not large: one pass over them, judged READ_BATCH a time
 LOB_BATCH = 4  # of a run whose rows may hold large values: 16 MiB of them a row
 KEY_MISSING = (KeyringError, EvidenceKeyError)  # a KEK the keyring lacks: the run waits for it
 # The evidence store's writes: an OSError raised under one (a full disk, an I/O error, too many open files)
 # pauses the run until a person puts it right.
-EVIDENCE_WRITES = frozenset(f.__code__ for f in (EvidenceStore.put_blob, EvidenceStore.ensure))
+EVIDENCE_WRITES = frozenset(
+    f.__code__ for f in (EvidenceStore.put_blob, EvidenceStore.put_all, EvidenceStore.ensure)
+)
 STALLS = (SnapshotLost, TargetRefused, KeyUnfit)  # a scan resumes after them, unless it saved no checkpoint
 STALLED = 3  # scan passes in a row that saved none: the run fails
 FIRING = 2  # schedules fired at once
+REFUSALS = 10  # times a key goes back unread for reads refused unsent before it is judged as read
+REFUSED_WAIT_S = 1.0  # the least wait of a key handed back so
 PURGE_EVERY_S = 3600  # a purge pass at most hourly
 WATCH_EVERY_S = 3600  # and a look at the licence's state
 ORPHANS_EVERY_S = 7 * 86400  # with the orphan sweep weekly
 GRACE_DAYS = 7  # no pass within this many days of 006: holds can follow an upgrade
+STALE_S = 30.0  # a sweep's age health tolerates at least, beside three polls: a busy store slows a sweep
 log = logging.getLogger(__name__)
+_STARTED: dict[int, float] = {}  # by the id of a Context: when this process started its worker (monotonic)
 
 
 class _LeaseLost(Exception):
@@ -159,6 +168,7 @@ class _Worker:
         self.stalled: dict[str, int] = {}  # by run: its scan's stalled passes in a row
         self.censuses: dict[str, asyncio.Task[None]] = {}
         self.draws: dict[str, asyncio.Task[None]] = {}
+        self.ending: dict[str, asyncio.Task[None]] = {}  # by run: the end of a cycle whose keys are all done
         # key censuses gate the leases
         self.counting = ctx.settings.packs is not None or ctx.settings.readiness is not None
         self.purging: asyncio.Task[None] | None = None
@@ -178,6 +188,7 @@ class _Worker:
         self.starts: dict[str, tuple[int, datetime]] = {}  # by run: its cycle, and when that falls due
         self.checks: dict[tuple[str, int], asyncio.Task[None]] = {}  # by pre-check and pair
         self.reading: Counter[str] = Counter()  # by target: the pre-check sessions held
+        self.busy: Counter[str] = Counter()  # by run: its groups in flight, which leases share out
 
     async def slot(self) -> None:
         while True:
@@ -186,7 +197,13 @@ class _Worker:
             try:
                 async with self.ctx.pool.connection() as conn:
                     leased = await repo.lease_due(
-                        conn, owner, 1, self.settings.lease_seconds, skip=full, census=self.counting
+                        conn,
+                        owner,
+                        1,
+                        self.settings.lease_seconds,
+                        skip=full,
+                        census=self.counting,
+                        busy=+self.busy,
                     )
                 if leased:
                     await self._handle(leased, owner)
@@ -217,9 +234,16 @@ class _Worker:
             for run in active:
                 if run["status"] == "cancelling":  # again until the expired leases are cancelled too
                     await repo.cancel_keys(conn, run["run_id"])
+            ended = [  # each one's end is a task of its own, one a run
+                run_id
+                for run in active
+                if (run_id := run["run_id"]) not in self.ending
+                and await repo.cycle_done(conn, run_id, run["cycle"])
+            ]
             uncounted = await repo.census_due(conn) if self.counting else []
             undrawn = await repo.draws_due(conn)
             unguarded = await self._unguarded(conn, active)
+            await repo.mark_sweep(conn, self.name)  # what health shows of the worker: it read what is due
         for run_id, fallen in unguarded.items():
             if fallen and run_id not in self.guards:
                 self.guards[run_id] = asyncio.create_task(self._guard(run_id))
@@ -263,19 +287,8 @@ class _Worker:
         if self.purging is None and time.monotonic() - self.purged_at >= PURGE_EVERY_S:
             self.purged_at = time.monotonic()
             self.purging = asyncio.create_task(self._purge())
-        for run in active:
-            try:
-                await finish_cycle(self.ctx, run["run_id"], who=WORKER)
-            except psycopg.OperationalError:
-                raise  # the store is unreachable: the sweep tries again, the run is fine
-            except KEY_MISSING as exc:
-                await self._key_missing(run["run_id"], exc)
-            except KeyAuthRefused as exc:  # a rolling key table's: never tried again in a loop
-                log.warning("run %s paused at its roll: %s", run["run_id"], exc)
-                await pause_run(self.ctx, run["run_id"], reason=AUTH_PAUSE, who=WORKER)
-            except Exception as exc:  # a bug, or data the store refuses: this run only
-                log.warning("run %s cannot end its cycle: %s", run["run_id"], located(exc))
-                await fail_run(self.ctx, run["run_id"], exc, who=WORKER)
+        for run_id in ended:
+            self.ending[run_id] = asyncio.create_task(self._end(run_id))
         self._notify()
         if self.measuring is None:
             self.measuring = asyncio.create_task(self._readiness())
@@ -417,6 +430,26 @@ class _Worker:
         if ended is None or (ended.done() and self.ctx.settings.notify is not None):
             self.notifying = asyncio.create_task(self.notifier.run())
 
+    async def _end(self, run_id: str) -> None:
+        """End the run's cycle, as a task of its own: a slow end (a rolling soak's key source read again, for
+        up to its cycle interval) holds up no other run's end, no cancellation, scan or schedule. What it
+        meets is logged by its type and where it was raised; only a bug or data the store refuses fails the
+        run, and a store that cannot record why leaves the end to a later sweep."""
+        try:
+            await finish_cycle(self.ctx, run_id, who=WORKER)
+        except psycopg.OperationalError as exc:  # the store is unreachable: a later sweep tries again
+            log.warning("cycle end of run %s postponed: %s", run_id, located(exc))
+        except KEY_MISSING as exc:
+            await self._key_missing(run_id, exc)
+        except KeyAuthRefused as exc:  # a rolling key table's: never tried again in a loop
+            log.warning("run %s paused at its roll: %s", run_id, exc)
+            await pause_run(self.ctx, run_id, reason=AUTH_PAUSE, who=WORKER)
+        except Exception as exc:  # a bug, or data the store refuses: this run only
+            log.warning("run %s cannot end its cycle: %s", run_id, located(exc))
+            await fail_run(self.ctx, run_id, exc, who=WORKER)
+        finally:
+            self.ending.pop(run_id, None)
+
     async def _guard(self, run_id: str) -> None:
         """The schema guard's look at the start of the run's cycle, which records what it meets: a
         refused login pauses the run, and only a store that cannot record the look leaves the cycle's
@@ -556,14 +589,17 @@ class _Worker:
     async def _handle(self, rows: list[repo.Row], owner: str) -> None:
         run_id, finished = rows[0]["run_id"], False
         renewing = asyncio.create_task(self._keep(owner))
+        self.busy[run_id] += 1
         try:
             run = await self._run(rows[0])
             if isinstance(run.reader, LiveReader) and run.reader.batches:  # a group
                 async with self.ctx.pool.connection() as conn:
-                    # Few keys where a row may be large; beside fixed files the whole group, whose every read
-                    # of them is a pass: ``_process`` reads the large side in slices.
+                    # Few keys where a row may be large; beside fixed files FILE_BATCH (READ_BATCH where a
+                    # row may be large), whose every read of them is a pass: ``_process`` reads the other
+                    # side, judges and saves in slices.
                     few = run.reader.large and not run.reader.fixed
-                    more = (LOB_BATCH if few else READ_BATCH) - len(rows)
+                    many = run.reader.fixed and not run.reader.large
+                    more = (LOB_BATCH if few else FILE_BATCH if many else READ_BATCH) - len(rows)
                     rows += await repo.lease_due(
                         conn, owner, more, self.settings.lease_seconds, run_id=run_id, census=self.counting
                     )
@@ -601,6 +637,7 @@ class _Worker:
                 log.warning("run %s failed: %s; keys %s", run_id, located(exc), keys)
                 await fail_run(self.ctx, run_id, exc, who=WORKER)
         finally:
+            self.busy[run_id] -= 1
             renewing.cancel()
             if not finished:
                 await self._release(owner)
@@ -624,22 +661,23 @@ class _Worker:
 
     async def _process(self, run: _Run, rows: list[repo.Row], owner: str) -> bool:
         """Open the group's leased rows, then read, judge and save one pass of each key, saved together;
-        False: a side refused the credential, and the keys go back. Where a side reads fixed files and the
-        other's rows may be large, the files are read for the group's first passes
-        in one pass over them, then the group is read, judged and saved ``LOB_BATCH`` keys at a time, so no
-        more large rows are held than a group of such a side alone holds; False also when the run stopped
-        before its last keys, which go back."""
+        False: a side refused the credential, and the keys go back. Where a side reads fixed files, the files
+        are read for the group's first passes in one pass over them, then the group is read, judged and saved
+        ``READ_BATCH`` keys at a time, or ``LOB_BATCH`` where the other's rows may be large: no more judged
+        keys, or large rows, are held than a group of a side of tables alone holds; False also when the run
+        stopped before its last keys, which go back."""
         async with self.ctx.pool.connection() as conn:
             sealer = await self.ctx.sealer(conn, rows[0]["run_id"])
         rows = [sealer.open_row(row) for row in rows]
         reader = run.reader
-        if not (isinstance(reader, LiveReader) and reader.batches and reader.large and reader.fixed):
+        if not (isinstance(reader, LiveReader) and reader.batches and reader.fixed):
             return await self._passed(run, rows, owner, sealer)
         ahead = [row["key"] for row in rows if row["pass_no"] == 1]
         await reader.ahead(ahead)
-        for start in range(0, len(rows), LOB_BATCH):
-            last = start + LOB_BATCH >= len(rows)
-            if not await self._passed(run, rows[start : start + LOB_BATCH], owner, sealer, ahead):
+        step = LOB_BATCH if reader.large else READ_BATCH
+        for start in range(0, len(rows), step):
+            last = start + step >= len(rows)
+            if not await self._passed(run, rows[start : start + step], owner, sealer, ahead):
                 return False
             if run.halted and not last:
                 return False
@@ -675,9 +713,16 @@ class _Worker:
             await pause_run(ctx, run_id, reason=AUTH_PAUSE, who=WORKER)
             return False
         passes, due, retry = [], {}, {}  # due and retry: the seconds after the database's now to wait
+        refused: dict[str, float] = {}  # and of the keys handed back unjudged
         resolve = spec.sample.resolve if spec.sample else None
         for row, (read, reads) in zip(rows, evaluated, strict=True):
             masked = row["key_masked"]
+            # A read refused unsent (an open breaker, a target's pause) took no time and observed nothing:
+            # the key goes back, due once its target may be read, up to REFUSALS times.
+            if isinstance(run.reader, LiveReader) and row["refused"] < REFUSALS:
+                if (wait := run.reader.refused(reads)) is not None:
+                    refused[masked] = max(wait, REFUSED_WAIT_S)
+                    continue
             result = _confirmed(run, row["pass_no"], read, firsts.get(masked))
             if run.live and row["pass_no"] <= run.policy.times and run.policy.due(result, run.reader.fixed):
                 due[masked] = run.policy.wait_s(masked)
@@ -690,22 +735,29 @@ class _Worker:
                 retry[masked] = resolve.delay_s + run.policy.jitter_s * key_fraction(masked)
             passes.append((row, read, result, reads))
         async with ctx.pool.connection() as conn:
-            await save_passes(
-                ctx,
-                conn,
-                spec,
-                run_id,
-                cycle,
-                [(row["pass_no"], result, reads) for row, _, result, reads in passes],
-                sealer,
-            )
+            if passes:
+                await save_passes(
+                    ctx,
+                    conn,
+                    spec,
+                    run_id,
+                    cycle,
+                    [(row["pass_no"], result, reads) for row, _, result, reads in passes],
+                    sealer,
+                )
             later = due | retry
             done = [row["key_masked"] for row, *_ in passes if row["key_masked"] not in later]
             moved = await repo.schedule_rechecks(conn, run_id, cycle, due, owner) if due else 0
             moved += await repo.schedule_retries(conn, run_id, cycle, retry, owner) if retry else 0
             moved += await repo.complete_keys(conn, run_id, cycle, done, owner) if done else 0
-            if moved != len(passes):
+            moved += await repo.hand_back(conn, run_id, cycle, refused, owner) if refused else 0
+            if moved != len(passes) + len(refused):
                 raise _LeaseLost  # another worker holds a key now: the whole group rolls back
+        if refused:
+            log.info(
+                "run %s: %d key(s) handed back unread, a target refusing reads for %.1f s",
+                run_id, len(refused), max(refused.values()),
+            )  # fmt: skip
         for row, read, result, reads in passes:
             for side in reads:
                 state = read.side_a if side is Side.A else read.side_b
@@ -747,6 +799,7 @@ class _Worker:
 
     async def close(self) -> None:
         tasks = [*self.scans.values(), *self.censuses.values(), *self.draws.values(), *self.firing.values()]
+        tasks += self.ending.values()
         tasks += [*self.checks.values(), *self.guards.values(), *filter(None, [self.purging, self.measuring])]
         for task in tasks:
             task.cancel()
@@ -829,17 +882,37 @@ async def run_worker(ctx: Context, *, stop: asyncio.Event | None = None, schedul
     stop = stop or asyncio.Event()
     poll_s = ctx.settings.worker.poll_seconds
     probes = _probes(ctx.settings.worker.lease_seconds / 3)
-    while not stop.is_set():
-        try:
-            connecting = psycopg.AsyncConnection.connect(ctx.pool.conninfo, autocommit=True, **probes)
-            async with await connecting as lock:
-                if not await _sole(lock, stop, poll_s):
-                    return
-                await _work(ctx, lock, stop, schedules)
-        except Exception as exc:  # the lock lost, or a slot or the sweep ended on a bug
-            log.warning("worker stopped (%s): slots restart once the lock is retaken", located(exc))
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(stop.wait(), poll_s)
+    _STARTED[id(ctx)] = time.monotonic()
+    try:
+        while not stop.is_set():
+            try:
+                connecting = psycopg.AsyncConnection.connect(ctx.pool.conninfo, autocommit=True, **probes)
+                async with await connecting as lock:
+                    if not await _sole(lock, stop, poll_s):
+                        return
+                    await _work(ctx, lock, stop, schedules)
+            except Exception as exc:  # the lock lost, or a slot or the sweep ended on a bug
+                log.warning("worker stopped (%s): slots restart once the lock is retaken", located(exc))
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(stop.wait(), poll_s)
+    finally:
+        _STARTED.pop(id(ctx), None)
+
+
+def stale_after(ctx: Context) -> float:
+    """The age past which the worker's last sweep counts as stale: three polls, ``STALE_S`` at least."""
+    return max(3 * ctx.settings.worker.poll_seconds, STALE_S)
+
+
+def stalled(ctx: Context, age_s: float | None) -> bool:
+    """Whether this process runs a worker on ``ctx`` (``ds serve`` without ``--no-worker``) and the database
+    has seen no sweep for longer than ``stale_after``: neither this worker's nor that of the worker
+    holding the lock. ``age_s``: the last sweep's age, None before any. A worker started more recently than
+    that has had no time to sweep."""
+    started, limit = _STARTED.get(id(ctx)), stale_after(ctx)
+    if started is None or time.monotonic() - started <= limit:
+        return False
+    return age_s is None or age_s > limit
 
 
 async def _work(ctx: Context, lock: psycopg.AsyncConnection, stop: asyncio.Event, schedules: bool) -> None:

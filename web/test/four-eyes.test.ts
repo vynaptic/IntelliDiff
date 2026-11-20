@@ -28,7 +28,7 @@ function label(approval: Partial<RunApproval>): string {
   return approvalLabel({ approval_id: ID, deciders: [], ...UNREVOKED, ...approval } as RunApproval);
 }
 
-test("a run's label says what report.pdf, the P0 summary and ds runs say", () => {
+test("a run's label says what report.pdf, the contract report and ds runs say", () => {
   assert.equal(
     label({ state: 'unapproved', needs: ['clear', 'known_diffs'], mode: 'tokens', approval_id: null }),
     'Unapproved spec version: clear, known_diffs were not approved by a second person (tokens mode has no approvers). Not sign-off evidence.',

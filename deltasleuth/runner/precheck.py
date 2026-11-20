@@ -41,6 +41,7 @@ from deltasleuth.core import precheck
 from deltasleuth.core.precheck import Judged, Pair
 from deltasleuth.core.spec import SpecError
 from deltasleuth.core.types import CompiledSpec, FieldCompare, Side, Target
+from deltasleuth.errors import told
 from deltasleuth.store import repo
 
 SESSION = "session"  # the check a side whose session did not open, or whose read met a bug, is recorded by
@@ -210,7 +211,7 @@ async def _read(
             if session is not None:
                 side.relation = await described(side.engine, session, f"side {side.name}", schema, name)
         except ValueError as exc:
-            return str(exc)
+            return told(exc)
         return None
 
     async def probe(side: _Side, session: Session | None) -> str | None:
@@ -218,7 +219,7 @@ async def _read(
             if plan is not None and not gated and session is not None and spec is not None:
                 await probed(side.engine, session, side.name, plan[side.name])
         except ValueError as exc:
-            return str(exc)
+            return told(exc)
         return None
 
     async def both(ask: Callable[[_Side, Session | None], Awaitable[str | None]]) -> None:

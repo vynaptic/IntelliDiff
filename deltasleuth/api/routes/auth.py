@@ -379,23 +379,20 @@ async def create_token(ctx: Ctx, who: FreshAdmin, body: TokenIn) -> Response:
     auth = ctx.settings.auth
     if auth is not None and auth.oidc is not None and body.owner_user_id is None:
         raise HTTPException(422, "owner_user_id is required")
-    try:
-        async with repo.audited(ctx.pool) as (conn, audit):
-            row, token = await tokens.create(
-                conn,
-                who,
-                name=body.name,
-                owner=body.owner,
-                role=body.role,
-                max_days=auth.token_max_days if auth is not None else tokens.DEFAULT_DAYS,
-                days=body.days,
-                owner_user_id=body.owner_user_id,
-            )
-            detail = {name: row[name] for name in ("name", "owner", "owner_user_id", "role")}
-            expires_at = row["expires_at"]
-            await audit(who, "token.create", row["token_id"], detail | {"expires_at": expires_at.isoformat()})
-    except ValueError as exc:  # the message names the field
-        raise HTTPException(422, str(exc)) from None
+    async with repo.audited(ctx.pool) as (conn, audit):  # a refusal's message names the field
+        row, token = await tokens.create(
+            conn,
+            who,
+            name=body.name,
+            owner=body.owner,
+            role=body.role,
+            max_days=auth.token_max_days if auth is not None else tokens.DEFAULT_DAYS,
+            days=body.days,
+            owner_user_id=body.owner_user_id,
+        )
+        detail = {name: row[name] for name in ("name", "owner", "owner_user_id", "role")}
+        expires_at = row["expires_at"]
+        await audit(who, "token.create", row["token_id"], detail | {"expires_at": expires_at.isoformat()})
     return ok({"token_id": row["token_id"], **detail, "expires_at": expires_at, "token": token}, 201)
 
 

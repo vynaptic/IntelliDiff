@@ -45,6 +45,7 @@ from deltasleuth.core.canonical.encoding import content_hash
 from deltasleuth.core.types import ExecutionConfig, Observation, SideConfig, Target
 
 Observed = dict[str, Observation]  # by key
+FIXED_ARMS = 2000  # keys of a statement over fixed files whose rows are not large: one pass over them
 
 
 def relation(side: Plan) -> str:
@@ -211,9 +212,11 @@ class TableConnector:
 
     async def _rows(self, session: Session, items: list[tuple[str, list[list[str]]]]) -> list[Row]:
         """The rows of ``items``' keys, each by its key's position among them, read in statements of as
-        many keys as one of the engine's holds: each statement after the first takes a token of the rate
-        budget too."""
-        arms, rows = self._engine.arms, []
+        many keys as one of the engine's holds, or ``FIXED_ARMS`` of fixed files whose rows are not large
+        (each statement is a pass over them, and joins its keys whatever their count): each statement after
+        the first takes a token of the rate budget too."""
+        arms = FIXED_ARMS if self.fixed and not self.large else self._engine.arms
+        rows: list[Row] = []
         for start in range(0, len(items), arms):
             if start:
                 await self._gate.limiter.acquire()

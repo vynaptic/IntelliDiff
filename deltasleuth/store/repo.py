@@ -40,6 +40,7 @@ from deltasleuth.core.types import (
     Verdict,
     derive_verdict,
 )
+from deltasleuth.errors import NotFound
 from deltasleuth.security.crypto import Sealer, chat_context
 
 Conn = AsyncConnection[Any]
@@ -328,6 +329,16 @@ async def run_scans(conn: Conn, run_id: str) -> dict[int, Row]:
     return {row["cycle"]: row["state"] for row in rows}
 
 
+async def cycle_scans(conn: Conn, run_id: str, cycles: Sequence[int]) -> dict[int, Row]:
+    """The scan state of each of ``cycles`` that scanned, by cycle."""
+    rows = await _rows(
+        conn,
+        "SELECT cycle, state FROM ds.scans WHERE run_id = %s AND cycle = ANY(%s)",
+        (run_id, list(cycles)),
+    )
+    return {row["cycle"]: row["state"] for row in rows}
+
+
 async def replace_graph_diffs(conn: Conn, run_id: str, cycle: int, rows: Sequence[Mapping[str, Any]]) -> None:
     """The cycle's graph parity rows, masked by the caller, replacing any before."""
     async with conn.transaction(), conn.cursor() as cur:
@@ -602,21 +613,29 @@ async def lease_due(
     skip: Sequence[str] = (),
     run_id: str | None = None,
     census: bool = False,
+    busy: Mapping[str, int] | None = None,
 ) -> list[Row]:
     """Lease up to ``limit`` due keys of running runs, except the ``skip`` runs, to ``owner``,
     expired leases included.
 
     Concurrent callers never get the same key (SKIP LOCKED). Keys are looked up run by run, so
     the keys of paused runs are never scanned. ``run_id``: that run's keys only (a batch). ``census``
-    (packs or readiness configured): no key of a run whose cycle awaits its key census. Rows: run_id,
+    (packs or readiness configured): no key of a run whose cycle awaits its key census. ``busy``: the
+    groups the worker has in flight, by run; the keys of the run with the fewest come first, so runs share
+    the slots in turn, and a run's own keys go by when they fell due, then in its order. Rows: run_id,
     cycle, key_masked, key_enc, pass_no (1 for the first reads, 2+ for a recheck), signoff_member and
-    retries (a sample's) and spec_id.
+    retries (a sample's), refused (``hand_back``) and spec_id.
     """
+    busy = busy or {}
     return await _rows(
         conn,
         f"""WITH due AS (
-                SELECT k.run_id, k.cycle, k.key_masked, r.spec_id
-                FROM ds.runs r CROSS JOIN LATERAL (
+                SELECT k.run_id, k.cycle, k.key_masked, r.spec_id, k.available_at, k.seq,
+                    coalesce(b.groups, 0) AS groups
+                FROM ds.runs r
+                LEFT JOIN unnest(%(busy)s::text[], %(groups)s::int[]) AS b (run_id, groups)
+                    ON b.run_id = r.run_id
+                CROSS JOIN LATERAL (
                     SELECT k.* FROM ds.run_keys k
                     WHERE k.run_id = r.run_id AND k.state IN ('pending', 'leased', 'recheck')
                       AND k.available_at <= now()
@@ -624,16 +643,16 @@ async def lease_due(
                 WHERE r.status = 'running' AND r.run_id <> ALL(%(skip)s::text[])
                   AND (%(run_id)s::text IS NULL OR r.run_id = %(run_id)s)
                   AND NOT coalesce(%(census)s AND {_CENSUS_PENDING}, false)
-                ORDER BY k.available_at, k.seq LIMIT %(limit)s)
+                ORDER BY groups, k.available_at, k.seq LIMIT %(limit)s)
             UPDATE ds.run_keys k SET state = 'leased', lease_owner = %(owner)s,
                 lease_until = now() + %(seconds)s * interval '1 second',
                 available_at = now() + %(seconds)s * interval '1 second'
             FROM due WHERE (k.run_id, k.cycle, k.key_masked) = (due.run_id, due.cycle, due.key_masked)
             RETURNING k.run_id, k.cycle, k.key_masked, k.key_enc, k.pass_no, k.signoff_member, k.retries,
-                due.spec_id""",  # noqa: S608
+                k.refused, due.spec_id""",  # noqa: S608
         {
             "owner": owner, "limit": limit, "seconds": lease_seconds, "skip": list(skip), "run_id": run_id,
-            "census": census,
+            "census": census, "busy": list(busy), "groups": list(busy.values()),
         },
     )  # fmt: skip
 
@@ -730,6 +749,22 @@ async def schedule_retries(
     return len(moved)
 
 
+async def hand_back(conn: Conn, run_id: str, cycle: int, due: Mapping[str, float], owner: str) -> int:
+    """Give up ``owner``'s lease of each masked key whose reads were refused unsent, one more refusal
+    counted, and make it due its wait in seconds after the database's now, in the same pass: nothing of it
+    was saved; how many ``owner`` still held."""
+    return await _changed(
+        conn,
+        """UPDATE ds.run_keys k SET state = CASE WHEN pass_no > 1 THEN 'recheck' ELSE 'pending' END,
+               refused = refused + 1, available_at = now() + d.wait * interval '1 second',
+               lease_owner = NULL, lease_until = NULL
+           FROM unnest(%s::text[], %s::float8[]) AS d (key_masked, wait)
+           WHERE k.run_id = %s AND k.cycle = %s AND k.key_masked = d.key_masked AND k.state = 'leased'
+             AND k.lease_owner = %s""",
+        (list(due), list(due.values()), run_id, cycle, owner),
+    )
+
+
 async def release_leases(conn: Conn, owner: str) -> int:
     """Hand back every key ``owner`` holds (a clean shutdown); return how many."""
     return await _changed(
@@ -749,6 +784,27 @@ async def cancel_keys(conn: Conn, run_id: str) -> int:
            WHERE run_id = %s AND (state IN ('pending', 'recheck')
                                   OR (state = 'leased' AND lease_until <= now()))""",
         (run_id,),
+    )
+
+
+async def mark_sweep(conn: Conn, holder: str) -> None:
+    """Record that ``holder`` (a host name and a process id) swept now, in the one row of
+    ``ds.worker_sweep``."""
+    await conn.execute(
+        """INSERT INTO ds.worker_sweep (holder, swept_at) VALUES (%s, now())
+           ON CONFLICT (one) DO UPDATE SET holder = EXCLUDED.holder, swept_at = EXCLUDED.swept_at""",
+        (holder,),
+    )
+
+
+async def last_sweep(conn: Conn) -> Row | None:
+    """The worker's last sweep: its ``holder``, ``swept_at`` and ``age_s``, its age in seconds on the
+    database's clock; None before any worker swept."""
+    return await _row(
+        conn,
+        """SELECT holder, swept_at, extract(epoch FROM now() - swept_at)::float8 AS age_s
+           FROM ds.worker_sweep""",
+        None,
     )
 
 
@@ -831,6 +887,28 @@ async def list_keys(
         },
     )
     return _page(rows, limit, "seq")
+
+
+async def keys_without_result(
+    conn: Conn, run_id: str, cycle: int, *, state: str, limit: int = 1000, cursor: str | None = None
+) -> Page:
+    """The cycle's keys in ``state`` that hold no result, in manifest order: seq and key_masked."""
+    rows = await _rows(
+        conn,
+        """SELECT k.seq, k.key_masked FROM ds.run_keys k
+           WHERE k.run_id = %(run_id)s AND k.cycle = %(cycle)s AND k.seq > %(after)s AND k.state = %(state)s
+             AND NOT EXISTS (SELECT 1 FROM ds.results r
+                             WHERE (r.run_id, r.cycle, r.key_masked) = (k.run_id, k.cycle, k.key_masked))
+           ORDER BY k.seq LIMIT %(limit)s""",
+        {"run_id": run_id, "cycle": cycle, "state": state, "after": _after(cursor, 1)[0], "limit": limit + 1},
+    )
+    return _page(rows, limit, "seq")
+
+
+async def limit_statements(conn: Conn, seconds: int) -> None:
+    """Have the store cancel each statement of the transaction ``conn`` is in, until it ends, that runs
+    longer than ``seconds`` (``statement_timeout``): psycopg raises ``errors.QueryCanceled``."""
+    await conn.execute("SELECT set_config('statement_timeout', %s, true)", (f"{seconds}s",))
 
 
 # -- observations, results, findings ----------------------------------------------------------
@@ -1471,7 +1549,7 @@ async def append_chat_message(
             (session_id,),
         )
         if cycle is None:
-            raise LookupError(f"no chat session {session_id}")
+            raise NotFound(f"no chat session {session_id}")
         seq = await _value(
             conn,
             "SELECT coalesce(max(seq), 0) + 1 FROM ds.chat_messages WHERE session_id = %s",
@@ -1947,6 +2025,51 @@ async def list_cycles(conn: Conn, run_id: str, *, standard_days: int, audit_days
     return await _rows(
         conn,
         f"""SELECT c.*, c.ended_at + {_KEPT} AS expires_at
+            FROM ds.cycles c JOIN ds.runs r USING (run_id)
+            WHERE c.run_id = %(run_id)s ORDER BY c.cycle""",  # noqa: S608 - fixed SQL fragments only
+        {"run_id": run_id, "standard_days": standard_days, "audit_days": audit_days},
+    )
+
+
+async def cycle_page(
+    conn: Conn,
+    run_id: str,
+    *,
+    standard_days: int,
+    audit_days: int,
+    limit: int = 20,
+    cursor: str | None = None,
+) -> Page:
+    """The run's ended cycles newest first, as ``list_cycles`` gives them, a page at a time; a page's cursor
+    is the oldest cycle it holds, and the next page holds the cycles before it."""
+    before = None
+    if cursor is not None:
+        before = _after(cursor, 1)[0]
+        if not 0 < before < 2**31:
+            raise ValueError("malformed cursor")
+    rows = await _rows(
+        conn,
+        f"""SELECT c.*, c.ended_at + {_KEPT} AS expires_at
+            FROM ds.cycles c JOIN ds.runs r USING (run_id)
+            WHERE c.run_id = %(run_id)s AND (%(before)s::int IS NULL OR c.cycle < %(before)s)
+            ORDER BY c.cycle DESC LIMIT %(limit)s""",  # noqa: S608 - fixed SQL fragments only
+        {
+            "run_id": run_id,
+            "before": before,
+            "limit": limit + 1,
+            "standard_days": standard_days,
+            "audit_days": audit_days,
+        },
+    )
+    return _page(rows, limit, "cycle")
+
+
+async def cycle_retention(conn: Conn, run_id: str, *, standard_days: int, audit_days: int) -> list[Row]:
+    """The run's ended cycles in order with what their retention shows and nothing else: ``cycle``,
+    ``ended_at``, ``expires_at``, ``purging_at`` and ``purged_at``."""
+    return await _rows(
+        conn,
+        f"""SELECT c.cycle, c.ended_at, c.ended_at + {_KEPT} AS expires_at, c.purging_at, c.purged_at
             FROM ds.cycles c JOIN ds.runs r USING (run_id)
             WHERE c.run_id = %(run_id)s ORDER BY c.cycle""",  # noqa: S608 - fixed SQL fragments only
         {"run_id": run_id, "standard_days": standard_days, "audit_days": audit_days},
@@ -2748,6 +2871,15 @@ async def ledger_draw(conn: Conn, draw_id: str) -> Row | None:
 async def run_draws(conn: Conn, run_id: str) -> list[Row]:
     """The run's draws, oldest cycle first."""
     return await _rows(conn, "SELECT * FROM ds.sample_draws WHERE run_id = %s ORDER BY cycle", (run_id,))
+
+
+async def cycle_draws(conn: Conn, run_id: str, cycles: Sequence[int]) -> list[Row]:
+    """The draws of the run's ``cycles``, oldest cycle first."""
+    return await _rows(
+        conn,
+        "SELECT * FROM ds.sample_draws WHERE run_id = %s AND cycle = ANY(%s) ORDER BY cycle",
+        (run_id, list(cycles)),
+    )
 
 
 async def retrying(conn: Conn, run_id: str, cycle: int) -> bool:

@@ -49,7 +49,7 @@ dev = [
     "pytest>=8.4",
     "pytest-asyncio>=1.0",
     "hypothesis>=6.130",
-    "deepdiff>=8.5",
+    "pytest-timeout>=2.4",
     "ruff>=0.12",
     "httpx>=0.28",
     "pip-audit>=2.10.1",
@@ -78,6 +78,9 @@ markers = [
     "live_public: calls public internet APIs (skipped by default)",
 ]
 addopts = "-m 'not live_llm and not live_public' --import-mode=importlib"
+# A hung test fails after ten minutes instead of hanging the run (pytest-timeout; tests/conftest.py gives
+# the opt-in measurements an hour).
+timeout = 600
 
 [tool.ruff]
 line-length = 110

@@ -12,11 +12,9 @@ from __future__ import annotations
 
 import io
 import zipfile
-from collections.abc import Iterator
-from contextlib import contextmanager
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Request, Response
 from pydantic import StrictInt
 
 from deltasleuth.api.deps import Ctx, Operator, Payload, Viewer, need, ok, page, run_of, shown
@@ -37,17 +35,6 @@ def adjudication_item(row: repo.Row) -> repo.Row:
     return shown(row, "sheet")
 
 
-@contextmanager
-def _not_found() -> Iterator[None]:
-    """An unknown run, adjudication or pack (LookupError) as 404; a KeyError or IndexError is a bug."""
-    try:
-        yield
-    except (KeyError, IndexError):
-        raise
-    except LookupError as exc:
-        raise HTTPException(404, str(exc)) from None
-
-
 # -- adjudications ----------------------------------------------------------------------------------
 
 
@@ -56,8 +43,7 @@ async def draw(ctx: Ctx, who: Operator, run_id: str, cycle: int, body: DrawIn | 
     """Draw a reviewer sheet of the ended cycle with a server salt (``adjudicate.store_draw``); 409 while
     the cycle has a requested or approved sign-off, or has not ended."""
     pack.sso(ctx)
-    with _not_found():
-        row = await adjudicate.store_draw(ctx, run_id, cycle, who=who, limit=(body or DrawIn()).limit)
+    row = await adjudicate.store_draw(ctx, run_id, cycle, who=who, limit=(body or DrawIn()).limit)
     keys = [line["key"] for line in parse_csv(row["sheet"].encode())[1]]  # masked, in the sheet's order
     return ok({"adjudication_id": row["adjudication_id"], "salt": row["salt"], "keys": keys}, 201)
 
@@ -92,8 +78,7 @@ async def score(ctx: Ctx, who: Operator, adjudication_id: str, request: Request)
     approved sign-off, or once it is scored; 413 over 1 MiB; 422 for a sheet that cannot be scored."""
     pack.sso(ctx)
     data = await request.body()
-    with _not_found():
-        await adjudicate.store_score(ctx, adjudication_id, data, who=who)
+    await adjudicate.store_score(ctx, adjudication_id, data, who=who)
     async with ctx.pool.connection() as conn:
         row = await repo.get_adjudication(conn, adjudication_id)
     assert row is not None
@@ -107,8 +92,7 @@ async def score(ctx: Ctx, who: Operator, adjudication_id: str, request: Request)
 async def issue(ctx: Ctx, who: Operator, run_id: str, cycle: int) -> Response:
     """Issue the signed-off cycle's evidence pack (``pack.issue``); 409 with every reason it gets none, 403
     for anyone but a signed-in person, 503 without the pack settings."""
-    with _not_found():
-        row = await pack.issue(ctx, run_id, cycle, who=who)
+    row = await pack.issue(ctx, run_id, cycle, who=who)
     fields = ("pack_id", "sums_sha256", "key_fingerprint")
     return ok({name: row[name] for name in fields}, 201)
 
@@ -153,8 +137,7 @@ async def download(ctx: Ctx, who: Viewer, pack_id: str) -> Response:
     """The pack's stored ZIP, audited ``pack.download`` before it is sent; 410 once its cycle's purge
     has started, which deletes it (copies downloaded before still verify)."""
     pack.available(ctx)
-    with _not_found():
-        found, data = await pack.stored(ctx, pack_id)
+    found, data = await pack.stored(ctx, pack_id)
     await pack.downloaded(ctx, who, found)
     headers = {"Content-Disposition": f'attachment; filename="{pack_id}.zip"'}
     return Response(data, media_type="application/zip", headers=headers)

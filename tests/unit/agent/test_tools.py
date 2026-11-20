@@ -320,7 +320,7 @@ async def test_tools_see_only_the_chats_run_and_its_spec(
         assert who == TESTER  # the asker
         raise LookupError("stop here")
 
-    monkeypatch.setattr("deltasleuth.runner.compare_one", compare_one)
+    monkeypatch.setattr("deltasleuth.runner.runs.compare_one", compare_one)
     scope = Scope(seeded.run_id, TESTER)
 
     refused = ("get_findings", {"run_id": other.run_id}), ("compare_key", {"spec_id": 1, "key": "x"})
@@ -346,7 +346,7 @@ async def test_a_spec_version_lacking_its_approval_is_a_tool_error_the_model_rea
     async def compare_one(*_: Any, **__: Any) -> Any:
         raise ApprovalRequired(needs)  # as under SSO, until a second person approves the version
 
-    monkeypatch.setattr("deltasleuth.runner.compare_one", compare_one)
+    monkeypatch.setattr("deltasleuth.runner.runs.compare_one", compare_one)
     with pytest.raises(ToolError, match=f"^{re.escape(needs)}$"):
         await run_tool(ctx, Scope(seeded.run_id, TESTER), "compare_key", {"key": seeded.key})
 
@@ -369,7 +369,7 @@ async def test_a_refused_connect_tells_the_model_the_side_and_the_target_only(
     async def compare_one(*_: Any, **__: Any) -> Any:  # as far as its plan, which finds no listener
         await plan(registry, compiled({"name": "customers", "keyColumns": ["id"]}))
 
-    monkeypatch.setattr("deltasleuth.runner.compare_one", compare_one)
+    monkeypatch.setattr("deltasleuth.runner.runs.compare_one", compare_one)
     with pytest.raises(ValueError, match="cannot connect") as created:  # what a run's creator reads
         await compare_one()
     assert str(created.value) == (

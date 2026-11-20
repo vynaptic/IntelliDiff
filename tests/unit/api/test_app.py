@@ -3,11 +3,14 @@ service facts, the UI mount and the worker."""
 
 from __future__ import annotations
 
+import asyncio
+import importlib
 import logging
 import re
 import time
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import AbstractContextManager, asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +22,7 @@ from psycopg_pool import PoolTimeout
 
 from deltasleuth.api.app import MAX_BODY, AuthQueryFilter
 from deltasleuth.connectors.tables import ENGINES, TargetRefused, TargetUnreachable
+from deltasleuth.runner import worker
 from tests.unit.connectors.engines import FakeEngine
 from tests.unit.connectors.test_postgres import compiled
 
@@ -37,7 +41,7 @@ def test_health_needs_no_credential_and_says_what_is_on(
     open_client: OpenClient, auth: dict[str, Any] | None, mode: str
 ) -> None:
     with open_client(auth=auth, ai=True) as client:
-        assert client.get("/v1/health").json() == {"status": "ok", "ai": True, "auth": mode}
+        assert client.get("/v1/health").json() == {"status": "ok", "ai": True, "auth": mode, "worker": None}
 
 
 def test_health_says_when_the_database_does_not_answer(
@@ -261,6 +265,66 @@ def test_an_unexpected_error_is_a_500_without_its_details(
     assert "hunter2" not in line.getMessage() and "K12345678" not in line.getMessage()
 
 
+def test_a_library_value_error_while_a_run_is_created_is_a_500_without_its_text(
+    open_client: OpenClient,
+    spec_yaml: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A ValueError the package did not raise as a refusal (here ``int()``'s, which quotes a key) is a
+    fault: a 500 that says nothing of it, logged by its type and where it was raised, never a 422 that
+    repeats its text."""
+
+    def taken(*_: Any) -> None:
+        int("K12345678")
+
+    monkeypatch.setattr("deltasleuth.runner.runs.run_keys", taken)
+    with caplog.at_level(logging.ERROR, logger="deltasleuth.api.app"):
+        with open_client(raise_server_exceptions=False) as client:
+            spec_id = client.post("/v1/specs", content=spec_yaml).json()["spec_id"]
+            failed = client.post("/v1/runs", json={"spec_id": spec_id, "mode": "batch"})
+    assert (failed.status_code, failed.json()) == (500, {"detail": "internal error"})
+    [line] = [r for r in caplog.records if r.name == "deltasleuth.api.app"]
+    said = f"internal error request_id={failed.headers['x-request-id']}: ValueError at runner/runs.py:"
+    assert line.getMessage().startswith(said) and "K12345678" not in line.getMessage()
+
+
+REFUSALS = [
+    ("deltasleuth.targets", "Refused", (409, "target svc-c is named by spec 7: remove it from the spec")),
+    ("deltasleuth.readiness", "Refused", (404, "pair nightly-pair not found")),
+    ("deltasleuth.schedules", "Refused", (409, "schedule SC-0001 is paused already")),
+    ("deltasleuth.notifications", "Refused", (409, "notifications are off")),
+    ("deltasleuth.prechecks", "Refused", (404, "table pre-check PC-0001 not found")),
+    ("deltasleuth.runner.drift", "Refused", (409, "run R-0001 cannot resume: column ORG_CODE changed")),
+    ("deltasleuth.runner.sample", "SampleRefused", (409, "spec cards has a draw still live")),
+    ("deltasleuth.licence", "LicenceRefused", ("licence LI-0001 ended on 2026-01-01",)),
+    ("deltasleuth.errors", "Invalid", ("the key set is empty",)),
+    ("deltasleuth.errors", "NotFound", ("spec 7 not found",)),
+    ("deltasleuth.errors", "Conflict", ("run R-0001 is held",)),
+    ("deltasleuth.errors", "Gone", ("cycle 1 of run R-0001 was purged on 2026-01-01",)),
+]
+STATUS = {"LicenceRefused": 409, "Invalid": 422, "NotFound": 404, "Conflict": 409, "Gone": 410}
+
+
+@pytest.mark.parametrize(("module", "name", "args"), REFUSALS)
+def test_a_refusal_is_answered_with_its_own_status_and_words(
+    open_client: OpenClient, stub: Any, spec_yaml: str, module: str, name: str, args: tuple[Any, ...]
+) -> None:
+    """Every module's refusal is one kind of exception the app answers with the status it carries and its
+    message, wherever it is raised: a runner route no longer answers a 404 or a 409 as a 422."""
+    refusal = getattr(importlib.import_module(module), name)(*args)
+
+    async def compare_one(*_: Any, **__: Any) -> None:
+        raise refusal
+
+    stub("deltasleuth.runner.runs", compare_one=compare_one, compare_again=compare_one, key_view=compare_one)
+    with open_client() as client:
+        spec_id = client.post("/v1/specs", content=spec_yaml).json()["spec_id"]
+        refused = client.post("/v1/compare", json={"spec_id": spec_id, "key": "K12345678"})
+    status = STATUS.get(name, args[0])
+    assert (refused.status_code, refused.json()) == (status, {"detail": args[-1]})
+
+
 @pytest.mark.parametrize(
     ("path", "site", "status"),
     [
@@ -400,6 +464,51 @@ def test_the_ui_is_served_with_a_single_page_fallback(open_client: OpenClient, t
     )
     assert (elsewhere.status_code, elsewhere.json()) == (404, {"detail": "Not Found"})
     assert unbuilt.headers["x-content-type-options"] == "nosniff" and "cache-control" not in unbuilt.headers
+
+
+def test_health_shows_the_worker_s_sweep_and_answers_503_once_it_stops(
+    open_client: OpenClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each sweep records its holder (host name and process id) and its time in one row; health shows its
+    time and age, never the holder, and a process that runs its own worker answers 503 once no sweep has run
+    for longer than the threshold."""
+    monkeypatch.setattr(worker, "STALE_S", 1.0)  # three polls of 0.1 s are less
+    with open_client(worker=True) as client:
+        deadline = time.monotonic() + 30
+        while (health := client.get("/v1/health")).json()["worker"] is None:
+            assert time.monotonic() < deadline
+            time.sleep(0.05)
+        seen = health.json()["worker"]
+        assert health.status_code == 200 and health.json()["status"] == "ok"
+        assert set(seen) == {"last_sweep_at", "age_s"} and 0 <= seen["age_s"] < 5
+        assert datetime.fromisoformat(seen["last_sweep_at"]).tzinfo is not None
+
+        async def stuck(self: Any) -> None:
+            await asyncio.Event().wait()  # a sweep that never ends
+
+        monkeypatch.setattr(worker._Worker, "_sweep_once", stuck)
+        while (health := client.get("/v1/health")).status_code == 200:
+            assert time.monotonic() < deadline
+            time.sleep(0.1)
+    body = health.json()
+    assert (health.status_code, body["status"], "holder" in body["worker"]) == (503, "stale", False)
+    assert body["worker"]["age_s"] > worker.STALE_S
+
+
+def test_health_without_a_worker_of_its_own_shows_the_sweep_and_stays_up(
+    open_client: OpenClient, pg_dsn: str
+) -> None:
+    """A ``--no-worker`` server shows the sweep of the worker beside it, however old: its own health is the
+    database's."""
+    with open_client() as client:
+        with psycopg.connect(pg_dsn, autocommit=True) as conn:
+            conn.execute(
+                "INSERT INTO ds.worker_sweep (holder, swept_at)"
+                " VALUES ('host-b:4242', now() - interval '1 hour')"
+            )
+        health = client.get("/v1/health")
+    assert (health.status_code, health.json()["status"]) == (200, "ok")
+    assert "holder" not in health.json()["worker"] and health.json()["worker"]["age_s"] >= 3600
 
 
 def test_with_its_worker_the_app_processes_runs(open_client: OpenClient, spec_yaml: str) -> None:

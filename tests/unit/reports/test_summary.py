@@ -1,4 +1,4 @@
-"""The P0 contract report: checklist states from the P0 tools, PARTIAL runs and escaping; an ended
+"""The contract report: checklist states from the onboarding tools, PARTIAL runs and escaping; an ended
 cycle's labelled accuracy."""
 
 from __future__ import annotations
@@ -67,7 +67,7 @@ async def test_a_run_that_did_not_finish_is_marked_partial(ctx: Context, tmp_pat
         ctx, {"K001": (doc("K001"), doc("K001"))}, status="cancelled", stop_reason="max_errors"
     )
     document = await _document(ctx, run_id, tmp_path)
-    assert document.title.startswith("P0 contract report (PARTIAL):")
+    assert document.title.startswith("Contract report (PARTIAL):")
     assert "The run stopped early (max_errors)." in document.warning
     assert _checks(document)["Paired responses ingested and compared"] == "fail"
 

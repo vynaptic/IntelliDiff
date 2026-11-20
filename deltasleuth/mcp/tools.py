@@ -36,12 +36,12 @@ from deltasleuth.context import Context
 from deltasleuth.core import jsonio
 from deltasleuth.core.readiness import STATES
 from deltasleuth.core.spec import SpecError
-from deltasleuth.core.spec.errors import UnknownTargetError
+from deltasleuth.errors import NotFound, Refused
 from deltasleuth.evidence.store import EvidenceKeyError
 from deltasleuth.llm.model import DataClass
 from deltasleuth.llm.profiles import Rate
 from deltasleuth.runner.compare import EvidenceMissing
-from deltasleuth.runner.purge import CyclePurged, refuse_purged
+from deltasleuth.runner.purge import refuse_purged
 from deltasleuth.security.crypto import KeyringError
 from deltasleuth.store import repo
 
@@ -264,7 +264,7 @@ async def _stored(ctx: Context, conn: repo.Conn, asked: _Asked, run_id: str) -> 
     settings do not serve such runs."""
     run = await repo.get_run(conn, run_id)
     if run is None:
-        raise LookupError(f"run {run_id} not found")
+        raise NotFound(f"run {run_id} not found")
     asked.run = run
     await refuse_purged(conn, run_id, run["cycle"])
     spec = await ctx.spec(conn, run["spec_id"])
@@ -615,19 +615,18 @@ async def _answered(
 
 
 def _told(exc: Exception, who: Principal) -> str:
-    """What a failed call's caller is told: a refusal's own text where it holds ids, names and counts
-    only; else that the request's id names it in the server log, where a refusal's text or a fault's
-    traceback is logged. Over stdio the log is the launching agent's, so it gets the failure's code
-    alone."""
-    if isinstance(exc, ToolError | CyclePurged | EvidenceMissing | readiness.Refused | schedules.Refused):
+    """What a failed call's caller is told: a refusal's own text, which holds ids, names and counts only
+    (a refused connect's ``brief``, which names no host or account); else that the request's id names it
+    in the server log, where a refusal's text or a fault's traceback is logged. Over stdio the log is the
+    launching agent's, so it gets the failure's code alone."""
+    if isinstance(exc, Refused):
+        return getattr(exc, "brief", None) or str(exc)
+    if isinstance(exc, ToolError | EvidenceMissing):
         return str(exc)
     if isinstance(exc, KeyringError | EvidenceKeyError):
         return f"evidence unreadable: {exc}"
     if isinstance(exc, psycopg.OperationalError):
         return "the database is unreachable; call again"
-    # A LookupError says which id is not stored; a missing member, index or target is a fault, not that.
-    if isinstance(exc, LookupError) and not isinstance(exc, KeyError | IndexError | UnknownTargetError):
-        return str(exc)
     quiet = who.via == STDIO
     if isinstance(exc, ValueError | SpecError):
         log.warning("refused request_id=%s: %s", who.request_id, code(exc) if quiet else exc)

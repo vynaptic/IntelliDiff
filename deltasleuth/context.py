@@ -35,6 +35,7 @@ from deltasleuth.core.types import (
     TargetCapabilities,
     TruncationIndicators,
 )
+from deltasleuth.errors import NotFound
 from deltasleuth.evidence.fsio import ensure_private_dir
 from deltasleuth.evidence.store import EvidenceStore
 from deltasleuth.llm.profiles import ProfileRegistry, load_profiles
@@ -133,7 +134,7 @@ class Context:
         if sealer is None:
             row = await repo.data_key(conn, run_id)
             if row is None:
-                raise LookupError(f"run {run_id} has no data key")
+                raise NotFound(f"run {run_id} has no data key")
             key = self.keyring.unwrap(row["kek"], row["wrapped"])
             sealer = self._sealers[run_id] = Sealer(key, run_id)
         return sealer
@@ -148,7 +149,7 @@ class Context:
         must not, so removing a target never hides its history."""
         row = await repo.get_spec(conn, spec_id)
         if row is None:
-            raise LookupError(f"spec {spec_id} not found")
+            raise NotFound(f"spec {spec_id} not found")
         if live:
             product.follow(self)
         return compile_spec(row["body"], targets=self.targets if live else None)

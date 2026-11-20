@@ -91,11 +91,11 @@ async def stored(empty_pool: AsyncConnectionPool) -> AsyncConnectionPool:
             await conn.execute(RUN, ("R-" + str(n) * 26, mode, Jsonb(params)))  # type: ignore[arg-type]
         before, fired = dict(await _all(conn, tables)), await _all(conn, triggers)
         made_, held = await _all(conn, functions), await _all(conn, constraints)
-    assert await migrate(empty_pool) == [16, 17, 18, 19, 20]
+    assert await migrate(empty_pool) == [16, 17, 18, 19, 20, 21, 22]
     async with empty_pool.connection() as conn:
         after = dict(await _all(conn, tables))
         assert {name: after[name] for name in before} == before  # no table is rewritten: not ds.runs
-        assert set(after) - set(before) == {"prechecks", "precheck_pairs"}
+        assert set(after) - set(before) == {"prechecks", "precheck_pairs", "worker_sweep"}  # 022's too
         assert await _all(conn, triggers) == fired and await _all(conn, functions) == made_
         assert await _all(conn, "SELECT count(*), count(guard) FROM ds.runs") == [(3, 0)]
         # Nor scanned: the column is nullable, has no default and brings no constraint to validate.

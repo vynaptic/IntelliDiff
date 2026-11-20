@@ -1,4 +1,4 @@
-"""Adjudication (P0 exit): a reviewer sheet for at most 50 keys of a run, and its score.
+"""Adjudication, the onboarding exit: a reviewer sheet for at most 50 keys of a run, and its score.
 
 Selection is deterministic (a salted SHA-256 of the masked key orders every choice) and
 stratified. Each engine outcome gets a quota: one key, and MATCH a reserved share (``MATCH_SHARE``
@@ -43,6 +43,7 @@ from deltasleuth.context import Context
 from deltasleuth.core import jsonio
 from deltasleuth.core.canonical.encoding import sha256_hex
 from deltasleuth.core.types import Verdict
+from deltasleuth.errors import NotFound
 from deltasleuth.reports.csv import parse_csv, render_csv
 from deltasleuth.reports.data import rank, read_json, write_json
 from deltasleuth.store import repo
@@ -409,7 +410,7 @@ async def _cycle_of(ctx: Context, run_id: str, cycle: int | None) -> int:
     async with ctx.pool.connection() as conn:
         run = await repo.get_run(conn, run_id)
         if run is None:
-            raise LookupError(f"run {run_id} not found")
+            raise NotFound(f"run {run_id} not found")
         cycle = cycle or run["cycle"]
         await refuse_purged(conn, run_id, cycle)
     return cycle
@@ -619,7 +620,7 @@ async def store_draw(
         raise AdjudicationError(f"the adjudication limit must be 1 to {MAX_LIMIT}")
     async with ctx.pool.connection() as conn:
         if await repo.get_run(conn, run_id) is None:
-            raise LookupError(f"run {run_id} not found")
+            raise NotFound(f"run {run_id} not found")
         await _unfrozen(conn, run_id, cycle)  # before the cycle is read
     salt = secrets.token_hex(16)
     selection, sheet = await draw(ctx, run_id, cycle, limit, salt)
@@ -647,7 +648,7 @@ async def store_score(ctx: Context, adjudication_id: str, data: bytes, *, who: P
     async with ctx.pool.connection() as conn:
         found = await repo.get_adjudication(conn, adjudication_id)
         if found is None:
-            raise LookupError(f"adjudication {adjudication_id} not found")
+            raise NotFound(f"adjudication {adjudication_id} not found")
         run_id, cycle = found["run_id"], found["cycle"]
         await _unfrozen(conn, run_id, cycle)
         if found["scored_at"] is not None:

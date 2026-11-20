@@ -104,7 +104,7 @@ NOT_MEASURED = (
 )
 NOTES = {
     "d4": "worker {concurrency: 4, lease_seconds: 120, poll_seconds: 0.05}: the shipped concurrency and"
-    " lease, the DS_PERF poll, so it measures work rather than idle polling (D4)",
+    " lease, the DS_PERF poll, so it measures work rather than idle polling",
     "darwin": "darwin: os.fsync does not use F_FULLFSYNC, so writes reach the disk's cache, not stable"
     " storage",
     "forward": "the database is reached through Docker's port forward on 127.0.0.1, which each round trip"
@@ -1528,7 +1528,7 @@ def _conditions(path: Path, result: dict[str, Any]) -> str:
             f" {hashlib.sha256(path.read_bytes()).hexdigest()}): observed on {hardware}, synthetic data;"
             f" {where}; PostgreSQL {pg['version']}{image} with {settings} holding"
             f" both sources and the control plane; topology {env['topology']}, rtt {env['rtt_ms']} ms; worker"
-            f" concurrency {w['concurrency']}, lease {w['lease_seconds']} s, poll {w['poll_seconds']} s (D4);"
+            f" concurrency {w['concurrency']}, lease {w['lease_seconds']} s, poll {w['poll_seconds']} s;"
             f" {result['options']['shape']} rows.")  # fmt: skip
 
 

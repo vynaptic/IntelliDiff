@@ -1,4 +1,4 @@
-"""Entity-linking domain pack (Appendix J): codes for what two services return about entities and
+"""Entity-linking domain pack: codes for what two services return about entities and
 their links, never how either is built, and the aliases MISSING_ENTITY / EXTRA_ENTITY of the core
 document codes. The loader reads its configuration schema from ``config.schema.json`` beside it.
 """

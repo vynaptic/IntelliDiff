@@ -18,6 +18,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from deltasleuth.core.secrets import read_secret_bytes
+from deltasleuth.errors import Invalid
 
 EXPECTED = "packs.signing_key_ref: expected an unencrypted PEM EC P-256 private key"
 NOT_PUBLIC = "not a PEM EC P-256 public key"
@@ -71,14 +72,14 @@ def load_public(public_pem: bytes) -> tuple[ec.EllipticCurvePublicKey, str]:
         der = base64.b64decode(b"".join(match[1].split()), validate=True) if match else b""
         key = serialization.load_der_public_key(der)
     except (ValueError, UnsupportedAlgorithm):
-        raise ValueError(NOT_PUBLIC) from None
+        raise Invalid(NOT_PUBLIC) from None
     spki = serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
     if (
         not isinstance(key, ec.EllipticCurvePublicKey)
         or not isinstance(key.curve, ec.SECP256R1)
         or key.public_bytes(*spki) != der  # a key re-encoded, not as the file holds it
     ):
-        raise ValueError(NOT_PUBLIC)
+        raise Invalid(NOT_PUBLIC)
     return key, hashlib.sha256(der).hexdigest()
 
 

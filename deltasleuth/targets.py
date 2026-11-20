@@ -44,6 +44,7 @@ from weakref import WeakKeyDictionary
 
 from jsonschema import Draft202012Validator
 
+from deltasleuth import errors as refusals
 from deltasleuth.auth import oidc, sessions
 from deltasleuth.auth.principal import Principal
 from deltasleuth.config import AuthSettings, Settings
@@ -54,6 +55,7 @@ from deltasleuth.core.spec.rules import _key_sources
 from deltasleuth.core.spec.schemas import schema_issues
 from deltasleuth.core.spec.targets import TargetRegistry, declared, load_targets
 from deltasleuth.core.types import AuthoritativeAbsence, CompiledSpec, Target
+from deltasleuth.errors import Invalid
 from deltasleuth.evidence.fsio import atomic_write, ensure_private_dir
 from deltasleuth.store import repo
 
@@ -107,12 +109,8 @@ FOLLOW_FAILED = (
 )
 
 
-class Refused(ValueError):
+class Refused(refusals.Refused):
     """A change of the product's targets refused: its HTTP status and binding message."""
-
-    def __init__(self, status: int, message: str) -> None:
-        super().__init__(message)
-        self.status = status
 
 
 def path(settings: Settings) -> Path:
@@ -306,7 +304,7 @@ async def unmoved(ctx: Context, read: Mapping[str, Target]) -> AsyncIterator[Non
     async with turns.lock:  # after a change under way
         for target_id, was in read.items():
             if target_id not in ctx.targets or _shape(ctx.targets.get(target_id)) != _shape(was):
-                raise ValueError(MOVED.format(target_id))
+                raise Invalid(MOVED.format(target_id))
         turns.written += 1
         turns.idle.clear()
     try:

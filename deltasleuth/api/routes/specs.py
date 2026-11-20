@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from pydantic import Field, ValidationError
 
-from deltasleuth import approvals
+from deltasleuth import approvals, specs
 from deltasleuth.api.deps import Ctx, Payload, SpecAuthor, Viewer, issues_of, masked_body, need, ok, trial
 from deltasleuth.connectors.base import KeyRejectedError
 from deltasleuth.connectors.rest import RestConnector
@@ -169,18 +169,11 @@ async def create_spec(ctx: Ctx, who: SpecAuthor, request: Request) -> Response:
     store would not keep it as uploaded, storing nothing. Every upload is
     audited: its first uploader is the spec's ``created_by``. The answer names the scopes that gate its
     runs under SSO (``needs``) and its active four-eyes approval, if any."""
-    spec = compile_spec((await _document(request))[0], targets=ctx.targets)
-    if problem := approvals.unstorable(spec.raw):
-        raise HTTPException(422, problem)
-    async with repo.audited(ctx.pool) as (conn, audit):
-        spec_id = await repo.save_spec(conn, spec, created_by=who.actor)
-        if problem := await approvals.unstored(conn, spec_id, spec):
-            raise HTTPException(422, problem)  # rolls the upload back
-        active = await repo.active_spec_approval(conn, spec_id)
-        await audit(who, "spec.create", str(spec_id), {"content_hash": spec.content_hash})
+    stored = await specs.store(ctx, (await _document(request))[0], who)  # Invalid: what it would not keep
+    spec = stored.spec
     fields = {"name": spec.name, "version": spec.version, "content_hash": spec.content_hash}
-    gates = {"needs": approvals.needs(spec), "approval_id": active and active["approval_id"]}
-    return ok({"spec_id": spec_id, **fields, **gates}, 201)
+    gates = {"needs": approvals.needs(spec), "approval_id": stored.approval_id}
+    return ok({"spec_id": stored.spec_id, **fields, **gates}, 201)
 
 
 @router.post("/specs/validate")
@@ -327,10 +320,7 @@ async def try_side(ctx: Ctx, who: SpecAuthor, sent: Request) -> Response:
         under = f"/sides/{other}/"
         own = [i for i in exc.issues if not (filled and (i.pointer + "/").startswith(under))]
         raise SpecError(own or exc.issues) from None  # the other side's own, when there is no other
-    try:
-        (key,) = normalise_keys([body.key], spec)
-    except ValueError as exc:  # positions, never a key
-        raise HTTPException(422, str(exc)) from None
+    (key,) = normalise_keys([body.key], spec)  # refused by its position, never the key
     cfg, raw = spec.sides[Side(side)], trial(ctx.settings)
     detail = {
         "spec": spec.name,

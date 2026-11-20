@@ -143,7 +143,7 @@ async def test_compare_key_is_masked_and_rate_limited_per_asker(scripted, make_c
                           pointer_parts=(("field", "email"),))  # fmt: skip
         return KeyResult(key, Outcome.MISMATCH, side, side, findings=[finding])
 
-    monkeypatch.setattr("deltasleuth.runner.compare_one", compare_one)
+    monkeypatch.setattr("deltasleuth.runner.runs.compare_one", compare_one)
     call = ("compare_key", {"key": seeded.key})
     llm.say("", *[call] * 6).say("", *[call] * 6)  # two turns at once, in two sessions, of six calls each
     for _ in range(4):
@@ -184,7 +184,7 @@ async def test_a_failing_tool_never_loses_the_turn(scripted, make_ctx, monkeypat
     async def compare_one(*_: Any, **__: Any) -> KeyResult:
         raise errors.pop(0)
 
-    monkeypatch.setattr("deltasleuth.runner.compare_one", compare_one)
+    monkeypatch.setattr("deltasleuth.runner.runs.compare_one", compare_one)
     call = ("compare_key", {"key": seeded.key})
     llm.say("", call).say("", call).say("", call).say("", call).say("Nothing compared.").say("Nothing.")
 
@@ -203,7 +203,7 @@ async def test_a_failing_tool_never_loses_the_turn(scripted, make_ctx, monkeypat
     assert len(logged) == 3 and all(f"session {sid}" in line for line in logged)
     kinds = [line.split(": ", 1)[1].split(" at ")[0] for line in logged]
     assert kinds == ["ValueError", "KeyError", "RuntimeError"]
-    assert all(" at agent/tools.py:" in line for line in logged)
+    assert all(" at runner/runs.py:" in line and " from agent/tools.py:" in line for line in logged)
     assert RAW_KEY not in caplog.text and RAW_EMAIL not in caplog.text
 
 
@@ -218,7 +218,7 @@ async def test_each_key_the_chat_reads_is_a_key_view_of_the_session(scripted, ma
         side = SideState(SideStateKind.COMPLETE)
         return KeyResult(key, Outcome.MATCH, side, side)
 
-    monkeypatch.setattr("deltasleuth.runner.compare_one", compare_one)
+    monkeypatch.setattr("deltasleuth.runner.runs.compare_one", compare_one)
     llm.say("", ("get_observations", {"key": seeded.key}), ("get_observations", {"key": "tok:x"}))
     llm.say("", ("compare_key", {"key": seeded.key})).say("Read.").say("Read.")
 
@@ -637,7 +637,7 @@ async def test_the_agent_acts_for_the_asker(scripted, make_ctx, monkeypatch) -> 
         side = SideState(SideStateKind.COMPLETE)
         return KeyResult(key, Outcome.MATCH, side, side)
 
-    monkeypatch.setattr("deltasleuth.runner.compare_one", compare_one)
+    monkeypatch.setattr("deltasleuth.runner.runs.compare_one", compare_one)
     call = ("compare_key", {"key": seeded.key})
     llm.say("", call).say("Not allowed.")
     await answer(ctx, sid, "Compare it.", replace(TESTER, roles=expand(["viewer"])))

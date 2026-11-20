@@ -1,0 +1,21 @@
+description: >
+  A finding an accepted known-difference rule matches is suppressed with the rule's id; a key whose
+  discrepant findings are all suppressed is KNOWN_DIFF.
+knownDiffs:
+  - id: KD-0001
+    when: "path == '$.segment' && a == 'PRIVATE' && b == 'WEALTH'"
+    classification: accepted
+    reason: The new service renamed the PRIVATE segment to WEALTH.
+    ticket: ORG-1001
+a:
+  body: '{"code": "ORG-000123", "segment": "PRIVATE"}'
+b:
+  body: '{"code": "ORG-000123", "segment": "WEALTH"}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  outcome: KNOWN_DIFF
+  findings:
+    - finding: [/segment, $.segment, value_changed, null]
+      taxonomy: [VALUE_MISMATCH, MEDIUM]
+      rule: KD-0001

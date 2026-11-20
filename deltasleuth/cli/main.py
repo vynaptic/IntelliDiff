@@ -6,7 +6,7 @@
     ds compare KEY --spec SPEC                  one key now (a one-shot run)
     ds run SPEC [--keys F] [--samples DIR] [--soak] [--no-wait]
     ds runs | report RUN                        list runs; write their reports
-    ds profile | measure | adjudicate | score   the P0 onboarding tools
+    ds profile | measure | adjudicate | score   the onboarding tools
     ds llm-probe [--profile ID]
     ds token create|revoke|list                 API tokens
     ds session revoke | users [disable|enable]  break-glass: sessions and people
@@ -37,9 +37,9 @@
 Settings come from ``--config`` or ``DS_CONFIG``. Exit codes: 0 success; 1 discrepancies found
 (``--fail-on-diff``), a pair below the state asked for (``ds readiness --fail-unless``), or a table
 pre-check with a pair as bad as asked, or cancelled (``ds precheck run --fail-on``); 2 usage,
-input or configuration errors (one ``error:`` line each); 3 an internal error (a bug: the traceback is
-printed); 130 interrupted. Messages name files, pointers and counts, never keys, payload values or
-credentials.
+input or configuration errors (one ``error:`` line each); 3 an internal error (a bug: its traceback is
+printed, each exception by its type and never its message); 130 interrupted. Messages name files,
+pointers and counts, never keys, payload values or credentials.
 
 The CLI acts as ``local:<DS_OPERATOR>@<host>`` with every role, outside the role model: whoever holds
 the DSN file and the tokeniser key can reach the store directly. With the auth
@@ -79,7 +79,7 @@ from typing import Annotated, Any, Literal, NoReturn
 import psycopg
 import typer
 
-from deltasleuth import approvals, licence, notifications, prechecks, readiness, schedules
+from deltasleuth import approvals, licence, notifications, prechecks, readiness, schedules, specs
 from deltasleuth.approvals import ApprovalConflict, ApprovalRequired
 from deltasleuth.auth.oidc import SignInError
 from deltasleuth.auth.principal import ROLES, Principal, expand, local
@@ -98,13 +98,12 @@ from deltasleuth.core.spec import (
 )
 from deltasleuth.core.spec.documents import in_container
 from deltasleuth.core.types import CompiledSpec, Verdict
+from deltasleuth.errors import Invalid, NotFound, ours
 from deltasleuth.evidence.store import EvidenceError
-from deltasleuth.licence import LicenceRefused
 from deltasleuth.llm.model import LLMError
 from deltasleuth.runner import drift, sample
 from deltasleuth.runner.compare import EvidenceMissing
-from deltasleuth.runner.purge import CyclePurged
-from deltasleuth.runner.sample import SampleRefused
+from deltasleuth.runner.cycle import located
 from deltasleuth.security import rawvalues
 from deltasleuth.security.signing import PackSigner
 from deltasleuth.store import chain, repo
@@ -116,15 +115,15 @@ DEVELOPER_MODE = (
 )
 NO_APPROVERS = "warning: no IdP group maps to rule_approver or above: nothing can be approved"
 VALUE_WIDTH = 60
-SUMMARY = "summary"  # the P0 contract report (report.md, report.html); the other kinds are reports.FORMATS
+SUMMARY = "summary"  # the contract report (report.md, report.html); the other kinds are reports.FORMATS
 _COUNTERS = ("total", "compared", "match", "different", "indeterminate", "cancelled", "outstanding")
 _EVIDENCE = ("kind", "path_a", "path_b", "decision", "sample_count", "scores", "note")
-# Failures a user can act on (ValueError covers bad settings, secrets, keys and sheets): one line
-# each, exit 2. Anything else is a bug, as is a KeyError or IndexError: no code raises them on purpose.
-_EXPECTED = (SpecError, ConnectorError, EvidenceError, LLMError, ContextError, SignInError, CyclePurged,
-             EvidenceMissing, ApprovalRequired, ApprovalConflict, LicenceRefused, SampleRefused,
-             psycopg.OperationalError, LookupError, ValueError, OSError)  # fmt: skip
-_BUGS = (KeyError, IndexError)
+# Failures a user can act on, one line each and exit 2: a refusal, or an error of a kind the package defines
+# for bad settings, secrets, keys and sheets (``errors.ours``), and these. Anything else is a bug, a
+# ValueError or LookupError of Python's or a library's among them: its message may quote a key or a value.
+_EXPECTED = (SpecError, ConnectorError, EvidenceError, LLMError, ContextError, SignInError, EvidenceMissing,
+             ApprovalRequired, ApprovalConflict, psycopg.OperationalError, OSError,
+             UnicodeDecodeError)  # fmt: skip
 
 app = typer.Typer(
     name="ds",
@@ -215,23 +214,58 @@ def _issues(issues: list[SpecIssue]) -> None:
 
 @contextmanager
 def _errors(interrupted: str = "interrupted") -> Iterator[None]:
-    """Expected failures: one line each, exit 2. A bug: its traceback, exit 3 (never 1). Ctrl-C: 130,
-    saying ``interrupted``."""
+    """Expected failures: one line each, exit 2. A bug: its traceback without messages, then its type and
+    where it was raised, exit 3 (never 1). Ctrl-C: 130, saying ``interrupted``."""
     try:
         yield
     except KeyboardInterrupt:
         typer.echo(interrupted, err=True)
         raise typer.Exit(EXIT_INTERRUPTED) from None
     except Exception as exc:
-        if isinstance(exc, _BUGS) or not isinstance(exc, _EXPECTED):
-            traceback.print_exception(exc)
-            typer.echo("internal error: a bug in DeltaSleuth; the traceback above tells where", err=True)
+        if not (ours(exc) or isinstance(exc, _EXPECTED)):
+            _traceback(exc)
+            typer.echo(
+                f"internal error: a bug in DeltaSleuth ({located(exc)}); the traceback above tells where",
+                err=True,
+            )
             raise typer.Exit(EXIT_INTERNAL) from None
         if isinstance(exc, SpecError):
             _issues(list(exc.issues))  # its message would repeat them
         else:
             typer.echo(f"error: {_message(exc)}", err=True)
         raise typer.Exit(EXIT_USAGE) from None
+
+
+_CAUSED = "The above exception was the direct cause of the following exception:"
+_DURING = "During handling of the above exception, another exception occurred:"
+
+
+def _mcp_server() -> Any:
+    """``deltasleuth.mcp.server``, whose import loads the MCP library: an ``OTEL_*`` setting that names what
+    is not installed stops it with a ValueError naming that setting's value, which is refused as such."""
+    try:
+        return importlib.import_module("deltasleuth.mcp.server")
+    except ValueError as exc:
+        raise Invalid(str(exc)) from None
+
+
+def _traceback(exc: BaseException) -> None:
+    """``exc``'s traceback as Python prints it, with the exceptions it chains, but each exception by its type
+    alone: a message may quote a key or a value."""
+    chained: list[tuple[BaseException, str | None]] = []  # the newest first, each with how it follows
+    link: BaseException | None = exc
+    while link is not None and not any(link is seen for seen, _ in chained):
+        older, note = link.__cause__, _CAUSED
+        if older is None and not link.__suppress_context__:
+            older, note = link.__context__, _DURING
+        chained.append((link, note if older is not None else None))
+        link = older
+    for n, (link, note) in enumerate(reversed(chained)):
+        if note and n:
+            typer.echo(f"\n{note}\n", err=True)
+        typer.echo("Traceback (most recent call last):", err=True)
+        typer.echo("".join(traceback.format_tb(link.__traceback__)), nl=False, err=True)
+        typer.echo(type(link).__qualname__, err=True)
 
 
 def _run[T](work: Awaitable[T], interrupted: str = "interrupted") -> T:
@@ -329,12 +363,10 @@ def _siem(stream: str = "stderr") -> None:
 
 
 async def _wrote(ctx: Context, who: Principal, run_id: str, name: str, cycle: int | None) -> None:
-    """Audit a report the CLI wrote as ``report.download``, in its own transaction."""
-    async with repo.audited(ctx.pool) as (conn, audit):
-        if cycle is None:  # the run's current cycle, which the report read
-            run = await repo.get_run(conn, run_id)
-            cycle = run and run["cycle"]
-        await audit(who, "report.download", run_id, {"name": name, "cycle": cycle})
+    """Audit a report the CLI wrote as ``report.download`` (``reports.downloaded``)."""
+    from deltasleuth.reports import downloaded
+
+    await downloaded(ctx, who, run_id, name, cycle)
 
 
 async def _warned(ctx: Context) -> None:
@@ -364,34 +396,10 @@ def _json(value: Any) -> str:
 async def _save_spec(
     ctx: Context, path: Path, who: Principal, *, gated: bool = True
 ) -> tuple[int, CompiledSpec]:
-    """Store the spec file (once per content hash), audited; its spec_id and compiled form.
-
-    Under SSO a run needs an approved upload: the file's stored version is
-    found by its content hash and gated before anything is written (unless ``gated`` is false: a table
-    pre-check is not gated), and it is not saved again. A version that needs an
-    approval and was never uploaded is refused; one that needs none is stored. A body the store would not
-    keep as written is refused, storing nothing, as the upload route does."""
-    spec = compile_spec(load_spec_file(path), targets=ctx.targets)
-    if problem := approvals.unstorable(spec.raw):
-        raise ValueError(problem)
-    if ctx.settings.auth_mode == "oidc":
-        async with ctx.pool.connection() as conn:
-            stored = await repo.spec_by_hash(conn, spec.content_hash)
-            if stored is not None:
-                if gated:
-                    await approvals.gate(ctx, conn, stored["spec_id"], spec)
-                return stored["spec_id"], spec
-        if approvals.needs(spec):
-            raise ApprovalRequired(
-                f"spec {spec.name} {spec.version} has no approved upload: upload it on the Specs screen,"
-                " signed in, and have it approved (a CLI or token upload needs two approvers)"
-            )
-    async with repo.audited(ctx.pool) as (conn, audit):
-        spec_id = await repo.save_spec(conn, spec, created_by=who.actor)
-        if problem := await approvals.unstored(conn, spec_id, spec):
-            raise ValueError(problem)  # rolls the upload back
-        await audit(who, "spec.create", str(spec_id), {"content_hash": spec.content_hash})
-    return spec_id, spec
+    """Store the spec file to run it (``specs.store``: under SSO only an approved upload runs, gated
+    unless ``gated`` is false, as a table pre-check is not); its spec_id and compiled form."""
+    stored = await specs.store(ctx, load_spec_file(path), who, to_run=True, gated=gated)
+    return stored.spec_id, stored.spec
 
 
 def _unapproved(ctx: Context, spec_id: int, spec: CompiledSpec, run_id: str) -> None:
@@ -492,7 +500,7 @@ def serve(
         if settings.packs is not None:
             PackSigner.load(settings.packs.signing_key_ref)  # likewise the evidence packs' signing key
         if settings.mcp is not None and settings.mcp.http:
-            importlib.import_module("deltasleuth.mcp.server")  # likewise the MCP library's import
+            _mcp_server()  # likewise the MCP library's import
         _bindable(host, port)  # last: before the store is opened, so no system.start row and no worker
     if not WEB_DIST.is_dir():
         typer.echo(
@@ -561,6 +569,29 @@ def _stopping(*, once: bool = False) -> Iterator[asyncio.Event]:
         signal.signal(signal.SIGTERM, previous or signal.SIG_DFL)  # None: one not set from Python
 
 
+async def _until[T](ctx: Context, wait: bool, check: Callable[[], Awaitable[tuple[bool, T]]]) -> T:
+    """What ``check`` found once it says it is done, or at once without ``wait``. With ``wait`` an
+    in-process worker (no schedules) works meanwhile, and ``check`` is asked again every
+    ``worker.poll_seconds``; a SIGTERM ends the wait as Ctrl-C does, once the worker has stopped."""
+    from deltasleuth.runner import run_worker
+
+    with _stopping() as stop:
+        running = asyncio.create_task(run_worker(ctx, stop=stop, schedules=False)) if wait else None
+        try:
+            while True:
+                done, found = await check()
+                if done or not wait:
+                    return found
+                with suppress(TimeoutError):
+                    await asyncio.wait_for(stop.wait(), ctx.settings.worker.poll_seconds)
+                if stop.is_set():  # a SIGTERM: as Ctrl-C, once the worker below has stopped
+                    raise KeyboardInterrupt
+        finally:
+            stop.set()
+            if running:
+                await running
+
+
 @app.command()
 def worker(config: ConfigOpt = None) -> None:
     """Process the keys of running runs until interrupted or terminated; unfinished keys are handed back."""
@@ -608,15 +639,15 @@ async def _files_check(
 
     who = f"target {target.target_id}"
     if table is not None and asked["form"] is None:
-        raise ValueError(f"{who}: --table of a files target is a path and needs --format csv or parquet")
+        raise Invalid(f"{who}: --table of a files target is a path and needs --format csv or parquet")
     if refused := await manifest.opened(settings, registry, Path(config or os.environ["DS_CONFIG"])):
-        raise ValueError(refused[0])
+        raise Invalid(refused[0])
     duck.configure(settings, registry)
     mount = await duck.mount(target)
     try:
         made = await duck.configured()
     except duck.Unstarted as exc:
-        raise ValueError(duck.unstarted(exc, who, settings.files)) from None
+        raise Invalid(duck.unstarted(exc, who, settings.files)) from None
     lines = await duck.check(target, table, **asked) if table is not None else []
     found = {"mount": mount, "version": made.version, "built": duck.reader.NEEDED, "lines": lines}
     return found | {"held": ", ".join(duck.restricted(made))}
@@ -648,10 +679,10 @@ def target_check(
         registry = load_targets(settings.targets_file)
         target = registry.get(target_id)
         if target.engine is None:
-            raise ValueError(f"target {target_id} is not a database target (dsn_ref or engine)")
+            raise Invalid(f"target {target_id} is not a database target (dsn_ref or engine)")
         if target.engine == "files":
             if form not in (None, "csv", "parquet"):
-                raise ValueError("--format is csv or parquet")
+                raise Invalid("--format is csv or parquet")
             asked = {"form": form, "delimiter": delimiter, "header": header, "count": count}
             found = await _files_check(settings, registry, target, config, table, **asked, listed=manifest)
             return "files", found, None
@@ -754,7 +785,7 @@ def run(
     """Start a batch (or soak) run; without --no-wait, process it here with an in-process worker. What the
     schema guard says of its tables at its creation is printed as warnings; a run it paused prints its
     lines and exits 2."""
-    from deltasleuth.runner import create_run, run_worker
+    from deltasleuth.runner import create_run
 
     who = _local(config)
     with _errors():
@@ -775,22 +806,15 @@ def run(
         if created["status"] != "paused":  # one created paused prints its lines below
             for line in drift.warnings(created):
                 typer.echo(f"warning: {line}", err=True)
-        with _stopping() as stop:
-            running = asyncio.create_task(run_worker(ctx, stop=stop, schedules=False)) if wait else None
-            try:
-                while True:
-                    async with ctx.pool.connection() as conn:
-                        row = await repo.get_run(conn, run_id)
-                        if not wait or row["status"] in (*repo.TERMINAL, "paused"):
-                            return row, await repo.get_cycle(conn, run_id, row["cycle"])
-                    with suppress(TimeoutError):
-                        await asyncio.wait_for(stop.wait(), ctx.settings.worker.poll_seconds)
-                    if stop.is_set():  # a SIGTERM: as Ctrl-C, once the worker below has stopped
-                        raise KeyboardInterrupt
-            finally:
-                stop.set()
-                if running:
-                    await running
+
+        async def ended() -> tuple[bool, repo.Row]:
+            async with ctx.pool.connection() as conn:
+                row = await repo.get_run(conn, run_id)
+            return row["status"] in (*repo.TERMINAL, "paused"), row
+
+        row = await _until(ctx, wait, ended)
+        async with ctx.pool.connection() as conn:
+            return row, await repo.get_cycle(conn, run_id, row["cycle"])
 
     row, ended = _in_context(config, work)
     guarded = row["status"] == "paused" and row["stop_reason"] == drift.SCHEMA_PAUSE
@@ -862,13 +886,13 @@ def report(
     cycle: CycleOpt = None,
     config: ConfigOpt = None,
 ) -> None:
-    """Write a run's reports, masked, as <run>-<name>: the CSV exports and the PDF the API serves, or the P0
-    summary (report.md and report.html).
+    """Write a run's reports, masked, as <run>-<name>: the CSV exports and the PDF the API serves, or the
+    contract report (summary: report.md and report.html).
 
     A run made in the unlicensed evaluation of a build that enforces a licence is written as
     <run>-unlicensed-evaluation-<name>; a build without a vendor key enforces none.
     """
-    from deltasleuth.reports import FORMATS
+    from deltasleuth.reports import FORMATS, download
     from deltasleuth.reports.summary import summary_report
 
     kinds = kind or ["discrepancies.csv", "retry.csv", "coverage.csv", "report.pdf"]
@@ -878,25 +902,30 @@ def report(
 
     async def work(ctx: Context) -> list[Path]:
         async with ctx.pool.connection() as conn:
-            if (run := await repo.get_run(conn, run_id)) is None:
-                raise LookupError(f"run {run_id} not found")
+            if await repo.get_run(conn, run_id) is None:
+                raise NotFound(f"run {run_id} not found")
         out.mkdir(parents=True, exist_ok=True)
         written = []
         for k in kinds:
             if k == SUMMARY:
                 written += (await summary_report(ctx, run_id, out, cycle=cycle)).values()
-            else:
-                path = out / licence.file_name(run, k)
-                path.write_bytes(await FORMATS[k][1](ctx, run_id, cycle))
-                written.append(path)
-            await _wrote(ctx, who, run_id, k, cycle)
+                await _wrote(ctx, who, run_id, k, cycle)
+                continue
+            got = await download(ctx, who, run_id, k, cycle)  # audited before it is written
+            written.append(path := out / got.file_name)
+            if isinstance(got.content, bytes):
+                path.write_bytes(got.content)
+                continue
+            with path.open("wb") as file:
+                async for chunk in got.content:
+                    file.write(chunk)
         return written
 
     for path in _in_context(config, work):
         typer.echo(str(path))
 
 
-# -- P0 onboarding tools ----------------------------------------------------------------------------
+# -- onboarding tools -------------------------------------------------------------------------------
 
 
 @app.command()
@@ -943,7 +972,7 @@ def _request(text: str) -> dict[str, str]:
     """``"GET /v1/things/{{ key }}"`` as a spec request block."""
     method, _, path = text.strip().partition(" ")
     if method.upper() not in ("GET", "POST") or not path.strip().startswith("/"):
-        raise ValueError("a request is 'GET /path/{{ key }}' or 'POST /path'")
+        raise Invalid("a request is 'GET /path/{{ key }}' or 'POST /path'")
     return {"method": method.upper(), "path": path.strip()}
 
 
@@ -1017,7 +1046,7 @@ def adjudicate(
 
 @app.command()
 def score(out: OutOpt, config: ConfigOpt = None) -> None:
-    """Score the filled reviewer sheet against the engine and check the P0 exit criterion."""
+    """Score the filled reviewer sheet against the engine and check the onboarding exit criterion."""
     from deltasleuth.reports.adjudicate import SCORE_NAME, SELECTION_NAME
     from deltasleuth.reports.adjudicate import score as score_sheet
     from deltasleuth.reports.data import read_json
@@ -1036,7 +1065,8 @@ def score(out: OutOpt, config: ConfigOpt = None) -> None:
             f"  disagreement {d['key']}: engine {d['engine_verdict']}, reviewer {d['reviewer_verdict']}"
         )
     passed = s["exit"]["passed"]
-    typer.echo("P0 exit: PASSED" if passed else "P0 exit: NOT YET (" + "; ".join(s["exit"]["reasons"]) + ")")
+    reasons = "; ".join(s["exit"]["reasons"])
+    typer.echo("onboarding exit: PASSED" if passed else f"onboarding exit: NOT YET ({reasons})")
 
 
 @app.command("llm-probe")
@@ -1129,10 +1159,10 @@ def token_revoke(token_id: Annotated[str, _a("The token id (T-…).")], config: 
     async def work(ctx: Context) -> repo.Row:
         async with repo.audited(ctx.pool) as (conn, audit):
             if await repo.token_by_id(conn, token_id) is None:
-                raise LookupError(f"token {token_id} not found")
+                raise NotFound(f"token {token_id} not found")
             row = await repo.revoke_token(conn, token_id, who.actor)
             if row is None:
-                raise ValueError(f"token {token_id} is already revoked")
+                raise Invalid(f"token {token_id} is already revoked")
             await audit(who, "token.revoke", token_id)
         return row
 
@@ -1172,12 +1202,12 @@ def session_revoke(
     async def work(ctx: Context) -> int:
         async with repo.audited(ctx.pool) as (conn, audit):
             if user is not None and await repo.get_user(conn, user) is None:
-                raise LookupError(f"user {user} not found")
+                raise NotFound(f"user {user} not found")
             count = await repo.revoke_sessions(
                 conn, who.actor, session_id=session, user_id=user, everyone=everyone
             )
             if session is not None and not count:  # unknown, or already ended
-                raise LookupError(f"session {session} not found")
+                raise NotFound(f"session {session} not found")
             await audit(who, "session.revoke", session or user or "all", {"count": count})
         return count
 
@@ -1230,10 +1260,10 @@ def users_disable(
     async def work(ctx: Context) -> tuple[repo.Row, list[repo.Row], list[str]]:
         async with repo.audited(ctx.pool) as (conn, audit):
             if await repo.get_user(conn, user_id) is None:
-                raise LookupError(f"user {user_id} not found")
+                raise NotFound(f"user {user_id} not found")
             row = await repo.set_user_disabled(conn, user_id, who.actor)
             if row is None:
-                raise ValueError(f"user {user_id} is already disabled")
+                raise Invalid(f"user {user_id} is already disabled")
             revoked = await repo.revoke_user_tokens(conn, user_id, who.actor) if revoke_tokens else []
             listed = await repo.user_tokens(conn, user_id)
             detail = {"sessions_revoked": row["sessions_revoked"], "tokens_revoked": revoked}
@@ -1258,9 +1288,9 @@ def users_enable(user_id: Annotated[str, _a("The user id (U-…).")], config: Co
         async with repo.audited(ctx.pool) as (conn, audit):
             user = await repo.get_user(conn, user_id)
             if user is None:
-                raise LookupError(f"user {user_id} not found")
+                raise NotFound(f"user {user_id} not found")
             if await repo.set_user_disabled(conn, user_id, None) is None:
-                raise ValueError(f"user {user_id} is not disabled")
+                raise Invalid(f"user {user_id} is not disabled")
             await audit(who, "user.enable", user_id)
         return user
 
@@ -1278,7 +1308,7 @@ def _when(text: str | None, option: str) -> datetime | None:
     try:
         when = datetime.fromisoformat(text)
     except ValueError:
-        raise ValueError(f"{option} {text!r} is not an ISO 8601 time, e.g. 2026-09-26T08:00:00Z") from None
+        raise Invalid(f"{option} {text!r} is not an ISO 8601 time, e.g. 2026-09-26T08:00:00Z") from None
     return when if when.tzinfo is not None else when.replace(tzinfo=UTC)
 
 
@@ -1703,7 +1733,7 @@ def samples_list(
                 return await repo.pages(repo.draws, conn)
             stored = await repo.newest_spec(conn, spec_name)
             if stored is None:
-                raise LookupError(f"spec {spec_name} not found")
+                raise NotFound(f"spec {spec_name} not found")
             found = compile_spec(stored["body"]).sample
             return [] if found is None else await repo.ledger(conn, found.population)
 
@@ -1764,7 +1794,7 @@ def labellings(
     async def work(ctx: Context) -> list[dict[str, Any]]:
         async with ctx.pool.connection() as conn:
             if run_id is not None and await repo.get_run(conn, run_id) is None:
-                raise LookupError(f"run {run_id} not found")
+                raise NotFound(f"run {run_id} not found")
             rows = await repo.list_labellings(conn, run_id)
             signoffs = await repo.pages(repo.list_approvals, conn, kind="signoff", run_id=run_id)
         attested = accuracy.attesting(signoffs)
@@ -2589,8 +2619,6 @@ def precheck_run(
     without --no-wait, read it here with an in-process worker: each pair's two tables are counted and added
     up inside one snapshot a side, and no row is read. It says where to look first; it does not compare
     rows."""
-    from deltasleuth.runner import run_worker
-
     if fail_on is not None and fail_on not in _FAIL_ON:
         _fail(f"--fail-on is one of {', '.join(_FAIL_ON)}")
     if fail_on is not None and not wait:
@@ -2620,21 +2648,12 @@ def precheck_run(
             ids_ = (stored + ids[len(stored) :]) or None
             made = await prechecks.create(ctx, body | {"spec_ids": ids_}, who)
         precheck_id = made["precheck_id"]
-        with _stopping() as stop:
-            running = asyncio.create_task(run_worker(ctx, stop=stop, schedules=False)) if wait else None
-            try:
-                while True:
-                    found = await prechecks.described(ctx, precheck_id, limit=prechecks.PAIRS)
-                    if not wait or found["finished_at"] is not None:
-                        return found
-                    with suppress(TimeoutError):
-                        await asyncio.wait_for(stop.wait(), ctx.settings.worker.poll_seconds)
-                    if stop.is_set():  # a SIGTERM: as Ctrl-C, once the worker below has stopped
-                        raise KeyboardInterrupt
-            finally:
-                stop.set()
-                if running:
-                    await running
+
+        async def finished() -> tuple[bool, dict[str, Any]]:
+            found = await prechecks.described(ctx, precheck_id, limit=prechecks.PAIRS)
+            return found["finished_at"] is not None, found
+
+        return await _until(ctx, wait, finished)
 
     found = _in_context(config, work)
     if as_json:
@@ -2811,7 +2830,9 @@ def mcp_serve(
         if settings.auth is not None and not host_channel:
             raise SettingsError(MCP_HOST_CHANNEL)
         from deltasleuth.connectors.tables import code
-        from deltasleuth.mcp import server, tools  # the MCP library's import, which this command alone needs
+        from deltasleuth.mcp import tools
+
+        server = _mcp_server()  # the MCP library's import, which this command alone needs
 
         asserted = replace(local(required=settings.auth is not None), roles=expand([role]))
         who = tools.caller(asserted, tools.STDIO)
@@ -2948,7 +2969,7 @@ def _preview(plan: dict[str, list[repo.Row]]) -> None:
             lines.append(f"abandon: {run}: cancelled, {past}; its cycle is then due")
     samples = sorted({(row["samples_dir"], row["run_id"]) for row in plan["due"] if row["samples_dir"]})
     for directory, run_id in samples:
-        lines.append(f"outside retention: {directory} (run {run_id}): P0 samples, for the site's cron")
+        lines.append(f"outside retention: {directory} (run {run_id}): captured samples, for the site's cron")
     for line in lines or ["nothing to purge"]:
         typer.echo(line)
 
@@ -3172,7 +3193,7 @@ def approvals_revoke(
             if approval is not None and rawvalues.key_shaped(
                 await ctx.spec(conn, approval["spec_id"]), reason
             ):
-                raise ValueError(rawvalues.KEY_SHAPED)  # audit rows and packs carry it forever
+                raise Invalid(rawvalues.KEY_SHAPED)  # audit rows and packs carry it forever
             return await approvals.revoke(conn, audit, approval_id, reason, who=who)
 
     done = _in_context(config, work)

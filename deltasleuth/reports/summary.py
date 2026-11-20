@@ -1,6 +1,7 @@
-"""The P0 contract report of a run: Markdown and self-contained HTML, written into its P0 directory.
+"""The contract report of a run: Markdown and self-contained HTML, written into the directory of the
+onboarding tools.
 
-Built from the run's masked rows, the spec's declarations and what the P0 tools wrote into the
+Built from the run's masked rows, the spec's declarations and what the onboarding tools wrote into the
 directory (``measure.json``, the adjudication sheet and score); no evidence body is read. A run
 that stopped early or cancelled keys is marked PARTIAL, and the adjudication check passes only on
 a score of the sheet the directory holds now (same run, same SHA-256): any other score is stale.
@@ -79,7 +80,7 @@ def summary_document(data: RunData, out_dir: Path) -> Document:
     if (run["params"].get("licence") or {}).get("state") in ("evaluation", "grace"):
         warning = " ".join(filter(None, [warning, licence_line(data)]))
     return Document(
-        title=f"P0 contract report{' (PARTIAL)' if partial else ''}: {data.spec.name}",
+        title=f"Contract report{' (PARTIAL)' if partial else ''}: {data.spec.name}",
         meta=f"Run {run['run_id']} · {run['mode']} · cycle {data.cycle} · every value is masked "
         "(equal tokens mean equal values)",
         warning=warning,
@@ -99,7 +100,7 @@ def summary_document(data: RunData, out_dir: Path) -> Document:
 
 
 def _for_run(path: Path, run_id: str) -> Any:
-    """A P0 tool's output for this run, else None (absent, or written for another run)."""
+    """An onboarding tool's output for this run, else None (absent, or written for another run)."""
     found = read_json(path) if path.exists() else None
     return found if found is not None and found["run_id"] == run_id else None
 
@@ -132,7 +133,7 @@ def _checklist(
         ("Profiler draft reviewed and LLM profiles probed", MANUAL, "outside this report"),
         ("LLM profiles reviewed by the site", MANUAL, "outside this report"),
     ]  # fmt: skip
-    return Section("P0 exit checklist", header=("Check", "Status", "Detail"), rows=rows)
+    return Section("Onboarding exit checklist", header=("Check", "Status", "Detail"), rows=rows)
 
 
 def _spec(data: RunData) -> Section:

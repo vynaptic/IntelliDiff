@@ -25,6 +25,7 @@ from deltasleuth.core import sampling
 from deltasleuth.core.spec import TargetRegistry, compile_spec
 from deltasleuth.core.spec.documents import parse_yaml_text
 from deltasleuth.core.types import CompiledSpec
+from deltasleuth.errors import Invalid
 from deltasleuth.runner.keys import KeyAuthRefused, resolve
 from deltasleuth.runner.runs import compare_one, create_run
 from deltasleuth.store import repo
@@ -212,7 +213,7 @@ def engine() -> Iterator[Failing]:
 async def test_read_refusals_are_value_errors(
     on_tables: Tables, engine: Failing, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Whatever keeps a key table from being planned or read is a ValueError, a run's refusal: a plan's in a
+    """Whatever keeps a key table from being planned or read is an Invalid, a run's refusal: a plan's in a
     table side's words, ``the key source`` where its side stands; a fault of its target by its code alone,
     never its text; a refused credential one a roll can tell (``KeyAuthRefused``)."""
     _, harness = on_tables(SHELVES)
@@ -258,7 +259,7 @@ async def test_read_refusals_are_value_errors(
             found = await refusal(h)
             assert str(found) == f"the key source {said}", method
             assert type(found) is (
-                KeyAuthRefused if isinstance(error, tables.TargetAuthRefused) else ValueError
+                KeyAuthRefused if isinstance(error, tables.TargetAuthRefused) else Invalid
             )
             engine(method)
 

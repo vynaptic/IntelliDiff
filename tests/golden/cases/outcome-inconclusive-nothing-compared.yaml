@@ -1,0 +1,13 @@
+description: >
+  Two documents an exclude leaves without a value compare nothing: the key is INCONCLUSIVE
+  unparseable, never MATCH, although both sides were read and their differences are excluded.
+compare:
+  exclude: [$.meta]
+a:
+  body: '{"meta": {"servedBy": "node-1"}}'
+b:
+  body: '{"meta": {"servedBy": "node-2"}}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  outcome: INCONCLUSIVE unparseable

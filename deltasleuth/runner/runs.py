@@ -40,9 +40,10 @@ from deltasleuth.connectors import tables
 from deltasleuth.context import Capabilities, Context
 from deltasleuth.core import cron
 from deltasleuth.core.canonical.encoding import sha256_hex
-from deltasleuth.core.types import CompiledSpec, KeyResult
+from deltasleuth.core.types import CompiledSpec, KeyResult, Observation, SideState
+from deltasleuth.errors import Invalid, NotFound
 from deltasleuth.runner import census, drift, sample
-from deltasleuth.runner.compare import FileReader, LiveReader, evaluate, save_pass
+from deltasleuth.runner.compare import FileReader, LiveReader, evaluate, save_pass, side_state
 from deltasleuth.runner.cycle import CANCELLED, due, fail_run, final_status, finish_cycle, summarise
 from deltasleuth.runner.drift import SCHEMA_PAUSE
 from deltasleuth.runner.keys import keys_cut, normalise_keys, resolve, run_keys
@@ -50,6 +51,7 @@ from deltasleuth.runner.recheck import RecheckPolicy, confirm, freeze
 from deltasleuth.runner.scan import new_scan
 from deltasleuth.runner.stop import STOP_PREFIX
 from deltasleuth.security.crypto import Sealer
+from deltasleuth.security.tokenise import mask_document
 from deltasleuth.store import repo
 
 AUTH_PAUSE = "run_paused_auth_error"  # a side refused the credential; a resume means it was fixed
@@ -115,9 +117,9 @@ async def create_run(
     may take long to list) is a ValueError too.
     """
     if mode not in ("batch", "soak") or (soak is not None and mode != "soak"):
-        raise ValueError(MODE)
+        raise Invalid(MODE)
     if mode == "soak" and samples_dir is not None:
-        raise ValueError("a soak run reads the targets: captured samples do not change between cycles")
+        raise Invalid("a soak run reads the targets: captured samples do not change between cycles")
     async with ctx.pool.connection() as conn:
         spec = await ctx.spec(conn, spec_id, live=True)
         read = product.reading(ctx, spec)  # its targets as it was judged: one moved since refuses the run
@@ -127,12 +129,12 @@ async def create_run(
             sample.refuse(mode, keys, samples_dir, soak)
             await sample.overlapping(conn, spec)
     if mode == "soak" and "cycleInterval" not in spec.raw.get("execution", {}):
-        raise ValueError(INTERVAL)
+        raise Invalid(INTERVAL)
     tabled = sum(cfg.table is not None for cfg in spec.sides.values())
     scanning = tabled == 2 and keys is None and "source" not in spec.raw["key"]  # a soak scans every cycle
     if samples_dir is not None:
         if tabled:
-            raise ValueError("captured samples replay service sides only; a table side is read live")
+            raise Invalid("captured samples replay service sides only; a table side is read live")
         samples_dir = str(Path(samples_dir).resolve())
         FileReader(samples_dir, spec)  # refuses an unreadable or ambiguous sample directory now
     planned = await tables.planning(ctx.targets, spec, scanning=scanning)  # refuses a missing table or column
@@ -237,7 +239,7 @@ async def run_status(ctx: Context, run_id: str) -> str:
     async with ctx.pool.connection() as conn:
         run = await repo.get_run(conn, run_id)
     if run is None:
-        raise LookupError(f"no run {run_id}")
+        raise NotFound(f"no run {run_id}")
     return run["status"]
 
 
@@ -279,7 +281,7 @@ async def resume_run(ctx: Context, run_id: str, *, who: Principal) -> str:
     async with ctx.pool.connection() as conn:
         run = await repo.get_run(conn, run_id)
         if run is None:
-            raise LookupError(f"no run {run_id}")
+            raise NotFound(f"no run {run_id}")
         if run["status"] != "paused":
             return run["status"]
         spec = await ctx.spec(conn, run["spec_id"])
@@ -415,6 +417,92 @@ async def compare_one(ctx: Context, spec_id: int, key: str, *, who: Principal) -
             raise approvals.revoked(spec_id, spec, approval_id)
     result.attrs["run_id"], result.attrs["warnings"] = run_id, warnings
     return result
+
+
+@dataclass(frozen=True)
+class KeyView:
+    """A stored key of a run's cycle as its views show it: its ``repo.get_key_detail`` row (result,
+    findings, observations), each side's stored observation observed again from its evidence with the
+    run's capabilities (None without one) and each side's canonical document, masked (None without one)."""
+
+    run: repo.Row
+    spec: CompiledSpec
+    cycle: int
+    detail: repo.Row
+    sides: Mapping[str, tuple[Observation, SideState] | None]
+    canonical: Mapping[str, Any]
+
+
+async def key_view(
+    ctx: Context, run_id: str, key_masked: str, cycle: int | None = None, *, who: Principal | None = None
+) -> KeyView | None:
+    """The key ``key_masked`` of the run's ``cycle`` (its current one by default); None when the cycle
+    holds no such key. Audited as ``key.view`` of ``who`` once built, in a transaction of its own; a caller
+    that audits it itself (a chat's turn) gives no ``who``. NotFound for an unknown run;
+    ``purge.CyclePurged`` once the cycle's purge has started; ``compare.EvidenceMissing`` for a side whose
+    evidence is gone."""
+    from deltasleuth.runner.purge import refuse_purged
+
+    async with ctx.pool.connection() as conn:
+        run = await repo.get_run(conn, run_id)
+        if run is None:
+            raise NotFound(f"run {run_id} not found")
+        cycle = run["cycle"] if cycle is None else cycle
+        await refuse_purged(conn, run_id, cycle)
+        detail = await repo.get_key_detail(conn, run_id, key_masked, cycle)
+        if detail is None:
+            return None
+        spec, caps = await ctx.spec(conn, run["spec_id"]), ctx.capabilities(run)
+        result = detail["result"] or {}  # empty until the key is compared
+        sides = {
+            s: await side_state(ctx, conn, spec, run_id, result.get(f"obs_{s}_id"), caps) for s in "ab"
+        }
+    canonical = {
+        s: None
+        if found is None or found[1].canonical is None
+        else mask_document(found[1].canonical.doc, spec, ctx.tokeniser, key=found[0].key)
+        for s, found in sides.items()
+    }
+    if who is not None:
+        async with repo.audited(ctx.pool) as (_, audit):
+            await audit(who, "key.view", run_id, {"key_masked": key_masked, "cycle": detail["cycle"]})
+    return KeyView(run, spec, detail["cycle"], detail, sides, canonical)
+
+
+@dataclass(frozen=True)
+class Compared:
+    """A run's stored key compared again: the one-shot run's result, and the run's spec and the cycle
+    the key was read from."""
+
+    result: KeyResult
+    spec_id: int
+    spec: CompiledSpec
+    cycle: int
+
+
+async def compare_again(
+    ctx: Context, run_id: str, key_masked: str, *, who: Principal, spec_id: int | None = None
+) -> Compared | None:
+    """Compare the key ``key_masked`` of the run's current cycle again now (``compare_one``, which audits
+    it), under the run's own spec: another could mask the key and its values less. None when the cycle holds
+    no such key. NotFound for an unknown run; Invalid when ``spec_id`` names a spec other than the run's;
+    ``purge.CyclePurged`` once the cycle's purge has started; and ``compare_one``'s refusals."""
+    from deltasleuth.runner.purge import refuse_purged
+
+    async with ctx.pool.connection() as conn:
+        run = await repo.get_run(conn, run_id)
+        if run is None:
+            raise NotFound(f"run {run_id} not found")
+        if spec_id is not None and run["spec_id"] != spec_id:
+            raise Invalid("a key of a run is compared under that run's spec")
+        await refuse_purged(conn, run_id, run["cycle"])
+        detail = await repo.get_key_detail(conn, run_id, key_masked, run["cycle"])
+        if detail is None:
+            return None
+        spec = await ctx.spec(conn, run["spec_id"])
+        key = (await ctx.sealer(conn, run_id)).open_row(detail)["key"]
+    result = await compare_one(ctx, run["spec_id"], key, who=who)
+    return Compared(result, run["spec_id"], spec, detail["cycle"])
 
 
 async def _read_now(

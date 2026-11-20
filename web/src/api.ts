@@ -111,8 +111,9 @@ export interface RunApproval {
 }
 export interface Decider { actor: string; name: string | null; at: string }
 /** GET /v1/runs/{id} also gives the current cycle's census and the table sides it still waits for (the
- *  worker counts them first, with evidence packs configured), and each ended cycle's census, adjudications and
- *  evidence packs and labellings. */
+ *  worker counts them first, with evidence packs configured), and its newest 20 ended cycles' census,
+ *  adjudications, evidence packs and labellings, oldest first, with how many cycles have ended: GET
+ *  /v1/runs/{id}/cycles pages through every one. */
 export type RunDetail = Run & {
   retention: Retention;
   approval: RunApproval;
@@ -120,6 +121,7 @@ export type RunDetail = Run & {
   census: Census | null;
   census_pending: string[];
   cycles: CycleEvidence[];
+  cycles_ended: number;
   sample: RunSample | null; // a sampled run's current draw; null for other runs
   schedule: RunSchedule | null; // the schedule that started it; null for other runs
   schema: RunSchema; // what the schema guard holds of its tables, as lines
@@ -1323,6 +1325,8 @@ export const api = {
   findings: (id: string, q: Query) => get<Page<Finding>>(`${run(id)}/findings${qs(q)}`),
   rootCauses: (id: string, cycle?: string) => get<Items<RootCause>>(`${run(id)}/root-causes${qs({ cycle })}`),
   changes: (id: string, q: Query) => get<Page<Change>>(`${run(id)}/changes${qs(q)}`),
+  /** The run's ended cycles newest first, as its `cycles` shows each; a page's cursor is the oldest cycle it holds. */
+  cycles: (id: string, q: Query) => get<Page<CycleEvidence>>(`${run(id)}/cycles${qs(q)}`),
   key: (id: string, key: string, cycle?: string) =>
     request(`${run(id)}/keys/${encodeURIComponent(key)}${qs({ cycle })}`).then(
       async (r) => parseExact(await r.text()) as KeyDetail,

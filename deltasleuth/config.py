@@ -283,6 +283,16 @@ class SamplingSettings:
 
 @with_config(_CLOSED)
 @dataclass(frozen=True)
+class ApiSettings:
+    """The API's reads of the store: the seconds one of their statements may take before the store
+    cancels it and the route answers 503, so that slow reads end instead of piling up on the pool the
+    worker shares."""
+
+    read_timeout_s: Annotated[int, Field(strict=True, ge=1, le=3600)] = 30
+
+
+@with_config(_CLOSED)
+@dataclass(frozen=True)
 class PrecheckSettings:
     """Table pre-checks: the sessions the worker holds on a target at once to
     read them, the seconds each of their statements may take, and the rows over which a side's distinct
@@ -745,6 +755,7 @@ class Settings:
     packs: PackSettings | None = None  # absent: no evidence packs
     sampling: SamplingSettings = field(default_factory=SamplingSettings)
     precheck: PrecheckSettings = field(default_factory=PrecheckSettings)
+    api: ApiSettings = field(default_factory=ApiSettings)
     notify: NotifySettings | None = None  # absent: no notifier runs
     readiness: ReadinessSettings | None = None  # absent: the default gates, and no key census for them
     files: FilesSettings = field(default_factory=FilesSettings)

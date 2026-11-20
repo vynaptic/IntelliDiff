@@ -47,6 +47,7 @@ from deltasleuth.core.canonical.encoding import sha256_hex
 from deltasleuth.core.sampling import percent
 from deltasleuth.core.spec import listing_side
 from deltasleuth.core.types import CompiledSpec, Side
+from deltasleuth.errors import NotFound
 from deltasleuth.reports import accuracy
 from deltasleuth.reports.adjudicate import EXIT_MINIMUM
 from deltasleuth.reports.csv import write_csv
@@ -1347,7 +1348,7 @@ async def issue(ctx: Context, run_id: str, cycle: int, *, who: Principal) -> rep
     async with ctx.pool.connection() as conn:
         run = await repo.get_run(conn, run_id)
         if run is None:
-            raise LookupError(f"run {run_id} not found")
+            raise NotFound(f"run {run_id} not found")
         found, pack = await _judged(ctx, conn, run, cycle, who)
     if found:
         raise PackRefused("; ".join(found))
@@ -1405,7 +1406,7 @@ async def stored(ctx: Context, pack_id: str) -> tuple[repo.Row, bytes]:
         pack = await repo.get_pack(conn, pack_id)
         ended = pack and await repo.get_cycle(conn, pack["run_id"], pack["cycle"])
     if pack is None:
-        raise LookupError(f"pack {pack_id} not found")
+        raise NotFound(f"pack {pack_id} not found")
     purged = pack["purged_at"] or ended["purging_at"]  # type: ignore[index]
     if data is None or purged is not None:
         raise CyclePurged(

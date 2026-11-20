@@ -24,10 +24,12 @@ from functools import partial
 from typing import Any
 
 from deltasleuth import approvals, licence
+from deltasleuth import errors as refusals
 from deltasleuth.config import ReadinessSettings
 from deltasleuth.context import Context
 from deltasleuth.core import readiness as gates
 from deltasleuth.core.readiness import GATES, STATES, Policy
+from deltasleuth.errors import Invalid
 from deltasleuth.security import rawvalues
 from deltasleuth.store import repo
 
@@ -55,12 +57,8 @@ _STRATUM = (
 log = logging.getLogger(__name__)
 
 
-class Refused(ValueError):
+class Refused(refusals.Refused):
     """A readiness read refused: its HTTP status and binding message."""
-
-    def __init__(self, status: int, message: str) -> None:
-        super().__init__(message)
-        self.status = status
 
 
 @dataclass(frozen=True)
@@ -620,30 +618,30 @@ async def verify(ctx: Context) -> dict[str, int]:
             record, at = row["readiness"] or {}, f"cycle {row['cycle']} of run {row['run_id']}"
             marker, measures = record.get("excluded"), "pair" in record and "error" not in record
             if row["rows"] > 1:  # the worker stores a cycle's measures once
-                raise ValueError(
+                raise Invalid(
                     f"{at} is named by {row['rows']} readiness.measured rows: its measures were removed and"
                     " measured again"
                 )
             if row["rows"] and not (measures and gates.measured_sha256(record) == row["sha256"]):
-                raise ValueError(
+                raise Invalid(
                     f"{at} does not hash to its readiness.measured row (seq {row['seq']}): its measures"
                     " were altered after they were written"
                 )
             if marker is not None:
                 captured = row["mode"] != "one_shot" and row["samples_dir"] is not None
                 if marker == "one_shot" and row["mode"] != "one_shot":
-                    raise ValueError(f"{at} is marked excluded (one_shot) but its run is a {row['mode']}")
+                    raise Invalid(f"{at} is marked excluded (one_shot) but its run is a {row['mode']}")
                 if marker != "one_shot" and not captured:
-                    raise ValueError(
+                    raise Invalid(
                         f"{at} is marked excluded ({marker}) but its run read no captured samples"
                     )
                 counts["excluded"] += 1
             elif "pair" not in record:
-                raise ValueError(f"{at} holds a record that is neither measures nor an excluded marker")
+                raise Invalid(f"{at} holds a record that is neither measures nor an excluded marker")
             elif "error" in record:
                 counts["errors"] += 1
             elif not row["rows"]:
-                raise ValueError(f"{at} has measures no readiness.measured row names")
+                raise Invalid(f"{at} has measures no readiness.measured row names")
             else:
                 counts["measured"] += 1
     return counts

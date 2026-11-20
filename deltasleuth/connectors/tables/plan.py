@@ -38,6 +38,7 @@ from deltasleuth.connectors.tables.keys import Plan, key_maps
 from deltasleuth.core import jsonio
 from deltasleuth.core.spec import TargetRegistry, where
 from deltasleuth.core.types import CompiledSpec, SideConfig, Target
+from deltasleuth.errors import Invalid
 
 _A = {"text": "text", "bytes": "bytes", "json": "JSON", "instant": "a zoned timestamp"}  # else "a <family>"
 # How the approved spec bridges two families; the first is the side that declares the type.
@@ -54,7 +55,7 @@ _AS = {"number": "decimal", "instant": "timestamp", "mapped timestamp": "timesta
 }
 
 
-class Unconnected(ValueError):
+class Unconnected(Invalid):
     """A connect refused when a run is created. Its message names the endpoint the
     target declares, for whoever creates the run; ``brief`` names the side and the target alone, which is
     all the chat's model is told; ``cause`` is what refused it."""
@@ -136,7 +137,7 @@ async def key_plan(targets: TargetRegistry, cfg: SideConfig) -> Plan:
             if not refused and target.engine != "postgresql":
                 _classed(name, side, target.engine or "", found, refused)
             if refused:
-                raise ValueError(refused[0])
+                raise Invalid(refused[0])
             side["digest"] = []  # no compared column: none is hashed
             if "pinned" in side:
                 side["pinned"]["who"] = who  # what its probe's refusals and log line name
@@ -150,7 +151,7 @@ async def key_plan(targets: TargetRegistry, cfg: SideConfig) -> Plan:
         if not str(exc).startswith(worded):
             raise
         said = str(exc).replace(worded, f"{who}:", 1)
-        raise (NotReady(exc.code, said) if isinstance(exc, NotReady) else ValueError(said)) from None
+        raise (NotReady(exc.code, said) if isinstance(exc, NotReady) else Invalid(said)) from None
     for member in ("end", "footed", "who"):  # its creation's alone, as ``planning`` leaves a file side's pins
         side.get("pinned", {}).pop(member, None)
     return side
@@ -163,7 +164,7 @@ def _budgets(spec: CompiledSpec, found: Plan, pinned: Mapping[str, Plan], scanni
     for name in pinned:
         if 2 * found[name]["pass_s"] > total:
             took, need = found[name]["pass_s"], math.ceil(2 * found[name]["pass_s"])
-            raise ValueError(
+            raise Invalid(
                 f"side {name}: one pass over its files took {took:g} s and a per-key read is one pass: set"
                 f" the spec's execution.timeouts.total to {need}s or more (it is {total:g}s), or export"
                 " Parquet"
@@ -173,7 +174,7 @@ def _budgets(spec: CompiledSpec, found: Plan, pinned: Mapping[str, Plan], scanni
     if scanning and sort > spill:
         name = max(pinned, key=lambda side: found[side]["sort_bytes"])
         rows, need = found[name]["selected"], math.ceil(sort / 2**30)
-        raise ValueError(
+        raise Invalid(
             f"side {name}: sorting its {rows:,} rows needs about {need} GiB of temporary space and"
             f" files.spill allows {spill // 2**30} GiB: raise files.spill with the volume under"
             " files.spill_dir, list fewer columns, or filter the rows"
@@ -213,7 +214,7 @@ def resolved(targets: TargetRegistry, spec: CompiledSpec, relations: Mapping[str
     first of ``issues`` is raised."""
     refused, found = _planned(targets, spec, relations)
     if refused:
-        raise ValueError(refused[0])
+        raise Invalid(refused[0])
     return found
 
 
@@ -363,10 +364,10 @@ async def preflight(target: Target, table: str | None = None) -> tuple[dict[str,
         schema, _, name = table.rpartition(".")
         return server, await described(engine, session, who, schema or None, name)
     except Refusal as exc:  # a role that may not execute what orders its text keys
-        raise ValueError(f"{who}: {exc}") from None
+        raise Invalid(f"{who}: {exc}") from None
     except ERRORS as exc:  # the session ended, or the server answered with a code
         said = "the session's account of its server could not be read"
-        raise ValueError(f"{who}: {said}: {_answered(exc)}") from None
+        raise Invalid(f"{who}: {said}: {_answered(exc)}") from None
     finally:
         await session.close()
 
@@ -379,7 +380,7 @@ async def _connected(engine: Engine, target: Target, who: str) -> Session:
     except REFUSED as exc:
         raise Unconnected(who, target, _why(exc), exc) from None
     except Refusal as exc:  # a server or a session the engine does not read
-        raise ValueError(f"{who}: {exc}") from None
+        raise Invalid(f"{who}: {exc}") from None
 
 
 async def described(
@@ -393,13 +394,13 @@ async def described(
     try:
         found = await engine.describe(session, schema, name, side=side)
     except Refusal as exc:  # a synonym the engine does not follow
-        raise ValueError(f"{who}: {exc}") from None
+        raise Invalid(f"{who}: {exc}") from None
     except ERRORS as exc:
-        raise ValueError(f"{who}: table or view {shown} cannot be described: {_answered(exc)}") from None
+        raise Invalid(f"{who}: table or view {shown} cannot be described: {_answered(exc)}") from None
     if found is None:
-        raise ValueError(f"{who}: table or view {shown} not found or not visible")
+        raise Invalid(f"{who}: table or view {shown} not found or not visible")
     if not any(c.readable for c in found.columns):
-        raise ValueError(f"{who}: the role may not read {found.schema}.{found.name}: grant it {engine.grant}")
+        raise Invalid(f"{who}: the role may not read {found.schema}.{found.name}: grant it {engine.grant}")
     return found
 
 
@@ -596,7 +597,7 @@ async def probed(engine: Engine, session: Session, name: str, side: Plan) -> Non
     try:
         await engine.probe(session, side)
     except Refusal as exc:  # a literal that is not of its column's class, a strata column no frame holds
-        raise ValueError(f"side {name}: {exc}") from None
+        raise Invalid(f"side {name}: {exc}") from None
     except ERRORS as exc:  # a pattern or a literal of the spec: the message names no value
         why = (str(exc).splitlines() or [type(exc).__name__])[0][:300]
-        raise ValueError(f"side {name}: the database refuses the filter or key map: {why}") from None
+        raise Invalid(f"side {name}: the database refuses the filter or key map: {why}") from None

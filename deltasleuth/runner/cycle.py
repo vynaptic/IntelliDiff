@@ -39,6 +39,7 @@ from deltasleuth.core.classify import rootcause
 from deltasleuth.core.secrets import SecretError
 from deltasleuth.core.spec import parse_duration
 from deltasleuth.core.types import CompiledSpec, Finding, Verdict
+from deltasleuth.errors import ours, told
 from deltasleuth.runner import census, sample
 from deltasleuth.runner.compare import rederive_all
 from deltasleuth.runner.counters import Tally
@@ -238,9 +239,10 @@ async def _rolled(
         resolved, walk = await resolve(ctx, spec, bound_s=min(census.TIMEOUT_S, interval or census.TIMEOUT_S))
     except KeyAuthRefused:
         raise
-    except ValueError as exc:  # its message names positions and statuses, never keys
-        log.warning("run %s keeps its key set: %s", run["run_id"], exc)
-        error = getattr(exc, "brief", None) or str(exc)  # a refused connect's: no host, no account
+    except ValueError as exc:  # a refusal's message names positions and statuses, never keys
+        # a refused connect's brief names no host and no account; a fault is told by its type alone
+        error = getattr(exc, "brief", None) or told(exc)
+        log.warning("run %s keeps its key set: %s", run["run_id"], error if ours(exc) else located(exc))
         async with repo.audited(ctx.pool) as (_, audit):
             await audit(WORKER, "rolling_resolve_failed", run["run_id"], {"error": error})
         return None, None, None

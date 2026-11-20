@@ -29,6 +29,7 @@ from deltasleuth.core.canonical import predicates
 from deltasleuth.core.canonical.errors import ExpressionError
 from deltasleuth.core.spec.expressions import reads
 from deltasleuth.core.types import Sample, StratumBucket, StratumDimension
+from deltasleuth.errors import Invalid
 
 TARGETS = {"standard": Fraction(1, 1000), "high": Fraction(1, 10000)}  # copied into every draw
 CONFIDENCE = Fraction(19, 20)  # one-sided
@@ -104,7 +105,7 @@ def needed(x: int, target: Fraction) -> int:
     confirmed by exact ``passes`` calls. ValueError over ``LIMIT``, where a census is the answer."""
     lo, hi = x + 1, LIMIT
     if upper(x, hi) > target:
-        raise ValueError(
+        raise Invalid(
             f"{x:,} discrepant key(s) pass a {percent(target)} target only among over {LIMIT:,} cleanly"
             " compared keys: compare the population as a census"
         )

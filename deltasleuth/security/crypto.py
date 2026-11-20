@@ -25,6 +25,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.keywrap import InvalidUnwrap, aes_key_unwrap, aes_key_wrap
 
 from deltasleuth.core.secrets import SecretError, read_secret_bytes
+from deltasleuth.errors import Invalid
 
 KEY_BYTES = 32
 WRAPPED_BYTES = 40  # AES-KW of a 32-byte key
@@ -40,7 +41,7 @@ class KeyringError(ValueError):
     """The keyring is unreadable or lacks a KEK; the message names a file, line or KEK id only."""
 
 
-class MaskedAlike(ValueError):
+class MaskedAlike(Invalid):
     """``count`` keys share their masked key with another: one masked key holds one key's row, results
     and findings, so it cannot stand for two. The message counts the keys and names none."""
 

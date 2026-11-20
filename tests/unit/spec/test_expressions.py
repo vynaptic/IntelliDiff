@@ -92,3 +92,26 @@ def test_invalid_jsonata(source: str) -> None:
 def test_key_regex(pattern: str, ok: bool) -> None:
     problem = regex_error(pattern)
     assert problem is None if ok else problem.startswith("invalid regular expression")
+
+
+@pytest.mark.parametrize(
+    ("source", "fragment"),
+    [
+        ("$contains(a, /^(x+)+$/)", "repeat inside a repeat"),
+        ("$replace(a, /(?:\\d+,?)*;/, '')", "repeat inside a repeat"),
+        ("$contains(a, /a**/)", "multiple repeat"),  # an invalid pattern is reported, not raised
+        pytest.param("$contains(a, /" + "a" * 4001 + "/)", "at most 4000 characters", id="too-long"),
+        ("$contains(a, /(?:(?:a{100}){100}){100}/)", "compilation work limit"),
+    ],
+)
+def test_a_map_regex_past_its_bounds_is_refused(source: str, fragment: str) -> None:
+    problem = jsonata_error(source)
+    assert problem is not None and problem.startswith("regular expression /") and fragment in problem
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["$replace(a, /^.*\\/([0-9]+)\\/?$/, '$1')", "$split(a, /\\s*,\\s*/)", "$contains(a, /^(?:\\d++,?)*;/)"],
+)
+def test_a_bounded_map_regex_is_accepted(source: str) -> None:
+    assert jsonata_error(source) is None

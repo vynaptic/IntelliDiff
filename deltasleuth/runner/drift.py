@@ -27,6 +27,7 @@ from typing import Any
 
 import psycopg
 
+from deltasleuth import errors as refusals
 from deltasleuth.auth.principal import WORKER, Principal
 from deltasleuth.connectors import tables
 from deltasleuth.connectors.base import utc_now_iso
@@ -63,12 +64,8 @@ class Tripped(Exception):
     """The schema guard paused the run before its scan pass opened a cursor: the pass ends, the run stays."""
 
 
-class Refused(ValueError):
+class Refused(refusals.Refused):
     """A run the schema guard does not create or resume; ``status`` is the API's answer."""
-
-    def __init__(self, status: int, message: str) -> None:
-        super().__init__(message)
-        self.status = status
 
 
 class _Unread(Exception):

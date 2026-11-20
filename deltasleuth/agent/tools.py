@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
 
@@ -28,9 +28,11 @@ from deltasleuth.llm.model import ToolSpec
 from deltasleuth.llm.profiles import Rate
 from deltasleuth.reports import accuracy
 from deltasleuth.security.policy import BUSINESS_CODE
-from deltasleuth.security.tokenise import mask_document, mask_finding
+from deltasleuth.security.tokenise import mask_finding
 from deltasleuth.store import repo
-from deltasleuth.store.repo import Conn
+
+if TYPE_CHECKING:
+    from deltasleuth.runner.runs import KeyView
 
 MAX_FINDINGS = 50
 DEFAULT_FINDINGS = 20  # keeps a turn's growing history inside the per-call input budget
@@ -210,21 +212,23 @@ async def _findings(
 
 
 async def _observations(ctx: Context, scope: Scope, key: str) -> Any:
-    async with ctx.pool.connection() as conn:
-        detail = await repo.get_key_detail(conn, scope.run_id, key)
-        if detail is None:
-            raise ToolError(f"no key {key} in run {scope.run_id}")
-        run = await repo.get_run(conn, scope.run_id)
-        spec = await ctx.spec(conn, run["spec_id"])
-        result = detail["result"] or {}
-        sides = {f"side_{s}": await _side(ctx, conn, spec, run, result.get(f"obs_{s}_id")) for s in "ab"}
-    scope.views.append((key, detail["cycle"]))
+    from deltasleuth.runner.compare import EvidenceMissing
+    from deltasleuth.runner.runs import key_view
+
+    try:
+        view = await key_view(ctx, scope.run_id, key)  # the turn audits it with the others it read
+    except EvidenceMissing as exc:  # purged or lost: the model is told, as a person gets a 410
+        raise ToolError(str(exc)) from None
+    if view is None:
+        raise ToolError(f"no key {key} in run {scope.run_id}")
+    detail, result = view.detail, view.detail["result"] or {}
+    scope.views.append((key, view.cycle))
     return {
         "key_masked": key,
-        "cycle": detail["cycle"],  # the one read: a soak's key has a row a cycle
+        "cycle": view.cycle,  # the one read: a soak's key has a row a cycle
         "state": detail["state"],
         "result": _pick(result, _RESULT) if result else None,
-        **sides,
+        **{f"side_{s}": _side(view, s) for s in "ab"},
         "findings": _picks(detail["findings"][:DEFAULT_FINDINGS], _FINDING),
         "more_findings": len(detail["findings"]) > DEFAULT_FINDINGS,
         "observations": _picks(detail["observations"], _OBSERVATION),
@@ -234,28 +238,23 @@ async def _observations(ctx: Context, scope: Scope, key: str) -> Any:
 async def _compare_key(ctx: Context, scope: Scope, key: str) -> Any:
     from deltasleuth.connectors.tables import Unconnected
     from deltasleuth.licence import LicenceRefused
-    from deltasleuth.runner import compare_one  # the runner is needed by this tool only
+    from deltasleuth.runner.runs import compare_again  # the runner is needed by this tool only
 
     if scope.compares is not None and not scope.compares.hit(scope.who.actor):
         raise ToolError(f"rate limited: at most {COMPARE_LIMIT} compare_key calls a minute per caller")
-    async with ctx.pool.connection() as conn:
-        detail = await repo.get_key_detail(conn, scope.run_id, key)
-        if detail is None:
-            raise ToolError(f"no key {key} in run {scope.run_id}")
-        # Always the run's own spec: another spec could mask the key and its values less.
-        spec_id = (await repo.get_run(conn, scope.run_id))["spec_id"]
-        spec = await ctx.spec(conn, spec_id)
-        raw = (await ctx.sealer(conn, scope.run_id)).open_row(detail)["key"]
-    try:
-        result = await compare_one(ctx, spec_id, raw, who=scope.who)
+    try:  # always under the run's own spec: another spec could mask the key and its values less
+        compared = await compare_again(ctx, scope.run_id, key, who=scope.who)
     except (approvals.ApprovalRequired, LicenceRefused) as exc:  # no four-eyes approval, or the licence
         raise ToolError(str(exc)) from None
     except Unconnected as exc:  # its message names the target's host, port and account: the model gets none
         raise ToolError(exc.brief) from None
-    findings = [mask_finding(f, spec, ctx.tokeniser) for f in result.findings[:DEFAULT_FINDINGS]]
-    scope.views.append((key, detail["cycle"]))
+    if compared is None:
+        raise ToolError(f"no key {key} in run {scope.run_id}")
+    result = compared.result
+    findings = [mask_finding(f, compared.spec, ctx.tokeniser) for f in result.findings[:DEFAULT_FINDINGS]]
+    scope.views.append((key, compared.cycle))
     return {
-        "spec_id": spec_id,
+        "spec_id": compared.spec_id,
         "key_masked": key,
         "outcome": result.outcome.value,
         "confirmation": result.confirmation.value,
@@ -268,28 +267,20 @@ async def _compare_key(ctx: Context, scope: Scope, key: str) -> Any:
     }
 
 
-async def _side(
-    ctx: Context, conn: Conn, spec: CompiledSpec, run: Mapping[str, Any], obs_id: str | None
-) -> dict[str, Any] | None:
-    """One side of a result re-derived from its evidence: state, masked canonical (capped)."""
-    from deltasleuth.runner.compare import EvidenceMissing, side_state
-
-    try:
-        found = await side_state(ctx, conn, spec, run["run_id"], obs_id, ctx.capabilities(run))
-    except EvidenceMissing as exc:  # purged or lost: the model is told, as a person gets a 410
-        raise ToolError(str(exc)) from None
+def _side(view: KeyView, side: str) -> dict[str, Any] | None:
+    """One side of a key's result as its view re-derived it from its evidence: its state and its masked
+    canonical document, cut at MAX_DOC_BYTES; None without an observation."""
+    found = view.sides[side]
     if found is None:
         return None
-    obs, state = found
-    side = {"obs_id": obs_id, **_state(state)}
-    if state.canonical is not None:
-        masked = mask_document(state.canonical.doc, spec, ctx.tokeniser, key=obs.key)
+    shown = {"obs_id": (view.detail["result"] or {}).get(f"obs_{side}_id"), **_state(found[1])}
+    if (masked := view.canonical[side]) is not None:
         text = jsonio.dumps(masked, sort_keys=True).encode()
-        side |= {
+        shown |= {
             "canonical": text[:MAX_DOC_BYTES].decode(errors="ignore"),
             "truncated": len(text) > MAX_DOC_BYTES,
         }
-    return side
+    return shown
 
 
 async def _root_cause(ctx: Context, scope: Scope, root_cause_id: str) -> Any:

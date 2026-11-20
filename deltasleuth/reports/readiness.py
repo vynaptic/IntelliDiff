@@ -22,6 +22,7 @@ from deltasleuth.context import Context
 from deltasleuth.core import readiness as gates
 from deltasleuth.core.readiness import worded
 from deltasleuth.core.types import Outcome
+from deltasleuth.errors import NotFound
 from deltasleuth.readiness import Judged, Refused
 from deltasleuth.reports.csv import render_csv
 from deltasleuth.reports.render import Document, Section, render_pdf
@@ -551,7 +552,7 @@ async def run_csv(ctx: Context, run_id: str, cycle: int | None = None) -> bytes:
     async with ctx.pool.connection() as conn:
         run = await repo.get_run(conn, run_id)
         if run is None:
-            raise LookupError(f"run {run_id} not found")
+            raise NotFound(f"run {run_id} not found")
         name = run["spec_name"]
         ended = await repo.get_cycle(conn, run_id, cycle or run["cycle"])
         before = ended and (ended["ended_at"], run_id, ended["cycle"] + 1)

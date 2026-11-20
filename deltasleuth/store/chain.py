@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from deltasleuth.errors import Invalid
 from deltasleuth.store import repo
 
 ZERO = "0" * 64
@@ -111,7 +112,7 @@ def read_siem(path: Path) -> list[dict[str, Any]]:
             if chain is not None and not (isinstance(chain["seq"], int) and isinstance(chain["hash"], str)):
                 raise TypeError
         except (ValueError, TypeError, KeyError, AttributeError):
-            raise ValueError(f"{path} line {number} is not a deltasleuth.audit line") from None
+            raise Invalid(f"{path} line {number} is not a deltasleuth.audit line") from None
         lines.append(line)
     return lines
 

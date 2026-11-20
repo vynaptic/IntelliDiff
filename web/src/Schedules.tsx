@@ -172,7 +172,8 @@ const Warnings = ({ lines }: { lines?: string[] }) => <>{lines?.map((line) => <p
 export function SchedulesScreen({ query }: { query: URLSearchParams }) {
   const { can } = useWho();
   const [pages, setPages] = useState(1);
-  const found = useLoad(() => listed((cursor) => api.schedules({ cursor }), pages), [pages]);
+  // More pages extend the list shown, which stays until they come: a reload, not other deps.
+  const found = useLoad(() => listed((cursor) => api.schedules({ cursor }), pages), []);
   const [saved, setSaved] = useState<SavedSchedule>();
   usePoll(found.reload, POLL_MS, true);
   const d = found.data;
@@ -203,7 +204,7 @@ export function SchedulesScreen({ query }: { query: URLSearchParams }) {
             rowId={(s) => s.schedule_id}
             empty={can('operator') ? 'No schedule yet. Add one with the form below.' : 'No schedule yet.'}
           />
-          {d.next_cursor && <button onClick={() => setPages(pages + 1)}>More</button>}
+          {d.next_cursor && <button onClick={() => (setPages(pages + 1), found.reload())}>More</button>}
         </>
       )}
       {saved && (

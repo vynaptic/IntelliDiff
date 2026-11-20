@@ -3,10 +3,14 @@ each waits for its spec version's four-eyes approval."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
 from contextlib import AbstractContextManager
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from functools import partial
 from typing import Any
 
 import psycopg
@@ -606,3 +610,138 @@ def test_a_file_side_s_root_pins_and_digest_are_in_no_answer(
         422,
         "side a: no file matches none/*.csv under target fa",
     )
+
+
+def _ended(client: TestClient, run_id: str, cycles: int) -> None:
+    """Give the run ``cycles`` ended cycles, an hour apart, and a live one after them."""
+
+    async def end(ctx: Any) -> None:
+        async with ctx.pool.connection() as conn:
+            await conn.execute(
+                """INSERT INTO ds.cycles (run_id, cycle, ended_at)
+                   SELECT %s, n, now() - (%s - n) * interval '1 hour' FROM generate_series(1, %s) n""",
+                (run_id, cycles + 1, cycles),
+            )
+            await conn.execute("UPDATE ds.runs SET cycle = %s WHERE run_id = %s", (cycles + 1, run_id))
+
+    client.portal.call(end, client.app.state.ctx)
+
+
+def test_a_run_answers_its_newest_ended_cycles_and_pages_the_rest(client: TestClient, seeded: Any) -> None:
+    """The run's answer holds its newest 20 ended cycles, oldest first, and how many have ended; the cycles
+    route pages through every one, newest first, each as the run shows it, from a cursor that is the oldest
+    cycle a page holds; the retention still names every ended cycle."""
+    _ended(client, seeded.run_id, 23)
+    base = f"/v1/runs/{seeded.run_id}"
+    run = client.get(base).json()
+    assert ([c["cycle"] for c in run["cycles"]], run["cycles_ended"]) == (list(range(4, 24)), 23)
+    assert [c["cycle"] for c in run["retention"]["cycles"]] == list(range(1, 24))
+    first = client.get(base + "/cycles").json()
+    assert (first["items"], first["next_cursor"]) == (list(reversed(run["cycles"])), "4")
+    rest = client.get(base + "/cycles", params={"cursor": first["next_cursor"]}).json()
+    assert ([c["cycle"] for c in rest["items"]], rest["next_cursor"]) == ([3, 2, 1], None)
+    paged = client.get(base + "/cycles", params={"cursor": "23", "limit": 2}).json()
+    assert ([c["cycle"] for c in paged["items"]], paged["next_cursor"]) == ([22, 21], "21")
+    malformed = client.get(base + "/cycles", params={"cursor": "x"})
+    assert (malformed.status_code, malformed.json()) == (400, {"detail": "malformed cursor"})
+    assert client.get(f"/v1/runs/{RUN_ID}/cycles").status_code == 404
+    last = client.get(base + "/cycles", params={"cursor": "2"}).json()
+    assert ([c["cycle"] for c in last["items"]], last["next_cursor"]) == ([1], None)
+
+
+def test_readers_of_a_live_run_share_one_count_of_its_progress(
+    client: TestClient, seeded: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Readers that come while the run's progress is counted wait for that count, and those that come
+    within COUNTED_FOR seconds of it take its answer; a run that moved on is counted again."""
+    from deltasleuth.api.routes import runs as route
+
+    counted: list[str] = []
+    real = repo.cycle_counts
+
+    async def slow(conn: Any, run_id: str, cycle: int | None = None) -> Any:
+        counted.append(run_id)
+        await asyncio.sleep(0.2)
+        return await real(conn, run_id, cycle)
+
+    monkeypatch.setattr(repo, "cycle_counts", slow)
+    ctx, base = client.app.state.ctx, f"/v1/runs/{seeded.run_id}"
+
+    async def read(readers: int) -> list[Any]:
+        async with ctx.pool.connection() as conn:
+            run = await repo.get_run(conn, seeded.run_id)
+        return await asyncio.gather(*(route.progress_of(ctx, run) for _ in range(readers)))
+
+    progress = {"keys": {"done": 1, "pending": 1}, "outcomes": {"MISMATCH": 1}}
+    assert client.portal.call(read, 5) == [progress] * 5
+    assert client.get(base).json()["progress"] == progress and counted == [seeded.run_id]
+    monkeypatch.setattr(route, "COUNTED_FOR", 0.0)
+    assert client.get(base).json()["progress"] == progress and len(counted) == 2
+    monkeypatch.setattr(route, "COUNTED_FOR", 60.0)
+    client.post(base + "/pause")
+    assert client.get(base).json()["status"] == "paused" and len(counted) == 3
+
+
+def test_a_read_that_outlasts_the_read_timeout_is_refused(
+    client: TestClient, seeded: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A statement of a run's read that runs past ``api.read_timeout_s`` is cancelled by the store and
+    answered 503, so slow reads end instead of piling up on the pool the worker shares."""
+    from deltasleuth.config import ApiSettings
+
+    real = repo.list_root_causes
+
+    async def slow(conn: Any, *args: Any, **kwargs: Any) -> Any:
+        await conn.execute("SELECT pg_sleep(1.5)")
+        return await real(conn, *args, **kwargs)
+
+    monkeypatch.setattr(repo, "list_root_causes", slow)
+    ctx, path = client.app.state.ctx, f"/v1/runs/{seeded.run_id}/root-causes"
+    client.app.state.ctx = replace(ctx, settings=replace(ctx.settings, api=ApiSettings(read_timeout_s=1)))
+    try:
+        refused = client.get(path)
+    finally:
+        client.app.state.ctx = ctx
+    assert said(refused) == (503, "the store did not answer this read within 1 s: try again")
+    assert client.get(path).status_code == 200  # within the default 30 s
+
+
+def test_a_csv_export_streams_the_bytes_it_always_had(client: TestClient, seeded: Any) -> None:
+    from deltasleuth.reports.csv import write_csv
+
+    ctx, base = client.app.state.ctx, f"/v1/runs/{seeded.run_id}/reports/"
+    for kind in ("discrepancies", "retry", "coverage"):
+        got = client.get(base + f"{kind}.csv")
+        assert got.content == client.portal.call(write_csv, ctx, seeded.run_id, None, kind), kind
+        assert "content-length" not in got.headers, kind  # sent a page at a time
+    assert client.get(base + "report.pdf").headers["content-length"]
+
+
+def test_the_key_view_and_a_compare_again_are_the_runner_s(client: TestClient, seeded: Any) -> None:
+    """``runner.runs.key_view`` audits a viewer's key view once it is built, and none for a caller that
+    audits it itself (a chat's turn); ``compare_again`` compares a run's stored key under the run's spec.
+    An unknown key is None to both."""
+    from deltasleuth.runner.runs import compare_again, key_view
+    from tests.conftest import TESTER
+
+    ctx = client.app.state.ctx
+
+    async def view(**options: Any) -> Any:
+        return await key_view(ctx, seeded.run_id, seeded.key, **options)
+
+    unaudited = client.portal.call(partial(view))
+    assert (unaudited.detail["key_masked"], unaudited.cycle) == (seeded.key, 1)
+    assert audited(client, "key.view") == []
+    assert unaudited.canonical["b"]["price"] == Decimal("2.5")
+    client.portal.call(partial(view, who=TESTER))
+    ((actor, run_id, detail),) = audited(client, "key.view")
+    assert (actor, run_id) == (TESTER.actor, seeded.run_id)
+    assert (detail["key_masked"], detail["cycle"]) == (seeded.key, 1)
+    assert client.portal.call(partial(key_view, ctx, seeded.run_id, "tok:none")) is None
+    again = client.portal.call(partial(compare_again, ctx, seeded.run_id, seeded.key, who=TESTER))
+    assert (again.spec_id, again.cycle, again.result.outcome) == (seeded.spec_id, 1, Outcome.MISMATCH)
+    assert again.result.attrs["run_id"] != seeded.run_id
+    assert client.portal.call(partial(compare_again, ctx, seeded.run_id, "tok:none", who=TESTER)) is None
+    with pytest.raises(ValueError, match=r"^a key of a run is compared under that run's spec$"):
+        client.portal.call(partial(compare_again, ctx, seeded.run_id, seeded.key, who=TESTER, spec_id=999))
+    assert len(audited(client, "key.view")) == 1  # a compare views no key

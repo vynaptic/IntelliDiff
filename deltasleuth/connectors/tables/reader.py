@@ -331,7 +331,12 @@ def connect(spill: str, roots: Sequence[str], memory_mib: int, spill_mib: int, t
     ``INSTALL`` is refused; and before the caches are set, one of which is the Parquet reader's own."""
     import duckdb
 
+    # The allocator flushes what it keeps at a quarter of the memory limit, and on any bulk free past the
+    # limit: by default it keeps up to 128 and 512 MiB, which, where it is jemalloc (Linux x86_64), held the
+    # reader's resident memory far above its limit while it streamed.
     config = {
+        "allocator_flush_threshold": f"{max(memory_mib // 4, 1)}MiB",
+        "allocator_bulk_deallocation_flush_threshold": f"{memory_mib}MiB",
         "threads": threads, "memory_limit": f"{memory_mib}MiB", "temp_directory": os.path.join(spill, "temp"),
         "home_directory": os.path.join(spill, "home"),
         "extension_directory": os.path.join(spill, "extensions"),

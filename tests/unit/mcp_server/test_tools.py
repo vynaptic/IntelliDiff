@@ -32,6 +32,7 @@ from deltasleuth.core.spec import compile_spec
 from deltasleuth.core.spec.documents import parse_yaml_text
 from deltasleuth.core.spec.errors import UnknownTargetError
 from deltasleuth.core.types import DatabaseTarget, Target
+from deltasleuth.errors import Invalid, NotFound
 from deltasleuth.licence import LicenceRefused
 from deltasleuth.mcp import server, tools
 from deltasleuth.runner import create_run, purge
@@ -506,7 +507,7 @@ async def test_a_run_refuses_as_the_api_does(world: World, monkeypatch: pytest.M
         async def compare_one(*_: Any, refusal: Exception = refusal, **__: Any) -> Any:
             raise refusal
 
-        monkeypatch.setattr("deltasleuth.runner.compare_one", compare_one)
+        monkeypatch.setattr("deltasleuth.runner.runs.compare_one", compare_one)
         asked = {"run_id": world.run_id} | key
         assert await ask(ctx, OPERATOR, "compare_key", asked) == (brief or str(refusal), True)
     monkeypatch.undo()
@@ -591,7 +592,10 @@ async def test_other_refusals_and_faults(
         KeyError("K19181918"): f"internal error: request {who.request_id} names it in the server log",
         UnknownTargetError("target 'crm-db' is not in the registry"): f"internal error: request"
         f" {who.request_id} names it in the server log",
-        LookupError("spec 7 not found"): "spec 7 not found",  # an id that is not stored, as the chat tells it
+        NotFound("spec 7 not found"): "spec 7 not found",  # an id that is not stored, as the chat tells it
+        Invalid("the key set is empty"): "the key set is empty",  # a refusal the package worded
+        LookupError("no member K19181918"): f"internal error: request {who.request_id} names it in the server"
+        " log",  # a library's: a fault
     }
     for fault, text in faults.items():
         caplog.clear()

@@ -26,8 +26,9 @@ def fsync_dir(directory: Path) -> None:
         os.close(fd)
 
 
-def atomic_write(path: Path, data: bytes) -> None:
-    """Write ``data`` so that after a crash ``path`` is either complete or absent (created 0600)."""
+def write_synced(path: Path, data: bytes) -> None:
+    """Write ``data`` to a temporary file beside ``path`` (created 0600), fsync it and rename it to ``path``,
+    so no reader sees half a file; the rename is durable once the caller fsyncs ``path``'s directory."""
     # ".<name>.<random>.tmp": scanners looking for "*.json" or "*.dse" never see a partial file.
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
@@ -40,4 +41,9 @@ def atomic_write(path: Path, data: bytes) -> None:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(tmp_name)
         raise
+
+
+def atomic_write(path: Path, data: bytes) -> None:
+    """Write ``data`` so that after a crash ``path`` is either complete or absent (created 0600)."""
+    write_synced(path, data)
     fsync_dir(path.parent)  # the rename itself must survive a crash

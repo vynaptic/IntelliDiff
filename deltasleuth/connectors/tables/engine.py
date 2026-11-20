@@ -21,6 +21,7 @@ from deltasleuth.connectors.base import UnsafeTargetError
 from deltasleuth.connectors.tables.keys import Plan
 from deltasleuth.core.secrets import SecretError, read_secret_bytes
 from deltasleuth.core.types import DatabaseTarget, Target
+from deltasleuth.errors import Invalid
 
 Rows = list[tuple[Any, ...]]  # one fetched batch
 Asked = dict[str, list[list[str]]]  # each key's side values per key column
@@ -219,7 +220,7 @@ class ReaderDied(TableError):
     Its code is the whole text, naming the end's cause and no file."""
 
 
-class NotReady(ValueError):
+class NotReady(Invalid):
     """A file side's export is not ready to be planned: ``code`` is one of ``NOT_READY``,
     which a schedule's miss records."""
 
@@ -235,7 +236,7 @@ class KeysOutOfOrder(ValueError):
     """A side's keys came below their predecessor, or not after the resume bound."""
 
 
-class Refusal(ValueError):
+class Refusal(Invalid):
     """What an engine does not plan, worded without its side: the plan names it."""
 
 

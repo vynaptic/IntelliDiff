@@ -1,4 +1,4 @@
-"""Credential canary: no environment variable an SDK reads may reach the wire (Appendix E).
+"""Credential canary: no environment variable an SDK reads may reach the wire.
 
 Every variable the ``openai`` and ``anthropic`` constructors consult (keys, tokens, base URLs,
 organisation/project ids, webhook secrets, custom headers, profiles), plus the proxy variables

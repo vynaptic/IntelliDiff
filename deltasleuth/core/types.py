@@ -269,7 +269,7 @@ class Target:
 
 
 # ---------------------------------------------------------------------------------------------
-# Compiled spec (the subset of spec.schema.json the P0 engine executes)
+# Compiled spec (the subset of spec.schema.json the engine runs)
 # ---------------------------------------------------------------------------------------------
 
 

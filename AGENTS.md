@@ -51,6 +51,7 @@ About the tests:
   expression, so repeat those two terms in it.
 - The end-to-end tests serve the mock pairs on free loopback ports themselves. Nothing has to be running.
 - The full suite is large. Run the folder you changed first.
+- Each test fails after 600 s (`timeout` in the pytest options); `--timeout=0` lifts it.
 
 ## Architecture
 
@@ -71,8 +72,8 @@ a group's observations, results and findings in one transaction.
 - `deltasleuth/context.py` defines `Context`: the pool, the target registry, the tokeniser, the evidence
   store, the keyring and one gate per target. The API, the CLI, the worker and the MCP server each open
   one and call the same code. The modules at the package's top level (`approvals.py`, `schedules.py`,
-  `readiness.py`, `prechecks.py`, `notifications.py`, `targets.py`, `licence.py`) hold the logic those
-  entry points share.
+  `readiness.py`, `prechecks.py`, `notifications.py`, `targets.py`, `licence.py`, `specs.py`, `errors.py`)
+  hold the logic those entry points share.
 - `deltasleuth/api` is FastAPI with one router per resource in `routes/`. Every `/v1` route declares the
   role that may call it (`require` in `api/deps.py`). The app serves the built UI from `web/dist`.
 - `web/src` is a hash-routed single page. A screen is a `.tsx` file. Logic lives in plain `.ts` modules,
@@ -97,6 +98,11 @@ Where a new connector, database engine, model dialect, domain pack or report for
 - **Values are masked.** Protected values are tokenised before they are stored for display. Raw keys,
   headers and chat text are sealed under the run's data key. Add no column, log line or report field that
   holds a raw value.
+- **Refusals are `errors.Refused`.** A request the package declines raises `Invalid` (422), `NotFound` (404),
+  `Conflict` (409), `Gone` (410) or a module's `Refused(status, message)`, whose message names ids, names and
+  counts only. The API answers its status, the CLI exits 2 with one `error:` line, the MCP tools show it. Any
+  other exception, a Python or library `ValueError` or `LookupError` included, is a fault: 500, exit 3, its
+  type and place only (`errors.told`).
 - **Credentials are `file:` references.** Never an environment variable, never inside a spec. The settings
   are one YAML file (`--config` or `DS_CONFIG`), and an unknown setting is an error.
 - **The UI and the engine share constants.** The same test file pins the outcome legend in
@@ -113,7 +119,7 @@ Where a new connector, database engine, model dialect, domain pack or report for
   camelCase as the schema spells them (`normalizerVersion`).
 - Comments, docstrings and messages say what the code does. They do not cite document sections, ticket
   numbers or the history of a decision.
-- A change to the engine's findings comes with a golden case: one YAML file in `tests/golden/cases`, in the
+- A change to the engine's findings or to a key's outcome comes with a golden case: one YAML file in `tests/golden/cases`, in the
   layout that `tests/golden/conftest.py` describes.
 - `[tool.uv] exclude-newer` in `pyproject.toml` is a cooldown date: a newer release does not resolve until
   that date moves. The UI's dependencies are pinned to exact versions.

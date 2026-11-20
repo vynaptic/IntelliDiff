@@ -38,11 +38,13 @@ from typer.testing import CliRunner, Result
 
 from deltasleuth.api.app import AuthQueryFilter
 from deltasleuth.cli.main import _bindable, _Stream, app
+from deltasleuth.config import SettingsError
 from deltasleuth.connectors.tables import Refusal, TargetRefused, TargetUnreachable
 from deltasleuth.connectors.tables import engine as seam
 from deltasleuth.connectors.tables.engine import Column
 from deltasleuth.context import ContextError
 from deltasleuth.core.spec import documents
+from deltasleuth.errors import Invalid, NotFound
 from deltasleuth.reports import accuracy
 from deltasleuth.security.signing import PackSigner
 from deltasleuth.store import db
@@ -173,7 +175,7 @@ def test_help_says_what_ds_does() -> None:
     assert "compare what two sources hold, key by key, black-box: REST services" in shown
     # A licence marks a run only in a build that enforces one: no word of ds --help's
     assert "newest first, each with what its spec approval says. report " in shown
-    assert "or the P0 summary (report.md and report.html). profile " in shown
+    assert "or the contract report (summary: report.md and report.html). profile " in shown
     assert all("a build that enforces a licence" in written[path] for path in ("ds runs", "ds report"))
 
 
@@ -218,7 +220,9 @@ def test_samples_size_refuses_a_tier_or_a_size_it_cannot_give() -> None:
 @pytest.mark.parametrize(
     ("raised", "code", "said"),
     [
-        (ValueError("no settings file: pass --config or set DS_CONFIG"), 2, "error: no settings file"),
+        (SettingsError("no settings file: pass --config or set DS_CONFIG"), 2, "error: no settings file"),
+        (Invalid("the key set is empty"), 2, "error: the key set is empty"),
+        (NotFound("run R-0001 not found"), 2, "error: run R-0001 not found"),
         (RuntimeError("a bug"), 3, "internal error"),
         (KeyError("counters"), 3, "internal error"),  # no code raises it on purpose: a bug, not bad input
         (KeyboardInterrupt(), 130, "interrupted"),
@@ -232,6 +236,50 @@ def test_failures_exit_with_their_code(monkeypatch: pytest.MonkeyPatch, raised: 
     monkeypatch.setattr("deltasleuth.cli.main.load_settings", load)
     exit_code, out = ds("init")
     assert exit_code == code and said in out
+
+
+@pytest.mark.parametrize(
+    "raised",
+    [
+        ValueError("invalid literal for int() with base 10: 'K40045123'"),  # a library's, quoting a key
+        LookupError("no member K40045123"),
+        KeyError("K40045123"),
+    ],
+)
+def test_a_fault_exits_3_naming_its_type_and_place_never_its_text(
+    monkeypatch: pytest.MonkeyPatch, raised: BaseException
+) -> None:
+    """Only a refusal the package worded is told in its words: any other exception is a bug, whose
+    traceback and last line name its type and where it was raised, never its message."""
+
+    def load(_: Any) -> None:
+        raise raised
+
+    monkeypatch.setattr("deltasleuth.cli.main.load_settings", load)
+    exit_code, out = ds("init")
+    assert exit_code == 3 and "K40045123" not in out
+    assert "Traceback (most recent call last):" in out
+    assert out.splitlines()[-1].startswith(
+        f"internal error: a bug in DeltaSleuth ({type(raised).__name__} at cli/main.py:"
+    )
+
+
+@pytest.mark.db
+def test_a_library_value_error_while_ds_run_creates_its_run_exits_3_without_its_text(
+    store: Callable[..., Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = store()
+    (tmp_path / "s.yaml").write_text(APPROVED.replace("keys: [K1]", "keys: [K40045123]"))
+
+    def taken(keys: list[str], *_: Any) -> None:  # int()'s ValueError quotes the key
+        int(keys[0])
+
+    monkeypatch.setattr("deltasleuth.runner.runs.run_keys", taken)
+    failed = run("run", tmp_path / "s.yaml", "--no-wait", "--config", config)
+    assert failed.exit_code == 3 and "K40045123" not in failed.stdout + failed.stderr
+    assert failed.stderr.splitlines()[-1].startswith(
+        "internal error: a bug in DeltaSleuth (ValueError at runner/runs.py:"
+    )
 
 
 def test_a_spec_with_blocking_issues_exits_2(tmp_path: Path) -> None:
@@ -1768,7 +1816,7 @@ def test_a_dry_run_names_what_a_pass_would_do_writes_nothing_and_needs_no_operat
         f"kept: cycle 1 of run {soak} (retention standard): expired {day(pg_dsn, expired, soak)}; its running"
         " soak reads it until its next cycle ends\n"
         f"abandon: run {one_shot} (queued since {since}): failed, a one-shot run queued for 24 h\n"
-        f"outside retention: /p0/samples-1 (run {due}): P0 samples, for the site's cron\n"
+        f"outside retention: /p0/samples-1 (run {due}): captured samples, for the site's cron\n"
     ))  # fmt: skip
     assert sql(pg_dsn, "SELECT count(*) AS n FROM ds.audit_log") == rows_before
     assert sql(pg_dsn, "SELECT count(*) AS n FROM ds.cycles WHERE purging_at IS NOT NULL") == [{"n": 0}]

@@ -1,0 +1,11 @@
+description: >
+  Two documents holding the same members in another order are MATCH, with no finding: member order
+  of an object is not a difference.
+a:
+  body: '{"code": "ORG-000123", "status": "ACTIVE", "tier": 2}'
+b:
+  body: '{"tier": 2, "status": "ACTIVE", "code": "ORG-000123"}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  outcome: MATCH

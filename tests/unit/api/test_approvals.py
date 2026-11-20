@@ -722,7 +722,7 @@ def test_an_ended_cycle_is_signed_off_by_someone_who_neither_wrote_started_nor_r
 
 
 async def _reported(ctx: Context, run_id: str, out: Path, cycle: int | None = None) -> list[str]:
-    """What report.pdf's title block and the P0 summary's four-eyes section say of the approvals of the
+    """What report.pdf's title block and the contract report's four-eyes section say of the approvals of the
     run's ``cycle`` (default: its current one)."""
     meta = (await report_document(ctx, run_id, cycle)).meta.splitlines()
     four_eyes = summary_document(await load_run(ctx, run_id, cycle), out).sections[1]
@@ -897,6 +897,28 @@ def test_a_revoke_reason_holding_a_key_shaped_value_is_refused(
         f"/v1/approvals/{spec_approval}/revoke", json={"reason": "wrong clear path"}, headers=carol
     )
     assert revoked.status_code == 200
+
+
+def test_a_fault_inside_a_revoke_is_a_500_not_an_unknown_approval(
+    open_client: OpenClient, idp: FakeIdp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A KeyError is a bug, never an approval that is not stored: the revoke answers 500 and says nothing
+    of it, where an unknown approval is a 404."""
+
+    async def revoke(*_: Any, **__: Any) -> None:
+        raise KeyError("approval_id")
+
+    auth = {"oidc": idp.settings(username_claim="preferred_username")}
+    with open_client(auth=auth, raise_server_exceptions=False) as client:
+        _, _, spec_approval = _approved_spec(client, idp)
+        carol = signed_in(client, idp, "carol", "G-approver")
+        unknown = client.post(f"/v1/approvals/A-{'0' * 26}/revoke", json={"reason": "no"}, headers=carol)
+        monkeypatch.setattr(approvals, "revoke", revoke)
+        failed = client.post(
+            f"/v1/approvals/{spec_approval}/revoke", json={"reason": "wrong clear path"}, headers=carol
+        )
+    assert said(unknown) == (404, f"approval A-{'0' * 26} not found")
+    assert (failed.status_code, failed.json()) == (500, {"detail": "internal error"})
 
 
 def test_reports_label_the_reported_cycle_by_the_approval_it_ran_under(

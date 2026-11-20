@@ -10,17 +10,36 @@ int or, where a double holds it, as a float. Any other number goes in as a stand
 (derived from a digest of the input, so data cannot forge it) and is swapped back afterwards.
 A stand-in is exact only while moved, so a map that reads one is evaluated again with nearest
 doubles and both results must agree.
+
+A map runs inside the shared server process, and a regular expression can backtrack for hours, so every
+regular expression literal of a map compiles through ``regex_engine``. It refuses a pattern that does not
+compile, one past a key pattern's size or compilation work bound, and a repeat inside a repeat
+(``RegexRefused``); an inner repeat that is possessive or atomic gives nothing back and is accepted. The
+pattern then runs on the ``regex`` engine, which stops at the map's time bound, written so that it matches
+exactly what Python's ``re`` matches: each ``\\d``, ``\\s``, ``\\w`` and ``\\b`` spelled out as the code
+points ``re`` gives it, and a case-insensitive character as the characters ``re`` folds to it. A pattern
+that cannot be written so (``\\B``, a back-reference, a scoped ``(?a:...)``) runs on ``re``. Either way it
+reads at most ``MAX_REGEX_INPUT`` characters of one string: a longer one fails the side.
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+import re
+import sys
+import time
+import warnings
+from collections.abc import Callable, Sequence
+from contextvars import ContextVar
 from decimal import Decimal
-from functools import lru_cache
+from functools import cache, lru_cache, partial
+from re import _compiler, _parser
+from re import _constants as _sre
 from typing import Any
 
 import jsonata
+import regex
+from jsonata.regex_engine import RegexFlags
 from jsonata.utils import Utils
 
 from deltasleuth.core.canonical.encoding import exact_json, sha256_hex
@@ -36,6 +55,12 @@ MAP_TIMEOUT_MS = 2000
 MAP_MAX_DEPTH = 500
 # The significant digits JSONata keeps when it writes a number as text; a double holds them all.
 EXACT_DIGITS = 15
+# A map's regular expression: the characters of one string it reads, and a key pattern's bounds on its size
+# and on its compilation work (finite repeats expanded).
+MAX_REGEX_INPUT = 10_000
+MAX_REGEX_CHARS = 4000
+MAX_REGEX_WORK = 16_000
+_DEADLINE: ContextVar[float | None] = ContextVar("map_deadline", default=None)  # the running map's
 
 
 def apply_select(select: str, doc: JSON) -> JSON:
@@ -49,7 +74,9 @@ def apply_select(select: str, doc: JSON) -> JSON:
 @lru_cache(maxsize=256)
 def _compiled(expression: str) -> Any:
     try:
-        compiled = jsonata.Jsonata(expression)
+        compiled = jsonata.Jsonata(expression, regex_engine)
+    except RegexRefused:
+        raise
     except Exception as exc:  # the parser raises JException or plain Python errors
         raise ExpressionError(f"JSONata expression does not compile: {_code(exc)}") from exc
     compiled.set_output_convert_nulls(False)  # keep JSONata null distinct from undefined
@@ -75,10 +102,15 @@ def _evaluate(compiled: Any, data: Any) -> Any:
     # so concurrent evaluations cannot see each other's input, and starts this call's time bound.
     frame = compiled.create_frame()
     frame.set_runtime_bounds(MAP_TIMEOUT_MS, MAP_MAX_DEPTH)
+    deadline = _DEADLINE.set(time.monotonic() + MAP_TIMEOUT_MS / 1000)  # its regular expressions'
     try:
         return compiled.evaluate(data, frame)
+    except MappingError:  # a regular expression's bound
+        raise
     except Exception as exc:  # JException (D1012 timeout, D1011 depth), ZeroDivisionError, ...
         raise MappingError(f"map expression failed: {_code(exc)}") from exc
+    finally:
+        _DEADLINE.reset(deadline)
 
 
 def _code(exc: Exception) -> str:
@@ -180,3 +212,311 @@ class _Codec:
                 and all(map(self.agrees, exact, approximate))
             )
         return type(exact) is type(approximate) and exact == approximate
+
+
+# -- regular expressions ----------------------------------------------------------------------------------
+
+
+class RegexRefused(ExpressionError):
+    """A map's regular expression that may not run: its message names the pattern, never a value."""
+
+
+class RegexLimitError(ValueError):
+    """A parsed pattern past its compilation work bound."""
+
+
+class _Unwritable(Exception):
+    """A construct the ``regex`` engine cannot be given with ``re``'s meaning."""
+
+
+def regex_engine(pattern: str, flags: RegexFlags) -> _Bounded:
+    """JSONata's regular expression engine for maps (``jsonata.Jsonata(expression, regex_engine)``)."""
+    case = re.IGNORECASE if flags.case_insensitive else 0
+    return _bounded(pattern, case | (re.MULTILINE if flags.multiline else 0))
+
+
+@lru_cache(maxsize=256)
+def _bounded(pattern: str, flags: int) -> _Bounded:
+    shown = f"/{pattern if len(pattern) <= 40 else pattern[:40] + '…'}/"
+    if len(pattern) > MAX_REGEX_CHARS:
+        limit = f"a map's is at most {MAX_REGEX_CHARS} characters"
+        raise RegexRefused(f"regular expression {shown} is too long: {limit}")
+    try:
+        compiled = re.compile(pattern, flags)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)  # re.compile surfaced them
+            parsed = _parser.parse(pattern, flags)
+    except (re.error, OverflowError, RecursionError) as exc:
+        raise RegexRefused(f"regular expression {shown} is not valid: {exc}") from None
+    try:
+        regex_work(parsed, MAX_REGEX_WORK)
+    except RegexLimitError:
+        why = "exceeds its compilation work limit; simplify its repeats"
+        raise RegexRefused(f"regular expression {shown} {why}") from None
+    if _nested(parsed, False):
+        why = "has a repeat inside a repeat, which can backtrack for hours on a long string"
+        fix = "make the inner repeat possessive (x++) or atomic ((?>x+)), or write it without nesting"
+        raise RegexRefused(f"regular expression {shown} {why}: {fix}")
+    return _Bounded(compiled, _native(parsed))
+
+
+def regex_work(nodes: _parser.SubPattern, limit: int) -> int:
+    """The work of compiling a parsed pattern: each operation once, a finite repeat's body as often as it may
+    repeat; ``RegexLimitError`` once it passes ``limit``. Python is pinned to 3.13: counting the parsed
+    operations reads escapes, classes, comments and inline flags as the compiler does, where braces in the
+    source would be misread as repeats."""
+    work = 0
+    for op, value in nodes:
+        cost = 1
+        if op in (_sre.MAX_REPEAT, _sre.MIN_REPEAT, _sre.POSSESSIVE_REPEAT):
+            low, high, child = value
+            cost += regex_work(child, limit) * (max(1, low) if high == _sre.MAXREPEAT else max(1, high))
+        elif op == _sre.SUBPATTERN:
+            cost += regex_work(value[-1], limit)
+        elif op == _sre.BRANCH:
+            cost += sum(regex_work(branch, limit) for branch in value[1])
+        elif op in (_sre.ASSERT, _sre.ASSERT_NOT):
+            cost += regex_work(value[1], limit)
+        elif op == _sre.ATOMIC_GROUP:
+            cost += regex_work(value, limit)
+        elif op == _sre.GROUPREF_EXISTS:
+            cost += regex_work(value[1], limit) + (regex_work(value[2], limit) if value[2] else 0)
+        work += cost
+        if work > limit:
+            raise RegexLimitError
+    return work
+
+
+def _nested(nodes: Sequence[Any], repeated: bool) -> bool:
+    """Whether a repeat that may run more than once (``repeated``: one encloses ``nodes``) holds an unbounded
+    repeat that gives back what it took. A possessive repeat's body and an atomic group give nothing back
+    once matched: only what nests inside them counts."""
+    for op, value in nodes:
+        if op in (_sre.MAX_REPEAT, _sre.MIN_REPEAT):
+            _, high, child = value
+            if (repeated and high == _sre.MAXREPEAT) or _nested(child, repeated or high > 1):
+                return True
+        elif op == _sre.POSSESSIVE_REPEAT:
+            if _nested(value[2], False):
+                return True
+        elif op == _sre.ATOMIC_GROUP:
+            if _nested(value, False):
+                return True
+        elif op == _sre.SUBPATTERN:
+            if _nested(value[-1], repeated):
+                return True
+        elif op == _sre.BRANCH:
+            if any(_nested(branch, repeated) for branch in value[1]):
+                return True
+        elif op in (_sre.ASSERT, _sre.ASSERT_NOT):
+            if _nested(value[1], repeated):
+                return True
+        elif op == _sre.GROUPREF_EXISTS:
+            if _nested(value[1], repeated) or (value[2] is not None and _nested(value[2], repeated)):
+                return True
+    return False
+
+
+class _Bounded:
+    """A map's compiled regular expression, as JSONata calls one (``jsonata.regex_engine.CompiledPattern``):
+    ``re``'s, and the same pattern on the ``regex`` engine when it could be written there."""
+
+    __slots__ = ("_native", "_re")
+
+    def __init__(self, compiled: re.Pattern[str], native: regex.Pattern[str] | None) -> None:
+        self._re, self._native = compiled, native
+
+    def search(self, string: str) -> Any:
+        return self._run(lambda p, **bound: p.search(string, **bound), string)
+
+    def finditer(self, string: str) -> Any:
+        return iter(self._run(lambda p, **bound: list(p.finditer(string, **bound)), string))
+
+    def sub(self, repl: Any, string: str, count: int = 0) -> str:
+        if isinstance(repl, str):  # read as re reads a template, with its errors, which JSONata parses
+            repl = partial(_expand, _parser.parse_template(repl, self._re))
+        return self._run(lambda p, **bound: p.sub(repl, string, count, **bound), string)
+
+    def split(self, string: str, maxsplit: int = 0) -> list[str]:
+        return self._run(lambda p, **bound: p.split(string, maxsplit, **bound), string)
+
+    def _run(self, call: Callable[..., Any], string: str) -> Any:
+        if len(string) > MAX_REGEX_INPUT:
+            limit = f"{MAX_REGEX_INPUT:,} characters"
+            raise MappingError(f"map regular expression read a string longer than {limit}")
+        if self._native is None:
+            return call(self._re)
+        deadline = _DEADLINE.get()
+        left = MAP_TIMEOUT_MS / 1000 if deadline is None else deadline - time.monotonic()
+        try:
+            if left <= 0:
+                raise TimeoutError
+            return call(self._native, concurrent=True, timeout=left)
+        except TimeoutError:
+            bound = f"the map's time bound ({MAP_TIMEOUT_MS} ms)"
+            raise MappingError(f"map regular expression ran past {bound}") from None
+
+
+def _expand(template: list[Any], match: Any) -> str:
+    """A template ``_parser.parse_template`` read (texts and group numbers) filled from ``match``."""
+    return "".join(part if isinstance(part, str) else (match.group(part) or "") for part in template)
+
+
+def _native(parsed: _parser.SubPattern) -> regex.Pattern[str] | None:
+    """The pattern on the ``regex`` engine, matching exactly what ``re`` matches; None where it cannot be."""
+    flags = parsed.state.flags
+    names = {number: name for name, number in parsed.state.groupdict.items()}
+    try:
+        source = _written(parsed, flags & (re.IGNORECASE | re.ASCII), names)
+        native = regex.VERSION0 | (regex.MULTILINE if flags & re.MULTILINE else 0)
+        return regex.compile(source, native | (regex.DOTALL if flags & re.DOTALL else 0), cache_pattern=False)
+    except (_Unwritable, regex.error):
+        return None
+
+
+_ANCHORS = {
+    _sre.AT_BEGINNING: "^", _sre.AT_BEGINNING_STRING: r"\A", _sre.AT_END: "$", _sre.AT_END_STRING: r"\Z",
+}  # fmt: skip
+_LOOK = {
+    (_sre.ASSERT, 1): "(?=", (_sre.ASSERT, -1): "(?<=",
+    (_sre.ASSERT_NOT, 1): "(?!", (_sre.ASSERT_NOT, -1): "(?<!",
+}  # fmt: skip
+_SUFFIX = {_sre.MAX_REPEAT: "", _sre.MIN_REPEAT: "?", _sre.POSSESSIVE_REPEAT: "+"}
+_SCOPED = ((re.MULTILINE, "m"), (re.DOTALL, "s"))
+_SINGLE = (_sre.LITERAL, _sre.NOT_LITERAL, _sre.IN)  # the operations that match one character
+
+
+def _written(nodes: Sequence[Any], flags: int, names: dict[int, str]) -> str:
+    """Parsed ``nodes`` as ``regex`` source of the same meaning, under ``re``'s ``IGNORECASE`` and ``ASCII``
+    as ``flags`` holds them. A character case-insensitive ``re`` matches is written as the set it matches."""
+    out = []
+    for op, value in nodes:
+        if op in _SINGLE and flags & re.IGNORECASE:
+            out.append(_set(_folded(op, tuple(value) if op == _sre.IN else value, flags), False))
+        elif op == _sre.LITERAL:
+            out.append(_char(value))
+        elif op == _sre.NOT_LITERAL:
+            out.append(_set([(value, value)], True))
+        elif op == _sre.ANY:
+            out.append(".")
+        elif op == _sre.IN:
+            out.append(_class(value, bool(flags & re.ASCII)))
+        elif op == _sre.AT and value in _ANCHORS:
+            out.append(_ANCHORS[value])
+        elif op == _sre.AT and value == _sre.AT_BOUNDARY:  # re's \w on one side only, whatever the case
+            word = _class([(_sre.CATEGORY, _sre.CATEGORY_WORD)], bool(flags & re.ASCII))
+            out.append(f"(?:(?<={word})(?!{word})|(?<!{word})(?={word}))")
+        elif op in _SUFFIX:
+            low, high, child = value
+            if high == _sre.MAXREPEAT:
+                count = {0: "*", 1: "+"}.get(low, f"{{{low},}}")
+            else:
+                count = "?" if (low, high) == (0, 1) else f"{{{low},{high}}}"
+            out.append(f"(?:{_written(child, flags, names)}){count}{_SUFFIX[op]}")
+        elif op == _sre.SUBPATTERN:
+            number, added, removed, child = value
+            if added & (re.ASCII | re.UNICODE):  # re reads a scoped (?a:\w) as neither class
+                raise _Unwritable
+            inner = _written(child, (flags | (added & re.IGNORECASE)) & ~removed, names)
+            on = "".join(letter for flag, letter in _SCOPED if added & flag)
+            off = "".join(letter for flag, letter in _SCOPED if removed & flag)
+            if on or off:
+                inner = f"(?{on}{'-' + off if off else ''}:{inner})"
+            if number is None:
+                out.append(f"(?:{inner})")
+            else:
+                out.append(f"(?P<{names[number]}>{inner})" if number in names else f"({inner})")
+        elif op == _sre.BRANCH:
+            out.append("(?:" + "|".join(_written(branch, flags, names) for branch in value[1]) + ")")
+        elif op in (_sre.ASSERT, _sre.ASSERT_NOT):
+            out.append(_LOOK[op, value[0]] + _written(value[1], flags, names) + ")")
+        elif op == _sre.ATOMIC_GROUP:
+            out.append(f"(?>{_written(value, flags, names)})")
+        else:  # \B (re never matches it in an empty string), a back-reference, a condition
+            raise _Unwritable
+    return "".join(out)
+
+
+def _char(point: int) -> str:
+    """A code point as ``regex`` source: a letter or digit as itself (no engine reads one as syntax), any
+    other by its number."""
+    return chr(point) if chr(point).isalnum() else f"\\U{point:08x}"
+
+
+def _class(items: Sequence[Any], ascii: bool) -> str:
+    negated, ranges = False, []
+    for op, value in items:
+        if op == _sre.NEGATE:
+            negated = True
+        elif op == _sre.LITERAL:
+            ranges.append((value, value))
+        elif op == _sre.RANGE:
+            ranges.append(value)
+        elif op == _sre.CATEGORY and value in _ESCAPES:
+            ranges += _code_points(*_ESCAPES[value], ascii)
+        else:
+            raise _Unwritable
+    return _set(ranges, negated)
+
+
+def _set(ranges: Sequence[tuple[int, int]], negated: bool) -> str:
+    """Code points as a class that is never negated: the ``regex`` engine misreads an alternation of
+    negated classes (``[^a]|[^b]`` does not match ``a``), so a negated one is written as its complement."""
+    merged: list[tuple[int, int]] = []
+    for low, high in sorted(ranges):
+        if merged and low <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(high, merged[-1][1]))
+        else:
+            merged.append((low, high))
+    written = _gaps(merged) if negated else merged
+    if not written:
+        return "(?!)"
+    return "[" + "".join(_char(lo) if lo == hi else f"{_char(lo)}-{_char(hi)}" for lo, hi in written) + "]"
+
+
+def _gaps(ranges: Sequence[tuple[int, int]]) -> list[tuple[int, int]]:
+    """The code points sorted, disjoint ``ranges`` leave out."""
+    gaps, start = [], 0
+    for low, high in ranges:
+        gaps += [(start, low - 1)] if low > start else []
+        start = high + 1
+    return gaps + ([(start, sys.maxunicode)] if start <= sys.maxunicode else [])
+
+
+_ESCAPES = {
+    _sre.CATEGORY_DIGIT: (r"\d", False), _sre.CATEGORY_NOT_DIGIT: (r"\d", True),
+    _sre.CATEGORY_SPACE: (r"\s", False), _sre.CATEGORY_NOT_SPACE: (r"\s", True),
+    _sre.CATEGORY_WORD: (r"\w", False), _sre.CATEGORY_NOT_WORD: (r"\w", True),
+}  # fmt: skip
+
+
+@cache
+def _code_points(escape: str, complement: bool, ascii: bool) -> tuple[tuple[int, int], ...]:
+    """The code points ``re`` matches with a class escape, or those it does not, as sorted ranges, asked of
+    ``re`` itself."""
+    if complement:
+        return tuple(_gaps(_code_points(escape, False, ascii)))
+    runs: list[list[int]] = []
+    for point in sorted({ord(c) for c in re.findall(escape, _every(), re.ASCII if ascii else 0)}):
+        if runs and runs[-1][1] == point - 1:
+            runs[-1][1] = point
+        else:
+            runs.append([point, point])
+    return tuple((low, high) for low, high in runs)
+
+
+@lru_cache(maxsize=4096)
+def _folded(op: Any, value: Any, flags: int) -> tuple[tuple[int, int], ...]:
+    """The code points one parsed character operation matches under ``flags``, case-insensitive among them,
+    as ranges, asked of ``re`` itself: its case folding is its own (the Kelvin sign is a k, ß is no ss)."""
+    state = _parser.State()
+    state.flags = flags | (0 if flags & re.ASCII else re.UNICODE)
+    node = _parser.SubPattern(state, [(op, list(value) if op == _sre.IN else value)])
+    found = {ord(c) for c in _compiler.compile(node, state.flags).findall(_every())}
+    return tuple((point, point) for point in sorted(found))
+
+
+@cache
+def _every() -> str:
+    """Every code point, in order: what a character class is read over."""
+    return "".join(map(chr, range(sys.maxunicode + 1)))

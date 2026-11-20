@@ -19,7 +19,7 @@ Design principles:
 
 - **A deterministic engine decides.** Outcomes, findings and root causes come from code and the spec. A language model only explains them, and each answer must cite stored ids.
 - **Black box.** It calls declared endpoints and reads declared tables and columns. It never depends on how a system is built.
-- **Fetching is separate from comparing.** Every read is stored as evidence before it is judged. A stored observation is judged again from its evidence when a key is viewed or rechecked, and captured samples run again without a live call.
+- **Fetching is separate from comparing.** Every read is stored as evidence before its observation is saved: a group's blobs are durable before the transaction that names them commits. A stored observation is judged again from its evidence when a key is viewed or rechecked, and captured samples run again without a live call.
 - **Every key gets a result.** A key that cannot be read is `INCONCLUSIVE`. Nothing is suppressed silently: a suppressed finding names the rule that suppressed it.
 - **Personal values are tokenised.** Values are tokenised by default. People, reports and models see keyed tokens unless a spec declares a path clear.
 - **Polite to targets.** Each target has one rate budget, an in-flight cap and a circuit breaker.
@@ -52,18 +52,18 @@ A run compares the keys of one stored spec version. Its mode is `one_shot` (one 
 set once) or `soak` (the same comparison in repeated cycles).
 
 1. **Create.** The spec is validated, compiled and stored as an immutable version in `ds.specs`. The run freezes what its targets declare and, for table sides, the column plan, so a later change does not alter it.
-2. **Key source.** Keys come with the run or from the spec's `key.source`: an inline `list`, a `paginated_endpoint`, a key table, or a `hash_sample` of a larger population. Between two tables a scan is the key source: both sides stream each key and a row hash in key order, equal rows count as `MATCH`, and only the other keys are queued. Keys are stored masked and sealed in `ds.run_keys`.
-3. **Leases and the single active worker.** One worker per database holds a PostgreSQL advisory lock; any other waits. Its slots lease due keys and renew the leases. A group's observations, results and findings are saved in one transaction, and a lost lease rolls it back. A killed worker costs only the keys in flight and never duplicates a result. The worker checks its lock every third of a lease period on a connection with TCP keepalives; a check not answered in that time counts as a lost lock, and its slots stop.
-4. **Fetch both sides.** One connector per side reads under its target's gate: the rate budget (`rate_per_s`, default 20), the in-flight cap, retries with backoff and a circuit breaker. Each read, a failed one included, is stored as evidence first.
+2. **Key source.** Keys come with the run or from the spec's `key.source`: an inline `list`, a `paginated_endpoint`, a key table, or a `hash_sample` of a larger population. Between two tables a scan is the key source: both sides stream each key and a row hash in key order, equal rows count as `MATCH`, and only the other keys are queued. In a UTF-8 PostgreSQL database a side orders and resumes by its key text in the "C" collation, so such a key streams from its index and resumes by range; each side fetches its next batch while the merge reads the one before. Keys are stored masked and sealed in `ds.run_keys`.
+3. **Leases and the single active worker.** One worker per database holds a PostgreSQL advisory lock; any other waits. Its slots lease due keys and renew the leases. A group's observations, results and findings are saved in one transaction, and a lost lease rolls it back. A killed worker costs only the keys in flight and never duplicates a result. The worker checks its lock every third of a lease period on a connection with TCP keepalives; a check not answered in that time counts as a lost lock, and its slots stop. A free slot leases a key of the run with the fewest groups in flight, so runs share the worker. Beside a side of fixed files a group is 2,000 keys, one pass over the files, judged and saved 200 at a time.
+4. **Fetch both sides.** One connector per side reads under its target's gate: the rate budget (`rate_per_s`, default 20), the in-flight cap, retries with backoff and a circuit breaker. Each read, a failed one included, is stored as evidence before its row: each blob file is fsynced, then each directory once a group. A key whose read the open breaker or a target's Retry-After pause refused unsent goes back unjudged, due when the target may be read again, up to ten times; then it is judged as read.
 5. **Observe.** Each read is judged against the declared contract and becomes `COMPLETE`, `ABSENT`, `INCOMPLETE` or `ERROR`. A side is `ABSENT` only when the spec and the target both declare that answer an authoritative not-found.
-6. **Select and map.** A service side applies `select` (JSONPath) and `map` (JSONata). A table side maps its declared columns to canonical fields. Both sides give one canonical shape. JSONata calculates in doubles and writes 15 digits, so a number of more than 15 significant digits goes into a map as a stand-in: moving it is exact, and a map that calculates with it or writes it as text leaves the side `INCOMPLETE`.
+6. **Select and map.** A service side applies `select` (JSONPath) and `map` (JSONata). A table side maps its declared columns to canonical fields. Both sides give one canonical shape. JSONata calculates in doubles and writes 15 digits, so a number of more than 15 significant digits goes into a map as a stand-in: moving it is exact, and a map that calculates with it or writes it as text leaves the side `INCOMPLETE`. A map's regular expressions run on the `regex` engine under the map's time bound, written to match what Python's `re` matches; one with a repeat inside a repeat is refused when the spec loads, and one that reads a string of more than 10,000 characters leaves the side `INCOMPLETE`.
 7. **Normalise.** Per-field normaliser chains run on a copy. Arrays are matched as `ordered`, `set`, `keyed` or `multiset`. The raw tree and the normalised tree are both kept and hashed.
 8. **Diff.** A structural diff compares the two documents, with `exact`, `tolerance` or `similarity` per field. A difference that a normaliser or a tolerance removed is still reported, at severity `INFO`. Member names pair by their NFC form, as the canonical hash writes them; two names of one object sharing a form pair only when spelled alike.
 9. **Classify.** Each finding gets a taxonomy code, a severity, a value class and a signature. Known-difference rules mark matching findings as suppressed. The key's outcome is `MATCH`, `MISMATCH`, `KNOWN_DIFF`, `NOT_FOUND_A`, `NOT_FOUND_B`, `DRIFT` or `INCONCLUSIVE`.
 10. **Recheck.** A discrepant key is read again `recheck.delay` after the database's now, side b first. If side a changed, or side b now agrees, the outcome is `DRIFT`. If nothing changed, the first outcome is confirmed. A key a table scan found different is queued `recheck.delay` after the scan, and its one read confirms it.
 11. **Root-cause grouping.** When a cycle ends, discrepant findings are grouped. The same array member missing or extra under several keys is one cause. The rest group by signature: where and how a value differs, never which key or value. The groups are ranked in `ds.root_causes`. The keys are derived again from their evidence a page at a time, and of each finding only what it groups by is kept.
-12. **Cycle end.** Counters are computed from the stored results, stop conditions are judged, and `ds.cycles` keeps one row per ended cycle. A soak then starts its next cycle after its interval; a late soak (after a pause, an outage or a long cycle) starts it one interval after the boundary, skipping the starts it missed.
-13. **Reports.** CSV exports and a PDF report are built from the store, masked.
+12. **Cycle end.** Counters are computed from the stored results, stop conditions are judged, and `ds.cycles` keeps one row per ended cycle. A soak then starts its next cycle after its interval; a late soak (after a pause, an outage or a long cycle) starts it one interval after the boundary, skipping the starts it missed. Each run's cycle end is a task of its own: a slow one holds up no other run, scan or schedule.
+13. **Reports.** CSV exports and a PDF report are built from the store, masked; a CSV export is sent a page of rows at a time, audited before its first byte.
 
 Around a run: schedules start runs by cron; table pre-checks compare counts and sums before any key is
 read; the schema guard pauses a run whose table changed; sign-off sampling draws a stratified sample of a
@@ -91,7 +91,7 @@ and Teams messages from the audit chain.
 | `deltasleuth/auth`, `deltasleuth/security` | Principals, roles, API tokens, sessions and OIDC; tokenisation, encryption keys and pack signing. |
 | `deltasleuth/profiler` | Drafts a spec from paired samples or from two tables. |
 | `deltasleuth/packs` | Domain packs. `entity_linking` is the optional example. |
-| `deltasleuth/*.py` | Settings (`config.py`), the shared context, and the service modules for approvals, schedules, readiness, pre-checks, notifications, targets and licences. |
+| `deltasleuth/*.py` | Settings (`config.py`), the shared context, and the service modules for approvals, schedules, readiness, pre-checks, notifications, targets, licences, spec storing (`specs.py`) and refusals (`errors.py`). |
 | `web/` | The React and TypeScript UI (Vite), with its tests in `web/test`. |
 | `mocks/` | Two mock service pairs with known ground truth. |
 | `examples/` | Runnable specs: public API pairs, table pairs for each engine, file pairs and graph parity. |
@@ -132,7 +132,7 @@ database; they are in the evidence store. Settings and targets are files, not ta
 |---|---|
 | `specs` | Immutable spec versions: name, version, content hash and body. |
 | `runs` | One row per run: spec, mode, status, parameters, current cycle, counters, retention class and hold. |
-| `run_keys` | The work queue: one row per key and cycle, with its state, pass, lease and sealed raw key. |
+| `run_keys` | The work queue: one row per key and cycle, with its state, pass, lease, refused reads and sealed raw key. |
 | `observations` | The metadata of each read: side, status, latency, attempts, pages and the evidence address. |
 | `results` | One row per key and cycle: the outcome, both side states, the confirmation and the observations used. |
 | `findings` | One row per difference: path, change type, taxonomy code, severity, masked values, rule and root cause. |
@@ -149,6 +149,7 @@ database; they are in the evidence store. Settings and targets are files, not ta
 | `schedules` | Cron schedules that start runs of a stored spec. |
 | `prechecks`, `precheck_pairs` | Table pre-checks and the verdict of each pair of tables. |
 | `notify_cursor`, `notify_deliveries`, `notify_mutes` | The notifier's position in the audit chain, its deliveries and its mutes. |
+| `worker_sweep` | The worker's holder (host name and process id) and its last sweep, whose time and age `/v1/health` shows. |
 | `installation`, `licences`, `schema_version` | The installation id, licence files (unused in the open build) and the applied migrations. |
 
 ## 7. Connectors
@@ -194,13 +195,14 @@ The AI layer is optional. Without an LLM profiles file it is off, and everything
 | Suite | Where | What it checks |
 |---|---|---|
 | Unit | `tests/unit` | Each package on its own. Tests marked `db` use a PostgreSQL container. |
-| Golden | `tests/golden` | 75 YAML cases that fix the engine's findings for given inputs, and fixtures for each database engine. |
-| Property | `tests/property` | Hypothesis properties of the engine and the normalisers. |
+| Golden | `tests/golden` | 93 YAML cases that fix the engine's findings for given inputs and, where a case states one, the key's outcome after classification and known-difference rules; the corpus reaches every core code and outcome one key can give. Fixtures for each database engine. |
+| Property | `tests/property` | Hypothesis properties of the engine and the normalisers, among them that documents the hashes tell apart always give a finding and that swapping the sources mirrors a key's outcome. |
 | End to end | `tests/e2e` | The API, the CLI and the worker against the mock pairs, tables, files, soak runs, kill and resume, and MCP. |
 | UI | `web/test` | The UI's logic modules. |
 
 `.github/workflows/checks.yml` runs ruff, every test with `DS_REQUIRE_DB=1`, and the UI's tests and build on each
-push to `main` and each pull request.
+push to `main` and each pull request. A test fails after 600 s (pytest-timeout; an hour under `DS_PERF` or
+`DS_IMAGE`), and the release tool stops each check after its own limit.
 
 The two mock pairs are in `mocks/`: `linker` (an entity and its linked entities, in an old and a new shape)
 and `customer` (a profile service, v1 and v2). Each has a dataset with planted differences and an

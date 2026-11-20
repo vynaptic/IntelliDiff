@@ -178,3 +178,62 @@ def test_runaway_map_is_a_mapping_error(monkeypatch: pytest.MonkeyPatch, express
     with pytest.raises(MappingError, match=r"D1012|D1011"):
         apply_map(expression, {"id": 1})
     assert time.monotonic() - started < 5
+
+
+class TestRegexBounds:
+    """A map's regular expression runs inside the shared server process: one that can backtrack for hours
+    is refused when the map compiles, and what remains is bounded by the map's time bound and by the
+    length of the string it reads. An ordinary one maps as Python's re reads it."""
+
+    @pytest.mark.parametrize(
+        "expression",
+        ["$contains(a, /^(x+)+$/)", "$match(a, /(\\w+\\s?)*$/)", "$split(a, /(?:[a-z]+,?){2,}/i)"],
+    )
+    def test_a_repeat_inside_a_repeat_is_refused_when_the_map_compiles(self, expression: str) -> None:
+        with pytest.raises(ExpressionError, match="repeat inside a repeat"):
+            apply_map(expression, {"a": "x"})
+
+    @pytest.mark.parametrize("expression", ["$contains(a, /^(x++)+$/)", "$contains(a, /^(?>x+)+$/)"])
+    def test_a_possessive_or_atomic_inner_repeat_is_accepted(self, expression: str) -> None:
+        assert apply_map(expression, {"a": "x" * 40 + "!"}) is False
+
+    def test_a_longer_input_fails_the_side_at_once(self) -> None:
+        started = time.monotonic()
+        with pytest.raises(MappingError, match="10,000 characters"):
+            apply_map("$contains(a, /y/)", {"a": "x" * (mapping.MAX_REGEX_INPUT + 1)})
+        assert time.monotonic() - started < 0.5
+        assert apply_map("$contains(a, /y/)", {"a": "x" * mapping.MAX_REGEX_INPUT}) is False
+
+    def test_backtracking_stops_at_the_map_time_bound(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Exponential in both Python's re and the bounded engine: only a time bound ends it.
+        monkeypatch.setattr(mapping, "MAP_TIMEOUT_MS", 300)
+        started = time.monotonic()
+        with pytest.raises(MappingError) as failed:
+            apply_map("$contains(a, /^(?:a.|.b)+$/)", {"a": "ab" * 28 + "!"})
+        assert time.monotonic() - started < 1.5
+        assert "time bound" in str(failed.value)
+
+    def test_a_pattern_python_re_backtracks_on_answers_in_time(self) -> None:
+        started = time.monotonic()
+        assert apply_map("$contains(a, /^(ab|a|b)+c/)", {"a": "ab" * 26 + "!"}) is False
+        assert time.monotonic() - started < 1
+
+    @pytest.mark.parametrize(
+        ("expression", "body", "expected"),
+        [
+            ('$replace(link, /^.*\\/([0-9]+)\\/?$/, "$1")', {"link": "https://x.example/people/12/"}, "12"),
+            # \d and \w read Unicode digits and letters as Python's re does, combining marks excepted.
+            ("$match(s, /(\\d+)-(\\w+)/).groups", {"s": "ORG-000123 45-ab ٣-é"}, ["45", "ab", "٣", "e"]),
+            ("$split(s, /\\s*,\\s*/)", {"s": "a , b,　c"}, ["a", "b", "c"]),
+            ("$contains(s, /^mbr-\\d+$/i)", {"s": "MBR-0045123"}, True),
+            ("$replace(s, /\\bx\\b/, '_')", {"s": "x xx éx x"}, "_ xx éx _"),
+            ("$replace(s, /(a)(b)?/, '[$2$1]')", {"s": "ab a"}, "[ba] [a]"),
+            ("$replace(s, /o/, function($m) { $uppercase($m.match) })", {"s": "foo"}, "fOO"),
+            ("$split(s, /x*/)", {"s": "abxd"}, ["", "a", "b", "", "d", ""]),
+            ("$contains(s, /^[^\\W\\d]+$/)", {"s": "été"}, True),
+            ("$contains(s, /^a.c$/m)", {"s": "x\na\nc\nabc"}, True),
+            ("$match(s, /\\ud83d\\ude00|\\U0001F600/).match", {"s": "a\U0001f600"}, "\U0001f600"),
+        ],
+    )
+    def test_an_ordinary_regex_maps_as_before(self, expression: str, body: dict, expected: object) -> None:
+        assert apply_map(expression, body) == expected

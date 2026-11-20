@@ -47,7 +47,7 @@ async def test_020_reads_the_due_blobs_by_the_queue_index(
         await conn.execute("ANALYZE ds.blob_gc")
         before = await _plan(conn, monkeypatch)
     assert "Seq Scan on blob_gc" in before and "Sort" in before
-    assert await migrate(empty_pool) == [QUEUE_INDEX]
+    assert await migrate(empty_pool, upto=QUEUE_INDEX) == [QUEUE_INDEX]
     async with empty_pool.connection() as conn:
         after = await _plan(conn, monkeypatch)
     assert "Index Scan using blob_gc_queued_idx on blob_gc" in after

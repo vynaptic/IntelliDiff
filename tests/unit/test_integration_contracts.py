@@ -25,6 +25,8 @@ from deltasleuth.core.canonical import paths as canonical_paths
 from deltasleuth.core.canonical.normalisers import apply_chain
 from deltasleuth.core.spec import normalise_pattern
 from deltasleuth.core.types import Normalizer, Outcome
+from deltasleuth.reports import FORMATS
+from deltasleuth.store import repo
 
 E164_GB = (Normalizer("e164", {"defaultRegion": "GB"}),)
 
@@ -72,6 +74,25 @@ def test_no_target_backend_is_named_anywhere_in_the_package(repo_root: Path) -> 
     assert offenders == []
 
 
+# A rule id, an appendix or a phase of a design document the repository does not hold.
+CITATIONS = re.compile(r"\([XD]\d+\)|\brule X\d+|Appendix [A-Z]|\bP0\b")
+
+
+def test_nothing_cites_a_rule_id_appendix_or_phase_of_a_design_document(repo_root: Path) -> None:
+    """Messages, help text, docstrings and comments say what the code does: deltasleuth/, mocks/,
+    examples/ and tools/ cite no rule id (``(X2)``), appendix or phase (``P0``) of a design document."""
+    roots = [repo_root / name for name in ("deltasleuth", "mocks", "examples", "tools")]
+    suffixes = (".py", ".j2", ".json", ".yaml", ".yml", ".md", ".sql", ".txt", ".html", ".toml", ".sh")
+    files = [p for root in roots for p in root.rglob("*") if p.is_file() and p.suffix in suffixes]
+    offenders = [
+        f"{p.relative_to(repo_root)}:{n}"
+        for p in files
+        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), start=1)
+        if CITATIONS.search(line)
+    ]
+    assert offenders == []
+
+
 # What each outcome says of a key, as the Run screen's legend words it.
 LEGEND = {
     "MATCH": "Both sides answered in full and nothing that matters differs.",
@@ -106,6 +127,56 @@ def test_the_ui_reads_a_citation_as_the_validator_does(repo_root: Path) -> None:
     validator's expression, so a bracket it did not read (one with a line break inside) is no chip."""
     source = (repo_root / "web" / "src" / "explain.ts").read_text()
     assert f"export const CITATION = /{validate.CITATION.pattern}/g;" in source
+
+
+def test_the_run_screen_offers_every_report_the_run_route_serves(repo_root: Path) -> None:
+    """``REPORTS`` in web/src/Run.tsx, the run screen's downloads, is ``reports.FORMATS`` in its order: a
+    format the route serves is offered."""
+    source = (repo_root / "web" / "src" / "Run.tsx").read_text()
+    offered = re.search(r"^const REPORTS = \[(.*?)\];$", source, re.DOTALL | re.MULTILINE)
+    assert offered and re.findall(r"'([\w.]+)'", offered[1]) == list(FORMATS)
+
+
+def test_the_run_screen_knows_the_statuses_a_run_ends_in(repo_root: Path) -> None:
+    """``TERMINAL`` in web/src/Run.tsx, past which the run screen stops polling, is ``repo.TERMINAL``."""
+    source = (repo_root / "web" / "src" / "Run.tsx").read_text()
+    ended = re.search(r"^const TERMINAL = \[(.*)\];$", source, re.MULTILINE)
+    assert ended and re.findall(r"'(\w+)'", ended[1]) == list(repo.TERMINAL)
+
+
+def _moves_from(source: str) -> dict[str, set[str]]:
+    """The statuses each run control of runner/runs.py moves a run from: the ``when`` of the status change in
+    ``pause_run``, ``resume_run`` and ``stop_run``, which a cancel calls."""
+    controls = {"pause_run": "pause", "resume_run": "resume", "stop_run": "cancel"}
+    moves: dict[str, set[str]] = {}
+    for node in ast.parse(source).body:
+        if not (isinstance(node, ast.AsyncFunctionDef) and node.name in controls):
+            continue
+        for call in (c for c in ast.walk(node) if isinstance(c, ast.Call)):
+            called = getattr(call.func, "id", None) or getattr(call.func, "attr", None)
+            when = {k.arg: k.value for k in call.keywords}.get("when")
+            if called == "_move":
+                when = call.args[3]
+            if called in ("_move", "set_run_status") and when is not None:
+                moves[controls[node.name]] = set(ast.literal_eval(when))
+    return moves
+
+
+def test_the_run_screen_offers_the_controls_the_runner_takes(repo_root: Path) -> None:
+    """``ACTIONS`` in web/src/Run.tsx, the controls the run screen offers in each status, are those the runner
+    moves a run from that status by (a pause from running, a resume from paused, a cancel from any live
+    status)."""
+    source = (repo_root / "web" / "src" / "Run.tsx").read_text()
+    offered = re.search(r"^const ACTIONS: Record<string, string\[\]> = \{(.*)\};$", source, re.MULTILINE)
+    assert offered
+    pairs = {
+        (status, action)
+        for status, actions in re.findall(r"(\w+): \[([^\]]*)\]", offered[1])
+        for action in re.findall(r"'(\w+)'", actions)
+    }
+    moves = _moves_from((repo_root / "deltasleuth" / "runner" / "runs.py").read_text())
+    assert set(moves) == {"pause", "resume", "cancel"}
+    assert pairs == {(status, action) for action, statuses in moves.items() for status in statuses}
 
 
 # The detail keys each fed audit action's projector reads: every writer of the

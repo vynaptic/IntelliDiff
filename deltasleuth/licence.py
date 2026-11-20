@@ -34,6 +34,7 @@ import psycopg
 from deltasleuth.auth.principal import WORKER, Principal, printable
 from deltasleuth.context import Context
 from deltasleuth.core.types import CompiledSpec
+from deltasleuth.errors import Conflict
 from deltasleuth.security import signing
 from deltasleuth.store import repo
 
@@ -74,7 +75,7 @@ class LicenceError(ValueError):
     the CLI exits 2."""
 
 
-class LicenceRefused(Exception):  # neither ValueError nor LookupError: never a 422 or 404
+class LicenceRefused(Conflict):
     """New work the licence does not allow: the API answers 409, the CLI exits 2."""
 
 

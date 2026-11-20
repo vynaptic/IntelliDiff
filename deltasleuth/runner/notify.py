@@ -41,6 +41,7 @@ from deltasleuth.core import jsonio
 from deltasleuth.core import notify as events
 from deltasleuth.core.notify import Event, Fired, Seen, Unsafe
 from deltasleuth.core.types import CompiledSpec, RetryPolicy
+from deltasleuth.errors import NotFound
 from deltasleuth.runner.cycle import failure
 from deltasleuth.security import rawvalues
 from deltasleuth.store import repo
@@ -253,7 +254,7 @@ class Notifier:
             return Seen()
         run = await repo.get_run(conn, obj)
         if run is None:
-            raise LookupError(f"run {obj} not found")
+            raise NotFound(f"run {obj} not found")
         spec = await self._spec(conn, run["spec_id"])
         cycle = events.concerned(row)
         cycle = await repo.cycle_at(conn, obj, row["seq"]) if cycle is None else cycle

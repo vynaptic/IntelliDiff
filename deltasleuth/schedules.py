@@ -23,6 +23,7 @@ from typing import Any
 from psycopg import errors
 
 from deltasleuth import approvals
+from deltasleuth import errors as refusals
 from deltasleuth.auth.principal import WORKER, Principal
 from deltasleuth.context import Context
 from deltasleuth.core import cron
@@ -56,12 +57,8 @@ _SUPERSEDED = {"update": "saved again", "pause": "paused", "delete": "deleted"}
 _LAST = datetime.max.replace(tzinfo=UTC) - timedelta(days=1)  # an ends_at is before it: no zone reads 10000
 
 
-class Refused(ValueError):
+class Refused(refusals.Refused):
     """A schedule write refused: its HTTP status and binding message."""
-
-    def __init__(self, status: int, message: str) -> None:
-        super().__init__(message)
-        self.status = status
 
 
 def missed(

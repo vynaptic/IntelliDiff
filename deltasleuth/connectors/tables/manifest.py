@@ -49,6 +49,7 @@ from deltasleuth.connectors.tables.engine import FilesChanged, NotReady, TargetD
 from deltasleuth.core.spec.durations import parse_duration
 from deltasleuth.core.spec.targets import TargetRegistry
 from deltasleuth.core.types import Target
+from deltasleuth.errors import Invalid
 
 STAT_S = 30  # a listing, a statvfs, a stat check or one read of a hash; and a call's wait for a thread
 STUCK_MAX = 4  # abandoned calls of one root waiting before its target's file work is refused
@@ -212,19 +213,19 @@ def unanswered(exc: TargetUnreachable, who: str, target: Target) -> ValueError:
     """What a plan's file work met in place of an answer, worded for ``who``: reads still waiting
     (``Stuck``), work not taken (``Busy``: not ready, tried again) or a directory that did not answer."""
     if isinstance(exc, Stuck) and stuck(target.root) >= STUCK_MAX:
-        return ValueError(
+        return Invalid(
             f"{who}: the file reader takes no work of target {target.target_id}: {stuck(target.root)} reads"
             " of its mount, which does not answer, are still waiting; it resumes when they return or"
             " DeltaSleuth restarts"
         )
     if isinstance(exc, Stuck):
-        return ValueError(
+        return Invalid(
             f"{who}: the file reader takes no work: {stuck()} reads of mounts that do not answer are still"
             " waiting; it resumes when they return or DeltaSleuth restarts"
         )
     if isinstance(exc, Busy):
         return NotReady("planning", f"{who}: the file reader did not take its files' work ({exc}): try again")
-    return ValueError(
+    return Invalid(
         f"{who}: the directory of target {target.target_id} did not answer within {STAT_S} s: is its"
         " mount alive?"
     )
@@ -610,14 +611,14 @@ async def rooted(target: Target, who: str, *, end: float | None = None) -> str:
     target_id = target.target_id
     mount = await call(_rooted, target.root or "", end=end, root=target.root)
     if mount == "absent":
-        raise ValueError(_absent(who, target))
+        raise Invalid(_absent(who, target))
     if mount == "link":
-        raise ValueError(
+        raise Invalid(
             f"{who}: the directory of target {target_id} is, or is reached through, a symbolic link: declare"
             " its real path as root"
         )
     if mount == "writable" and not target.allow_writable:
-        raise ValueError(
+        raise Invalid(
             f"{who}: the directory of target {target_id} is mounted writable: mount it read-only (:ro), or"
             " declare allow_writable: true on the target"
         )
@@ -647,14 +648,14 @@ async def expand(
     try:
         found = sorted(await _walk(target.root or "", path, end, max_files), key=lambda f: f.path.encode())
     except _Deep:
-        raise ValueError(f"{who}: the path holds directories more than {DEPTH} deep") from None
+        raise Invalid(f"{who}: the path holds directories more than {DEPTH} deep") from None
     except _Wide:
-        raise ValueError(
+        raise Invalid(
             f"{who}: the path visits more than {WALK_ENTRIES:,} directory entries, including skipped names:"
             " narrow the export path"
         ) from None
     except _Many:
-        raise ValueError(
+        raise Invalid(
             f"{who}: the path matches at least {max_files + 1:,} files: a side reads at most {max_files:,}"
             " (files.max_files)"
         ) from None
@@ -663,13 +664,13 @@ async def expand(
     for n, candidate in enumerate(found, 1):
         if candidate.kind != "file":
             why = _KIND_TEXT[candidate.kind].format(uid=os.getuid())
-            raise ValueError(f"{who}: file {n} of {len(found)} (in path order) {why}")
+            raise Invalid(f"{who}: file {n} of {len(found)} (in path order) {why}")
     if partitions:
         above, named = _fixed(path)[0], ", ".join(partitions)
         # DuckDB reads every name=value directory of a file's whole path as a column of each row, in place
         # of a column of that name in the files: only the declared ones may be in it.
         if any("=" in segment for segment in [*(target.root or "").split("/"), *above]):
-            raise ValueError(
+            raise Invalid(
                 f"{who}: a directory above the declared partitions ({named}) is named name=value, in the"
                 f" path or in the root of target {target_id}: it would be read as a column of every row;"
                 " rename it"
@@ -679,7 +680,7 @@ async def expand(
             if len(dirs) != len(partitions) or any(
                 not d.startswith(f"{p}=") for d, p in zip(dirs, partitions, strict=False)
             ):
-                raise ValueError(
+                raise Invalid(
                     f"{who}: file {n} of {len(found)} does not lie under the declared partitions ({named})"
                 )
     return found
@@ -1256,23 +1257,23 @@ async def pin(
             except (_Moved, FileNotFoundError):
                 raise _changed(who, n, len(found)) from None
             except Damaged as exc:
-                raise ValueError(
+                raise Invalid(
                     f"{who}: its files could not be read while the run was planned ({exc})"
                 ) from None
             except BadFooter as exc:
-                raise ValueError(footer_refused(who, n, len(found), exc)) from None
+                raise Invalid(footer_refused(who, n, len(found), exc)) from None
             except PermissionError:
-                raise ValueError(_refused(who, n, len(found), "unreadable")) from None
+                raise Invalid(_refused(who, n, len(found), "unreadable")) from None
             except OSError as exc:
                 if exc.errno == errno.ELOOP:
-                    raise ValueError(_refused(who, n, len(found), "link")) from None
-                raise ValueError(
+                    raise Invalid(_refused(who, n, len(found), "link")) from None
+                raise Invalid(
                     f"{who}: its files could not be read while the run was planned ({type(exc).__name__})"
                 ) from None
             if _key(opened) != _key(candidate.stat):  # type: ignore[arg-type]
                 raise _changed(who, n, len(found))
             if not (read_only or target.allow_writable):  # a mount below the root's, which step 1 judged
-                raise ValueError(
+                raise Invalid(
                     f"{who}: file {n} of {len(found)} lies on a mount DeltaSleuth could write to: mount it"
                     " read-only (:ro), or declare allow_writable: true on the target"
                 )
@@ -1289,7 +1290,7 @@ async def pin(
     except TargetUnreachable as exc:
         raise unanswered(exc, who, target) from None
     except OSError:  # a listing or a stat the mount answered with an error
-        raise ValueError(_absent(who, target)) from None
+        raise Invalid(_absent(who, target)) from None
     files_ = tuple(f.path for f in found)
     return Pinned(files_, tuple(pins), pinned_at, as_of, modified, mount, bool(partitions), summed(footers))
 

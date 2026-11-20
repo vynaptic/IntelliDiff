@@ -86,6 +86,7 @@ from deltasleuth.core.precheck import FILE_SIDE
 from deltasleuth.core.spec import where
 from deltasleuth.core.spec.targets import TargetRegistry
 from deltasleuth.core.types import SideConfig, Target
+from deltasleuth.errors import Invalid
 
 SPILL_RESERVE = 2**30  # free beyond files.spill when a reader starts
 LOW_SPACE = 64 * 2**20  # an IOException with less free in the spill is temporary space
@@ -1674,9 +1675,9 @@ async def _planning(who: str, target: Target, files: int) -> AsyncIterator[None]
     try:
         yield
     except Unstarted as exc:
-        raise ValueError(unstarted(exc, who, _configured().files)) from None
+        raise Invalid(unstarted(exc, who, _configured().files)) from None
     except ReaderDied as exc:  # its code is the text, worded for its side
-        raise ValueError(str(exc)) from None
+        raise Invalid(str(exc)) from None
     except StatementTimeout:
         raise NotReady(
             "planning",
@@ -1687,7 +1688,7 @@ async def _planning(who: str, target: Target, files: int) -> AsyncIterator[None]
     except TargetUnreachable as exc:
         raise manifest.unanswered(exc, who, target) from None
     except (FilesChanged, TargetTempSpace, TargetDenied, TargetRefused) as exc:  # any of DuckDB's
-        raise ValueError(
+        raise Invalid(
             f"{who}: its files could not be read while the run was planned ({code(exc)})"
         ) from None
 
@@ -1751,15 +1752,15 @@ async def _records(session: _Session, side: Plan, who: str) -> None:
         record = found[0][: len(wider)] if found else ()  # its partitions' columns follow
         fields = next((i for i, value in enumerate(record) if value is None), len(record))
         if fields != want:
-            raise ValueError(
+            raise Invalid(
                 f"{who}: the first record of {at} has {fields} fields, not the {want} of csv.columns"
             )
         if csv.get("newline", "\n") == "\n" and record[want - 1].endswith("\r"):
-            raise ValueError(f"{who}: {at} ends its lines with \\r\\n where csv.newline declares \\n")
+            raise Invalid(f"{who}: {at} ends its lines with \\r\\n where csv.newline declares \\n")
         if csv.get("header"):
             for i, (text, column) in enumerate(zip(record, declared, strict=False), 1):
                 if _fold(text) != _fold(column):
-                    raise ValueError(f"{who}: the header of {at} does not name field {i} as csv.columns does")
+                    raise Invalid(f"{who}: the header of {at} does not name field {i} as csv.columns does")
 
 
 _SCHEMA = (
@@ -1848,7 +1849,7 @@ async def _footers(session: _Session, side: Plan, cfg: SideConfig, who: str) -> 
             try:
                 await session.rows(side, _SCHEMA, {}, files=[name], timeout_s=_left(side))
             except TargetRefused:
-                raise ValueError(
+                raise Invalid(
                     f"{who}: file {n} of {len(files)} is not a Parquet file this build reads ({code(exc)})"
                 ) from None
         raise
@@ -1859,7 +1860,7 @@ async def _footers(session: _Session, side: Plan, cfg: SideConfig, who: str) -> 
     partitions = side["file"].get("partitions") or []
     for partition in partitions:
         if partition in tops[0]:
-            raise ValueError(f"{who}: partition {partition!r} is also a column of the files")
+            raise Invalid(f"{who}: partition {partition!r} is also a column of the files")
     keys = list(table.key_columns)
     listed = [column for column, _ in table.columns] if table.columns is not None else None
     filtered = list(where.columns(where.parse(table.where))) if table.where else []
@@ -1871,17 +1872,17 @@ async def _footers(session: _Session, side: Plan, cfg: SideConfig, who: str) -> 
             continue
         cls, why = _parquet_type(name, kind, tops[0].get(name), table.types)
         if cls is None and name in planned:
-            raise ValueError(f"{who}: {why}")
+            raise Invalid(f"{who}: {why}")
         columns.append(Column(name, kind, cls, True, cls == "text", cls in _KEYS and cls != "char"))
         if name not in planned:
             continue
         for n, top in enumerate(tops[1:], 2):
             at = f"file {n} of {len(files)}"
             if name not in top:
-                raise ValueError(f"{who}: {at} lacks column {name!r}")
+                raise Invalid(f"{who}: {at} lacks column {name!r}")
             if _footed(top[name]) != _footed(tops[0][name]):
                 was, now = _footed(tops[0][name]), _footed(top[name])
-                raise ValueError(
+                raise Invalid(
                     f"{who}: {at} has another type for column {name!r} than file 1 ({now}, not {was})"
                 )
     return columns
@@ -1923,7 +1924,7 @@ def _p11(side: Plan, who: str) -> None:
         for value in node.values if node.op != "like" else ():
             if value.kind != "str" and _csv(side["declared"].get(node.column or "", FIELD)):
                 what = "a number: quote the literal" if value.kind == "num" else "TRUE or FALSE: quote it"
-                raise ValueError(
+                raise Invalid(
                     f"{who}: the filter compares column {node.column!r} ({FIELD}, which is text) with {what}"
                     " to compare text"
                 )
@@ -1969,7 +1970,7 @@ async def _count(session: _Session, side: Plan, who: str) -> dict[str, Any]:
     pass_s = round(time.monotonic() - started, 1)
     for (column, _), held in zip(dated, outside, strict=True):
         if held:
-            raise ValueError(
+            raise Invalid(
                 f"{who}: key column {column!r} holds {held:,} date(s) outside the years 0001 to 9999, which"
                 " have no key text: filter those rows out, or export the key as text"
             )
@@ -1988,7 +1989,7 @@ async def _count(session: _Session, side: Plan, who: str) -> dict[str, Any]:
                 "%s: %d line(s) of its files are not rows: %s", who, len(lines), "; ".join(shown[:20])
             )
         if len(lines) > REJECT_MAX:
-            raise ValueError(
+            raise Invalid(
                 f"{who}: over {REJECT_MAX:,} lines of its files are not rows of the declared CSV dialect: the"
                 " dialect does not fit (ds target check drafts one)"
             )
@@ -2046,7 +2047,7 @@ async def _lines(session: _Session, side: Plan, who: str, rows: int, more: str) 
     cut = {at: kind for at, kind in lines.items() if at not in counted}
     alike = all(lines.get(at) == kind for at, kind in counted.items())
     if read != rows or not alike or any(kind != "quote" or at[1] != last[at[0]] for at, kind in cut.items()):
-        raise ValueError(
+        raise Invalid(
             f"{who}: its files hold line ends inside quoted fields, and whether a file ends inside one could"
             " not be checked: export them without line ends inside fields, or as Parquet"
         )
@@ -2078,7 +2079,7 @@ async def _flood(session: _Session, side: Plan, who: str) -> None:
     specs = {c: file["csv"]["keys"][c]["as"] for c in keyed} | {c: spec["as"] for c, spec in mapped}
     for column, count in failed.items():
         if 2 * count > len(rows):
-            raise ValueError(
+            raise Invalid(
                 f"{who}: column {column!r} is declared {specs[column]} and {count:,} of the first"
                 f" {len(rows):,} rows do not read as one: declare the format the export holds (typeMap"
                 " format), or string"
@@ -2303,7 +2304,7 @@ async def check(
     else. A refusal is a plan's, worded for ``target <id>``."""
     files, who = _configured().files, f"target {target.target_id}"
     if manifest.path_error(path):
-        raise ValueError(manifest.PATH_REFUSED)
+        raise Invalid(manifest.PATH_REFUSED)
     async with _planning(who, target, 0):
         await manifest.rooted(target, who)
         found = await manifest.expand(target, path, who, max_files=files.max_files)
@@ -2337,7 +2338,7 @@ async def check(
                 try:
                     footers.append(await manifest.call(manifest.footed, os.path.join(root, name), root=root))
                 except manifest.BadFooter as exc:
-                    raise ValueError(manifest.footer_refused(who, n, len(names), exc)) from None
+                    raise Invalid(manifest.footer_refused(who, n, len(names), exc)) from None
                 except OSError:
                     raise TargetRefused("OSError") from None
             held["footed"] = manifest.summed(footers)
@@ -2348,7 +2349,7 @@ async def check(
                 if str(exc) != "Died" or session.cursor is None:
                     raise
                 cause = session.cursor._instance.cause
-                raise ValueError(
+                raise Invalid(
                     f"{who}: the file reader's process ended ({cause}) while it read these files"
                 ) from None
     except ValueError as exc:  # a file that changed under a statement is worded for a side
@@ -2415,7 +2416,7 @@ async def _draft(
     named = [str(c["name"]) if header else f"column {i}" for i, c in enumerate(columns, 1)]
     ends = {escaped: end for end, escaped in _NEWLINES.items()}
     if newline not in ends:  # a lone \r: no csv.newline declares it
-        raise ValueError(f"{who}: file 1 ends its lines with neither \\n nor \\r\\n: convert the export")
+        raise Invalid(f"{who}: file 1 ends its lines with neither \\n nor \\r\\n: convert the export")
     dialect: dict[str, Any] = {"delimiter": delim, "newline": ends[newline]}
     dialect |= {"header": True} if headed else {}
     dialect |= {"compression": packed} if (packed := _packed(first[0])) else {}
@@ -2484,7 +2485,7 @@ async def _drafted(
         if sniffed and (n == 0 or sniffed != found[0])
     ]
     if not drafts:
-        raise ValueError(
+        raise Invalid(
             f"{who}: no CSV dialect could be drafted from file 1: write its csv block by hand (delimiter,"
             " header, quote, escape, newline, encoding)"
         )

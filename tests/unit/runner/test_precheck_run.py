@@ -467,15 +467,24 @@ async def test_writes_only_its_tables_and_audit(tables: Tables, fake: FakeEngine
         await ended(h.ctx, await checked(h, table_spec("users")))  # a worker's first sweep audits its own
         spec_ids = [await h.spec(table_spec(name)) for name in NAMES[:2]]
         before = await counts(h)
+        async with h.ctx.pool.connection() as conn:
+            row = await (await conn.execute("SELECT coalesce(max(id), 0) FROM ds.audit_log")).fetchone()
+            last = row[0]  # type: ignore[index]
         made_ = await prechecks.create(h.ctx, {"spec_ids": spec_ids, "level": "distinct"}, TESTER)
         await ended(h.ctx, made_["precheck_id"])
         after = await counts(h)
         async with h.ctx.pool.connection() as conn:
-            cur = await conn.execute("SELECT action FROM ds.audit_log ORDER BY id")
-            actions = [action for (action,) in await cur.fetchall()]
+            cur = await conn.execute(
+                "SELECT action, object FROM ds.audit_log WHERE id > %s ORDER BY id", (last,)
+            )
+            added = await cur.fetchall()
     changed = {name: after[name] - before[name] for name in after if after[name] != before[name]}
-    assert changed == {"prechecks": 1, "precheck_pairs": 2, "audit_log": 2, "audit_chain": 2}
-    assert actions[-2:] == ["precheck.create", "precheck.finished"]  # no run, no licence pair, no event
+    audited = changed.pop("audit_log")
+    assert changed == {"prechecks": 1, "precheck_pairs": 2, "audit_chain": audited}
+    # Its own audit is the create and the end; the worker's sweep, on a slow host, may audit beside it.
+    ours = [action for action, object_ in added if object_ == made_["precheck_id"]]
+    assert ours == ["precheck.create", "precheck.finished"] and audited == len(added)
+    assert not [a for a, _ in added if a.startswith(("run.", "licence.", "notify."))]  # no run, pair or event
     assert made_ == {
         "not": precheck.NOT, "precheck_id": made_["precheck_id"], "pairs": 2, "skipped": 0,
         "evaluation": False,

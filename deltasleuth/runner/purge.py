@@ -29,6 +29,7 @@ import psycopg
 from deltasleuth import approvals
 from deltasleuth.auth.principal import Principal, printable
 from deltasleuth.context import Context
+from deltasleuth.errors import Conflict, Gone, Invalid, NotFound
 from deltasleuth.evidence.store import EvidenceStore
 from deltasleuth.runner import sample
 from deltasleuth.runner.cycle import ERASURE, fail_run, failure
@@ -48,7 +49,7 @@ _LIVE = ("queued", "running", "paused", "cancelling")
 log = logging.getLogger(__name__)
 
 
-class CyclePurged(Exception):
+class CyclePurged(Gone):
     """A read of a cycle whose purge has started: the API answers 410."""
 
 
@@ -56,7 +57,7 @@ class AbandonedRun(Exception):
     """A one-shot run queued for 24 h, failed by the purge's ceiling."""
 
 
-class PurgeBusy(ValueError):
+class PurgeBusy(Conflict):
     """Another purger holds the purge lock."""
 
 
@@ -328,9 +329,9 @@ async def erase(ctx: Context, who: Principal, run_id: str, text: str, cycle: int
         async with ctx.pool.connection() as conn:
             run = await repo.get_run(conn, run_id)
             if run is None:
-                raise LookupError(f"run {run_id} not found")
+                raise NotFound(f"run {run_id} not found")
             if run["hold_reason"] is not None:
-                raise ValueError(f"run {run_id} is held")
+                raise Invalid(f"run {run_id} is held")
             await _unkeyed(ctx, conn, run, text)
             if cycle is not None:
                 await _erasable(conn, run, cycle)
@@ -349,7 +350,7 @@ async def erase(ctx: Context, who: Principal, run_id: str, text: str, cycle: int
 
 
 def _in_flight(run_id: str) -> ValueError:
-    return ValueError(f"run {run_id} still has keys in flight; try again in 60 s")
+    return Invalid(f"run {run_id} still has keys in flight; try again in 60 s")
 
 
 async def _erasable(conn: repo.Conn, run: repo.Row, cycle: int) -> None:
@@ -358,11 +359,11 @@ async def _erasable(conn: repo.Conn, run: repo.Row, cycle: int) -> None:
     run_id = run["run_id"]
     row = await repo.get_cycle(conn, run_id, cycle)
     if row is None:
-        raise ValueError(f"cycle {cycle} of run {run_id} has not ended")
+        raise Invalid(f"cycle {cycle} of run {run_id} has not ended")
     if row["purged_at"] is not None:
-        raise ValueError(f"cycle {cycle} of run {run_id} was purged on {_purged_on(row)}")
+        raise Invalid(f"cycle {cycle} of run {run_id} was purged on {_purged_on(row)}")
     if run["status"] in _LIVE and cycle >= run["cycle"] - 1:
-        raise ValueError(
+        raise Invalid(
             f"cycle {cycle} of run {run_id} is still read by the running soak: erase the whole run"
         )
     if await repo.keys_in_flight(conn, run_id, cycle):
@@ -396,7 +397,7 @@ async def _unkeyed(ctx: Context, conn: repo.Conn, run: repo.Row, text: str) -> N
     """Refuse a hold's or an erasure's reason holding a raw key-shaped value of the run's spec: audit rows,
     and the evidence packs citing them, carry it forever."""
     if rawvalues.key_shaped(await ctx.spec(conn, run["spec_id"]), text):
-        raise ValueError(rawvalues.KEY_SHAPED)
+        raise Invalid(rawvalues.KEY_SHAPED)
 
 
 # -- holds and the dry run ----------------------------------------------------------------------------
@@ -408,12 +409,12 @@ async def hold(ctx: Context, who: Principal, run_id: str, text: str | None) -> N
     async with repo.audited(ctx.pool) as (conn, audit):
         run = await repo.get_run(conn, run_id)
         if run is None:
-            raise LookupError(f"run {run_id} not found")
+            raise NotFound(f"run {run_id} not found")
         if text is not None:
             await _unkeyed(ctx, conn, run, text)
         before = await repo.set_hold(conn, run_id, text, None if text is None else who.actor)
         if before is None:
-            raise ValueError(f"run {run_id} is {'already' if text is not None else 'not'} held")
+            raise Invalid(f"run {run_id} is {'already' if text is not None else 'not'} held")
         if text is None:
             await audit(who, "retention.release", run_id, {"reason": before["hold_reason"]})
         else:

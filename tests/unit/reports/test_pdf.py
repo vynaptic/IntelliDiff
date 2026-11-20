@@ -1,5 +1,5 @@
 """The PDF run report: section order, trend, soak changes, masked findings and the AI annex; an ended
-cycle's labelled accuracy, in report.pdf and the P0 summary."""
+cycle's labelled accuracy, in report.pdf and the contract report."""
 
 from __future__ import annotations
 
@@ -231,7 +231,7 @@ async def test_a_sampled_cycle_s_report_says_whether_its_bounds_are_still_to_be_
     ctx: Context, tmp_path: Path
 ) -> None:
     """Live, its bounds are judged when the cycle ends; ended without a judgement (its judging raised), the
-    report and the P0 summary say so, and that it cannot be signed off."""
+    report and the contract report say so, and that it cannot be signed off."""
     version = sampled()
     async with ctx.pool.connection() as conn:
         bob = await person(conn, "bob")
@@ -256,7 +256,7 @@ async def test_a_sampled_cycle_s_report_says_whether_its_bounds_are_still_to_be_
 async def test_an_ended_cycle_s_reports_state_its_labelled_accuracy_or_that_none_was_labelled(
     pack_ctx: Context, tmp_path: Path
 ) -> None:
-    """The four report texts of labelled accuracy, in report.pdf and the P0 summary alike: a live
+    """The four report texts of labelled accuracy, in report.pdf and the contract report alike: a live
     cycle has no such section; an ended one says that nothing was measured, or prints its labelling whole
     with LIMITS: the newest labelled, a person's before a newer one no person labelled, and once its
     sign-off is requested the one that attests. Where the cycle has other labellings, its second line counts
@@ -397,6 +397,6 @@ async def test_a_graph_run_reports_its_counts_and_the_first_rows_of_each_code(
     assert [row[1] for row in graph.rows] == [f"tok:g{i:02d}" for i in range(TOP_GRAPH_ROWS)] + ["tok:m1"]
     assert graph.rows[-1] == ("CLUSTER_SPLIT", "tok:m1", 2, 1, 1, 0, '{"members": 2}')
     assert (await pdf_report(ctx, run_id)).startswith(b"%PDF-")
-    assert graph in summary_document(await load_run(ctx, run_id), tmp_path).sections  # the P0 report too
+    assert graph in summary_document(await load_run(ctx, run_id), tmp_path).sections  # the summary too
     plain = await report_document(ctx, await seed_run(ctx, {}))
     assert "Graph parity" not in [s.title for s in plain.sections]

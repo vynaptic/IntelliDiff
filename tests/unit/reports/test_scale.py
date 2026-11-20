@@ -3,6 +3,7 @@ counters of the whole cycle, and each report reads the rows it prints, never eve
 
 from __future__ import annotations
 
+import asyncio
 import tracemalloc
 from collections import defaultdict
 from datetime import UTC, datetime
@@ -22,7 +23,7 @@ from deltasleuth.core.types import (
     Severity,
 )
 from deltasleuth.reports import pdf
-from deltasleuth.reports.csv import KINDS, parse_csv, read_csv, write_csv
+from deltasleuth.reports.csv import KINDS, parse_csv, read_csv, stream_csv, write_csv
 from deltasleuth.reports.data import is_discrepant, load_run
 from deltasleuth.runner.counters import count_cycle
 from deltasleuth.runner.cycle import summarise
@@ -220,6 +221,7 @@ async def test_reports_read_a_page_of_results_at_a_time_and_only_the_rows_they_p
     pages = repo.result_pages
     monkeypatch.setattr(repo, "list_findings", whole_cycle)
     monkeypatch.setattr(repo, "list_observations", whole_cycle)
+    monkeypatch.setattr(repo, "list_keys", whole_cycle)  # every cancelled key of the cycle
     monkeypatch.setattr(repo, "result_pages", partial(pages, size=5))
     monkeypatch.setattr(pdf, "TOP_FINDINGS", 2)
     csvs = {}
@@ -268,3 +270,38 @@ async def test_reports_read_a_page_of_results_at_a_time_and_only_the_rows_they_p
     assert [(row[0], row[1], row[4]) for row in top.rows] == [
         (f["key_masked"], f["severity"], f["json_pointer"]) for f in discrepant[:2]
     ]
+
+
+async def test_an_export_streams_a_page_at_a_time_and_writes_the_bytes_it_always_had(
+    ctx: Context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An export's first bytes go out before its last page of results is read, each page rendered off the
+    event loop, a retry list's cancelled keys too; together they are the bytes written whole."""
+    spec = _spec()
+    run_id = await _cycle(ctx, spec, retried=True)
+    async with ctx.pool.connection() as conn:
+        await summarise(ctx, conn, spec, await repo.get_run(conn, run_id))
+    whole = {kind: await write_csv(ctx, run_id, None, kind) for kind in KINDS}
+    pages, read, rendered = repo.result_pages, [], []
+
+    async def counted(*args: Any, **kwargs: Any) -> Any:
+        async for page in pages(*args, **kwargs | {"size": 2}):
+            read.append(len(page[0]))
+            yield page
+
+    def threaded(work: Any, *args: Any) -> Any:
+        rendered.append(work)
+        return to_thread(work, *args)
+
+    to_thread = asyncio.to_thread
+    monkeypatch.setattr(repo, "result_pages", counted)
+    monkeypatch.setattr(asyncio, "to_thread", threaded)
+    for kind in ("discrepancies", "retry"):
+        read.clear()
+        rendered.clear()
+        chunks = await stream_csv(ctx, run_id, None, kind)
+        assert read == []  # nothing of the cycle's rows is read before the first byte is asked for
+        seen = [(chunk, len(read)) async for chunk in chunks]
+        assert b"".join(chunk for chunk, _ in seen) == whole[kind], kind
+        assert seen[0][1] == 0 and len(read) == 7 and len({n for _, n in seen}) > 2, kind  # 13 results
+        assert len(rendered) >= len({n for _, n in seen}), kind

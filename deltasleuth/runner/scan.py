@@ -3,8 +3,9 @@
 Each side streams (key texts, row hash) in code-point order from one read-only snapshot of its engine, and a
 side whose keys come out of that order fails the run. A merge counts the identical rows and queues every
 other key for the worker's per-key reads while it goes on. It runs synchronously over each fetched batch and
-awaits only to fetch the next: a task per row costs 16x. Progress is checkpointed with the keys found, so a
-restart, a pause or a lost connection resumes after the last saved key and counts nothing twice. The keys
+awaits only for the next: a task per row costs 16x. Each side fetches its next batch ahead, while the merge
+reads the one before and while the other side fetches its own. Progress is checkpointed with the keys found,
+so a restart, a pause or a lost connection resumes after the last saved key and counts nothing twice. The keys
 found and the point the scan resumes after are sealed under the run's data key; checkpoints are numbered, so
 a scanner saves only on the checkpoint it read. Each pass reads both catalogues on its own sessions before a
 cursor opens (the schema guard's look): a table that is no longer what the run's plan reads pauses the run
@@ -54,6 +55,7 @@ from deltasleuth.security.tokenise import mask_key
 from deltasleuth.store import repo
 
 BATCH = 10_000  # merged keys per checkpoint
+SLICE = 1_000  # merged keys between two turns of the event loop: about 3 ms of the merge
 MAX_KEY_BYTES = 1024  # a run key
 Key = tuple[str, ...]
 _ALIKE = "(they differ only in Unicode normal form): no result could tell them apart"
@@ -117,11 +119,31 @@ class _Stream:
         self._floor, self._bound = after, True  # the key before it: the resume bound, then each row's
         self.check: Callable[[], Awaitable[None]] | None = None
         self.group_rows = 0
+        self._ahead: asyncio.Task[list[tuple[Any, ...]] | None] | None = None  # the next batch, being fetched
 
     async def open(self) -> None:
-        """Send the scan's statement, which pins the side: its batches are fetched from then on."""
+        """Send the scan's statement, which pins the side, and begin fetching its first batch. The engine is
+        told the server's character set as this pass's catalogue says it, by which a PostgreSQL side in
+        UTF-8 orders and resumes by its key texts as they are (``queries.scan_sql``); the run's plan is not
+        changed."""
         bound = None if self._floor is None else [part.encode() for part in self._floor]
-        self._batches = await self._engine.scan(self.session, self._plan, bound)
+        said = {"charset": self.relation.facts.get("charset")} if self.relation is not None else {}
+        self._batches = await self._engine.scan(self.session, self._plan | said, bound)
+        self._ahead = asyncio.create_task(self._fetch())
+        await asyncio.sleep(0)  # sent before the other side's statement
+
+    async def _fetch(self) -> list[tuple[Any, ...]] | None:
+        return await anext(self._batches, None)
+
+    async def settle(self) -> None:
+        """End the fetch begun ahead, if one is: a pass that stops before its end closes its session with no
+        statement of the side in flight. What that fetch read, or failed with, the pass no longer needs."""
+        ahead, self._ahead = self._ahead, None
+        if ahead is not None:
+            ahead.cancel()
+            await asyncio.wait([ahead])
+            if not ahead.cancelled():
+                ahead.exception()  # retrieved: not logged as never retrieved
 
     async def head(self) -> Key | None:
         """The key of the next row, None at the end. A key below the one before it, or a first key not
@@ -131,10 +153,12 @@ class _Stream:
             while self._i == len(self._rows):
                 if self.check is not None:
                     await self.check()
-                fetched = await anext(self._batches, None)
+                fetched = await (self._ahead or asyncio.create_task(self._fetch()))
                 if fetched is None:
-                    self._eof = True
+                    self._ahead, self._eof = None, True
                     return None
+                self._ahead = asyncio.create_task(self._fetch())  # while the merge reads this one
+                await asyncio.sleep(0)  # its first step sends it: the merge yields nothing until the next
                 self._rows, self._i = fetched, 0
             key = self._rows[self._i][: self._parts]
             if self._floor is not None and (key < self._floor or (self._bound and key == self._floor)):
@@ -224,6 +248,8 @@ async def scan(ctx: Context, run_id: str) -> str | None:
             )
             for s in Side
         ]
+        for stream in (a, b):  # before its session closes
+            stack.push_async_callback(stream.settle)
         # When the snapshots opened, not when a file side's sort returned; counted with the rows next saved:
         # a lost pass read none of them.
         opened = utc_now_iso()
@@ -288,6 +314,8 @@ async def scan(ctx: Context, run_id: str) -> str | None:
                         ctx, sealer, run_id, cycle, state, found, saved, wait, done=True, stop_reason=stop
                     )
                     return None
+                if merged % SLICE == 0:  # the event loop serves the rest of the process between slices
+                    await asyncio.sleep(0)
                 if merged % BATCH == 0:
                     if not await _save(ctx, sealer, run_id, cycle, state, found, saved, wait):
                         return None

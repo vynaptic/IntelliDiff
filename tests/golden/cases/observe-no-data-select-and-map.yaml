@@ -12,3 +12,4 @@ b:
 expect:
   a: INCOMPLETE unparseable
   b: INCOMPLETE unparseable
+  outcome: INCONCLUSIVE unparseable
