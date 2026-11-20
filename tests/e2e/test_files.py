@@ -626,8 +626,9 @@ async def test_a_scan_of_files_killed_mid_pass_resumes_after_its_checkpoint(
         3,
         False,
     )
-    # 300 keys merged in text order, 1001 among them, which side a lacks.
-    assert killed_at["scan"]["rows_a"] == 299 and "verified_a" not in killed_at["scan"]
+    # The key is a whole number on both sides, so keys merge by value: 1 to 300, all of them side a's
+    # (in text order 1001, which side a lacks, would be among them).
+    assert killed_at["scan"]["rows_a"] == 300 and "verified_a" not in killed_at["scan"]
     assert run["status"] == "completed" and run["scan"]["verified_a"]
     assert_seeded(run, found)
 
