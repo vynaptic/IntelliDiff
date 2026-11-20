@@ -98,8 +98,14 @@ def test_scan_memory_is_bounded(tmp_path: Path) -> None:
         "    rows = 0\n"
         "    while batch := cursor.fetchmany(10000):\n"
         "        rows += len(batch)\n"
+        "    held = made.con.execute('SELECT sum(memory_usage_bytes) FROM duckdb_memory()').fetchone()[0]\n"
         "peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss\n"
         "print(rows, peak if sys.platform == 'darwin' else peak * 1024)\n"
+        # What a failure is read against: the platform, its CPUs and huge pages, DuckDB's own accounting
+        "import os, platform, duckdb\n"
+        "thp = Path('/sys/kernel/mm/transparent_hugepage/enabled')\n"
+        "print(platform.machine(), os.cpu_count(), duckdb.__version__, held,"
+        " thp.read_text().strip() if thp.exists() else '-')\n"
     )
     ran = subprocess.run(
         [sys.executable, "-c", script],
@@ -108,8 +114,9 @@ def test_scan_memory_is_bounded(tmp_path: Path) -> None:
         timeout=300,
         cwd=Path(__file__).parents[3],
     )
-    rows, peak = map(int, ran.stdout.split())
-    assert rows == 5_000_000 and peak < 400 * 2**20, peak
+    counted, facts = ran.stdout.splitlines()
+    rows, peak = map(int, counted.split())
+    assert rows == 5_000_000 and peak < 400 * 2**20, (peak, facts)
 
 
 @settings(max_examples=50, deadline=None)

@@ -91,7 +91,7 @@ async def stored(empty_pool: AsyncConnectionPool) -> AsyncConnectionPool:
             await conn.execute(RUN, ("R-" + str(n) * 26, mode, Jsonb(params)))  # type: ignore[arg-type]
         before, fired = dict(await _all(conn, tables)), await _all(conn, triggers)
         made_, held = await _all(conn, functions), await _all(conn, constraints)
-    assert await migrate(empty_pool) == [16, 17, 18]
+    assert await migrate(empty_pool) == [16, 17, 18, 19, 20]
     async with empty_pool.connection() as conn:
         after = dict(await _all(conn, tables))
         assert {name: after[name] for name in before} == before  # no table is rewritten: not ds.runs

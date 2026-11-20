@@ -1,0 +1,48 @@
+{
+  "pair": "linker",
+  "run_id": "R-01JEVA1L1NKERM1SC0VNT00000",
+  "question": "summarise",
+  "results": [
+    {
+      "tool": "get_run_summary",
+      "data": {
+        "run_id": "R-01JEVA1L1NKERM1SC0VNT00000",
+        "spec_name": "mock-linker-legacy-vs-new",
+        "mode": "batch",
+        "status": "completed",
+        "stop_reason": null,
+        "counters": {
+          "total": 61,
+          "match": 52,
+          "different": 6,
+          "indeterminate": 3,
+          "by_outcome": {"MATCH": 52, "MISMATCH": 5, "NOT_FOUND_B": 1, "INCONCLUSIVE": 3}
+        },
+        "root_causes": [
+          {
+            "root_cause_id": "RC-11a4e7000007",
+            "taxonomy_code": "FIELD_MISSING",
+            "max_severity": "HIGH",
+            "path_pattern": "$.links[*]",
+            "change_type": "missing_in_b",
+            "affected_keys": 1,
+            "finding_count": 1,
+            "sample_keys": ["ORG-000007"]
+          },
+          {
+            "root_cause_id": "RC-11a4e7000041",
+            "taxonomy_code": "MISSING_DOCUMENT",
+            "max_severity": "CRITICAL",
+            "path_pattern": "$",
+            "change_type": "missing_in_b",
+            "affected_keys": 1,
+            "finding_count": 1,
+            "sample_keys": ["ORG-000041"]
+          }
+        ]
+      }
+    }
+  ],
+  "answer": "The run compared 61 keys [RC-11a4e7000007]. By outcome, 52 MATCH and 7 are a MISMATCH [RC-11a4e7000007]. Root cause [RC-11a4e7000041] is a document missing on side B in 3 keys.",
+  "expect": {"passes": false}
+}

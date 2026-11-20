@@ -351,14 +351,15 @@ async def test_a_sign_off_excludes_whoever_closed_a_draw_of_its_ledger(pool: Asy
     assert sampled == {olga.actor, fay.actor, gus.actor}
 
 
-async def test_store_at_011_opens_with_001_to_010_files(
+async def test_store_at_011_is_refused_by_001_to_010_files(
     pool: AsyncConnectionPool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The release before 011 beside the new one: its migrate applies nothing."""
+    """The release before 011 beside the new one: its migrate refuses the newer store, applying nothing."""
     for path in MIGRATIONS.glob("0[01][0-9]_*.sql"):
         if int(path.name[:3]) < db.SAMPLING:
             (tmp_path / path.name).write_bytes(path.read_bytes())
     monkeypatch.setattr(db, "MIGRATIONS", tmp_path)
-    assert await migrate(pool) == []
+    with pytest.raises(db.MigrationError, match=r"not have: 11, 12, .*, 20 \(this build's newest is 10\)"):
+        await migrate(pool)
     async with pool.connection() as conn:
-        assert await _all(conn, "SELECT max(version) FROM ds.schema_version") == [(18,)]
+        assert await _all(conn, "SELECT max(version) FROM ds.schema_version") == [(20,)]

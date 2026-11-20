@@ -45,11 +45,11 @@ Kind = Literal[
 KINDS: tuple[str, ...] = get_args(Kind)
 RESERVED: dict[str, str] = {}  # an event refused in rules until its feature is built: none now
 UNSPECIFIC = ("licence.state", "notify.dead", "notify.skipped", "notify.daily")  # they match no spec
-# runner.runs.AUTH_PAUSE, KEY_PAUSE, approvals.APPROVAL_PAUSE, licence.LICENCE_PAUSE, sample.SAMPLE_PAUSE,
-# drift.SCHEMA_PAUSE
+# runner.runs.AUTH_PAUSE, KEY_PAUSE, EVIDENCE_PAUSE, approvals.APPROVAL_PAUSE, licence.LICENCE_PAUSE,
+# sample.SAMPLE_PAUSE, drift.SCHEMA_PAUSE
 Pause = Literal[
-    "run_paused_auth_error", "run_paused_key_missing", "run_paused_approval", "run_paused_licence",
-    "run_paused_sample", "run_paused_schema_drift",
+    "run_paused_auth_error", "run_paused_key_missing", "run_paused_evidence_error", "run_paused_approval",
+    "run_paused_licence", "run_paused_sample", "run_paused_schema_drift",
 ]  # fmt: skip
 PAUSES: tuple[str, ...] = get_args(Pause)
 DRAW_PAUSE = "run_paused_draw"  # sample.DRAW_PAUSE: its sample.draw_failed notifies instead
@@ -61,8 +61,9 @@ Stop = Literal[
 ALERT_STOPS = get_args(Stop)[:4]
 End = Literal["cancelled", "erasure", "abandoned", "approval_revoked"]  # the reasons sent besides stops
 Reason = Literal[
-    "run_paused_auth_error", "run_paused_key_missing", "run_paused_approval", "run_paused_licence",
-    "run_paused_sample", "run_paused_schema_drift", "cancelled", "erasure", "abandoned", "approval_revoked",
+    "run_paused_auth_error", "run_paused_key_missing", "run_paused_evidence_error", "run_paused_approval",
+    "run_paused_licence", "run_paused_sample", "run_paused_schema_drift", "cancelled", "erasure", "abandoned",
+    "approval_revoked",
     "stop_condition:maxErrorRate", "stop_condition:maxInconclusiveRate",
     "stop_condition:maxConsecutiveErrors",
     "stop_condition:maxUnexplainedCritical", "stop_condition:until", "stop_condition:maxDuration",
@@ -771,7 +772,10 @@ def severity(event: Event, held: bool) -> str:
         case "run.stopped":
             return "alert" if f["condition"] in ALERT_STOPS else "warning"
         case "run.paused":
-            alerts = ("run_paused_auth_error", "run_paused_key_missing", "run_paused_schema_drift")
+            alerts = (
+                "run_paused_auth_error", "run_paused_key_missing", "run_paused_evidence_error",
+                "run_paused_schema_drift",
+            )  # fmt: skip
             return "alert" if f["reason"] in alerts else "warning"
         case "schema.drift":
             return "alert" if f["paused"] else "warning"
@@ -882,6 +886,8 @@ _PAUSED = {
     "run_paused_auth_error": "a side refused its credential. A person fixes it and resumes the run.",
     "run_paused_key_missing": "the keyring lacks a key the run needs. A person restores it and resumes the"
     " run.",
+    "run_paused_evidence_error": "the evidence store could not write (a full disk, say). A person frees it"
+    " and resumes the run.",
     "run_paused_approval": "its spec version needs a four-eyes approval for its next cycle. A person approves"
     " it and resumes the run.",
     "run_paused_licence": "the licence does not allow its next cycle{refusal}. A person installs a licence"

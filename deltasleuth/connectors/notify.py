@@ -59,7 +59,7 @@ LOCAL_NAME = "deltasleuth.invalid"  # the EHLO name: smtplib never calls socket.
 
 
 @dataclass(frozen=True)
-class Outcome:
+class Delivery:
     """An attempt's result: ``sent``, ``retry`` or ``dead``, a closed ``error`` code, the HTTP or SMTP
     ``status``, a ``Retry-After`` in seconds and how long it took."""
 
@@ -137,15 +137,15 @@ def secure(url: str, host: str | None, proxied: bool = False) -> Any:
     return parts if host is None or parts.hostname == host.strip("[]") else None
 
 
-def _http_outcome(status: int, retry_after: float | None) -> Outcome:
+def _http_outcome(status: int, retry_after: float | None) -> Delivery:
     if not 100 <= status <= 599:  # not HTTP's: kept out of last_status, retried as a server's fault
-        return Outcome("retry", "http_5xx", None, retry_after)
+        return Delivery("retry", "http_5xx", None, retry_after)
     if 200 <= status <= 299:
-        return Outcome("sent", status=status)
+        return Delivery("sent", status=status)
     if status in (408, 425, 429) or status >= 500:
         error = f"http_{status}" if status < 500 else "http_5xx"
-        return Outcome("retry", error, status, retry_after)
-    return Outcome("dead", "http_3xx" if status < 400 else "http_4xx", status)
+        return Delivery("retry", error, status, retry_after)
+    return Delivery("dead", "http_3xx" if status < 400 else "http_4xx", status)
 
 
 class _Resolver(AbstractResolver):
@@ -264,36 +264,36 @@ def _deliver(
         smtp.close()
 
 
-def _smtp_outcome(exc: BaseException, late: bool) -> Outcome:
+def _smtp_outcome(exc: BaseException, late: bool) -> Delivery:
     if isinstance(exc, _Unsafe):
-        return Outcome("dead", "unsafe_destination")
+        return Delivery("dead", "unsafe_destination")
     if isinstance(exc, SecretError):
-        return Outcome("retry", "secret_unreadable")
+        return Delivery("retry", "secret_unreadable")
     if isinstance(exc, _NoStartTLS):
-        return Outcome("dead", "smtp_no_starttls")
+        return Delivery("dead", "smtp_no_starttls")
     if late:  # the socket was shut down at the deadline: a reply cut short is no answer
-        return Outcome("retry", "timeout")
+        return Delivery("retry", "timeout")
     if isinstance(exc, smtplib.SMTPRecipientsRefused):
         codes = [code for code, _ in exc.recipients.values()]
         temporary = any(400 <= code <= 499 for code in codes)
-        return Outcome("retry" if temporary else "dead", "smtp_temporary" if temporary else "smtp_permanent",
+        return Delivery("retry" if temporary else "dead", "smtp_temporary" if temporary else "smtp_permanent",
                        codes[0] if codes and 100 <= codes[0] <= 599 else None)  # fmt: skip
     if isinstance(exc, smtplib.SMTPResponseException):
         status = exc.smtp_code if 100 <= exc.smtp_code <= 599 else None
         if 400 <= exc.smtp_code <= 499:
-            return Outcome("retry", "smtp_temporary", status)
-        return Outcome("dead", "smtp_permanent", status)
+            return Delivery("retry", "smtp_temporary", status)
+        return Delivery("dead", "smtp_permanent", status)
     if isinstance(exc, ssl.SSLError | ssl.CertificateError):
-        return Outcome("retry", "tls_error")
+        return Delivery("retry", "tls_error")
     if isinstance(exc, TimeoutError):
-        return Outcome("retry", "timeout")
+        return Delivery("retry", "timeout")
     if isinstance(exc, socket.gaierror):
-        return Outcome("retry", "dns_error")
+        return Delivery("retry", "dns_error")
     if isinstance(exc, smtplib.SMTPException) and not isinstance(exc, smtplib.SMTPServerDisconnected):
-        return Outcome("dead", "smtp_permanent")  # smtplib's own refusals: no AUTH (in common), no SMTPUTF8
+        return Delivery("dead", "smtp_permanent")  # smtplib's own refusals: no AUTH (in common), no SMTPUTF8
     if isinstance(exc, OSError):
-        return Outcome("retry", "connect_error")
-    return Outcome("dead", "smtp_permanent")
+        return Delivery("retry", "connect_error")
+    return Delivery("dead", "smtp_permanent")
 
 
 class Sender:
@@ -320,26 +320,26 @@ class Sender:
             raise socket.gaierror(f"{host} does not resolve")
         return [str(info[4][0]) for info in infos]
 
-    async def send(self, channel: ChannelSettings, delivery: Mapping[str, Any]) -> Outcome:
+    async def send(self, channel: ChannelSettings, delivery: Mapping[str, Any]) -> Delivery:
         """One attempt of ``delivery`` (``delivery_id``, ``body``) to ``channel``, ended by
         ``timeout_seconds``."""
         started = time.monotonic()
         body = delivery["body"].encode()
         if len(body) > (MAX_TEAMS if channel.kind == "teams" else MAX_BODY):
-            outcome = Outcome("dead", "payload_too_large")
+            outcome = Delivery("dead", "payload_too_large")
         elif channel.kind == "email":
             outcome = await self._mail(channel, delivery["body"], started + self.notify.timeout_seconds)
         else:
             outcome = await self._post(channel, delivery["delivery_id"], body)
         latency = round((time.monotonic() - started) * 1000)
-        return Outcome(outcome.state, outcome.error, outcome.status, outcome.retry_after, latency)
+        return Delivery(outcome.state, outcome.error, outcome.status, outcome.retry_after, latency)
 
-    async def _post(self, channel: ChannelSettings, delivery_id: str, body: bytes) -> Outcome:
+    async def _post(self, channel: ChannelSettings, delivery_id: str, body: bytes) -> Delivery:
         notify = self.notify
         try:
             url = channel.url or read_secret(channel.url_ref)  # type: ignore[arg-type]
             if (parts := secure(url, channel.host if channel.url_ref else None, channel.proxy)) is None:
-                return Outcome("dead", "url_mismatch")  # the URL is never shown
+                return Delivery("dead", "url_mismatch")  # the URL is never shown
             headers = {"Content-Type": "application/json", "User-Agent": self._agent}
             if channel.kind == "webhook":
                 keys = [signing_key(ref) for ref in channel.signing_key_refs]
@@ -364,19 +364,19 @@ class Sender:
                 await response.content.read(READ_BYTES)
                 return _http_outcome(response.status, parse_retry_after(response.headers.get("Retry-After")))
         except _Unsafe:
-            return Outcome("dead", "unsafe_destination")
+            return Delivery("dead", "unsafe_destination")
         except SecretError:
-            return Outcome("retry", "secret_unreadable")
+            return Delivery("retry", "secret_unreadable")
         except TimeoutError:  # before ClientError: ServerTimeoutError is both
-            return Outcome("retry", "timeout")
+            return Delivery("retry", "timeout")
         except aiohttp.ClientConnectorDNSError:
-            return Outcome("retry", "dns_error")
+            return Delivery("retry", "dns_error")
         except (aiohttp.ClientSSLError, ssl.SSLError):
-            return Outcome("retry", "tls_error")
+            return Delivery("retry", "tls_error")
         except (aiohttp.ClientError, OSError, ValueError):  # the type only: a message may hold the URL
-            return Outcome("retry", "connect_error")
+            return Delivery("retry", "connect_error")
 
-    async def _mail(self, channel: ChannelSettings, stored: str, deadline: float) -> Outcome:
+    async def _mail(self, channel: ChannelSettings, stored: str, deadline: float) -> Delivery:
         loop = asyncio.get_running_loop()
         host = channel.smtp_host
         assert host is not None
@@ -419,7 +419,7 @@ class Sender:
                 raise
         except Exception as exc:
             return _smtp_outcome(exc, time.monotonic() >= deadline)
-        return Outcome("sent", "recipients_refused" if refused else None, 250)
+        return Delivery("sent", "recipients_refused" if refused else None, 250)
 
 
 # -- without sending: ds notify check and the warnings at start -----------------------------------

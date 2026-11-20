@@ -197,3 +197,53 @@ class TestRawValues:
         found = run('{"xs": []}', '{"xs": null}', compare)
         assert summary(found) == [("/xs", "$.xs", TYPE, "NORMALIZATION_ONLY")]
         assert (found[0].a_value, found[0].a_raw) == (None, [])
+
+
+class TestMemberNameForms:
+    """One member name spelled in two Unicode forms is one field, as the canonical hash writes it."""
+
+    NFC, NFD = "caf\u00e9", "cafe\u0301"
+    AMOUNT = CompareConfig(
+        fields=(FieldRule("$.amount", compare=FieldCompare("tolerance", abs_tol=D("0.01"))),)
+    )
+
+    def test_a_name_reads_the_same_whatever_another_field_does(self, run) -> None:
+        alone = run(f'{{"{self.NFC}": 1}}', f'{{"{self.NFD}": 1}}', self.AMOUNT)
+        beside = run(
+            f'{{"{self.NFC}": 1, "amount": 1.00}}', f'{{"{self.NFD}": 1, "amount": 1.001}}', self.AMOUNT
+        )
+        spelling = [  # the raw walk pairs names byte-exact, in code point order
+            (f"/{self.NFD}", f"$['{self.NFD}']", EXTRA, "NORMALIZATION_ONLY"),
+            (f"/{self.NFC}", f"$['{self.NFC}']", MISSING, "NORMALIZATION_ONLY"),
+        ]
+        assert summary(alone) == spelling and all(f.raw_only for f in alone)
+        assert summary(beside) == [("/amount", "$.amount", VALUE, "NORMALIZATION_ONLY"), *spelling]
+        assert [f.raw_only for f in beside] == [False, True, True]
+
+    def test_a_value_change_under_two_spellings_is_reported_at_the_nfc_name(self, run) -> None:
+        found = run(f'{{"{self.NFD}": 1}}', f'{{"{self.NFC}": 2}}')
+        assert summary(found) == [
+            (f"/{self.NFC}", f"$['{self.NFC}']", VALUE, None),
+            (f"/{self.NFD}", f"$['{self.NFD}']", MISSING, "NORMALIZATION_ONLY"),
+        ]
+        assert (found[0].a_value, found[0].b_value, found[0].raw_only) == (D(1), D(2), False)
+        assert found[0].pointer_parts == (("field", self.NFC),)
+
+    def test_names_sharing_a_form_in_one_object_pair_only_when_spelled_alike(self, run) -> None:
+        found = run(f'{{"{self.NFC}": 1, "{self.NFD}": 2}}', f'{{"{self.NFD}": 2}}')
+        assert summary(found) == [(f"/{self.NFC}", f"$['{self.NFC}']", MISSING, None)]
+
+    def test_filter_membership_is_found_under_two_spellings(self, run) -> None:
+        compare = CompareConfig(
+            arrays=(ArrayRule("$.*.links", "keyed", ("to",)),),
+            value_filter="!(path.endsWith('.links[*]') && value.status == 'inactive')",
+        )
+        found = run(
+            f'{{"{self.NFC}": {{"links": [{{"to": "E1", "status": "active"}}]}}}}',
+            f'{{"{self.NFD}": {{"links": [{{"to": "E1", "status": "inactive"}}]}}}}',
+            compare,
+        )
+        changed = [f for f in found if not f.raw_only]
+        assert summary(changed) == [
+            (f"/{self.NFC}/links/E1", f"$['{self.NFC}'].links[*]", MISSING, "FILTER_MEMBERSHIP")
+        ]

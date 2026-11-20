@@ -382,7 +382,7 @@ def test_the_migration_seals_everything_and_ends_plaintext_storage(store: Path, 
         "sealed: 9 key(s), 14 header(s), 4 chat message(s) and 2 scan point(s) under 5 new run data key(s);"
         " 6 blob(s) re-encrypted, 2 missing; plaintext storage ended (migration 007)\n"
     )
-    assert versions(pg_dsn) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+    assert versions(pg_dsn) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     [audited] = migrations_audited(pg_dsn)
     assert ({n: audited[n] for n in TOTALS}, audited["complete"]) == (TOTALS, True)
     migrated = rows(
@@ -390,7 +390,7 @@ def test_the_migration_seals_everything_and_ends_plaintext_storage(store: Path, 
     )
     assert [(r["actor"], r["detail"]) for r in migrated] == [
         ("system:migration", {"versions": [6]}),
-        ("system:migration", {"versions": list(range(7, 19))}),  # the end of plaintext storage
+        ("system:migration", {"versions": list(range(7, 21))}),  # the end of plaintext storage
     ]
     columns = rows(
         pg_dsn,
@@ -428,7 +428,7 @@ def test_interrupted_in_any_phase_a_rerun_completes_with_the_same_api_outputs(
         ]
     done = run("keys", "migrate", "--config", store)
     assert done.exit_code == 0, done.output
-    assert versions(pg_dsn) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+    assert versions(pg_dsn) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     audited = migrations_audited(pg_dsn)
     assert audited[-1]["complete"] is True
     assert {n: sum(a[n] for a in audited) for n in TOTALS} == TOTALS  # nothing sealed twice, nothing lost

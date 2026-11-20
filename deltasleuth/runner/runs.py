@@ -54,6 +54,7 @@ from deltasleuth.store import repo
 
 AUTH_PAUSE = "run_paused_auth_error"  # a side refused the credential; a resume means it was fixed
 KEY_PAUSE = "run_paused_key_missing"  # the keyring lacks a KEK the run needs; resumed once it is back
+EVIDENCE_PAUSE = "run_paused_evidence_error"  # the evidence store could not write; resumed once it can
 MODE = "mode must be batch or soak, and only a soak run takes soak settings"
 INTERVAL = "a soak run needs the spec's execution.cycleInterval"
 
@@ -266,13 +267,13 @@ async def pause_run(ctx: Context, run_id: str, *, reason: str | None = None, who
 
 async def resume_run(ctx: Context, run_id: str, *, who: Principal) -> str:
     """Run a paused run again, under its spec version's approval (ApprovalRequired when it needs one it
-    lacks); a refused credential's, a missing KEK's, a revoked approval's, the licence's or a sample's pause
-    reason goes, as it was fixed, and a refused draw is drawn again. A soak paused for the licence resumes
-    only once the licence allows its runs and seats its name as of when its cycle falls due, or now if later
-    (LicenceRefused); a sampled one only once the draw before passed or was closed (SampleRefused); one
-    the schema guard paused only once its tables, looked at again, hold no change that breaks its plan
-    (``drift.Refused``), which accepts the changes that stand, and a cap at its creation is its reason
-    again.
+    lacks); a refused credential's, a missing KEK's, an unwritable evidence store's, a revoked approval's, the
+    licence's or a sample's pause reason goes, as it was fixed, and a refused draw is drawn again. A soak
+    paused for the licence resumes only once the licence allows its runs and seats its name as of when its
+    cycle falls due, or now if later (LicenceRefused); a sampled one only once the draw before passed or was
+    closed (SampleRefused); one the schema guard paused only once its tables, looked at again, hold no
+    change that breaks its plan (``drift.Refused``), which accepts the changes that stand, and a cap at its
+    creation is its reason again.
     The run's first approval covers its next cycle on: the current one read keys without it, unless a
     soak's boundary or its draw paused that cycle before it read any."""
     async with ctx.pool.connection() as conn:
@@ -292,7 +293,7 @@ async def resume_run(ctx: Context, run_id: str, *, who: Principal) -> str:
             await licence.need(ctx, conn, "run", name=spec.name, prefix=prefix, at=at)
         await sample.refuse_resume(conn, run)
         unread = (approvals.APPROVAL_PAUSE, licence.LICENCE_PAUSE, sample.DRAW_PAUSE, sample.SAMPLE_PAUSE)
-        cleared = (AUTH_PAUSE, KEY_PAUSE, SCHEMA_PAUSE, *unread)
+        cleared = (AUTH_PAUSE, KEY_PAUSE, EVIDENCE_PAUSE, SCHEMA_PAUSE, *unread)
         if await repo.set_run_status(
             conn, run_id, "running", when=("paused",), stop_reason=capped, cleared=cleared
         ):

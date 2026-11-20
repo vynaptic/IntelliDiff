@@ -94,6 +94,90 @@ async def test_a_recheck_s_jitter_comes_from_the_masked_key(
     assert masked != "K001" and "K001" not in spread and spread.count(masked) >= 3  # the recheck's too
 
 
+async def test_slots_that_meet_a_run_together_load_it_once(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first slot to meet a run loads it, the CRITICAL counts saved before among it; the slots that meet
+    it meanwhile wait for that load instead of repeating it."""
+    run_id = await create_run(harness.ctx, await harness.spec(spec_text(["K001"])), "batch", who=TESTER)
+    row = {"run_id": run_id, "spec_id": (await harness.run(run_id))["spec_id"]}
+    counted, unexplained_critical = [], repo.unexplained_critical
+
+    async def counting(conn: repo.Conn, run_id: str) -> dict[str, int]:
+        counted.append(run_id)
+        return await unexplained_critical(conn, run_id)
+
+    monkeypatch.setattr(repo, "unexplained_critical", counting)
+    sweeper = worker._Worker(harness.ctx)
+    try:
+        loaded = await asyncio.gather(*(sweeper._run(row) for _ in range(4)))
+    finally:
+        await sweeper.close()
+    assert counted == [run_id] and all(run is loaded[0] for run in loaded)
+
+
+async def test_a_group_that_lost_some_leases_hands_back_the_rest(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A group rolled back because another worker took one of its keys hands back the keys it still holds at
+    once, due now, instead of leaving them leased until their leases expire."""
+    spec_id = await harness.spec(spec_text(["K001", "K002"]))
+    run_id = await create_run(harness.ctx, spec_id, "batch", who=TESTER)
+    states = "SELECT key_masked, state, lease_owner FROM ds.run_keys WHERE run_id = %s"
+
+    async def taken_meanwhile(self: Any, run: Any, rows: Any, owner: str) -> bool:
+        async with harness.ctx.pool.connection() as conn:  # its lease expired, and another worker leased it
+            await conn.execute(
+                "UPDATE ds.run_keys SET lease_owner = 'other' WHERE run_id = %s AND key_masked = 'K001'",
+                (run_id,),
+            )
+        raise worker._LeaseLost
+
+    monkeypatch.setattr(worker._Worker, "_process", taken_meanwhile)
+    sweeper = worker._Worker(harness.ctx)
+    try:
+        async with harness.ctx.pool.connection() as conn:
+            rows = await repo.lease_due(conn, "mine", 2, 60, run_id=run_id)
+        await sweeper._handle(rows, "mine")
+    finally:
+        await sweeper.close()
+    async with harness.ctx.pool.connection() as conn:
+        found = await (await conn.execute(states, (run_id,))).fetchall()
+    assert {key: (state, owner) for key, state, owner in found} == {
+        "K001": ("leased", "other"),
+        "K002": ("pending", None),
+    }
+
+
+async def test_a_lock_check_that_does_not_answer_ends_the_slots(
+    open_harness: OpenHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lock connection that stops answering (a failover, a half-open socket) counts as a lost lock once a
+    check waits longer than the check period: the slots and the sweep stop, so a worker that took the lock
+    meanwhile is the only one processing keys."""
+    checked, ended = asyncio.Event(), []
+
+    class Silent:  # the lock's connection, whose server no longer answers
+        async def execute(self, *args: Any) -> None:
+            checked.set()
+            await asyncio.Event().wait()
+
+    async def looping(self: Any) -> None:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            ended.append("task")
+
+    monkeypatch.setattr(worker._Worker, "slot", looping)
+    monkeypatch.setattr(worker._Worker, "sweep", looping)
+    targets = TARGETS.format(base="http://127.0.0.1:9", rate=500)
+    async with open_harness(targets, concurrency=2, lease_seconds=1) as h:
+        started = time.monotonic()
+        with pytest.raises(worker.LockSilent):
+            await asyncio.wait_for(worker._work(h.ctx, Silent(), asyncio.Event(), False), 10)  # type: ignore[arg-type]
+    assert checked.is_set() and ended == ["task"] * 3 and time.monotonic() - started < 2
+
+
 @pytest.mark.usefixtures("vendor_keys")
 async def test_watch_once_per_change(
     harness: Harness, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture

@@ -3,11 +3,13 @@
 Statuses are evidence, not verdicts. ``latency_ms`` sums, per page, the attempt that produced it
 (it measures the target, not our queues); ``attempts`` is the most any page needed; ``pages``
 counts responses received, a failing last one included and an empty end page excluded. A key listing
-too large to merge is streamed a page at a time instead (``walk``).
+too large to merge is streamed a page at a time instead (``walk``). A page is parsed, judged and merged,
+and the merged answer serialised, in a worker thread, so the event loop serves others meanwhile.
 """
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 from collections.abc import AsyncIterator, Callable, Mapping
 from functools import partial
@@ -111,6 +113,7 @@ class RestConnector:
         gate: TargetGate | None = None,
         resolver: HostResolver = system_resolve,
         max_body_bytes: int = jsonio.DEFAULT_MAX_BYTES,
+        max_values: int | None = None,
     ) -> None:
         if execution.total_timeout_s <= 0 or max_body_bytes < 0:
             raise ConnectorConfigError("total timeout must be positive and the body cap non-negative")
@@ -121,7 +124,8 @@ class RestConnector:
         self._breaker = gate.breaker(execution)
         guarded = GuardedResolver(resolver, allow_private=target.allow_private_network)
         self._http = HttpCaller(gate, execution, guarded, self._auth)
-        self._max_body = max_body_bytes
+        self._max_body = min(max_body_bytes, target.max_body_bytes or max_body_bytes)  # the smaller cap
+        self._max_values = max_values  # what a page, and the pages merged, hold at most
 
     async def aclose(self) -> None:
         await self._http.aclose()
@@ -141,8 +145,7 @@ class RestConnector:
         variables = template_variables(key, run_id, call_seq, side_cfg.request.key_parts)
         render = partial(self._request, side_cfg.request, variables)
         first = render(window_params(paging) if paging else ())
-        if not self._target.allow_private_network:
-            check_literal_host(self._endpoint.host)
+        check_literal_host(self._endpoint.host, allow_private=self._target.allow_private_network)
         observation = partial(
             Observation, key=key, side=side_cfg.side, observed_at=utc_now_iso(), request_url=str(first.url)
         )
@@ -164,8 +167,7 @@ class RestConnector:
             raise ConnectorConfigError("a key listing needs a request template and pagination")
         render = partial(self._request, side_cfg.request, template_variables("keys", "p0", 0))
         first = request = render(window_params(paging))
-        if not self._target.allow_private_network:
-            check_literal_host(self._endpoint.host)
+        check_literal_host(self._endpoint.host, allow_private=self._target.allow_private_network)
         walk = PageWalk(paging, stable_ordering=self._target.capabilities.stable_ordering, merge=False)
         status, page_no = None, 0
         while True:
@@ -178,11 +180,11 @@ class RestConnector:
             if page_no == 1:
                 if page.status not in side_cfg.success_status:
                     raise self._incomplete(page.status, None)
-                walk.start(page.body or b"", page.headers, request.url)
+                await asyncio.to_thread(walk.start, page.body or b"", page.headers, request.url)
             elif page.status not in side_cfg.success_status:
                 walk.stop(f"page {page_no} returned HTTP {page.status}; paging stopped")
             else:
-                walk.add(page.body or b"", page.headers, request.url)
+                await asyncio.to_thread(walk.add, page.body or b"", page.headers, request.url)
             if walk.page:
                 yield walk.page
             if (step := walk.next) is None:
@@ -231,8 +233,10 @@ class RestConnector:
             return _ended_on(
                 observation, result, result.error_detail, result.attempts, min(result.attempts, 1)
             )
-        walk = PageWalk(paging, stable_ordering=self._target.capabilities.stable_ordering)
-        walk.start(result.body or b"", result.headers, first.url)
+        walk = PageWalk(
+            paging, stable_ordering=self._target.capabilities.stable_ordering, max_values=self._max_values
+        )
+        await asyncio.to_thread(walk.start, result.body or b"", result.headers, first.url)
         pages, attempts, latency, size = 1, result.attempts, result.latency_ms or 0.0, len(result.body or b"")
         while (step := walk.next) is not None:
             if step.link is None:
@@ -253,7 +257,7 @@ class RestConnector:
             if page.status not in side_cfg.success_status:
                 walk.stop(f"page {page_no} returned HTTP {page.status}; paging stopped")
                 break
-            walk.add(page.body or b"", page.headers, request.url)
+            await asyncio.to_thread(walk.add, page.body or b"", page.headers, request.url)
         if walk.ended_on_empty_page:
             pages -= 1
         common = {
@@ -264,9 +268,12 @@ class RestConnector:
             "pages": pages,
         }
         try:
-            body = walk.body(max_number_bytes=self._max_body)
+            body = await asyncio.to_thread(walk.body, max_number_bytes=self._max_body)
         except jsonio.ResourceLimitError:
-            detail = f"body of {pages} pages exceeds {self._max_body} bytes or a numeric expansion limit"
+            detail = (
+                f"body of {pages} pages exceeds {self._max_body} bytes, a value count or a numeric expansion"
+                " limit"
+            )
             return observation(**common, body=None, error_class="resource_limit", error_detail=detail)
         if len(body) > self._max_body:
             # Exact re-serialisation can outgrow the pages (1E+99 merges as 100 digits); the

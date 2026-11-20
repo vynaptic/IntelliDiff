@@ -370,6 +370,9 @@ docker compose build || failed 'the build'
 
 printf '== 4/6 Workspace and database\n'
 docker compose run --rm app ds init || failed 'ds init'
+# The app an earlier run started stops before the migration: its worker would meet a schema its build does
+# not know. Step 5 starts it on the new image. Where no app container exists, Compose stops nothing.
+docker compose stop app || failed 'docker compose stop app'
 docker compose run --rm app ds migrate || failed 'ds migrate'
 
 # The app is not healthy: its last error line, if it logged one, then the refusal.

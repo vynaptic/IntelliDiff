@@ -28,6 +28,7 @@ DEFAULT_MAX_BYTES = 64 * 1024 * 1024  # a larger body is INCOMPLETE(resource_lim
 MAX_NUMBER_BYTES = DEFAULT_MAX_BYTES  # total fixed-point digits/punctuation, before expansion
 DEFAULT_MAX_DEPTH = 256
 MAX_EXPONENT = 4000  # |adjusted exponent| above this is rejected (avoids huge expansions)
+MAX_VALUES = 2_000_000  # values one parse builds at most: every scalar, array and object counts
 
 
 class JSONParseError(ValueError):
@@ -75,6 +76,30 @@ def _depth(value: Any, limit: int) -> None:
             stack.extend((x, d + 1) for x in v)
 
 
+# A string (its commas and brackets are text), a comma, or a container's opening bracket together with its
+# closing one when it is empty. UTF-8 never encodes another character with these bytes.
+_VALUE_TOKEN = re.compile(rb'"[^"\\]*(?:\\.[^"\\]*)*"|,|[\[{](?:[ \t\n\r]*[\]}])?', re.DOTALL)
+
+
+def _holds_more_values(raw: bytes, limit: int) -> bool:
+    """Whether the JSON text ``raw`` holds more than ``limit`` values, judged without building one.
+
+    Every value but the outermost is an item of a non-empty container, and a container's items are one
+    more than the commas between them: so the values are one, plus the commas outside strings, plus the
+    non-empty containers. The commas and opening brackets anywhere bound that from above, which settles
+    most bodies with no scan of their tokens."""
+    if 1 + raw.count(b",") + raw.count(b"[") + raw.count(b"{") <= limit:
+        return False
+    values = 1
+    for token in _VALUE_TOKEN.finditer(raw):
+        start, end = token.span()
+        if raw[start] != 0x22 and (raw[start] == 0x2C or end - start == 1):  # not a string, not empty
+            values += 1
+            if values > limit:
+                return True
+    return False
+
+
 # UTF-8 cannot encode a surrogate, so in bytes one can only come from a \uD800-\uDFFF escape;
 # a body without such an escape (the usual case) is not walked.
 _SURROGATE_ESCAPE = re.compile(rb"\\u[dD][89a-fA-F]")
@@ -103,11 +128,13 @@ def parse_json(
     max_bytes: int = DEFAULT_MAX_BYTES,
     max_depth: int = DEFAULT_MAX_DEPTH,
     check_number_expansion: bool = True,
+    max_values: int | None = None,
 ) -> tuple[JSON, bool]:
     """Parse ``body``; return ``(value, duplicate_member_found)``.
 
     Raises ``JSONParseError`` for invalid JSON or non-UTF-8 bytes (``LoneSurrogateError`` for a
-    string that is not Unicode text) and ``ResourceLimitError`` for oversized input. Numbers
+    string that is not Unicode text) and ``ResourceLimitError`` for oversized input, counted before any
+    value is built when it holds more than ``max_values`` (default ``MAX_VALUES``) values. Numbers
     are ``Decimal``; ``NaN``/``Infinity`` are rejected. Only captured-sample envelopes disable
     ``check_number_expansion``: their body is budgeted separately to preserve resource observations.
     """
@@ -117,6 +144,9 @@ def parse_json(
         raise LoneSurrogateError("the text holds a lone UTF-16 surrogate (not Unicode text)") from None
     if len(raw) > max_bytes:
         raise ResourceLimitError(f"body of {len(raw)} bytes exceeds {max_bytes}")
+    limit = MAX_VALUES if max_values is None else max_values
+    if _holds_more_values(raw, limit):
+        raise ResourceLimitError(f"body holds more than {limit} values")
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -249,6 +279,20 @@ def check_number_budget(value: Any, *, max_bytes: int | None = None) -> int:
         else:
             stack.pop()
     return used
+
+
+def count_values(value: Any) -> int:
+    """The values in a parsed JSON value, itself included: every scalar, array and object, as
+    ``MAX_VALUES`` counts them."""
+    count, stack = 0, [value]
+    while stack:
+        node = stack.pop()
+        count += 1
+        if isinstance(node, dict):
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return count
 
 
 def number_text(d: Decimal) -> str:

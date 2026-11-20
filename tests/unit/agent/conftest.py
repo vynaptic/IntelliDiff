@@ -222,15 +222,17 @@ async def seed(
     wide: int = 0,
     scan: dict[str, Any] | None = None,
     doc: dict[str, Any] = SPEC_DOC,
+    members: dict[str, Any] | None = None,
+    key: str = RAW_KEY,
 ) -> Seeded:
-    """A batch run of two keys compared by the engine: C1001 differs in email, total and note, and
-    has ``wide`` more fields on side B only; with ``scan``, the run's table scan state; under ``doc``,
-    which declares total and note clear unless given."""
+    """A batch run of two keys compared by the engine: ``key`` (C1001) differs in email, total and note,
+    and has ``wide`` more fields and ``members`` on side B only; with ``scan``, the run's table scan state;
+    under ``doc``, which declares total and note clear unless given."""
     spec = compile_spec(doc, targets=ctx.targets)
-    extra = {f"x{i}": i for i in range(wide)}  # after note and total: their findings come first
+    extra = {f"x{i}": i for i in range(wide)} | (members or {})  # after note and total: theirs come first
     docs = {
-        RAW_KEY: ({"id": RAW_KEY, "email": RAW_EMAIL, "total": 10, "note": "same"},
-                  {"id": RAW_KEY, "email": "ann@example.com", "total": 12, "note": note_b} | extra),
+        key: ({"id": key, "email": RAW_EMAIL, "total": 10, "note": "same"},
+              {"id": key, "email": "ann@example.com", "total": 12, "note": note_b} | extra),
         MATCH_KEY: ({"id": MATCH_KEY, "total": 3}, {"id": MATCH_KEY, "total": 3}),
     }  # fmt: skip
     async with ctx.pool.connection() as conn:
@@ -240,27 +242,29 @@ async def seed(
         run_id, sealer = await create_run(ctx, conn, spec_id, "batch", keys, params, scan)
         await repo.set_run_status(conn, run_id, "running")
         results = []
-        for key, bodies in docs.items():
-            obs = [_observed(ctx, key, side, body) for side, body in zip(Side, bodies, strict=True)]
+        for raw, bodies in docs.items():
+            obs = [_observed(ctx, raw, side, body) for side, body in zip(Side, bodies, strict=True)]
             states = [
                 observe(o, spec.sides[o.side], spec, ctx.targets.get(f"svc-{o.side}").capabilities)
                 for o in obs
             ]
-            result = compare_pair(key, *states, spec, today=date.today(), tokeniser=ctx.tokeniser)
+            result = compare_pair(raw, *states, spec, today=date.today(), tokeniser=ctx.tokeniser)
             result = replace(result, obs_a_id=obs[0].obs_id, obs_b_id=obs[1].obs_id)
             await save_pass(ctx, conn, spec, run_id, 1, 1, result, {o.side: o for o in obs}, sealer)
-            await repo.complete_key(conn, run_id, 1, keys[key], "nobody")
+            await repo.complete_key(conn, run_id, 1, keys[raw], "nobody")
             results.append(result)
         rows, _ = await repo.list_findings(conn, run_id)
         causes = {rc.path_pattern: rc for rc in root_causes(results, spec=spec, tokeniser=ctx.tokeniser)}
-        links = {r["finding_id"]: causes[r["path_pattern"]].root_cause_id for r in rows}
+        # A finding a known difference suppresses is in no root cause.
+        linked = [r for r in rows if r["path_pattern"] in causes]
+        links = {r["finding_id"]: causes[r["path_pattern"]].root_cause_id for r in linked}
         await repo.replace_root_causes(conn, run_id, 1, list(causes.values()), links)
         await repo.set_counters(conn, run_id, {"keys": 2, "MATCH": 1, "MISMATCH": 1})
         await repo.set_run_status(conn, run_id, "completed")
     return Seeded(
         run_id,
         spec_id,
-        keys[RAW_KEY],
+        keys[key],
         {r["path_pattern"]: r["finding_id"] for r in rows},
         {p: rc.root_cause_id for p, rc in causes.items()},
     )

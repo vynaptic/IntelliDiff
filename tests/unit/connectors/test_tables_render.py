@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import random
 import struct
 from decimal import Decimal
@@ -515,3 +516,25 @@ async def test_the_same_floats_read_and_digest_alike_on_every_engine(
     for i, (d, f) in enumerate(zip(doubles, singles, strict=True)):  # and each is the float that was stored
         document = found["postgresql"][str(i)][0]
         assert (float(document["d"]), _reads(str(document["f"]))) == (d, f), i
+
+
+def test_the_largest_32_bit_float_reads_back_where_packing_past_it_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Packing a double beyond the 32-bit range raises OverflowError on some builds of Python (Linux
+    x86_64) and gives infinity on others: the largest 32-bit float and its neighbours read alike on both,
+    and a number past the range is no 32-bit float on both."""
+    pack = struct.pack
+
+    def strict(fmt: str, *values: float) -> bytes:
+        if fmt == "f" and any(math.isfinite(v) and abs(v) >= 3.4028235677973366e38 for v in values):
+            raise OverflowError("float too large to pack with f format")
+        return pack(fmt, *values)
+
+    largest = _single(3.4028235e38)
+    for packing in (pack, strict):
+        monkeypatch.setattr(render.struct, "pack", packing)
+        assert render.value("float32", repr(largest), "c") == Decimal("3.4028235E+38")
+        assert render.value("float32", "3.4028235e38", "c") == Decimal("3.4028235E+38")
+        with pytest.raises(ConversionError):
+            render.value("float32", "3.5e38", "c")

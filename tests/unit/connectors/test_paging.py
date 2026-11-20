@@ -486,3 +486,23 @@ async def test_merged_body_above_the_cap_is_a_resource_limit(start: Start) -> No
     obs = await (await start(reply, max_body_bytes=1000)).fetch("K1", side_config(pagination=CURSOR))
     assert (obs.error_class, obs.body, obs.content_hash, obs.pages) == ("resource_limit", None, None, 2)
     assert "exceeds 1000 bytes" in (obs.error_detail or "")
+
+
+async def test_merged_pages_share_the_value_count(
+    start: Start, recorder: Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Each page holds 8 values (the envelope, its array, four items, the cursor and the total); the
+    # third would take the merged answer to 16, past the count, so it is never merged.
+    monkeypatch.setattr(jsonio, "MAX_VALUES", 12)
+    reply = cursor_reply(list(range(16)))
+    obs = await (await start(reply)).fetch("K1", side_config(pagination=CURSOR))
+    assert (obs.error_class, obs.body, obs.content_hash, obs.pages, recorder.count) == (
+        "resource_limit",
+        None,
+        None,
+        3,
+        3,
+    )
+    assert "value" in (obs.error_detail or "")
+    monkeypatch.setattr(jsonio, "MAX_VALUES", 20)  # the same pages merged at the count: 16 items and 4
+    assert ids(await (await start(reply)).fetch("K1", side_config(pagination=CURSOR))) == list(range(16))

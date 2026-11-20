@@ -1,0 +1,47 @@
+{
+  "pair": "linker",
+  "run_id": "R-01JEVA1L1NKEREXP1A1N000000",
+  "question": "explain RC-11a4e7000007",
+  "results": [
+    {
+      "tool": "get_root_cause",
+      "data": {
+        "root_cause_id": "RC-11a4e7000007",
+        "kind": "path",
+        "taxonomy_code": "FIELD_MISSING",
+        "max_severity": "HIGH",
+        "path_pattern": "$.links[*]",
+        "change_type": "missing_in_b",
+        "direction": "a_only",
+        "affected_keys": 1,
+        "finding_count": 1,
+        "member_key_tok": null,
+        "value_class": null,
+        "sample_keys": ["ORG-000007"]
+      }
+    },
+    {
+      "tool": "get_findings",
+      "data": {
+        "findings": [
+          {
+            "finding_id": "F-11a4e70000000007",
+            "root_cause_id": "RC-11a4e7000007",
+            "taxonomy_code": "FIELD_MISSING",
+            "severity": "HIGH",
+            "change_type": "missing_in_b",
+            "direction": "a_only",
+            "path_pattern": "$.links[*]",
+            "json_pointer": "/links/tok:code:v1:EVA1L1NKC0DEAAAAAAAAAAAAAA",
+            "value_a": "{\"code\":\"tok:code:v1:EVA1L1NKC0DEAAAAAAAAAAAAAA\"}",
+            "value_b": null,
+            "key_masked": "ORG-000007"
+          }
+        ],
+        "more": false
+      }
+    }
+  ],
+  "answer": "Root cause [RC-11a4e7000007] groups 1 finding in 1 key: side A holds a member of $.links[*] that side B lacks, a FIELD_MISSING change of HIGH severity. In key [K:ORG-000007] the link is missing on side B [F-11a4e70000000007]. Side B answers with one link fewer for this entity; the services' reasons are not shown.",
+  "expect": {"passes": true}
+}

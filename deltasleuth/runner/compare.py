@@ -75,19 +75,23 @@ def connect(
     table: Plan | None = None,
     *,
     max_body_bytes: int = jsonio.DEFAULT_MAX_BYTES,
+    max_values: int | None = None,
 ) -> Connector:
     """A live connector to the target, under the process's one gate for it (``ctx.gates``: the rate
     budget and slots every run on the target shares) and that gate's breaker for the ``circuitBreaker``
     that ``execution`` declares; a database target reads the table side ``table`` of a run's column plan.
     ``max_body_bytes`` caps a service's answer, its pages together (a trial of an endpoint reads less than
-    a run does). A change another process made to the product's list of targets is taken in first."""
+    a run does), and ``max_values`` the values it holds (a key listing holds more). A change another
+    process made to the product's list of targets is taken in first."""
     product.follow(ctx)
     target = ctx.targets.live(target_id)
     gate = ctx.gates.setdefault(target_id, TargetGate.for_target(target))
     if target.engine:
         return TableConnector(target, execution, table or {}, gate=gate)
     try:
-        return RestConnector(target, execution, gate=gate, max_body_bytes=max_body_bytes)
+        return RestConnector(
+            target, execution, gate=gate, max_body_bytes=max_body_bytes, max_values=max_values
+        )
     except SecretError:
         if target.declared_in != "product":
             raise  # an operator's own mount: the refusal names the file, never its content

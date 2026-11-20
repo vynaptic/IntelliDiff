@@ -169,15 +169,27 @@ class EvidenceStore:
 
     def delete(self, address: str) -> int:
         """Unlink the blob at ``address`` and fsync its directory; the bytes freed (0 if it was absent)."""
-        path = self._blob_path(address)
+        return self.delete_all([address])[address]
+
+    def delete_all(self, addresses: Iterable[str]) -> dict[str, int]:
+        """Unlink the blobs at ``addresses``, then fsync once each directory that lost one, in name order;
+        the bytes each freed (0 for one that was absent). When it returns, every deletion is durable."""
+        freed: dict[str, int] = {}
+        touched: set[Path] = set()
         with self._lock:
-            try:
-                size = path.stat().st_size
-                path.unlink()
-            except FileNotFoundError:
-                return 0
-        fsync_dir(path.parent)
-        return size
+            for address in addresses:
+                path = self._blob_path(address)
+                try:
+                    size = path.stat().st_size
+                    path.unlink()
+                except FileNotFoundError:
+                    freed[address] = 0
+                    continue
+                freed[address] = size
+                touched.add(path.parent)
+        for directory in sorted(touched):
+            fsync_dir(directory)
+        return freed
 
     def walk(self) -> Iterator[tuple[str, str | None, int]]:
         """Every blob file: its address, the evidence key id its header names (None when the header is

@@ -1201,7 +1201,7 @@ def test_the_mcp_library_is_pinned_and_brings_no_telemetry_backend(repo_root: Pa
     wheel, which the SBOM must hold, and ``pywin32`` for Windows alone, which it need not; no OpenTelemetry
     SDK, exporter or instrumentation in the lock; and the entry points that the API's ``OTEL_PYTHON_CONTEXT``,
     ``OTEL_PYTHON_TRACER_PROVIDER`` and ``OTEL_PROPAGATORS`` select are the API's own."""
-    added = {"mcp": "2.2.0", "mcp-types": "2.2.0", "opentelemetry-api": "1.44.0", "sse-starlette": "3.4.11"}
+    added = {"mcp": "2.2.0", "mcp-types": "2.2.0", "opentelemetry-api": "1.45.2", "sse-starlette": "3.4.11"}
     assert (
         "mcp==2.2.0" in tomllib.loads((repo_root / "pyproject.toml").read_text())["project"]["dependencies"]
     )

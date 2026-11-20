@@ -86,3 +86,10 @@ def test_a_table_error_keeps_its_class_and_code_and_a_log_line_adds_where() -> N
     assert (cycle.failure(exc), cycle.recorded(exc)) == (told, told)
     at = r" at connectors/tables/engine\.py:\d+ in planned"
     assert re.fullmatch(re.escape(told) + at, cycle.located(exc))
+
+
+def test_keys_that_mask_alike_are_shown_by_their_count() -> None:
+    """Its message counts the keys and names none, so a failed run says what to put right."""
+    from deltasleuth.security.crypto import MaskedAlike
+
+    assert cycle.failure(MaskedAlike(2)) == f"MaskedAlike: {MaskedAlike(2)}"

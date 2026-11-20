@@ -113,6 +113,23 @@ async def test_rows_without_a_key_refuse(on_tables: Tables) -> None:
         assert len(found) == 5
 
 
+async def test_keys_that_mask_alike_refuse_by_rank(on_tables: Tables) -> None:
+    """Two keys of a key table that differ only in Unicode normal form (one invented key in NFC and in
+    NFD) would be one masked key: the read refuses them by their ranks in key order and names neither."""
+    alike = ("K\u00c901", "KE\u030101")
+    _, harness = on_tables(
+        "CREATE TABLE item_keys (id text);"
+        " INSERT INTO item_keys VALUES ('K001'), ('K\u00c901'), ('KE\u030101');"
+    )
+    async with harness as h:
+        tokenised = {"pattern": "^K", "class": "identifier"}
+        with pytest.raises(ValueError, match=r"^2 key\(s\) .*\(positions 2, 3 of the key set\)") as refused:
+            await resolve(h.ctx, compiled(h, keyed(ITEM_KEYS, tokenised)))
+        assert not any(key in str(refused.value) for key in alike)
+        found, _ = await resolve(h.ctx, compiled(h, keyed(ITEM_KEYS, {"pattern": "^K"})))
+        assert sorted(found) == sorted(["K001", *alike])  # a business code is shown as it is: three keys
+
+
 async def test_lines_that_are_not_rows_refuse(on_tables: Tables, monkeypatch: pytest.MonkeyPatch) -> None:
     """A CSV key file's lines that are not rows of its dialect are in no key list. Its plan counts them
     and the read refuses by that count, rather than leave their keys out unsaid: the file

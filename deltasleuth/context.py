@@ -43,7 +43,7 @@ from deltasleuth.security.crypto import KEY_BYTES, Keyring, KeyringError, Sealer
 from deltasleuth.security.signing import PackSigner
 from deltasleuth.security.tokenise import Tokeniser, load_or_create_key, read_key
 from deltasleuth.store import repo
-from deltasleuth.store.db import SEALED, WAIT, admitted, migrate, opening
+from deltasleuth.store.db import NEEDS_MIGRATION, SEALED, WAIT, admitted, migrate, opening, pending
 
 KEK_FILE = "kek"  # developer mode's keyring, in the workspace
 _EVIDENCE_ID_LABEL = b"deltasleuth/obs_id/v1"
@@ -174,12 +174,17 @@ class Context:
         oidc: bool = False,
         rewrap: bool = False,
         migrating: bool = False,
+        apply_migrations: bool = True,
         packs: bool = False,
         pool: tuple[int, int] | None = None,
     ) -> AsyncIterator[Context]:
         """Load everything, open the pool, apply pending migrations and load the data keys; close the
         pool on exit. A files target's root that lies where it may not is refused, and the spill directories
         of processes that ended are swept.
+
+        ``apply_migrations`` False (each command but ``ds serve``, ``ds worker``, ``ds migrate`` and ``ds
+        keys migrate``) applies none and creates nothing: a pending migration ends the open with
+        ContextError ``NEEDS_MIGRATION``, and a database this build cannot run on with MigrationError.
 
         ``oidc`` (the server only) builds the IdP client in oidc mode: it reads the client credential
         and fetches the IdP's discovery document. Other entry points never contact the IdP. ``rewrap``
@@ -215,7 +220,10 @@ class Context:
         try:
             with opening():
                 await opened.open(wait=True, timeout=WAIT)
-            await migrate(opened, upto=SEALED - 1 if migrating else None)
+            if apply_migrations:
+                await migrate(opened, upto=SEALED - 1 if migrating else None)
+            elif await pending(opened):
+                raise ContextError(NEEDS_MIGRATION)
             loaded = await keys.start(opened, keyring, rewrap=rewrap)
             evidence = EvidenceStore(
                 settings.evidence_dir,

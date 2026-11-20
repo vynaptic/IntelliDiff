@@ -9,6 +9,7 @@ import os
 import stat
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 import zstandard
@@ -299,6 +300,34 @@ class TestEnsureDeleteWalk:
         forged = Observation(**{**stored.__dict__, "body": b"another body"})
         with pytest.raises(EvidenceIntegrityError):
             store.ensure([forged])
+
+    def test_a_batch_is_unlinked_then_each_directory_synced_once(
+        self, store: EvidenceStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A drain's batch: every blob unlinked, then each directory that lost one synced once, after the
+        last unlink; an absent address frees nothing and syncs nothing."""
+        by_directory: dict[str, list[str]] = {}
+        n = 0
+        while len(by_directory) < 3 or max(map(len, by_directory.values())) < 2:  # a directory holds two
+            stored = store.put_body(b'{"n": %d}' % n)
+            by_directory.setdefault(stored[4:6], []).append(stored)
+            n += 1
+        sizes = {blob: size for blob, _, size in store.walk()}
+        absent = address(b"never stored")
+        events: list[tuple[str, str]] = []
+        unlink = Path.unlink
+
+        def unlinked(path: Path, *args: Any, **kwargs: Any) -> None:
+            events.append(("unlink", path.parent.name))
+            unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", unlinked)
+        monkeypatch.setattr(store_module, "fsync_dir", lambda folder: events.append(("sync", folder.name)))
+        assert store.delete_all([*sizes, absent]) == sizes | {absent: 0}
+        assert list(store.walk()) == []
+        unlinks = [name for kind, name in events if kind == "unlink"]
+        assert sorted(unlinks) == sorted(blob[4:6] for blob in sizes)
+        assert events[len(unlinks) :] == [("sync", name) for name in sorted(by_directory)]
 
     def test_delete_returns_the_bytes_freed(self, store: EvidenceStore, tmp_path: Path) -> None:
         store.put_blob(make_obs())

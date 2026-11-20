@@ -1,6 +1,6 @@
 """Target registry: the endpoints a spec may call and their declared, observable behaviour.
 
-A targets file maps ids to ``base_url``, ``auth`` (``secret_ref: file:...`` only), rate budget,
+A targets file maps ids to ``base_url``, ``auth`` (``secret_ref: file:...`` only), rate budget, body cap,
 network opt-ins and ``capabilities`` (``TargetCapabilities`` fields). Specs name target ids only,
 so the registry is the SSRF allowlist. A target without ``base_url`` serves file samples only; one
 with ``dsn_ref`` (a file holding a PostgreSQL DSN) or ``engine`` (a MySQL or Oracle endpoint, declared
@@ -24,6 +24,7 @@ from cryptography import x509
 from jsonschema import Draft202012Validator
 
 from deltasleuth.core.canonical.paths import jsonpath_error, normalise_query
+from deltasleuth.core.jsonio import DEFAULT_MAX_BYTES
 from deltasleuth.core.spec.documents import read_document
 from deltasleuth.core.spec.errors import SpecError, SpecIssue, TargetsError, UnknownTargetError, pointer
 from deltasleuth.core.spec.expressions import cel_error
@@ -38,7 +39,9 @@ from deltasleuth.core.types import (
 )
 
 _OBJECT = {"type": "object", "additionalProperties": False}
-_SERVICE_ONLY = ("base_url", "auth", "capabilities", "allow_private_network", "allow_insecure_http")
+_SERVICE_ONLY = (
+    "base_url", "auth", "capabilities", "allow_private_network", "allow_insecure_http", "max_body_bytes"
+)
 _PATH = {"type": "string", "pattern": "^\\$"}
 _FILE_REF = {"type": "string", "pattern": "^file:[^\\x00]+$"}
 # No connect descriptor, SID or alias can be written as a service, a database or a user.
@@ -60,7 +63,7 @@ _ENGINE_ONLY = {
     "tls_verify_name": {"type": "boolean"},
     "allow_unencrypted": {"type": "boolean"},
 }
-_NOT_ENGINE = ("dsn_ref", "base_url", "auth", "capabilities", "allow_insecure_http")
+_NOT_ENGINE = ("dsn_ref", "base_url", "auth", "capabilities", "allow_insecure_http", "max_body_bytes")
 _PORTS = {"mysql": 3306, "oracle": 1521}
 # A header's name and a target's id end at \Z: Python's $ would pass one that ends in a line break.
 _HEADER = {
@@ -99,6 +102,12 @@ _TARGETS_SCHEMA: dict[str, Any] = {
                 "max_concurrency": {"type": "integer", "minimum": 1, "maximum": 256},
                 "allow_private_network": {"type": "boolean"},
                 "allow_insecure_http": {"type": "boolean"},
+                "max_body_bytes": {
+                    "description": "Bytes of a service's answer, its pages together, at most.",
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": DEFAULT_MAX_BYTES,
+                },
                 "capabilities": {"$ref": "#/$defs/capabilities"},
                 "dsn_ref": {
                     "description": "A PostgreSQL database: file:<path> of its DSN. Never an inline value.",
@@ -347,6 +356,7 @@ def _target(target_id: str, entry: dict[str, Any], base_dir: Path, issues: list[
         ),
         allow_private_network=bool(entry.get("allow_private_network", False)),
         allow_insecure_http=bool(entry.get("allow_insecure_http", False)),
+        max_body_bytes=entry.get("max_body_bytes"),
         dsn_ref=_file_ref(entry.get("dsn_ref"), base_dir),
         database=_database(entry, base_dir, at, issues) if "engine" in entry and not files else None,
         root=entry.get("root", "") if files else None,
@@ -477,6 +487,10 @@ def _base_url(entry: dict[str, Any], auth_kind: str) -> str:
         raise _Refused("invalid_base_url", "base_url path must not contain . or .. segments")
     if scheme == "http" and auth_kind != "none" and not entry.get("allow_insecure_http", False):
         raise _Refused("insecure_http", "credentials require https unless allow_insecure_http is true")
+    if _is_never_host(host):
+        raise _Refused(
+            "forbidden_host", f"{host} is never a target (link-local, unspecified, multicast or metadata)"
+        )
     if _is_private_host(host) and not entry.get("allow_private_network", False):
         raise _Refused(
             "private_network", "loopback, private and link-local hosts need allow_private_network: true"
@@ -484,6 +498,14 @@ def _base_url(entry: dict[str, Any], auth_kind: str) -> str:
     netloc = f"[{host}]" if ":" in host else host  # an IPv6 literal
     netloc += "" if port is None else f":{port}"
     return urlunsplit((scheme, netloc, parts.path.rstrip("/"), "", ""))
+
+
+def _is_never_host(host: str) -> bool:
+    """A literal host that is never a target, whatever the target allows; a name is guarded at call time."""
+    try:
+        return address_rule(host) == "never"
+    except ValueError:
+        return False
 
 
 def _is_private_host(host: str) -> bool:

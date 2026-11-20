@@ -41,6 +41,7 @@ from deltasleuth.cli.main import _bindable, _Stream, app
 from deltasleuth.connectors.tables import Refusal, TargetRefused, TargetUnreachable
 from deltasleuth.connectors.tables import engine as seam
 from deltasleuth.connectors.tables.engine import Column
+from deltasleuth.context import ContextError
 from deltasleuth.core.spec import documents
 from deltasleuth.reports import accuracy
 from deltasleuth.security.signing import PackSigner
@@ -160,7 +161,8 @@ def test_help_says_what_ds_does() -> None:
         "Database and files targets: the pre-flight check.",
         "Token name, audited as its actor_name: 3 to 64 of a-z, 0-9, '.', '_' and '-', starting with a"
         " letter or a digit.",
-        "Apply the pending database migrations (every command that opens the store applies them too).",
+        "Apply the pending database migrations, each logged as it runs (ds serve and ds worker apply them as"
+        " they start; every other command refuses while one is pending).",
     )
     assert written["ds precheck draft"].endswith(
         " Never stored: when it is ready, upload it on the Specs screen or with POST /v1/specs, or, outside"
@@ -408,7 +410,7 @@ def test_serve_leaves_proxy_headers_to_the_app_and_sign_in_queries_out_of_the_lo
     monkeypatch.setattr(access, "filters", [])  # restored after the test
     ran: dict[str, Any] = {}
     monkeypatch.setattr("uvicorn.run", lambda app, **options: ran.update(options))
-    monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda *_: None)
+    monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda *_, **__: None)
     (tmp_path / "ds.yaml").write_text(SETTINGS)
     code, _ = ds("serve", "--config", tmp_path / "ds.yaml")
     assert (code, ran["proxy_headers"], audit_logger.propagate) == (0, False, False)
@@ -422,7 +424,9 @@ def test_serve_refuses_a_taken_port_before_it_opens_the_store(
     """The last refusal before the store is opened, so no ``system.start``
     row is written and no worker starts; the driver's own exit would be 3, with a traceback."""
     monkeypatch.setattr("deltasleuth.cli.main._bindable", _bindable)
-    monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda *_: pytest.fail("the store must not open"))
+    monkeypatch.setattr(
+        "deltasleuth.cli.main._in_context", lambda *_, **__: pytest.fail("the store must not open")
+    )
     monkeypatch.setattr("uvicorn.run", lambda *_, **__: pytest.fail("the server must not start"))
     (tmp_path / "ds.yaml").write_text(SETTINGS)
     with socket.create_server(("127.0.0.1", 0)) as held:
@@ -450,7 +454,7 @@ def test_serve_warns_when_the_ui_is_not_built(tmp_path: Path, monkeypatch: pytes
     """On stderr, and the server starts all the same."""
     ran: list[Any] = []
     monkeypatch.setattr("uvicorn.run", lambda *_, **__: ran.append(1))
-    monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda *_: None)
+    monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda *_, **__: None)
     (tmp_path / "ds.yaml").write_text(SETTINGS)
     built = run("serve", "--config", tmp_path / "ds.yaml")
     dist = tmp_path / "web" / "dist"
@@ -472,7 +476,7 @@ def test_serve_runs_the_worker_in_its_process_unless_told_not_to(
 ) -> None:
     made: dict[str, Any] = {}
     monkeypatch.setattr("uvicorn.run", lambda app, **options: None)
-    monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda *_: None)
+    monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda *_, **__: None)
     monkeypatch.setattr("deltasleuth.api.create_app", lambda settings, **options: made.update(options))
     (tmp_path / "ds.yaml").write_text(SETTINGS)
     code, _ = ds("serve", *option, "--config", tmp_path / "ds.yaml")
@@ -1082,7 +1086,7 @@ def test_target_check_reads_an_oracle_target(tmp_path: Path, oracle_server: Orac
 def test_the_worker_copies_audit_rows_to_stdout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, audit_logger: logging.Logger
 ) -> None:
-    monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda *_: None)
+    monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda *_, **__: None)
     (tmp_path / "ds.yaml").write_text(SETTINGS)
     assert ds("worker", "--config", tmp_path / "ds.yaml")[0] == 0
     assert [h.stream for h in audit_logger.handlers] == ["stdout"] and not audit_logger.propagate  # type: ignore[attr-defined]
@@ -1252,6 +1256,51 @@ def store(tmp_path: Path, pg_dsn: str) -> Callable[..., Path]:
         return tmp_path / "ds.yaml"
 
     return make
+
+
+@pytest.mark.db
+def test_a_command_refuses_a_database_that_needs_migrations(tmp_path: Path, pg_dsn: str) -> None:
+    """Only ``ds serve``, ``ds worker`` and ``ds migrate`` apply migrations: another command that opens the
+    store says so in one line and leaves the database as it found it, and runs once ``ds migrate`` has."""
+    (tmp_path / "dsn").write_text(pg_dsn + "\n")
+    (tmp_path / "t.yaml").write_text(TARGETS)
+    (tmp_path / "ds.yaml").write_text(SETTINGS)
+    config = tmp_path / "ds.yaml"
+    assert run("init", "--config", config).exit_code == 0  # the workspace's keys: no schema
+    for command in (("runs",), ("token", "list"), ("keys", "status")):
+        assert ds(*command, "--config", config) == (2, f"error: {db.NEEDS_MIGRATION}\n")
+    with psycopg.connect(pg_dsn) as conn:
+        assert conn.execute("SELECT to_regnamespace('ds')").fetchone() == (None,)
+    migrated = run("migrate", "--config", config)
+    newest = sorted(db.MIGRATIONS.glob("*.sql"))[-1].name
+    assert migrated.exit_code == 0 and migrated.stdout.startswith("migrations applied: 1, 2, ")
+    lines = migrated.stderr.splitlines()
+    said = [line.split(" ", 4)[-1] for line in lines if " deltasleuth.store.db " in line]  # after time, level
+    assert (said[0], said[1][:31]) == ("migration 001_init.sql: started", "migration 001_init.sql: done in")
+    assert said[-2].startswith(f"migration {newest}: done in ")
+    assert said[-1].startswith("migrations committed: 1, 2, ")
+    assert ds("runs", "--config", config)[0] == 0
+
+
+@pytest.mark.parametrize(
+    ("command", "applies"),
+    [(("serve",), True), (("worker",), True), (("runs",), False), (("token", "list"), False)],
+    ids=lambda value: " ".join(value) if isinstance(value, tuple) else str(value),
+)
+def test_only_the_services_open_the_store_to_apply_migrations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: tuple[str, ...], applies: bool
+) -> None:
+    opened = []
+
+    def recorded(*_: Any, **options: Any) -> Any:
+        opened.append(options.get("apply_migrations", True))
+        raise ContextError("opened")
+
+    monkeypatch.setattr("deltasleuth.cli.main.Context.open", recorded)
+    (tmp_path / "t.yaml").write_text(TARGETS)
+    (tmp_path / "ds.yaml").write_text(SETTINGS)
+    refused = run(*command, "--config", tmp_path / "ds.yaml")
+    assert (refused.exit_code, refused.output.splitlines()[-1], opened) == (2, "error: opened", [applies])
 
 
 @pytest.mark.parametrize("operator", [None, ""], ids=["unset", "empty"])
@@ -2314,7 +2363,7 @@ def test_serve_and_auth_check_warn_when_no_idp_group_maps_to_rule_approver(
     tmp_path: Path, idp: FakeIdp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("uvicorn.run", lambda *_, **__: None)
-    monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda *_: None)
+    monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda *_, **__: None)
     (tmp_path / "oidc_secret").write_text(CLIENT_SECRET + "\n")
     oidc = idp.settings(
         client_secret_ref=f"file:{tmp_path / 'oidc_secret'}", roles={"spec_author": ["G-author"]}

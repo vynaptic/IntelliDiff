@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime, timedelta
 
 from deltasleuth.core.types import Canonical, ChangeType, Finding, KeyResult, Outcome, Severity, SideState
@@ -65,6 +66,33 @@ def test_unexplained_critical_counts_the_current_results() -> None:
     assert monitor.reason(T0) is None
     monitor.record_result("K3", _result(Outcome.MISMATCH, critical=1), first_read=True)
     assert monitor.reason(T0) == "stop_condition:maxUnexplainedCritical"
+
+
+def test_the_critical_total_follows_each_key_s_latest_count() -> None:
+    """The running total equals the sum over every key's latest count, through updates of the same key; a
+    key whose count is zero is not held."""
+    counts = [3, 0, 2, 0, 0, 1, 4, 0, 2, 2]  # each update's count, keys K0 to K3 in turn
+    monitor = StopMonitor(StopConditions(max_unexplained_critical=100), T0, {"K0": 1, "K1": 0, "K9": 2})
+    latest = {"K0": 1, "K1": 0, "K9": 2}
+    assert (monitor.critical_count, monitor.critical) == (3, {"K0": 1, "K9": 2})
+    for i, count in enumerate(counts):
+        key = f"K{i % 4}"
+        monitor.record_result(key, _result(Outcome.MISMATCH, critical=count), first_read=False)
+        latest[key] = count
+        assert monitor.critical_count == sum(latest.values())
+        assert monitor.critical == {k: n for k, n in latest.items() if n}
+    assert monitor.reason(T0) is None
+
+
+def test_the_critical_count_stays_linear_in_the_keys() -> None:
+    """A run's every key feeds the count, on the event loop: 100,000 keys take a fraction of a second."""
+    monitor = StopMonitor(StopConditions(max_unexplained_critical=10**9), T0)
+    critical, clean = _result(Outcome.MISMATCH, critical=1), _result(Outcome.MATCH)
+    started = time.perf_counter()
+    for i in range(100_000):
+        monitor.record_result(f"K{i}", critical if i % 3 == 0 else clean, first_read=False)
+    assert time.perf_counter() - started < 1.0
+    assert (monitor.critical_count, len(monitor.critical)) == (33_334, 33_334)
 
 
 def test_time_limits_and_cycle_boundaries() -> None:

@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import errno
 import io
 import json
 import re
 import threading
 import time
 from collections import Counter
+from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import psycopg
@@ -23,6 +26,7 @@ from deltasleuth.connectors import tables
 from deltasleuth.connectors.files import SampleWriter
 from deltasleuth.connectors.postgres import engine as postgresql
 from deltasleuth.core.types import SideStateKind
+from deltasleuth.evidence import store
 from deltasleuth.reports.csv import write_csv
 from deltasleuth.runner import (
     cancel_run,
@@ -167,6 +171,25 @@ async def test_rechecks_wait_their_delay_and_outlast_an_unusable_read(
     assert [f["value_class"] for f in k1["findings"]] == [INTERMITTENT_B] == [cause["value_class"]]
 
 
+async def test_a_recheck_waits_its_delay_on_the_store_s_clock_whatever_the_process_s_says(
+    harness: Harness, service: ScriptedService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A worker whose clock is an hour behind the database's still waits a recheck's delay: its due time is
+    the delay after the database's now."""
+
+    class Behind(datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> Any:
+            return datetime.now(tz) - timedelta(hours=1)
+
+    monkeypatch.setattr("deltasleuth.runner.worker.datetime", Behind)
+    service.both("K001", doc("K001", status="OLD"), doc("K001", status="NEW"))  # differs: a recheck is due
+    spec = spec_text(["K001"]).replace("recheck: {delay: 0s,", "recheck: {delay: 1s,")
+    await _run(harness, spec)
+    b_reads = [t for side, _, t in service.log if side == "b"]
+    assert len(b_reads) == 2 and b_reads[1] - b_reads[0] >= 0.9
+
+
 async def test_a_nul_padded_value_is_saved_not_read_again(harness: Harness, service: ScriptedService) -> None:
     service.both("K001", doc("K001", status="ACTIVE\u0000"), doc("K001", status="ACTIVE"))
     run_id, run = await _run(harness, spec_text(), ["K001"])
@@ -274,6 +297,57 @@ async def test_a_run_whose_kek_the_keyring_lacks_pauses_until_it_is_back(
     assert await resume_run(harness.ctx, run_id, who=TESTER) == "running"
     run = await harness.finish(run_id)
     assert (run["status"], run["stop_reason"], run["counters"]["match"]) == ("completed", None, 2)
+
+
+async def test_an_evidence_store_that_cannot_write_pauses_the_run_until_resumed(
+    harness: Harness,
+    service: ScriptedService,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A full evidence disk (or an I/O error, too many open files) pauses the run, its keys handed back
+    unsaved, logged by type and place but never by its message, which names a path; a resume once there is
+    room again goes on."""
+    for key in KEYS[:2]:
+        service.both(key, doc(key), doc(key))
+    atomic_write, full = store.atomic_write, [True]
+
+    def writing(path: Path, data: bytes) -> None:
+        if full[0]:
+            raise OSError(errno.ENOSPC, "No space left on device", str(path))
+        atomic_write(path, data)
+
+    monkeypatch.setattr(store, "atomic_write", writing)
+    run_id = await create_run(harness.ctx, await harness.spec(spec_text(KEYS[:2])), "batch", who=TESTER)
+    run = await harness.finish(run_id, ("paused", *repo.TERMINAL))
+    for _ in range(100):  # the run is paused first, so that no slot leases its keys, then they go back
+        async with harness.ctx.pool.connection() as conn:
+            progress = await repo.cycle_counts(conn, run_id)
+        if "leased" not in progress["keys"]:
+            break
+        await asyncio.sleep(0.05)
+    assert (run["status"], run["stop_reason"], run["error"]) == ("paused", running.EVIDENCE_PAUSE, None)
+    assert progress == {"keys": {"pending": 2}, "outcomes": {}}  # handed back, nothing saved
+    said = [r.getMessage() for r in caplog.records if run_id in r.getMessage()]
+    assert said and all(re.search(r"not written: OSError" + AT + r" \(ENOSPC\)$", line) for line in said)
+    assert not any("space" in line or "blobs" in line for line in said)
+    full[0] = False  # room again
+    assert await resume_run(harness.ctx, run_id, who=TESTER) == "running"
+    run = await harness.finish(run_id)
+    assert (run["status"], run["stop_reason"], run["counters"]["match"]) == ("completed", None, 2)
+
+
+async def test_an_os_error_outside_the_evidence_store_still_fails_the_run(
+    harness: Harness, service: ScriptedService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service.both("K001", doc("K001"), doc("K001"))
+
+    def broken(*args: Any) -> Any:
+        raise OSError(errno.EIO, "Input/output error")
+
+    monkeypatch.setattr(compare, "_compare", broken)
+    _, run = await _run(harness, spec_text(["K001"]), ["K001"])
+    assert (run["status"], run["stop_reason"]) == ("failed", None) and run["error"].startswith("OSError at ")
 
 
 async def test_cancel_ends_the_run_with_its_unstarted_keys_cancelled(
@@ -461,6 +535,35 @@ async def test_a_soak_waits_its_cycle_interval(harness: Harness, service: Script
     assert second - first >= 0.8  # cycle 2 is due a cycleInterval after the start, not at once
 
 
+async def test_a_late_soak_skips_its_missed_cycles_instead_of_running_them_back_to_back(
+    harness: Harness, service: ScriptedService
+) -> None:
+    """A soak whose next cycle's nominal start has passed (a pause, a worker outage, an overrun) starts it a
+    cycleInterval after the boundary: the slots it missed are skipped, not run back to back."""
+    service.both("K001", doc("K001"), doc("K001"))
+    text = spec_text(["K001"], execution="concurrency: 2, cycleInterval: 1s, stop: {maxCycles: 3}")
+    run_id = await create_run(harness.ctx, await harness.spec(text), "soak", who=TESTER)
+    async with harness.ctx.pool.connection() as conn:  # it started a minute ago, then was paused until now
+        earlier = "UPDATE ds.runs SET started_at = now() - interval '1 minute' WHERE run_id = %s"
+        await conn.execute(earlier, (run_id,))
+    run = await harness.finish(run_id)
+    reads = [t for side, _, t in service.log if side == "a"]
+    assert (run["status"], run["cycle"], len(reads)) == ("completed", 3, 3)
+    assert all(later - earlier >= 0.9 for earlier, later in pairwise(reads))
+
+
+def test_a_soak_on_time_starts_its_next_cycle_at_its_nominal_start() -> None:
+    """On time, the next cycle starts exactly a cycleInterval after the previous one's nominal start; late, a
+    cycleInterval after the boundary."""
+    spec: Any = SimpleNamespace(raw={"execution": {"cycleInterval": "10m"}})
+    now, interval = datetime.now(UTC), timedelta(minutes=10)
+    on_time = {"cycle": 2, "started_at": now - timedelta(minutes=15)}
+    assert cycle._boundary(spec, on_time) == (on_time["started_at"] + 2 * interval, None)
+    late = {"cycle": 2, "started_at": now - timedelta(hours=24)}
+    next_at, reason = cycle._boundary(spec, late)
+    assert reason is None and now + interval <= next_at <= datetime.now(UTC) + interval
+
+
 @pytest.mark.parametrize(
     ("listing", "paging"),
     [(["K001", "K002", None], ""), (["K001", "K002", "K003", "K004", "K005"], ", maxPages: 1")],
@@ -478,6 +581,30 @@ async def test_keys_the_store_cannot_hold_are_refused_by_position(harness: Harne
     spec_id = await harness.spec(spec_text().replace('pattern: "^K[0-9]{3}$"', 'pattern: "^K"'))
     with pytest.raises(ValueError, match=r"2 key\(s\) .* \(positions 2, 3\)"):
         await create_run(harness.ctx, spec_id, "batch", keys=["K001", "K" * 1025, "K\u0000"], who=TESTER)
+
+
+ALIKE = ["K\u00c901", "KE\u030101"]  # one invented key, in NFC and in NFD
+
+
+async def test_keys_that_mask_alike_are_refused_by_position_naming_none(harness: Harness) -> None:
+    tokenised = spec_text().replace('pattern: "^K[0-9]{3}$"', 'pattern: "^K"')
+    spec_id = await harness.spec(tokenised.replace("class: business_code", "class: identifier"))
+    with pytest.raises(HTTPException) as refused, _runner_errors():
+        await create_run(harness.ctx, spec_id, "batch", keys=["K001", *ALIKE], who=TESTER)
+    said = refused.value.detail
+    assert refused.value.status_code == 422
+    assert re.search(r"^2 key\(s\) .*\(positions 2, 3 of the key set\)", said)
+    assert not any(key in said for key in ALIKE)
+    async with harness.ctx.pool.connection() as conn:
+        assert (await repo.list_runs(conn))[0] == []
+
+
+async def test_a_business_code_keeps_keys_that_differ_only_in_unicode_form(harness: Harness) -> None:
+    spec_id = await harness.spec(spec_text().replace('pattern: "^K[0-9]{3}$"', 'pattern: "^K"'))
+    run_id = await create_run(harness.ctx, spec_id, "batch", keys=ALIKE, who=TESTER)
+    async with harness.ctx.pool.connection() as conn:
+        rows, _ = await repo.list_keys(conn, run_id)
+    assert sorted(row["key_masked"] for row in rows) == sorted(ALIKE)  # shown in clear: two keys
 
 
 async def test_compare_one_rechecks_inline(harness: Harness, service: ScriptedService) -> None:

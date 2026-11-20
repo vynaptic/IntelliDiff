@@ -9,10 +9,10 @@ where a table side's rows may be large, but beside fixed files, whose group stay
 files, then the other side read, judged and saved ``LOB_BATCH`` keys at a time. It renews the leases while
 the keys wait and are read: A then B, or B then A on a recheck pass, which ``confirm`` judges against the
 stored first read; a recheck reads no side of fixed files again, whose first observation stands. The group's
-observations, results, masked findings and next states (done, or a recheck due after ``recheck.delay`` +
-jitter) are saved in one transaction; a lost lease rolls it back, so a kill -9 costs at most the keys in
-flight and never duplicates a result. A key a table scan queued falls due that long after the scan saved it,
-so its first usable per-key read is its confirming read and no second one follows.
+observations, results, masked findings and next states (done, or a recheck due ``recheck.delay`` + jitter
+after the database's now) are saved in one transaction; a lost lease rolls it back, so a kill -9 costs at
+most the keys in flight and never duplicates a result. A key a table scan queued falls due that long after
+the scan saved it, so its first usable per-key read is its confirming read and no second one follows.
 
 Politeness: one gate per target for the process (``ctx.gates``: rate budget, in-flight cap, and a breaker
 for each ``execution.circuitBreaker`` its specs declare, so a run is governed by its own spec's), at most
@@ -61,6 +61,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 import logging
 import os
 import secrets
@@ -69,7 +70,8 @@ import time
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
+from typing import TypeGuard
 
 import psycopg
 
@@ -89,7 +91,7 @@ from deltasleuth.connectors.tables import (
 from deltasleuth.context import Capabilities, Context
 from deltasleuth.core.spec.errors import SpecError
 from deltasleuth.core.types import CompiledSpec, Confirmation, KeyResult, Outcome, Side, SideStateKind
-from deltasleuth.evidence.store import EvidenceKeyError
+from deltasleuth.evidence.store import EvidenceKeyError, EvidenceStore
 from deltasleuth.runner import census, drift, notify, precheck, purge, readiness, sample, schedule
 from deltasleuth.runner.compare import (
     FileReader,
@@ -102,7 +104,7 @@ from deltasleuth.runner.compare import (
 from deltasleuth.runner.cycle import due, fail_run, finish_cycle, located
 from deltasleuth.runner.keys import KeyAuthRefused
 from deltasleuth.runner.recheck import RecheckPolicy, confirm, freeze, key_fraction
-from deltasleuth.runner.runs import AUTH_PAUSE, KEY_PAUSE, pause_run, run_status, stop_run
+from deltasleuth.runner.runs import AUTH_PAUSE, EVIDENCE_PAUSE, KEY_PAUSE, pause_run, run_status, stop_run
 from deltasleuth.runner.scan import scan
 from deltasleuth.runner.stop import StopConditions, StopMonitor
 from deltasleuth.security.crypto import KeyringError, Sealer
@@ -112,6 +114,9 @@ LOCK_ID = 0x44535752  # pg advisory lock "DSWR": the one worker of a database, o
 READ_BATCH = 200  # keys a slot reads at once from a run that reads in groups (``LiveReader.batches``)
 LOB_BATCH = 4  # of a run whose rows may hold large values: 16 MiB of them a row
 KEY_MISSING = (KeyringError, EvidenceKeyError)  # a KEK the keyring lacks: the run waits for it
+# The evidence store's writes: an OSError raised under one (a full disk, an I/O error, too many open files)
+# pauses the run until a person puts it right.
+EVIDENCE_WRITES = frozenset(f.__code__ for f in (EvidenceStore.put_blob, EvidenceStore.ensure))
 STALLS = (SnapshotLost, TargetRefused, KeyUnfit)  # a scan resumes after them, unless it saved no checkpoint
 STALLED = 3  # scan passes in a row that saved none: the run fails
 FIRING = 2  # schedules fired at once
@@ -124,6 +129,11 @@ log = logging.getLogger(__name__)
 
 class _LeaseLost(Exception):
     """Another worker holds the key now: this pass is rolled back."""
+
+
+class LockSilent(Exception):
+    """The worker lock's connection did not answer a check within the check period: the lock counts as
+    lost, as a database that failed over or a half-open socket may hold it no longer."""
 
 
 @dataclass
@@ -144,6 +154,7 @@ class _Worker:
         self.ctx, self.settings = ctx, ctx.settings.worker
         self.name = f"{socket.gethostname()}:{os.getpid()}"
         self.runs: dict[str, _Run] = {}
+        self.loading: dict[str, asyncio.Lock] = {}  # by run: held while a slot loads it into ``runs``
         self.scans: dict[str, asyncio.Task[None]] = {}
         self.stalled: dict[str, int] = {}  # by run: its scan's stalled passes in a row
         self.censuses: dict[str, asyncio.Task[None]] = {}
@@ -272,6 +283,7 @@ class _Worker:
         self.stalled = {run_id: passes for run_id, passes in self.stalled.items() if run_id in live}
         for run_id in [r for r in self.runs if r not in live]:
             if await run_status(self.ctx, run_id) in repo.TERMINAL:
+                self.loading.pop(run_id, None)
                 await self.runs.pop(run_id).reader.aclose()
 
     async def _due(self, conn: repo.Conn) -> list[repo.Row] | None:
@@ -533,6 +545,14 @@ class _Worker:
         log.warning("run %s paused: %s", run_id, exc)
         await pause_run(self.ctx, run_id, reason=KEY_PAUSE, who=WORKER)
 
+    async def _unwritten(self, run_id: str, exc: OSError) -> None:
+        """Pause a running run whose evidence the store could not write; ``resume_run`` clears the reason
+        once there is room again. Logged by its type, its errno's name and where it was raised: its message
+        names a path."""
+        code = errno.errorcode.get(exc.errno or 0, "no errno")
+        log.warning("run %s paused, its evidence not written: %s (%s)", run_id, located(exc), code)
+        await pause_run(self.ctx, run_id, reason=EVIDENCE_PAUSE, who=WORKER)
+
     async def _handle(self, rows: list[repo.Row], owner: str) -> None:
         run_id, finished = rows[0]["run_id"], False
         renewing = asyncio.create_task(self._keep(owner))
@@ -561,13 +581,16 @@ class _Worker:
                     execution = run.spec.execution
                     wait = execution.delay_s + execution.jitter_s * key_fraction(rows[0]["key_masked"])
                     await asyncio.sleep(wait)
-        except _LeaseLost:
-            finished = True
+        except _LeaseLost:  # rolled back: the keys it still holds go back below, due now
+            pass
         except KEY_MISSING as exc:  # the keys go back, unread or unsaved, until the KEK is restored
             await self._key_missing(run_id, exc)
         except psycopg.OperationalError as exc:  # the store is unreachable: the keys are read again
             log.warning("keys of run %s not saved: %s", run_id, type(exc).__name__)
         except Exception as exc:  # a bug, or data the store refuses: never read again in a loop
+            if _unwritable(exc):  # the keys go back unsaved, until the evidence store can write again
+                await self._unwritten(run_id, exc)
+                return
             finished = await self._release(owner)  # first, so the failed run cancels this key too
             # A column or a table the plan reads is gone, which pauses the run, its keys handed back.
             if isinstance(exc, drift.DENIED) and await drift.failed(self.ctx, run_id):
@@ -651,21 +674,20 @@ class _Worker:
             run.halted = True  # a refused credential is not hammered, and it judges nothing
             await pause_run(ctx, run_id, reason=AUTH_PAUSE, who=WORKER)
             return False
-        now, passes, due, retry = datetime.now(UTC), [], {}, {}
+        passes, due, retry = [], {}, {}  # due and retry: the seconds after the database's now to wait
         resolve = spec.sample.resolve if spec.sample else None
         for row, (read, reads) in zip(rows, evaluated, strict=True):
             masked = row["key_masked"]
             result = _confirmed(run, row["pass_no"], read, firsts.get(masked))
             if run.live and row["pass_no"] <= run.policy.times and run.policy.due(result, run.reader.fixed):
-                due[masked] = now + timedelta(seconds=run.policy.wait_s(masked))
+                due[masked] = run.policy.wait_s(masked)
             elif (
                 resolve is not None
                 and row["signoff_member"]
                 and row["retries"] < resolve.times
                 and sample.retriable(result, firsts.get(masked))
             ):
-                wait = resolve.delay_s + run.policy.jitter_s * key_fraction(masked)
-                retry[masked] = now + timedelta(seconds=wait)
+                retry[masked] = resolve.delay_s + run.policy.jitter_s * key_fraction(masked)
             passes.append((row, read, result, reads))
         async with ctx.pool.connection() as conn:
             await save_passes(
@@ -696,26 +718,32 @@ class _Worker:
         return True
 
     async def _run(self, row: repo.Row) -> _Run:
+        """The run as this worker holds it, loaded by the first slot that meets it; a slot that meets it
+        while it loads waits for that load."""
         run_id = row["run_id"]
-        if run_id not in self.runs:
-            async with self.ctx.pool.connection() as conn:
-                stored = await repo.get_run(conn, run_id)
-                samples = stored["params"].get("samples_dir")
-                spec = await self.ctx.spec(conn, row["spec_id"], live=not samples)  # live: calls targets
-                critical = await repo.unexplained_critical(conn, run_id)  # saved by an earlier worker too
-                tables = stored["params"].get("tables")
-                if stored["params"].get("pinned"):  # a file side's pins
-                    tables = unsealed(await self.ctx.sealer(conn, run_id), stored["params"])
-            reader = FileReader(samples, spec) if samples else LiveReader(self.ctx, spec, tables)
-            monitor = StopMonitor(StopConditions.from_spec(spec.raw), stored["started_at"], critical)
-            lanes = None if samples else asyncio.Semaphore(spec.execution.concurrency)
-            policy = RecheckPolicy.from_spec(spec.raw)
-            caps = self.ctx.capabilities(stored)
-            scanned = stored["scan"] is not None
-            self.runs.setdefault(
-                run_id, _Run(spec, caps, reader, not samples, policy, monitor, lanes, scanned)
-            )
+        if run_id in self.runs:
+            return self.runs[run_id]
+        async with self.loading.setdefault(run_id, asyncio.Lock()):
+            if run_id not in self.runs:
+                self.runs[run_id] = await self._load(run_id, row["spec_id"])
         return self.runs[run_id]
+
+    async def _load(self, run_id: str, spec_id: int) -> _Run:
+        async with self.ctx.pool.connection() as conn:
+            stored = await repo.get_run(conn, run_id)
+            samples = stored["params"].get("samples_dir")
+            spec = await self.ctx.spec(conn, spec_id, live=not samples)  # live: calls targets
+            critical = await repo.unexplained_critical(conn, run_id)  # saved by an earlier worker too
+            tables = stored["params"].get("tables")
+            if stored["params"].get("pinned"):  # a file side's pins
+                tables = unsealed(await self.ctx.sealer(conn, run_id), stored["params"])
+        reader = FileReader(samples, spec) if samples else LiveReader(self.ctx, spec, tables)
+        monitor = StopMonitor(StopConditions.from_spec(spec.raw), stored["started_at"], critical)
+        lanes = None if samples else asyncio.Semaphore(spec.execution.concurrency)
+        policy = RecheckPolicy.from_spec(spec.raw)
+        caps = self.ctx.capabilities(stored)
+        scanned = stored["scan"] is not None
+        return _Run(spec, caps, reader, not samples, policy, monitor, lanes, scanned)
 
     async def close(self) -> None:
         tasks = [*self.scans.values(), *self.censuses.values(), *self.draws.values(), *self.firing.values()]
@@ -731,6 +759,17 @@ class _Worker:
 def _pair(row: repo.Row) -> tuple[str, int]:
     """A pre-check's pair as the worker's tasks are keyed."""
     return row["precheck_id"], row["n"]
+
+
+def _unwritable(exc: BaseException) -> TypeGuard[OSError]:
+    """Whether ``exc`` is an ``OSError`` that one of the evidence store's writes met. Of its traceback only
+    each frame's code is looked at: nothing a frame holds is read."""
+    trace = exc.__traceback__ if isinstance(exc, OSError) else None
+    while trace is not None:
+        if trace.tb_frame.f_code in EVIDENCE_WRITES:
+            return True
+        trace = trace.tb_next
+    return False
 
 
 def _confirmed(run: _Run, pass_no: int, read: KeyResult, first: KeyResult | None) -> KeyResult:
@@ -764,19 +803,36 @@ async def _sole(lock: psycopg.AsyncConnection, stop: asyncio.Event, poll_s: floa
     return True
 
 
+def _probes(check_s: float) -> dict[str, int]:
+    """The lock connection's TCP options: keepalive probes find a peer gone silent while the connection idles
+    within about ``check_s``, and data left unacknowledged that long closes it. A system without one of
+    them ignores it."""
+    probe = max(1, int(check_s / 4))
+    return {
+        "keepalives": 1,
+        "keepalives_idle": probe,
+        "keepalives_interval": probe,
+        "keepalives_count": 3,
+        "tcp_user_timeout": max(1000, int(check_s * 1000)),
+    }
+
+
 async def run_worker(ctx: Context, *, stop: asyncio.Event | None = None, schedules: bool = True) -> None:
     """Process keys until ``stop`` is set or the task is cancelled; unfinished leases are handed back.
 
-    The worker lock lives on its own connection. If that connection is lost (a database restart),
-    another worker may take the lock, so this one stops its slots at once and waits to retake it;
+    The worker lock lives on its own connection, with TCP keepalive probes. If that connection is lost (a
+    database restart), or a check on it is not answered within the check period (a failover, a half-open
+    socket), another worker may take the lock, so this one stops its slots at once and waits to retake it;
     a slot or the sweep that meets a bug restarts the same way, logged. Without ``schedules`` it neither
     rezones nor fires them (``ds run``'s worker, whose config and targets are one invocation's).
     """
     stop = stop or asyncio.Event()
     poll_s = ctx.settings.worker.poll_seconds
+    probes = _probes(ctx.settings.worker.lease_seconds / 3)
     while not stop.is_set():
         try:
-            async with await psycopg.AsyncConnection.connect(ctx.pool.conninfo, autocommit=True) as lock:
+            connecting = psycopg.AsyncConnection.connect(ctx.pool.conninfo, autocommit=True, **probes)
+            async with await connecting as lock:
                 if not await _sole(lock, stop, poll_s):
                     return
                 await _work(ctx, lock, stop, schedules)
@@ -796,7 +852,10 @@ async def _work(ctx: Context, lock: psycopg.AsyncConnection, stop: asyncio.Event
         while not stop.is_set():
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), check_s)
-            await lock.execute("SELECT 1")
+            try:
+                await asyncio.wait_for(lock.execute("SELECT 1"), check_s)
+            except TimeoutError:
+                raise LockSilent(f"the lock's connection did not answer within {check_s:g} s") from None
             for task in tasks:
                 if task.done():  # they loop forever: an ended one met a bug
                     task.result()

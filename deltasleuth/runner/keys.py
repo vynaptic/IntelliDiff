@@ -7,9 +7,10 @@ target it reads. A ``table`` source with a target and a table of its own (a key
 table) is planned anew at each read and read to its end in one snapshot, under one slot of its target's
 gate: a key list, not a census of a side. Every key goes through ``key.normalize`` and must
 match ``key.pattern`` and fit the store (at most 1024 UTF-8 bytes, no NUL); duplicates are dropped,
-the first kept. A multi-part key (a composite key beside a service side) is its parts joined by ``|``,
-each part normalised and matched on its own. Problems are reported by position, never by value (keys
-may be personal data). The rule runs off the event loop: a key set may hold a million keys.
+the first kept, and keys that would share a masked key are refused. A multi-part key (a composite
+key beside a service side) is its parts joined by ``|``, each part normalised and matched on its own.
+Problems are reported by position, never by value (keys may be personal data). The rule runs off the
+event loop: a key set may hold a million keys.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from deltasleuth.connectors.http import TargetGate
 from deltasleuth.connectors.tables.engine import ERRORS
 from deltasleuth.context import Context
 from deltasleuth.core import jsonio, sampling
+from deltasleuth.core.canonical.encoding import scalar_text
 from deltasleuth.core.canonical.paths import find
 from deltasleuth.core.spec import key_table, listing_side
 from deltasleuth.core.spec.errors import UnknownTargetError
@@ -33,6 +35,7 @@ from deltasleuth.core.types import CompiledSpec
 from deltasleuth.runner.census import TIMEOUT_S
 from deltasleuth.runner.compare import connect
 from deltasleuth.runner.stop import StopConditions
+from deltasleuth.security.policy import BUSINESS_CODE
 from deltasleuth.security.tokenise import Tokeniser, mask_key
 
 KEYLESS = "the key source holds {:,} row(s) without a key: leave them out with table.where"
@@ -41,6 +44,12 @@ UNROWED = (
     " csv declaration"
 )
 OVER = "the key source holds over {:,} keys: narrow it with table.where"
+# The values a paginated key listing holds at most, its pages merged: a million keys of eight values each.
+LISTING_MAX_VALUES = 8_000_000
+ALIKE = (
+    "{:,} key(s) differ from another only in Unicode normal form, and masked they would be one key"
+    " (positions {} of the key set): give each key in one form, for instance with key.normalize nfkc"
+)
 
 
 class KeyAuthRefused(ValueError):
@@ -81,9 +90,10 @@ async def resolve(
 
 def normalise_keys(raw_keys: Iterable[Any], spec: CompiledSpec) -> list[str]:
     """Apply ``key.normalize`` and check ``key.pattern`` and the store's limits; the first of
-    duplicates is kept."""
+    duplicates is kept. Keys that would share a masked key are refused (``_refuse_alike``)."""
     keys: dict[str, None] = {}
     _refuse(_fit(raw_keys, spec, keys), spec)
+    _refuse_alike(keys, spec)
     return list(keys)
 
 
@@ -116,6 +126,25 @@ def _refuse(bad: Sequence[int], spec: CompiledSpec) -> None:
         )
 
 
+def _refuse_alike(keys: Iterable[str], spec: CompiledSpec) -> None:
+    """ValueError naming the positions in the key set of the keys that would share a masked key, if any.
+    A key's token is of its NFC text, so keys that differ only in Unicode normal form would be one masked
+    key, and one of them would get no result. A business code is shown as it is: its keys never share one.
+    Two keys alike hold a key outside ASCII, so a set in ASCII is passed at once."""
+    keys = list(keys)
+    if spec.key.value_class == BUSINESS_CODE or all(key.isascii() for key in keys):
+        return
+    first: dict[str, int] = {}  # a key's NFC text -> the position of the first key of that text
+    alike: set[int] = set()
+    for position, key in enumerate(keys, start=1):
+        if (seen := first.setdefault(scalar_text(key), position)) != position:
+            alike.update((seen, position))
+    if alike:
+        ranked = sorted(alike)
+        shown = ", ".join(map(str, ranked[:10])) + (" ..." if len(ranked) > 10 else "")
+        raise ValueError(ALIKE.format(len(ranked), shown))
+
+
 def run_keys(keys: Sequence[str], spec: CompiledSpec, tokeniser: Tokeniser) -> dict[str, str]:
     """The keys a run takes (the first ``maxKeys``), each with its masked form."""
     return {
@@ -135,7 +164,7 @@ async def _listed(
     walk's census record. A multi-part key's ``keyPath`` selects its parts, each a string or a number: an
     item giving anything else is "" too."""
     side = listing_side(source)
-    connector = connect(ctx, side.target, spec.execution)  # under the target's rate budget
+    connector = connect(ctx, side.target, spec.execution, max_values=LISTING_MAX_VALUES)  # under its budget
     first_at = utc_now_iso()
     try:
         obs = await connector.fetch("keys", side)
@@ -150,7 +179,7 @@ async def _listed(
     ):
         problem = obs.error_detail or obs.error_class or "an incomplete or unstable page walk"
         raise ValueError(f"the key listing was not read completely (HTTP {obs.http_status}: {problem})")
-    listing, duplicate = jsonio.parse_json(obs.body or b"")
+    listing, duplicate = jsonio.parse_json(obs.body or b"", max_values=LISTING_MAX_VALUES)
     if duplicate:  # RFC 8259 leaves a repeated name undefined: which keys were listed is unknown
         raise ValueError("the key listing repeats a member name, so its keys are ambiguous")
     found = [value for value, _ in find(side.pagination.items_path or "$", listing)]
@@ -213,6 +242,7 @@ async def _tabled(
     if skipped:
         raise ValueError(KEYLESS.format(skipped))
     _refuse(bad, spec)
+    await asyncio.to_thread(_refuse_alike, keys, spec)
     record = {"basis": "key_table", "target": cfg.target, "relation": tables.relation(plan)}
     return list(keys), record | {"rows": rows, "keys": len(keys), "at": at}
 

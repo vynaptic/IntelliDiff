@@ -23,7 +23,10 @@ x-release: &release                    # the signed release: `docker load` puts 
 services:
   db:
     image: postgres:16-alpine
-    command: [postgres, -c, log_error_verbosity=terse]   # errors log no row values
+    # Errors log no row values. Memory for a host of 4 GB or more beside the app: an eighth of it for the
+    # buffers, and the work memory one sort or hash of a connection may take (the app holds about ten).
+    command: [postgres, -c, log_error_verbosity=terse, -c, shared_buffers=512MB, -c, work_mem=32MB]
+    shm_size: 256m                             # a parallel hash's shared memory: Docker's 64 MB is too little
     logging: {driver: json-file, options: {max-size: 10m, max-file: "3"}}
     environment:
       POSTGRES_USER: deltasleuth
@@ -51,6 +54,8 @@ services:
       - workspace:/var/lib/deltasleuth/workspace
       - p0:/var/lib/deltasleuth/p0             # samples, specs and P0 sheets for `docker compose run app ds ...`
     secrets: [db_dsn, kek, tokeniser]          # the site file adds the IdP credential and llm_key
+    logging: {driver: json-file, options: {max-size: 10m, max-file: "3"}}   # audit rows and access lines
+    stop_grace_period: 40s                     # to close the notifier and file reads and hand back leases
     restart: unless-stopped
 
   mocks:                                       # both mock pairs, for a first run without real endpoints

@@ -1048,7 +1048,9 @@ async def test_a_terminated_worker_ends_its_scan_s_statements(
         async with stack.context() as ctx:
             await create_run(ctx, await store_spec(ctx, SLOW_SPEC), "batch", who=TESTER)
         argv = [*ds, "worker", "--config", str(stack.settings)]
-    else:  # the worker inside ``ds run``
+    else:  # the worker inside ``ds run``, on a store migrated as ``ds migrate`` leaves it
+        async with stack.context():
+            pass
         (stack.settings.parent / "spec.yaml").write_text(yaml.safe_dump(SLOW_SPEC))
         argv = [*ds, "run", str(stack.settings.parent / "spec.yaml"), "--config", str(stack.settings)]
     process = await asyncio.create_subprocess_exec(

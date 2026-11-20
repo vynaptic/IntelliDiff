@@ -19,6 +19,7 @@ from psycopg.rows import dict_row
 
 from deltasleuth.auth.principal import WORKER
 from deltasleuth.core.types import Observation, Side
+from deltasleuth.evidence import store as store_module
 from deltasleuth.reports.data import load_run
 from deltasleuth.runner import compare, create_run, cycle, pause_run, purge, run_worker
 from deltasleuth.runner.compare import LiveReader, evaluate, save_passes
@@ -595,6 +596,49 @@ async def test_a_shared_blob_goes_24_h_after_its_last_reference_and_requeuing_re
     assert (done.blobs_deleted, done.blobs_shared) == (len(shared), 0) and done.bytes > 0
     assert not any(blob_path(harness, address).exists() for address in shared)
     assert await rows(harness, "SELECT * FROM ds.blob_gc") == []
+
+
+async def test_the_drain_syncs_each_directory_once_a_batch_before_the_queue_forgets_it(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each batch of due blobs is unlinked, then each directory that lost one is synced once, and only then
+    do their addresses leave the queue: after a crash a queued blob is either gone for good or queued."""
+    evidence, by_directory, n = harness.ctx.evidence, {}, 0
+    while len(by_directory) < 4 or max(map(len, by_directory.values())) < 2:  # a directory holds two
+        stored = evidence.put_body(b'{"d": %d}' % n)
+        by_directory.setdefault(stored[4:6], []).append(stored)
+        n += 1
+    queued = [blob for blobs_ in by_directory.values() for blob in blobs_]
+    for blob in queued:
+        await rows(harness, "INSERT INTO ds.blob_gc (content_hash) VALUES (%s)", blob)
+    await queue_aged(harness, 25)
+    events: list[tuple[str, Any]] = []
+    sync, forget = store_module.fsync_dir, repo.gc_done
+
+    def synced(directory: Path) -> None:
+        events.append(("sync", directory.name))
+        sync(directory)
+
+    async def forgotten(conn: repo.Conn, addresses: list[str]) -> None:
+        events.append(("forget", sorted(address[4:6] for address in addresses)))
+        await forget(conn, addresses)
+
+    monkeypatch.setattr(store_module, "fsync_dir", synced)
+    monkeypatch.setattr(repo, "gc_done", forgotten)
+    monkeypatch.setattr(purge, "DRAIN", (len(queued) + 1) // 2)  # two batches
+    done = await purge.purge(harness.ctx, TESTER)
+    assert (done.blobs_deleted, done.blobs_shared) == (len(queued), 0)
+    batches, syncs = [], []
+    for kind, value in events:
+        if kind == "sync":
+            syncs.append(value)
+        else:
+            batches.append((syncs, value))
+            syncs = []
+    batches = [(syncs, forgot) for syncs, forgot in batches if forgot]  # a drain that found nothing due
+    assert len(batches) == 2 and sum(len(forgot) for _, forgot in batches) == len(queued)
+    assert [syncs for syncs, _ in batches] == [sorted(set(forgot)) for _, forgot in batches]
+    assert await rows(harness, "SELECT * FROM ds.blob_gc") == [] and list(evidence.walk()) == []
 
 
 async def _pass(h: Harness, run_id: str, key: str) -> tuple[Any, Any]:

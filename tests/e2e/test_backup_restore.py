@@ -119,6 +119,7 @@ def test_a_lost_installation_is_restored_from_its_backup(
         assert result.exit_code == 0 and "error:" not in result.output, result.output
         return result.stdout
 
+    assert ds("migrate").startswith("migrations applied: 1, ")  # as the deployment's set-up does
     made = ds("token", "create", "--name", "restore-drill", "--owner", "tests", "--role", "spec_author")
     token = made.strip()  # the command's only line of standard output
     with _serving(settings, token) as client:

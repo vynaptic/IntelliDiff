@@ -108,6 +108,7 @@ export function Chat({ runId, keyMasked, closed, ai }: { runId: string; keyMaske
       <form onSubmit={ask}>
         <textarea
           name="q"
+          aria-label="Question about these results"
           rows={3}
           disabled={!!closed}
           placeholder="Ask about these results. Questions are kept and sent as typed: use masked keys, no personal data."

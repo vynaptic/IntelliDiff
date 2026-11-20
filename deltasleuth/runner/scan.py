@@ -28,6 +28,8 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
+import psycopg
+
 from deltasleuth.connectors.base import utc_now_iso
 from deltasleuth.connectors.tables import (
     Engine,
@@ -36,6 +38,7 @@ from deltasleuth.connectors.tables import (
     Relation,
     RowsMoved,
     Session,
+    TableError,
     duck,
     encode_key,
     planned,
@@ -46,13 +49,19 @@ from deltasleuth.core.types import Side, Target
 from deltasleuth.runner import drift, graph
 from deltasleuth.runner.recheck import RecheckPolicy
 from deltasleuth.runner.stop import STOP_PREFIX, StopConditions
-from deltasleuth.security.crypto import Sealer
+from deltasleuth.security.crypto import MaskedAlike, Sealer
 from deltasleuth.security.tokenise import mask_key
 from deltasleuth.store import repo
 
 BATCH = 10_000  # merged keys per checkpoint
 MAX_KEY_BYTES = 1024  # a run key
 Key = tuple[str, ...]
+_ALIKE = "(they differ only in Unicode normal form): no result could tell them apart"
+
+
+class KeysMaskAlike(TableError):
+    """Keys the scan found share a masked key: one masked key holds one key's row and result, so the run
+    fails, counting the keys and naming none, and the checkpoint that met them saves nothing."""
 
 
 def new_scan() -> dict[str, Any]:
@@ -323,13 +332,25 @@ async def _save(
     resumes nowhere: its ``after`` is None), and a maxKeys ``stop_reason`` with the run's ``keys_cut``;
     each key's per-key read falls due ``wait`` of its masked key seconds after the save (None: at once).
     False: the run stopped running, or another scanner saved since (a worker lock handover), so this one
-    stops."""
+    stops. Keys that share a masked key, among those found or with one saved before, raise
+    ``KeysMaskAlike`` and save nothing."""
+    try:
+        sealed = sealer.seal_keys(found)
+    except MaskedAlike as exc:
+        found_alike = f"the scan found {exc.count} keys that are one key once masked"
+        raise KeysMaskAlike(f"{found_alike} {_ALIKE}") from None
     state["candidates"] += len(found)
     state["done"] = done
     stored = state | {"after": None if done else seal_after(sealer, cycle, state["after"])}
     delays = None if wait is None else {masked: wait(masked) for masked in found.values()}
     async with ctx.pool.connection() as conn:
-        ok = await repo.save_scan(conn, run_id, cycle, stored, sealer.seal_keys(found), saved, delays)
+        try:
+            ok = await repo.save_scan(conn, run_id, cycle, stored, sealed, saved, delays)
+        except psycopg.errors.UniqueViolation as exc:  # rolled back with the checkpoint
+            if exc.diag.constraint_name != "run_keys_pkey":
+                raise
+            saved_alike = "the scan found a key that is one key once masked with a key it saved before"
+            raise KeysMaskAlike(f"{saved_alike} {_ALIKE}") from None
         if ok and stop_reason:  # maxKeys: the run goes on, its keys found so far are still read
             await repo.set_run_status(conn, run_id, "running", when=("running",), stop_reason=stop_reason)
             await repo.set_keys_cut(conn, run_id, {"taken": state["candidates"]})

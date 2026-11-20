@@ -110,7 +110,9 @@ async def review(ctx: Ctx, who: Viewer, approval_id: str) -> Response:
     """The request, what it attests, its review (the needed items, the exclusion set, the earlier requests
     of its version or cycle and, for a spec version, its content hash and both bodies masked: its own and
     ``previous``'s, the name's newest approved version before it) and whether the caller can approve it
-    now."""
+    now. A sampled sign-off's draw is shown as its own route shows it (``samples.withheld``)."""
+    from deltasleuth.api.routes.samples import withheld  # samples imports this module
+
     async with ctx.pool.connection() as conn:
         row = need(await repo.get_approval(conn, approval_id), f"approval {approval_id}")
         persons, unattributed = await _authors(conn, row)
@@ -143,7 +145,10 @@ async def review(ctx: Ctx, who: Viewer, approval_id: str) -> Response:
                 found |= await _labelled(conn, row)
         refusal = await _refusal(conn, row, who, persons)
     you = {"can_decide": refusal is None, "reason": refusal}
-    return ok(_item(row) | {"attests": row["attests"], "review": found, "you": you})
+    attests = row["attests"]  # a spec version's request attests nothing
+    if attests and attests.get("sample"):
+        attests = attests | {"sample": withheld(attests["sample"], who)}
+    return ok(_item(row) | {"attests": attests, "review": found, "you": you})
 
 
 async def _ledger(conn: repo.Conn, population: Sequence[str], draw_id: str | None = None) -> list[repo.Row]:

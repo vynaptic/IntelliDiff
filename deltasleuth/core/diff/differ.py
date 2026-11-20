@@ -10,6 +10,7 @@ the raw (or normalised) values.
 
 from __future__ import annotations
 
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from decimal import Context, Decimal
@@ -76,6 +77,34 @@ def diff(a: Canonical, b: Canonical, spec: CompiledSpec, *, key: str) -> list[Fi
     return findings
 
 
+def _paired_names(a: dict, b: dict, *, nfc: bool) -> list[tuple[str, str | None, str | None]]:
+    """(name in the pointer, a's name, b's name) for the member names of two objects, in order.
+
+    The raw walk pairs names byte-exact. The normalised walk pairs them as ``canonical_json``
+    writes them: by NFC form, so one name spelled in two Unicode forms is one field, reported under
+    its NFC form. Where one object has two names sharing an NFC form, the hash keeps them apart, so
+    names in that form pair only when spelled alike.
+    """
+    if not nfc:
+        return [(n, n if n in a else None, n if n in b else None) for n in sorted(a.keys() | b.keys())]
+    forms_a, forms_b = _by_form(a), _by_form(b)
+    pairs: list[tuple[str, str | None, str | None]] = []
+    for form in sorted(forms_a.keys() | forms_b.keys()):
+        in_a, in_b = forms_a.get(form, []), forms_b.get(form, [])
+        if len(in_a) == 1 and len(in_b) == 1:
+            pairs.append((in_a[0] if in_a == in_b else form, in_a[0], in_b[0]))
+        else:
+            pairs += [(n, n if n in in_a else None, n if n in in_b else None) for n in sorted({*in_a, *in_b})]
+    return pairs
+
+
+def _by_form(obj: dict) -> dict[str, list[str]]:
+    forms: dict[str, list[str]] = {}
+    for name in obj:
+        forms.setdefault(unicodedata.normalize("NFC", name), []).append(name)
+    return forms
+
+
 @dataclass
 class _Walk:
     """One walk. ``ta`` / ``tb`` are each side's twin nodes, of the same shape except where
@@ -87,6 +116,8 @@ class _Walk:
     filtered: tuple[Filtered, Filtered]
     raw: bool
     findings: list[Finding] = field(default_factory=list)
+    # Parts of a pair whose names differ only in Unicode form -> (a's parts, b's parts) as spelled.
+    renamed: dict[Parts, tuple[Parts, Parts]] = field(default_factory=dict)
 
     def run(self, da: JSON, db: JSON, ta: JSON, tb: JSON) -> list[Finding]:
         self.node(da, db, ta, tb, ())
@@ -132,19 +163,31 @@ class _Walk:
     ) -> None:
         finding = self.emit(at, change, values, twins, value_class="duplicate_key" if dup else None)
         # A member the other side's valueFilter removed is FILTER_MEMBERSHIP, not missing or extra.
-        other = self.filtered[1 if change is MISSING else 0]
-        if finding.member_key in other.get(render_pointer(p for p in array if p[0] != "dup"), ()):
+        side = 1 if change is MISSING else 0
+        pointer = render_pointer(p for p in self.spelled(array, side) if p[0] != "dup")
+        if finding.member_key in self.filtered[side].get(pointer, ()):
             finding.taxonomy_code, finding.severity = FILTER_MEMBERSHIP, Severity.MEDIUM
 
     def object(self, da: dict, db: dict, ta: JSON, tb: JSON, parts: Parts) -> None:
-        for name in sorted(da.keys() | db.keys()):
+        for name, na, nb in _paired_names(da, db, nfc=not self.raw):
             at = (*parts, ("field", name))
-            if name in da and name in db:
-                self.node(da[name], db[name], ta[name], tb[name], at)
-            elif name in da and not (self.null_equals_absent and da[name] is None):
-                self.emit(at, MISSING, (da[name], None), (ta[name], None))
-            elif name in db and not (self.null_equals_absent and db[name] is None):
-                self.emit(at, EXTRA, (None, db[name]), (None, tb[name]))
+            if na is not None and nb is not None:
+                if na != nb:  # one name in two Unicode forms: keep each side's spelling for its lookups
+                    spelled_a, spelled_b = self.spelled(parts, 0), self.spelled(parts, 1)
+                    self.renamed[at] = ((*spelled_a, ("field", na)), (*spelled_b, ("field", nb)))
+                self.node(da[na], db[nb], ta[na], tb[nb], at)
+            elif na is not None and not (self.null_equals_absent and da[na] is None):
+                self.emit(at, MISSING, (da[na], None), (ta[na], None))
+            elif nb is not None and not (self.null_equals_absent and db[nb] is None):
+                self.emit(at, EXTRA, (None, db[nb]), (None, tb[nb]))
+
+    def spelled(self, parts: Parts, side: int) -> Parts:
+        """``parts`` with member names as side ``side`` (0 for a, 1 for b) spells them."""
+        if self.renamed:
+            for n in range(len(parts), 0, -1):
+                if (prefix := parts[:n]) in self.renamed:
+                    return (*self.renamed[prefix][side], *parts[n:])
+        return parts
 
     def ordered(self, da: list, db: list, ta: JSON, tb: JSON, parts: Parts) -> None:
         """Equal as multisets but reordered: one order_changed. Else position-wise plus surplus."""

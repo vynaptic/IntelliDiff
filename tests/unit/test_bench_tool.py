@@ -972,7 +972,13 @@ def test_refusals_by_stage(stubs: Stubs, tmp_path: Path, monkeypatch: pytest.Mon
         "error: postgres:16-alpine (the benchmark's database) is not in the local image store; this tool"
         " never pulls. To add it: docker pull postgres:16-alpine\n"
     )
-    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    hidden = tmp_path / "no-docker"  # the system's tools without docker, wherever the system keeps it
+    hidden.mkdir()
+    for folder in (Path("/usr/bin"), Path("/bin")):
+        for tool in folder.iterdir():
+            if tool.name != "docker" and not (hidden / tool.name).exists():
+                (hidden / tool.name).symlink_to(tool)
+    monkeypatch.setenv("PATH", str(hidden))
     assert stubs.bench("--allow-dirty").stderr == (
         "error: docker is not available: install Docker, or give --server file:<absolute path>\n"
     )

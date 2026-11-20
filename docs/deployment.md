@@ -55,7 +55,7 @@ Later, in the same folder:
   ```bash
   docker compose --profile mocks up -d
   ```
-- Update. Fetch the newer source, then run the script again: it rebuilds the image and restarts the containers on it. Files, data and the token stay.
+- Update. Fetch the newer source, then run the script again: it rebuilds the image, stops the app, applies the new migrations and starts the containers on the new image. Files, data and the token stay.
   ```bash
   git pull
   ```
@@ -104,7 +104,7 @@ Later, in the same folder:
    chmod 444 deploy/secrets/*
    ```
    Keep a copy of `kek` and `tokeniser` in a vault, never beside a backup: they open the stored data, and a lost key cannot be made again. A further secret, such as the OIDC client secret or a target's credential, takes four actions. Write `deploy/secrets/<name>` and `chmod 444` it. In the site file, add `<name>` to `services.app.secrets` and the line `<name>: {file: ./secrets/<name>}` under the top-level `secrets:`. Reference it as `file:/run/secrets/<name>`. Apply it with `docker compose up -d`.
-4. **The database** needs no further setting. The `db` service is PostgreSQL 16, with a user and a database both named `deltasleuth`. It takes `db_password` when its volume is first created, and the app connects with `db_dsn`. `ds migrate` creates the schema `ds`, and every later start applies pending migrations by itself.
+4. **The database** needs no further setting. The `db` service is PostgreSQL 16, with a user and a database both named `deltasleuth`. It takes `db_password` when its volume is first created, and the app connects with `db_dsn`. `ds migrate` creates the schema `ds`. Later, `ds serve` and `ds worker` apply pending migrations as they start; any other command stops with `the database needs migrations: run ds migrate` until then. The database takes 512 MB of shared buffers and 32 MB of work memory per sort, sized for a host of 4 GB or more; a site file's `db` `command` can change them.
 5. **Declare the targets**, `deploy/config/targets.yaml`. It is the allow-list: DeltaSleuth calls only the targets declared there or in the product. Replace the example entries with real ones, and delete the four mock targets. [The example](../deploy/config/targets.example.yaml) shows each kind.
    - A service: `base_url`, `auth` (`kind: none`, `bearer` or `header`, with a `secret_ref`), and the agreed load as `rate_per_s` and `max_concurrency`.
    - A database: `dsn_ref` for PostgreSQL; `engine: mysql` or `engine: oracle` with `host`, `port`, `user`, `password_ref` and `tls_ca_ref`.
@@ -160,14 +160,14 @@ Later, in the same folder:
     ```bash
     docker compose up -d
     ```
-12. **Update.** Take a backup first: it is the way back. Then fetch the newer source and rebuild. The app applies pending database migrations as it starts. To go back, check out the older source, rebuild its image, and restore the backup as in step 11. Under single sign-on, a stored spec whose side has a `map`, or a `select` of part of the answer, needs a new approval that covers `transforms` before its next run or resume.
+12. **Update.** Take a backup first: it is the way back. Then fetch the newer source and rebuild. The app applies pending database migrations as it starts, and refuses a database a newer build migrated or whose applied migrations this build changed beyond comments and layout. To go back, check out the older source, rebuild its image, and restore the backup as in step 11. Under single sign-on, a stored spec whose side has a `map`, or a `select` of part of the answer, needs a new approval that covers `transforms` before its next run or resume.
     ```bash
     git pull
     ```
     ```bash
     docker compose up -d --build
     ```
-13. **Check health and read the logs.** The first command answers with the status, whether AI is on and the sign-in mode. The second shows the app's newest lines: a configuration problem stops the app with one line that starts `error:`. Each log line has its time, level and logger; audit rows are JSON lines on standard output. A failed run's error names its type and where in the code it was raised, never its message, and a 500's log line names the request id its response carried. After a change to a settings file or to a secret's content, run `docker compose restart app`; after a change to the site file, run `docker compose up -d`.
+13. **Check health and read the logs.** The first command answers with the status, whether AI is on and the sign-in mode. The second shows the app's newest lines: a configuration problem stops the app with one line that starts `error:`. Each container's log rotates at 10 MB, three files kept, and a stop gives the app 40 s to hand back its work. Each log line has its time, level and logger; audit rows are JSON lines on standard output. A failed run's error names its type and where in the code it was raised, never its message, and a 500's log line names the request id its response carried. After a change to a settings file or to a secret's content, run `docker compose restart app`; after a change to the site file, run `docker compose up -d`.
     ```bash
     curl -fsS http://127.0.0.1:8000/v1/health
     ```
@@ -208,4 +208,5 @@ This is developer mode, for one person's machine: there is no sign-in, and whoev
 | `error: the app did not become healthy` | The app stopped as it started | The line above it is the app's last `error:` line. Correct what it names and run the script again |
 | `cross-origin request refused` under "Sign in" | The page was opened at another address than `public_url`, such as `http://127.0.0.1:8000` | Open `public_url` exactly. `invalid or expired API token` means the paste was not an active token |
 | `unexpected Host header` (status 400) | The proxy does not pass the host name of `public_url` | Pass the `Host` header (section 3, step 9) |
+| `the database needs migrations: run ds migrate` | This build has migrations the database lacks; only `ds serve`, `ds worker` and `ds migrate` apply them | Run `docker compose run --rm app ds migrate`, or start the app |
 | `cannot read secret file /run/secrets/<name>` | The secret is not mounted, or the container's user cannot read it | Name it in the site file and `chmod 444` it (section 3, step 3), then run `docker compose up -d` |

@@ -10,6 +10,7 @@ digests mean equal documents. A rendered text that is not of its class's form do
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 import struct
 from collections.abc import Callable, Mapping, Sequence
@@ -104,10 +105,28 @@ def _shortest32(found: Decimal) -> Decimal:
         rounded = Decimal(f"{single:.{digits - 1}e}")
         step = Decimal(1).scaleb(rounded.adjusted() - digits + 1)
         # Just above a power of two the nearest text of this length may read back as its neighbour.
-        fits = [d for d in (rounded, rounded - step, rounded + step) if _single(d) == single]
+        fits = [d for d in (rounded, rounded - step, rounded + step) if _reads_as(d, single)]
         if fits:
             return min(fits, key=lambda d: abs(d - exact))
     raise ValueError
+
+
+def _narrowed(wide: float) -> float | None:
+    """The 32-bit float nearest the double ``wide``; None past the 32-bit range, where packing raises
+    OverflowError on some builds of Python and gives infinity on others."""
+    try:
+        near: float = struct.unpack("f", struct.pack("f", wide))[0]
+    except OverflowError:
+        return None
+    return None if math.isinf(near) and not math.isinf(wide) else near
+
+
+def _reads_as(text: Decimal, single: float) -> bool:
+    """Whether ``text`` reads back as the 32-bit float ``single``; a number past the range reads as none."""
+    try:
+        return _single(text) == single
+    except OverflowError:
+        return False
 
 
 def _single(found: Decimal) -> float:
@@ -115,9 +134,11 @@ def _single(found: Decimal) -> float:
     rounded twice: where the double is the midpoint of two 32-bit floats, ``found`` itself says which
     side of it it lies on."""
     wide = float(found)
-    near = struct.unpack("f", struct.pack("f", wide))[0]
+    near = _narrowed(wide)
+    if near is None:
+        raise OverflowError("beyond the 32-bit range")
     other = 2 * wide - near  # the float on the double's other side, when the double is such a midpoint
-    if other != near and struct.unpack("f", struct.pack("f", other))[0] == other:
+    if other != near and _narrowed(other) == other:
         middle = Decimal(wide)
         if found != middle and (found > middle) == (other > near):
             return other

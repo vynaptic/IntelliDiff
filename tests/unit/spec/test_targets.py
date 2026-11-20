@@ -119,6 +119,7 @@ def test_database_target(write_yaml: WriteYaml, tmp_path: Path) -> None:
         ("base_url", "https://db.example"),
         ("auth", {"kind": "bearer", "secret_ref": "file:t"}),
         ("capabilities", {"authoritative_absence": {"status": [404]}}),
+        ("max_body_bytes", 1048576),
     ],
 )
 def test_a_database_target_takes_no_service_members(write_yaml: WriteYaml, member: str, value: Any) -> None:
@@ -380,14 +381,39 @@ def test_an_engine_target_takes_only_its_own_members_and_no_descriptor(
         ({"base_url": "http://localhost:8080"}, "private_network"),
         ({"base_url": "http://[::1]:8080"}, "private_network"),
         ({"base_url": "http://[::ffff:127.0.0.1]"}, "private_network"),
-        ({"base_url": "http://169.254.169.254/latest"}, "private_network"),
+        ({"base_url": "http://169.254.169.254/latest"}, "forbidden_host"),
         ({"base_url": "http://10.1.2.3"}, "private_network"),
         ({"base_url": "http://192.168.0.10"}, "private_network"),
-        ({"base_url": "http://0.0.0.0"}, "private_network"),
+        ({"base_url": "http://0.0.0.0"}, "forbidden_host"),
     ],
 )
 def test_base_url_rules(write_yaml: WriteYaml, entry: dict[str, Any], code: str) -> None:
     assert _problems(write_yaml, {"targets": {"svc": entry}}) == {("/targets/svc/base_url", code)}
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://169.254.169.254/latest",
+        "https://[fe80::1]:8443",
+        "http://[::ffff:169.254.169.254]",
+        "http://[64:ff9b::a9fe:a9fe]",
+        "http://[fd00:ec2::254]",
+        "http://0.0.0.0:8080",
+        "http://[::]",
+        "http://224.0.0.1",
+    ],
+)
+def test_a_never_literal_base_url_is_refused_whatever_the_opt_in(
+    write_yaml: WriteYaml, base_url: str
+) -> None:
+    entry = {"base_url": base_url, "allow_private_network": True}
+    with pytest.raises(TargetsError) as exc:
+        _load(write_yaml, {"svc": entry})
+    assert [(i.pointer, i.code) for i in exc.value.issues] == [("/targets/svc/base_url", "forbidden_host")]
+    assert exc.value.issues[0].message.endswith(
+        "is never a target (link-local, unspecified, multicast or metadata)"
+    )
 
 
 def test_network_opt_ins(write_yaml: WriteYaml) -> None:
@@ -406,6 +432,44 @@ def test_network_opt_ins(write_yaml: WriteYaml) -> None:
         "http://[::1]:9000",
     ]
     assert registry.get("mock").allow_private_network
+
+
+def test_a_service_may_cap_its_answers_below_the_default(write_yaml: WriteYaml) -> None:
+    registry = _load(
+        write_yaml,
+        {
+            "small": {"base_url": "https://svc.example", "max_body_bytes": 1048576},
+            "largest": {"base_url": "https://svc.example", "max_body_bytes": 64 * 1024 * 1024},
+            "default": {"base_url": "https://svc.example"},
+        },
+    )
+    caps = [registry.get(t).max_body_bytes for t in ("small", "largest", "default")]
+    assert caps == [1048576, 64 * 1024 * 1024, None]  # None: the default cap
+
+
+@pytest.mark.parametrize(
+    ("entry", "expected"),
+    [
+        ({"max_body_bytes": 0}, ("/targets/svc/max_body_bytes", "schema.minimum")),
+        ({"max_body_bytes": -1}, ("/targets/svc/max_body_bytes", "schema.minimum")),
+        ({"max_body_bytes": 64 * 1024 * 1024 + 1}, ("/targets/svc/max_body_bytes", "schema.maximum")),
+        ({"max_body_bytes": 1.5}, ("/targets/svc/max_body_bytes", "schema.type")),
+        ({"max_body_bytes": "1MB"}, ("/targets/svc/max_body_bytes", "schema.type")),
+        ({"max_body_size": 1048576}, ("/targets/svc/max_body_size", "schema.additionalProperties")),
+    ],
+)
+def test_a_body_cap_is_a_positive_integer_no_larger_than_the_default(
+    write_yaml: WriteYaml, entry: dict[str, Any], expected: tuple[str, str]
+) -> None:
+    targets = {"targets": {"svc": {"base_url": "https://svc.example", **entry}}}
+    assert _problems(write_yaml, targets) == {expected}
+
+
+def test_a_body_cap_belongs_to_a_service_target(write_yaml: WriteYaml) -> None:
+    mysql = MYSQL | {"max_body_bytes": 1048576}
+    assert ("/targets/db/max_body_bytes", "schema.not") in _problems(write_yaml, {"targets": {"db": mysql}})
+    files = FILES | {"max_body_bytes": 1048576}
+    assert ("/targets/f", "invalid_files_target") in _problems(write_yaml, {"targets": {"f": files}})
 
 
 @pytest.mark.parametrize(

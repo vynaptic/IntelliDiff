@@ -60,6 +60,23 @@ FORBIDDEN = [
     "::a9fe:a9fe",
 ]
 PUBLIC = ["93.184.216.34", "8.8.8.8", "2606:4700:4700::1111", "64:ff9b::808:808", "::ffff:8.8.8.8"]
+# Never a service target, whatever it allows: link-local (the metadata service among them), unspecified,
+# multicast and the ULA metadata address, also when an IPv6 address stands for an IPv4 one.
+NEVER = [
+    "169.254.169.254",
+    "fe80::1",
+    "fe80::1%en0",
+    "::ffff:169.254.169.254",
+    "64:ff9b::a9fe:a9fe",
+    "fd00:ec2::254",
+    "0.0.0.0",  # noqa: S104 - an address under test, nothing binds to it
+    "::",
+    "224.0.0.1",
+]
+NEVER_MESSAGE = (
+    "target host resolves to a link-local, unspecified, multicast or metadata address, which is never a"
+    " target"
+)
 
 
 class TestSSRFGuard:
@@ -90,13 +107,50 @@ class TestSSRFGuard:
         async def resolve(host: str, port: int) -> list[str]:
             return ["2606:4700::1", "10.0.0.7"]
 
-        resolver = GuardedResolver(resolve, allow_private=True)  # an explicit opt-in skips the check
+        resolver = GuardedResolver(resolve, allow_private=True)  # an explicit opt-in admits private answers
         results = await resolver.resolve("svc.example", 443)
         assert [(r["host"], r["family"], r["port"]) for r in results] == [
             ("2606:4700::1", socket.AF_INET6, 443),
             ("10.0.0.7", socket.AF_INET, 443),
         ]
         await resolver.close()
+
+    @pytest.mark.parametrize("allow_private", [True, False])
+    @pytest.mark.parametrize("address", NEVER)
+    async def test_resolver_refuses_a_never_answer_whatever_the_opt_in(
+        self, address: str, allow_private: bool
+    ) -> None:
+        # A name rebound to the metadata service must not receive the target's credential headers.
+        async def resolve(host: str, port: int) -> list[str]:
+            return ["93.184.216.34", address]
+
+        with pytest.raises(UnsafeTargetError) as exc:
+            await GuardedResolver(resolve, allow_private=allow_private).resolve("svc.example", 443)
+        assert str(exc.value) == NEVER_MESSAGE
+
+    async def test_resolver_admits_a_private_answer_only_with_the_opt_in(self) -> None:
+        async def resolve(host: str, port: int) -> list[str]:
+            return ["10.1.2.3"]
+
+        results = await GuardedResolver(resolve, allow_private=True).resolve("svc.example", 443)
+        assert [r["host"] for r in results] == ["10.1.2.3"]
+        with pytest.raises(UnsafeTargetError, match="set allow_private_network"):
+            await GuardedResolver(resolve, allow_private=False).resolve("svc.example", 443)
+
+    @pytest.mark.parametrize("allow_private", [True, False])
+    @pytest.mark.parametrize("host", [*NEVER, "[fe80::1]", "[::ffff:169.254.169.254]"])
+    def test_a_never_literal_host_is_refused_whatever_the_opt_in(
+        self, host: str, allow_private: bool
+    ) -> None:
+        with pytest.raises(UnsafeTargetError) as exc:
+            check_literal_host(host, allow_private=allow_private)
+        assert str(exc.value) == NEVER_MESSAGE
+
+    @pytest.mark.parametrize("host", ["127.0.0.1", "[::1]", "10.0.0.7", "64:ff9b::a01:203"])
+    def test_a_private_literal_host_passes_with_the_opt_in(self, host: str) -> None:
+        check_literal_host(host, allow_private=True)
+        with pytest.raises(UnsafeTargetError, match="set allow_private_network"):
+            check_literal_host(host)
 
     async def test_system_resolver_on_loopback_literal(self) -> None:
         assert "127.0.0.1" in await system_resolve("127.0.0.1", 80)

@@ -252,6 +252,8 @@ if argv[0] == "compose":
         end(scenario["build"], err="stub: build\n")
     if words == ["up", "-d"]:
         end(scenario["up"], err="stub: up\n")
+    if words == ["stop", "app"]:  # Compose stops nothing, and says nothing, where no app container exists
+        end(scenario["stop"], err="stub: stop\n" if scenario["stop"] else "")
     if words[0] == "logs":
         end(out=scenario["logs"])
     if words[0] == "run":
@@ -357,6 +359,7 @@ class Trial:
             "compose": "2.40.3-desktop.1", "info": 0, "images": [], "containers": [], "volumes": {}, "ps": 0,
             "networks": {"n1": "bridge 172.17.0.0/16 ", "n2": "host ", "n3": "other_default 172.29.0.0/24 "},
             "curl": 7, "curl6": 7, "uname": "Darwin", "config": None, "site": None, "build": 0, "up": 0,
+            "stop": 0,
             "app": "c0ffee\n", "oneoff": "",
             "ds": {"init": 0, "migrate": 0, "token create": 0, "token list": 0}, "said": "",
             "health": ["starting 0", "healthy 0"], "logs": "", "token": self.token + "\n", "tokens": "",
@@ -622,6 +625,7 @@ def test_a_fresh_clone_gets_every_file_and_a_token_that_is_never_printed(watched
         ("docker", ["compose", "--profile", "mocks", "config"]),
         ("docker", ["compose", "build"]),
         ("docker", ["compose", "run", "--rm", "app", "ds", "init"]),
+        ("docker", ["compose", "stop", "app"]),
         ("docker", ["compose", "run", "--rm", "app", "ds", "migrate"]),
         ("docker", ["compose", "--profile", "mocks", "up", "-d"]),
         ("docker", ["ps", "-aq", "--filter", project, *OWN]),
@@ -656,6 +660,20 @@ def test_running_again_overwrites_nothing(trial: Trial) -> None:
         ]
         assert [argv for argv in again.docker() if "-f" in argv] == [judged]  # the one command with -f
         assert [call for call in again.calls if call["tool"] == "curl" or NEVER & set(call["argv"])] == []
+
+
+def test_an_update_stops_the_running_app_before_it_migrates(trial: Trial) -> None:
+    """Run again after an update: the new image is built while the old app serves, then the app stops before
+    ``ds migrate``, so its worker never meets a schema its build does not know; step 5 starts it on the new
+    image."""
+    assert trial.run().code == 0
+    again = trial.run(**trial.installed())
+    assert again.code == 0 and again.out.endswith(_closing())
+    compose = [argv[1:] for argv in again.docker() if argv[0] == "compose"]
+    migrate, up = ["run", "--rm", "app", "ds", "migrate"], ["--profile", "mocks", "up", "-d"]
+    steps = (["build"], ["stop", "app"], migrate, up)
+    assert [compose.count(step) for step in steps] == [1, 1, 1, 1]
+    assert [compose.index(step) for step in steps] == sorted(compose.index(step) for step in steps)
 
 
 def test_settings_and_secrets_that_exist_are_never_overwritten(watched: Trial) -> None:
@@ -1235,6 +1253,7 @@ STOPPED = [  # (the refusal, its message, the folder's files, the scenario, the 
     ("V4", V4, {".env": _ALSO.format(file="moved"), "deploy/moved.yml": _MOVED}, {}, TEN[:4], []),
     ("V5", V5.format(step="the build"), {}, {"build": 17}, TEN[:9], ["build"]),
     ("V5", V5.format(step="ds init"), {}, {"ds": _DS | {"init": 2}}, TEN[:9], ["build", "ds init"]),
+    ("V5", V5.format(step="docker compose stop app"), {}, {"stop": 1}, TEN[:9], ["build", "ds init"]),
     ("V5", V5.format(step="ds migrate"), {}, {"ds": _DS | {"migrate": 2}}, TEN[:9], _UP[:1] + _UP[2:]),
     ("V5", V5.format(step="docker compose up"), {}, {"up": 1}, TEN[:9], _UP),
     ("V6", V6, {}, {"app": ""}, TEN[:9], _UP),

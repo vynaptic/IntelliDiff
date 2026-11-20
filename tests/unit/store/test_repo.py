@@ -136,8 +136,8 @@ def payload(content: str, tool_calls: list[Any] | None = None) -> dict[str, Any]
 async def test_migrations_apply_once(pool: AsyncConnectionPool) -> None:
     assert await migrate(pool) == []
     async with pool.connection() as conn:
-        cur = await conn.execute("SELECT version FROM ds.schema_version")
-        assert await cur.fetchall() == [(v,) for v in range(1, 19)]
+        cur = await conn.execute("SELECT version FROM ds.schema_version ORDER BY version")
+        assert await cur.fetchall() == [(v,) for v in range(1, 21)]
 
 
 async def test_a_spec_is_stored_once_per_content_hash(pool: AsyncConnectionPool) -> None:
@@ -150,7 +150,6 @@ async def test_a_spec_is_stored_once_per_content_hash(pool: AsyncConnectionPool)
 
 async def test_keys_are_leased_completed_and_rechecked(pool: AsyncConnectionPool, make_run: MakeRun) -> None:
     run_id = await make_run(["a", "b", "c"], status="queued")
-    now = datetime.now(UTC)
     async with pool.connection() as conn:
         assert await repo.lease_due(conn, "w1", 10, 60) == []  # only running runs are worked
         await repo.set_run_status(conn, run_id, "running")
@@ -163,8 +162,8 @@ async def test_keys_are_leased_completed_and_rechecked(pool: AsyncConnectionPool
         assert await repo.lease_due(conn, "w1", 10, 60) == []  # every key is held
         assert await repo.complete_key(conn, run_id, 1, "m-a", "w1")
         assert not await repo.complete_key(conn, run_id, 1, "m-a", "w1")  # no longer held
-        assert await repo.schedule_recheck(conn, run_id, 1, "m-b", "w1", now + LATER)
-        assert await repo.schedule_recheck(conn, run_id, 1, "m-c", "w1", now - LATER)
+        assert await repo.schedule_recheck(conn, run_id, 1, "m-b", "w1", LATER.total_seconds())
+        assert await repo.schedule_recheck(conn, run_id, 1, "m-c", "w1", -LATER.total_seconds())
         [recheck] = opened(await repo.lease_due(conn, "w2", 10, 60))  # b is not due yet
         assert (recheck["key"], recheck["pass_no"]) == ("c", 2)
         assert not await repo.cycle_done(conn, run_id, 1)
@@ -176,7 +175,7 @@ async def test_leases_are_released_and_open_keys_cancelled(
     run_id = await make_run(["a", "b", "c"])
     async with pool.connection() as conn:
         assert keys(await repo.lease_due(conn, "w1", 2, 60)) == ["a", "b"]
-        assert await repo.schedule_recheck(conn, run_id, 1, "m-b", "w1", datetime.now(UTC) + LATER)
+        assert await repo.schedule_recheck(conn, run_id, 1, "m-b", "w1", LATER.total_seconds())
         assert await repo.release_leases(conn, "w1") == 1  # a is pending again, due after c
         assert keys(await repo.lease_due(conn, "w2", 1, 60)) == ["c"]
         assert await repo.cancel_keys(conn, run_id) == 2  # a and b; c is under a live lease
@@ -243,6 +242,21 @@ async def test_a_scan_s_candidates_fall_due_their_delay_after_the_store_s_clock_
         assert await repo.complete_key(conn, run_id, 1, "m-c", "w1")
         assert dict(await (await conn.execute(due)).fetchall()) == saved
         assert not await repo.cycle_done(conn, run_id, 1)  # the scan is done, and two keys wait
+
+
+async def test_rechecks_and_retries_fall_due_their_wait_after_the_store_s_clock(
+    pool: AsyncConnectionPool, make_run: MakeRun
+) -> None:
+    """A recheck's or a retry's due time is its wait in seconds after the database's now, so a process
+    whose clock lags the database's still waits for it."""
+    waits = "SELECT key_masked, extract(epoch FROM available_at - now())::float8 FROM ds.run_keys"
+    run_id = await make_run(["a", "b"])
+    async with pool.connection() as conn:  # one transaction: its now() is the save's
+        assert keys(await repo.lease_due(conn, "w1", 2, 60)) == ["a", "b"]
+        assert await repo.schedule_rechecks(conn, run_id, 1, {"m-a": 30.0}, "w1") == 1
+        assert await repo.schedule_retries(conn, run_id, 1, {"m-b": 45.5}, "w1") == 1
+        assert dict(await (await conn.execute(waits)).fetchall()) == {"m-a": 30.0, "m-b": 45.5}
+        assert await repo.lease_due(conn, "w2", 10, 60) == []  # neither is due yet
 
 
 async def test_concurrent_leasers_never_get_the_same_key(
@@ -593,6 +607,26 @@ async def test_soak_cycles_list_outcome_changes(pool: AsyncConnectionPool, make_
     assert rolled == {"keys": {"pending": 1}, "outcomes": {}}
 
 
+async def test_unexplained_critical_holds_the_keys_whose_latest_result_has_some(
+    pool: AsyncConnectionPool, make_run: MakeRun
+) -> None:
+    """Each key's unsuppressed CRITICAL findings in its latest result, of any cycle; a key whose latest result
+    has none is left out."""
+    run_id, critical = await make_run(["a", "b", "c", "d"], mode="soak"), Severity.CRITICAL
+    async with pool.connection() as conn:
+        await save(conn, run_id, result("a", Outcome.MISMATCH, [critical, critical]))
+        await save(conn, run_id, result("b", Outcome.MISMATCH, [critical]))  # not read again: it still counts
+        await save(conn, run_id, result("c", Outcome.MISMATCH, [critical]))
+        await save(conn, run_id, result("d"))
+        assert await repo.start_next_cycle(conn, run_id, datetime.now(UTC)) == 2
+        await save(conn, run_id, result("a"), cycle=2)  # put right: its first findings count no more
+        explained = result("c", Outcome.MISMATCH, [critical, critical, critical, Severity.HIGH])
+        explained.findings[2] = dataclasses.replace(explained.findings[2], rule_id="known-1")  # suppressed
+        await save(conn, run_id, explained, cycle=2)
+        await save(conn, run_id, result("d"), cycle=2)
+        assert await repo.unexplained_critical(conn, run_id) == {"m-b": 1, "m-c": 2}
+
+
 async def test_outcome_changes_are_one_cycle_s_and_page_in_manifest_order(
     pool: AsyncConnectionPool, make_run: MakeRun
 ) -> None:
@@ -784,10 +818,10 @@ async def test_a_group_of_keys_moves_on_only_while_its_owner_holds_them(
     async with pool.connection() as conn:
         assert keys(await repo.lease_due(conn, "w1", 10, 60, run_id=other)) == ["x"]
         assert keys(await repo.lease_due(conn, "w1", 3, 60, run_id=run_id)) == ["a", "b", "c"]
-        assert await repo.schedule_rechecks(conn, run_id, 1, {"m-a": datetime.now(UTC) - LATER}, "w1") == 1
+        assert await repo.schedule_rechecks(conn, run_id, 1, {"m-a": -LATER.total_seconds()}, "w1") == 1
         assert await repo.complete_keys(conn, run_id, 1, ["m-b", "m-c"], "w2") == 0  # w1 holds them
         assert await repo.complete_keys(conn, run_id, 1, ["m-a", "m-b", "m-c", "m-d"], "w1") == 2  # b and c
-        assert await repo.schedule_rechecks(conn, run_id, 1, {"m-b": datetime.now(UTC)}, "w1") == 0
+        assert await repo.schedule_rechecks(conn, run_id, 1, {"m-b": 0.0}, "w1") == 0
         again = opened(await repo.lease_due(conn, "w3", 10, 60, run_id=run_id))
     assert sorted((r["key"], r["pass_no"]) for r in again) == [("a", 2), ("d", 1)]
 
@@ -809,7 +843,7 @@ async def test_migration_4_moves_a_run_s_scan_to_its_current_cycle(pg_dsn: str) 
     pool = AsyncConnectionPool(pg_dsn, open=False)
     await pool.open(wait=True)
     try:
-        assert await migrate(pool) == [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+        assert await migrate(pool) == [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
         async with pool.connection() as conn:
             run = await repo.get_run(conn, "R-" + "0" * 26)
             assert await repo.get_scan(conn, run["run_id"], 1) is None
@@ -846,7 +880,7 @@ async def test_migration_5_keeps_legacy_rows_and_checks_new_ones(pg_dsn: str) ->
     pool = AsyncConnectionPool(pg_dsn, open=False)
     await pool.open(wait=True)
     try:
-        assert await migrate(pool) == [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+        assert await migrate(pool) == [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
         async with pool.connection() as conn:
             run = await repo.get_run(conn, "R-" + "0" * 26)
             cur = await conn.execute("SELECT actor, actor_name FROM ds.audit_log ORDER BY id")

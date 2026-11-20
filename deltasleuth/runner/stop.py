@@ -82,7 +82,8 @@ class StopMonitor:
     def __init__(
         self, conditions: StopConditions, started_at: datetime, critical: Mapping[str, int] | None = None
     ) -> None:
-        """``critical``: unsuppressed CRITICAL findings per key, of results saved before it."""
+        """``critical``: unsuppressed CRITICAL findings per key, of results saved before it. Only the keys
+        with some are held, and their total is kept as each key's count changes."""
         self.conditions, self.started_at = conditions, started_at
         c = conditions
         self._calls: deque[bool] = deque(maxlen=c.max_error_rate.window if c.max_error_rate else 0)
@@ -90,8 +91,14 @@ class StopMonitor:
             maxlen=c.max_inconclusive_rate.window if c.max_inconclusive_rate else 0
         )
         self._consecutive = 0
-        self.critical = dict(critical or {})
+        self.critical = {key: count for key, count in (critical or {}).items() if count}
+        self._critical_total = sum(self.critical.values())
         self._fired: str | None = None
+
+    @property
+    def critical_count(self) -> int:
+        """The unsuppressed CRITICAL findings of every key's latest result."""
+        return self._critical_total
 
     def record_call(self, *, failed: bool) -> None:
         """A read judged ERROR is a failed call; an incomplete read (truncated, unparseable) is not."""
@@ -110,13 +117,11 @@ class StopMonitor:
             self._keys.append(result.outcome is Outcome.INCONCLUSIVE)
             if _exceeded(self._keys, c.max_inconclusive_rate):
                 self._fire("maxInconclusiveRate")
-        self.critical[key] = sum(
-            1 for f in result.findings if not f.suppressed and f.severity is Severity.CRITICAL
-        )
-        if (
-            c.max_unexplained_critical is not None
-            and sum(self.critical.values()) >= c.max_unexplained_critical
-        ):
+        count = sum(1 for f in result.findings if not f.suppressed and f.severity is Severity.CRITICAL)
+        self._critical_total += count - self.critical.pop(key, 0)
+        if count:
+            self.critical[key] = count
+        if c.max_unexplained_critical is not None and self._critical_total >= c.max_unexplained_critical:
             self._fire("maxUnexplainedCritical")
 
     def reason(self, now: datetime) -> str | None:

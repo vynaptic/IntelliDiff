@@ -109,7 +109,16 @@ def _identities(items: list[Any]) -> set[str]:
 class PageWalk:
     """The pages of one key. Feed page 1 to ``start`` and later pages to ``add``."""
 
-    def __init__(self, cfg: Pagination, *, stable_ordering: bool, merge: bool = True) -> None:
+    def __init__(
+        self,
+        cfg: Pagination,
+        *,
+        stable_ordering: bool,
+        merge: bool = True,
+        max_values: int | None = None,
+    ) -> None:
+        """``max_values``: the values a page, and the pages merged, hold at most (default
+        ``jsonio.MAX_VALUES``)."""
         self._cfg = cfg
         self._merge = merge
         self._max_pages = cfg.max_pages or DEFAULT_MAX_PAGES
@@ -120,6 +129,8 @@ class PageWalk:
         self._pages = 0  # pages taken, an empty end page included
         self._merged = False
         self._number_bytes = 0
+        self._values = 0  # values of the merged document, as ``jsonio.count_values`` counts them
+        self._max_values = jsonio.MAX_VALUES if max_values is None else max_values
         self._position = 0 if cfg.kind == "offset" else 1
         self._short = False  # the last non-empty window held fewer items than ``size``
         self._end_check = False  # past maxPages: the next page may only confirm the end
@@ -137,7 +148,7 @@ class PageWalk:
         """Take page 1; a page that cannot be walked stays a single document."""
         self._first = body
         try:
-            doc, duplicate = jsonio.parse_json(body)
+            doc, duplicate = jsonio.parse_json(body, max_values=self._max_values)
         except (jsonio.JSONParseError, jsonio.ResourceLimitError) as exc:
             self.resource_limited = isinstance(exc, jsonio.ResourceLimitError)
             if not self._merge:  # no observe() judges the pages of a listing
@@ -149,6 +160,7 @@ class PageWalk:
             return
         self._doc, self._items, self._pages, self._seen = doc, items, 1, _identities(items)
         self._number_bytes = jsonio.check_number_budget(doc)
+        self._values = jsonio.count_values(doc) if self._merge else 0
         self.page = items
         self._advance(doc, items, headers, url)
         if duplicate and (self.next or not self._merge):  # merging would drop the duplicate names
@@ -158,7 +170,7 @@ class PageWalk:
         """Take a later page; a problem stops the walk and is explained in ``detail``."""
         page_no, self.page = self._pages + 1, []
         try:
-            doc, duplicate = jsonio.parse_json(body)
+            doc, duplicate = jsonio.parse_json(body, max_values=self._max_values)
         except (jsonio.JSONParseError, jsonio.ResourceLimitError) as exc:
             self.resource_limited = isinstance(exc, jsonio.ResourceLimitError)
             self.stop(f"page {page_no} could not be parsed ({type(exc).__name__}); paging stopped")
@@ -181,6 +193,12 @@ class PageWalk:
                 self.stop(f"page {page_no} exceeds the aggregate numeric expansion limit")
                 return
             self._number_bytes += added
+            joined = jsonio.count_values(items) - 1  # its items join page 1's array, not their own
+            if self._values + joined > self._max_values:
+                self.resource_limited = True
+                self.stop(f"page {page_no} takes the merged answer past {self._max_values} values")
+                return
+            self._values += joined
         identities = _identities(items)
         if items and self._cfg.kind in _WINDOW_KINDS and not self._window_advances(page_no, identities):
             return
@@ -203,7 +221,7 @@ class PageWalk:
 
     def body(self, *, max_number_bytes: int | None = None) -> bytes:
         if self.resource_limited:
-            raise jsonio.ResourceLimitError("a page exceeds a numeric expansion limit")
+            raise jsonio.ResourceLimitError("a page, or the pages merged, exceed a parse limit")
         return (
             jsonio.dumps(self._doc, max_number_bytes=max_number_bytes).encode("utf-8")
             if self._merged else self._first

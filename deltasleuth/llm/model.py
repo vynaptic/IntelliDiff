@@ -15,6 +15,8 @@ from typing import Any, Literal
 # Identifiers both wire APIs accept as tool names.
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _SAFE_CODE = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
+# A model's name as providers and gateways write one (vendor/name:tag@version+quantisation): no space.
+_MODEL_NAME = re.compile(r"[A-Za-z0-9_.:/@+-]{1,128}")
 
 StopReason = Literal["end_turn", "tool_use", "max_tokens", "refusal", "content_filter", "other"]
 
@@ -217,6 +219,12 @@ class LLMResponse:
 def safe_code(value: object) -> str | None:
     """A provider code or id if it looks like an identifier; free text may echo the prompt."""
     return value if isinstance(value, str) and _SAFE_CODE.fullmatch(value) else None
+
+
+def model_name(value: object) -> str | None:
+    """The model a provider reports, if it reads as a model's name of at most 128 characters; the field is
+    the provider's free text, which is stored, and may echo the prompt."""
+    return value if isinstance(value, str) and _MODEL_NAME.fullmatch(value) else None
 
 
 class LLMError(Exception):

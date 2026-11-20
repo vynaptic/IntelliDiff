@@ -3,13 +3,17 @@ each page capped on its own, a repeat judged against the previous page only."""
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
+import time
+from collections.abc import Callable
 from typing import Any
 
 import pytest
 from aiohttp import web
 
+from deltasleuth.connectors.paging import PageWalk
 from deltasleuth.connectors.rest import ListingIncomplete, RestConnector
 from deltasleuth.core.types import Pagination
 
@@ -126,3 +130,45 @@ async def test_an_unreadable_first_page_is_incomplete(start: Start) -> None:
         "the key listing of target t was not read completely (HTTP 200: page 1 could not be parsed"
         " (JSONParseError))"
     )
+
+
+@pytest.mark.parametrize("read", ["merged", "streamed"])
+async def test_page_bookkeeping_leaves_the_event_loop_free(
+    read: str, start: Start, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Parsing, hashing and merging a large page takes a while: meanwhile the loop serves everything else.
+    slow = 0.15
+
+    def slowed(method: Callable[..., Any]) -> Callable[..., Any]:
+        def run(*args: Any, **kwargs: Any) -> Any:
+            time.sleep(slow)
+            return method(*args, **kwargs)
+
+        return run
+
+    for name in ("start", "add", "body"):
+        monkeypatch.setattr(PageWalk, name, slowed(getattr(PageWalk, name)))
+    connector = await start(cursor_reply(), "/api/things/{key}")
+    ticks = 0
+
+    async def tick() -> None:
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.005)
+            ticks += 1
+
+    ticker = asyncio.create_task(tick())
+    began = time.monotonic()
+    try:
+        if read == "merged":
+            items = merged_items((await connector.fetch("keys", side_config(pagination=CURSOR))).body)
+        else:
+            pages, incomplete = await walked(connector, CURSOR)
+            assert incomplete is None
+            items = [item for page in pages for item in page]
+    finally:
+        ticker.cancel()
+    took = time.monotonic() - began
+    assert [item["id"] for item in items] == list(range(10))
+    assert took >= 3 * slow  # three pages, each taken slowly
+    assert ticks >= took / 0.005 / 3, (ticks, took)  # the loop kept turning while they were taken

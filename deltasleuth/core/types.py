@@ -256,6 +256,7 @@ class Target:
     allow_writable: bool = False  # a mount DeltaSleuth could write to (development)
     allow_insecure_http: bool = False  # a credential over plain http, as declared
     declared_in: Literal["file", "product"] = "file"  # the targets file, or the product's list (targets.py)
+    max_body_bytes: int | None = None  # a service's answer, its pages together, at most; None: the default
 
     @property
     def engine(self) -> str | None:

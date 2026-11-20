@@ -2,10 +2,11 @@
 
 The worker calls ``finish_cycle`` for every running or cancelling run; the first to find the cycle done
 takes the run's row lock and ends it, the others find it ended. A soak's next cycle is due
-``execution.cycleInterval`` after the previous one's nominal start (the same keys, or re-resolved when
-``soak.rolling``) unless a stop condition ends the soak at the boundary; any other run gets its final
-status. A rolling listing or key table is read before the row lock is taken, and when it fails the soak goes
-on with the same keys: an outage at a boundary never ends a long soak. A key table whose target refuses the
+``execution.cycleInterval`` after the previous one's nominal start, or after the boundary when that start has
+passed, so the starts a late soak missed are skipped (the same keys, or re-resolved when ``soak.rolling``)
+unless a stop condition ends the soak at the boundary; any other run gets its final status. A rolling
+listing or key table is read before the row lock is taken, and when it fails the soak goes on with the same
+keys: an outage at a boundary never ends a long soak. A key table whose target refuses the
 credential is raised instead (``KeyAuthRefused``): the worker pauses the run. A soak over two tables opens
 its next cycle with a fresh scan, due at the cycle's start. The run's final status is audited as
 ``run.finished``, and each soak cycle that starts as ``run.cycle``, by whoever ended the cycle. Every ended
@@ -45,6 +46,7 @@ from deltasleuth.runner.keys import KeyAuthRefused, keys_cut, resolve, run_keys
 from deltasleuth.runner.recheck import INTERMITTENT_B, RecheckPolicy
 from deltasleuth.runner.scan import new_scan
 from deltasleuth.runner.stop import StopConditions
+from deltasleuth.security.crypto import MaskedAlike
 from deltasleuth.security.tokenise import mask_key, mask_pointer
 from deltasleuth.store import repo
 
@@ -210,8 +212,12 @@ def due(spec: CompiledSpec, run: repo.Row, cycle: int) -> datetime:
 
 
 def _boundary(spec: CompiledSpec, run: repo.Row) -> tuple[datetime, str | None]:
-    """A soak's next cycle start and the stop condition (if any) that ends the soak there instead."""
-    next_at = max(due(spec, run, run["cycle"] + 1), datetime.now(UTC))
+    """A soak's next cycle start and the stop condition (if any) that ends the soak there instead. On time,
+    the next cycle starts at its nominal start (``due``); once that has passed (a pause, a worker outage, an
+    overrun), ``cycleInterval`` after now: the starts it missed are skipped, never run back to back."""
+    nominal, now = due(spec, run, run["cycle"] + 1), datetime.now(UTC)
+    interval = timedelta(seconds=parse_duration(spec.raw["execution"]["cycleInterval"]))
+    next_at = nominal if nominal >= now else now + interval
     return next_at, StopConditions.from_spec(spec.raw).at_boundary(run["cycle"], run["started_at"], next_at)
 
 
@@ -260,9 +266,9 @@ async def _attached(ctx: Context, conn: repo.Conn, spec: CompiledSpec, run: repo
 
 def failure(exc: BaseException) -> str:
     """What a failed run shows: an unreadable secret names its file (never its content), a table side's
-    error its class and code and the SSRF guard's its text, an address, anything
-    else only its type (a message may hold keys or values)."""
-    if isinstance(exc, TableError | UnsafeTargetError):
+    error its class and code, the SSRF guard's its text, an address, and keys that mask alike their
+    count; anything else only its type (a message may hold keys or values)."""
+    if isinstance(exc, TableError | UnsafeTargetError | MaskedAlike):
         return f"{type(exc).__name__}: {exc}"
     return str(exc) if isinstance(exc, SecretError) else type(exc).__name__
 

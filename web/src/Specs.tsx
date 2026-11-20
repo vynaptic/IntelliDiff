@@ -116,8 +116,8 @@ export function Specs() {
         <>
           <section className="panel">
             <h2>Upload a comparison (YAML or JSON)</h2>
-            <input type="file" accept=".yaml,.yml,.json" onChange={(e) => e.target.files?.[0]?.text().then(setYaml)} />
-            <textarea rows={16} value={yaml} onChange={(e) => setYaml(e.target.value)} spellCheck={false} />
+            <input type="file" aria-label="Comparison file (YAML or JSON)" accept=".yaml,.yml,.json" onChange={(e) => e.target.files?.[0]?.text().then(setYaml)} />
+            <textarea aria-label="Comparison (YAML or JSON)" rows={16} value={yaml} onChange={(e) => setYaml(e.target.value)} spellCheck={false} />
             <p className="inline">
               <button onClick={() => check('validate')} disabled={!yaml}>Validate</button>
               <button className="primary" onClick={() => check('save')} disabled={!yaml}>Save</button>
@@ -214,7 +214,7 @@ function Profile({ onDraft }: { onDraft: (draft: Draft) => void }) {
       <h2>Draft a comparison from sample pairs</h2>
       <p className="muted">A JSON array of {'{key, a, b}'}, or JSON Lines of {'{key, side, status, body}'} records (a side without a 2xx JSON body has no document). The draft and its issues open in the editor above.</p>
       <div className="inline">
-        <input type="file" name="samples" accept=".json,.jsonl" required />
+        <input type="file" name="samples" aria-label="Sample pairs (JSON or JSON Lines)" accept=".json,.jsonl" required />
         {['spec_name', 'target_a', 'target_b', 'key_name'].map((name) => (
           <label key={name}>
             {label(name)}{' '}

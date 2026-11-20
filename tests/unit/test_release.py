@@ -66,8 +66,7 @@ def test_the_version_is_one_in_pyproject_compose_and_the_ca_override(repo_root: 
 def test_release_keys_match_security_md(repo_root: Path) -> None:
     """SECURITY.md's key table mirrors tools/release-keys.txt: fingerprint, status and procedure."""
     security = repo_root / "SECURITY.md"
-    if not security.exists():
-        pytest.skip("SECURITY.md is not written yet")
+    assert security.is_file(), "SECURITY.md is a required document"
     row = re.compile(r"\| `?([0-9a-f]{64})`? \| ([^|]+?) \| `?(?:procedure=)?([0-9a-f]{64})`? \|")
     table = {match[1]: (match[2], match[3]) for match in row.finditer(security.read_text())}
     assert table == release.release_keys()
@@ -77,8 +76,7 @@ def test_the_maintainer_checklist_is_the_heading_build_refuses(repo_root: Path) 
     """build refuses while SECURITY.md holds the maintainer's checklist, by its heading: a reworded
     heading would let the checklist ship."""
     security = repo_root / "SECURITY.md"
-    if not security.exists():
-        pytest.skip("SECURITY.md is not written yet")
+    assert security.is_file(), "SECURITY.md is a required document"
     lines = security.read_text().splitlines()
     assert [line for line in lines if line.startswith("#") and "first release" in line] in (
         [],
@@ -90,8 +88,7 @@ def test_only_section_2_holds_the_security_contact_placeholder(repo_root: Path) 
     """The checklist names the placeholder as section 2's, never itself, so filling it in touches that
     section alone."""
     security = repo_root / "SECURITY.md"
-    if not security.exists():
-        pytest.skip("SECURITY.md is not written yet")
+    assert security.is_file(), "SECURITY.md is a required document"
     sections = re.split(r"\n(?=## )", security.read_text())
     holding = [section.partition("\n")[0] for section in sections if "<SECURITY-CONTACT>" in section]
     assert holding in ([], ["## 2. Reporting a vulnerability"])

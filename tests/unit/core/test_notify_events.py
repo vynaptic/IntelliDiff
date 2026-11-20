@@ -68,6 +68,7 @@ def test_the_reasons_named_are_the_runner_s() -> None:
     assert notify.PAUSES == (
         runs.AUTH_PAUSE,
         runs.KEY_PAUSE,
+        runs.EVIDENCE_PAUSE,
         approvals.APPROVAL_PAUSE,
         licence.LICENCE_PAUSE,
         sample.SAMPLE_PAUSE,
@@ -633,6 +634,13 @@ def test_the_schema_guard_s_event() -> None:
     )
     # A name that is withheld is a spec's id, as on every run's event.
     assert rendered(drifted(), labels=False)[0]["text"].startswith(f"[prod] run {RUN} of spec 7 1.0.0 (soak)")
+
+
+def test_an_unwritable_evidence_store_s_pause_is_an_alert() -> None:
+    """The worker's pause on an evidence store that cannot write is sent, as an alert: a person frees it."""
+    (event,) = notify.EVENTS["paused"][0](row("paused", {"reason": runs.EVIDENCE_PAUSE}), seen(cycle=3))
+    event = notify.checked(event)
+    assert event.facts["reason"] == "run_paused_evidence_error" and notify.severity(event, False) == "alert"
 
 
 def test_the_schema_guard_s_pause_is_a_run_paused_as_any_other() -> None:

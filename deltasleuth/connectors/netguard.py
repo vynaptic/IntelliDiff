@@ -1,4 +1,5 @@
-"""SSRF guard: a target is reached on public addresses only, unless it sets allow_private_network.
+"""SSRF guard: a target is reached on public addresses only, unless it sets allow_private_network, which
+admits private ones too. A link-local, unspecified, multicast or metadata address is never reached.
 
 Host names are checked on every new connection by ``GuardedResolver`` (so DNS rebinding is
 refused at connect time); aiohttp never resolves IP-literal hosts, so ``check_literal_host``
@@ -31,22 +32,29 @@ def is_forbidden_address(address: str) -> bool:
     return address_rule(address) is not None
 
 
-def refuse_forbidden(addresses: list[str]) -> None:
+def refuse_forbidden(addresses: list[str], *, allow_private: bool = False) -> None:
+    """Refuse the answer when any address in it is never a target, or private without ``allow_private``."""
     if not addresses:
         raise UnsafeTargetError("target host resolved to no addresses")
-    if any(is_forbidden_address(a) for a in addresses):
+    rules = {address_rule(a) for a in addresses}
+    if "never" in rules:
+        raise UnsafeTargetError(
+            "target host resolves to a link-local, unspecified, multicast or metadata address, "
+            "which is never a target"
+        )
+    if "private" in rules and not allow_private:
         raise UnsafeTargetError(
             "target host resolves to a loopback, private, link-local or reserved address; "
             "set allow_private_network on the target to permit it"
         )
 
 
-def check_literal_host(host: str) -> None:
+def check_literal_host(host: str, *, allow_private: bool = False) -> None:
     try:
         address = str(ipaddress.ip_address(host.strip("[]")))
     except ValueError:
         return  # a name: checked when it is resolved
-    refuse_forbidden([address])
+    refuse_forbidden([address], allow_private=allow_private)
 
 
 async def vetted(host: str, port: int, allow_private: bool) -> list[str]:
@@ -67,7 +75,8 @@ async def vetted(host: str, port: int, allow_private: bool) -> list[str]:
 
 
 class GuardedResolver(AbstractResolver):
-    """aiohttp resolver that refuses forbidden answers unless private networks are allowed."""
+    """aiohttp resolver that refuses an answer holding an address that is never a target, or a private one
+    unless private networks are allowed."""
 
     def __init__(self, resolve: HostResolver, *, allow_private: bool) -> None:
         self._resolve = resolve
@@ -77,8 +86,7 @@ class GuardedResolver(AbstractResolver):
         self, host: str, port: int = 0, family: socket.AddressFamily = socket.AF_INET
     ) -> list[ResolveResult]:
         addresses = await self._resolve(host, port)
-        if not self._allow_private:
-            refuse_forbidden(addresses)
+        refuse_forbidden(addresses, allow_private=self._allow_private)
         return [
             {
                 "hostname": host,

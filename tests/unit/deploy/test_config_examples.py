@@ -22,11 +22,13 @@ import yaml
 
 from deltasleuth.agent.loop import DATA_CLASSES
 from deltasleuth.config import McpSettings, Settings, SettingsError, load_settings
+from deltasleuth.connectors.tables.duck import GRACE_S
 from deltasleuth.context import init_workspace
 from deltasleuth.core.spec import compile_spec, load_spec_file, load_targets
 from deltasleuth.llm.model import EgressDenied
 from deltasleuth.llm.policy import EgressPolicy, check_egress
 from deltasleuth.llm.profiles import load_profiles
+from deltasleuth.runner.notify import CLOSE_S
 from mocks.registry import PAIRS, pair_dir
 from tests.unit.deploy.test_up_script import OWN_SITE
 from tools import release
@@ -311,6 +313,23 @@ def test_compose_runs_the_release_hardened(repo_root: Path) -> None:
     assert not re.search(r"--build|\bbuild:|x-build", text)
     assert compose["services"]["app"]["secrets"] == ["db_dsn", "kek", "tokeniser"]
     assert set(compose["secrets"]) == {"db_password", "db_dsn", "kek", "tokeniser"}
+
+
+def test_compose_bounds_the_logs_and_lets_the_app_hand_back_its_work(repo_root: Path) -> None:
+    """Both services' logs rotate (the app copies every audit row and access line to stdout); a stop gives
+    the app time to close its notifier and its file reads and hand back its leases, which Docker's default
+    10 s would cut short; the store gets working memory for a small host, and the shared memory its
+    parallel workers' hashes need beyond Docker's 64 MB."""
+    services = yaml.safe_load((repo_root / "deploy" / BASE).read_text())["services"]
+    app, db = services["app"], services["db"]
+    rotated = {"driver": "json-file", "options": {"max-size": "10m", "max-file": "3"}}
+    assert app["logging"] == db["logging"] == rotated
+    grace = int(app["stop_grace_period"].removesuffix("s"))
+    assert grace == 40 and grace >= 2 * (CLOSE_S + GRACE_S) and "stop_grace_period" not in services["mocks"]
+    settings = dict(arg.split("=", 1) for arg in db["command"][2::2])
+    assert db["command"][0] == "postgres" and set(db["command"][1::2]) == {"-c"}
+    assert settings == {"log_error_verbosity": "terse", "shared_buffers": "512MB", "work_mem": "32MB"}
+    assert db["shm_size"] == "256m"
 
 
 def test_site_example_adds_no_secret_until_its_lines_are_on(repo_root: Path) -> None:

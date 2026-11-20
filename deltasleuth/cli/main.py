@@ -240,14 +240,20 @@ def _run[T](work: Awaitable[T], interrupted: str = "interrupted") -> T:
 
 
 def _in_context[T](
-    config: Path | None, work: Callable[[Context], Awaitable[T]], pool: tuple[int, int] | None = None
+    config: Path | None,
+    work: Callable[[Context], Awaitable[T]],
+    pool: tuple[int, int] | None = None,
+    *,
+    apply_migrations: bool = False,
 ) -> T:
-    """``work`` with a Context open on the configured store (migrated; ``pool``: its least and most
-    connections); the audit rows it commits are copied for the SIEM."""
+    """``work`` with a Context open on the configured store (``pool``: its least and most connections); the
+    audit rows it commits are copied for the SIEM. Only the services (``apply_migrations``) apply pending
+    migrations: another command refuses while one is pending, so it never changes the schema under a
+    running app."""
     _siem()
 
     async def main() -> T:
-        async with Context.open(load_settings(config), pool=pool) as ctx:
+        async with Context.open(load_settings(config), pool=pool, apply_migrations=apply_migrations) as ctx:
             return await work(ctx)
 
     return _run(main())
@@ -295,6 +301,18 @@ def _service_logs() -> None:
         package.addHandler(handler)
     package.setLevel(logging.INFO)
     package.propagate = False
+
+
+def _migration_logs() -> None:
+    """For ``ds migrate``: each migration's lines on stderr as it starts and ends, as ``_service_logs`` words
+    them, which Python's last-resort handler would drop (INFO). Only the migration logger changes, and its
+    records still propagate."""
+    progress = logging.getLogger("deltasleuth.store.db")
+    if not any(isinstance(h, _Stream) for h in progress.handlers):
+        handler = _Stream("stderr")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+        progress.addHandler(handler)
+    progress.setLevel(logging.INFO)
 
 
 def _siem(stream: str = "stderr") -> None:
@@ -418,13 +436,15 @@ def init(config: ConfigOpt = None) -> None:
 
 @app.command()
 def migrate(config: ConfigOpt = None) -> None:
-    """Apply the pending database migrations (every command that opens the store applies them too)."""
+    """Apply the pending database migrations, each logged as it runs (ds serve and ds worker apply them as
+    they start; every other command refuses while one is pending)."""
     from psycopg_pool import AsyncConnectionPool
 
     from deltasleuth.core.secrets import read_secret
     from deltasleuth.store.db import WAIT, admitted, opening
     from deltasleuth.store.db import migrate as apply
 
+    _migration_logs()
     _siem()
 
     async def main() -> list[int]:
@@ -489,7 +509,7 @@ def serve(
         _mcp_logs(bare=False)
     _service_logs()
     _siem("stdout")
-    _in_context(config, _warned)
+    _in_context(config, _warned, apply_migrations=True)
     logging.getLogger("uvicorn.access").addFilter(AuthQueryFilter())
     # proxy_headers=False: only auth.trusted_proxies may name the client.
     uvicorn.run(create_app(settings, worker=not no_worker), host=host, port=port, proxy_headers=False)
@@ -554,7 +574,7 @@ def worker(config: ConfigOpt = None) -> None:
 
     _service_logs()
     _siem("stdout")
-    _in_context(config, work)
+    _in_context(config, work, apply_migrations=True)
 
 
 # -- specs, compares and runs ---------------------------------------------------------------------

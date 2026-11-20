@@ -183,11 +183,13 @@ async def test_replies_without_usage_are_charged_their_worst_case(start_mock: An
         assert not (await client.complete(request)).usage.reported
     with pytest.raises(BudgetExceeded, match="per_run_tokens"):
         await client.complete(request)
-    counters = client.counters
-    assert (counters.input_tokens, counters.cost_micros) == (0, 0)
+    counters, worst = client.counters, 5 * estimate + 25 * 10  # micros at $5 and $25 per MTok
+    assert (counters.input_tokens, counters.cost_micros) == (0, 4 * worst)
     assert counters.estimated_tokens == 4 * (estimate + 10)
     assert [r["usage_reported"] for r in client.call_log[:4]] == [False] * 4
-    assert "cost_micros" not in client.call_log[0]  # estimates are never priced
+    row = client.call_log[0]  # priced at the worst case it was charged, and marked so
+    assert (row["cost_micros"], row["usage_estimated"], row["usage_charged"]) == (worst, True, estimate + 10)
+    assert (row["currency"], row["price_version"]) == ("USD", "test-2026-09")
     per_turn = make_client(mock, budgets={"max_input_tokens_per_turn": 2 * estimate})
     turn = per_turn.new_turn()
     await per_turn.complete(request, turn=turn)
@@ -195,6 +197,30 @@ async def test_replies_without_usage_are_charged_their_worst_case(start_mock: An
     with pytest.raises(BudgetExceeded, match="max_input_tokens_per_turn"):
         await per_turn.complete(request, turn=turn)
     assert (turn.input_tokens, len(mock.requests)) == (2 * estimate, 6)
+
+
+async def test_a_timed_out_attempt_is_charged_its_worst_case(start_mock: Any, make_client: Any) -> None:
+    """A provider may bill a request it was still answering: the attempt's row holds its worst case, marked
+    estimated, as the standing budgets sum it, and the client and the turn count it too. A refused
+    connection was never answered and is charged nothing."""
+    mock = await start_mock("openai")
+    request = req(max_output_tokens=16)
+    estimate = make_client(mock).estimate_input_tokens(request)
+    client = make_client(
+        mock, limits={"timeout_s": 0.05}, retry_attempts=1, budgets={"per_run_tokens": 2 * (estimate + 16)}
+    )
+    turn = client.new_turn()
+    mock.delay_s = 0.5
+    with pytest.raises(ProviderError) as info:
+        await client.complete(request, turn=turn)
+    assert info.value.error_class == "Timeout"
+    row = client.call_log[-1]
+    assert (row["error_class"], row["usage_charged"]) == ("Timeout", estimate + 16) and row["usage_estimated"]
+    assert (client.counters.estimated_tokens, turn.input_tokens) == (estimate + 16, estimate)
+    mock.delay_s = 0
+    await client.complete(request)  # the budget holds two worst cases: the timed-out call's and this one's
+    with pytest.raises(BudgetExceeded, match="per_run_tokens"):
+        await client.complete(request)
 
 
 async def test_turn_budgets(start_mock: Any, make_client: Any) -> None:

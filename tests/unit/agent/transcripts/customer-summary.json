@@ -1,0 +1,58 @@
+{
+  "pair": "customer",
+  "run_id": "R-01JEVA1CVST0MERS0MMARY0000",
+  "question": "summarise",
+  "results": [
+    {
+      "tool": "get_run_summary",
+      "data": {
+        "run_id": "R-01JEVA1CVST0MERS0MMARY0000",
+        "spec_name": "mock-customer-v1-vs-v2",
+        "mode": "batch",
+        "status": "completed",
+        "stop_reason": null,
+        "counters": {
+          "total": 40,
+          "match": 35,
+          "different": 5,
+          "indeterminate": 0,
+          "by_outcome": {"MATCH": 35, "MISMATCH": 2, "NOT_FOUND_B": 1, "KNOWN_DIFF": 2}
+        },
+        "root_causes": [
+          {
+            "root_cause_id": "RC-c0a5e7000001",
+            "taxonomy_code": "VALUE_MISMATCH",
+            "max_severity": "CRITICAL",
+            "path_pattern": "$.consents[*].granted",
+            "change_type": "value_changed",
+            "affected_keys": 1,
+            "finding_count": 1,
+            "sample_keys": ["tok:identifier:v1:EVA1CVST0MERKEYAAAAAAAAAAA"]
+          },
+          {
+            "root_cause_id": "RC-c0a5e7000002",
+            "taxonomy_code": "FIELD_MISSING",
+            "max_severity": "HIGH",
+            "path_pattern": "$.accounts[*]",
+            "change_type": "missing_in_b",
+            "affected_keys": 1,
+            "finding_count": 1,
+            "sample_keys": ["tok:identifier:v1:EVA1CVST0MERKEYBBBBBBBBBBB"]
+          },
+          {
+            "root_cause_id": "RC-c0a5e7000003",
+            "taxonomy_code": "MISSING_DOCUMENT",
+            "max_severity": "CRITICAL",
+            "path_pattern": "$",
+            "change_type": "missing_in_b",
+            "affected_keys": 1,
+            "finding_count": 1,
+            "sample_keys": ["tok:identifier:v1:EVA1CVST0MERKEYCCCCCCCCCCC"]
+          }
+        ]
+      }
+    }
+  ],
+  "answer": "The run compared 40 keys of the customer pair and is completed [RC-c0a5e7000001]. By outcome, 35 keys MATCH, 2 are a MISMATCH, 1 is NOT_FOUND_B and 2 are a KNOWN_DIFF [RC-c0a5e7000001]. Root cause [RC-c0a5e7000001] is a CRITICAL value change at $.consents[*].granted in 1 key, such as [K:tok:identifier:v1:EVA1CVST0MERKEYAAAAAAAAAAA]. Root cause [RC-c0a5e7000002] is a HIGH member missing on side B at $.accounts[*] in 1 key. Root cause [RC-c0a5e7000003] is a document missing on side B in 1 key. These claims are observed, not certified.",
+  "expect": {"passes": true}
+}

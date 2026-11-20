@@ -324,13 +324,13 @@ async def test_migrations_are_audited_once_the_log_names_actors(
         for path in sorted(MIGRATIONS.glob("00[1234]_*.sql")):
             await conn.execute(path.read_bytes())
             await conn.execute("INSERT INTO ds.schema_version VALUES (%s)", (int(path.name[:3]),))
-    assert (await migrate(pool), await migrate(pool)) == (list(range(5, 19)), [])
+    assert (await migrate(pool), await migrate(pool)) == (list(range(5, 21)), [])
     async with pool.connection() as conn:
         rows, _ = await repo.list_audit(conn)
     installation_id = rows[1]["object"]
     assert [(r["actor"], r["actor_name"], r["action"], r["object"], r["detail"]) for r in rows] == [
         ("system:migration", "migration", "system.migrate", "schema",
-         {"versions": [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]}),
+         {"versions": [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]}),
         ("system:migration", "migration", "installation.created", installation_id,
          {"installation_id": installation_id}),
     ]  # fmt: skip
@@ -341,7 +341,7 @@ async def test_an_empty_database_records_every_migration(pool: AsyncConnectionPo
     await migrate(pool)
     async with pool.connection() as conn:
         [row], _ = await repo.list_audit(conn, action="system.migrate")
-    assert row["detail"] == {"versions": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]}
+    assert row["detail"] == {"versions": list(range(1, 21))}
 
 
 async def test_the_siem_line_follows_the_commit_and_a_rollback_leaves_none(

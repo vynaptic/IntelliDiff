@@ -206,7 +206,7 @@ def test_explain_starts_a_session_asks_the_fixed_question_and_audits_it(
         (ids[2], prompt.SUMMARISE, None),
     ]
     # developer mode acts as admin: the agent of a fixed question is a viewer all the same
-    viewer = ["get_run_summary", "get_findings", "get_observations"]
+    viewer = ["get_run_summary", "get_findings", "get_observations", "get_root_cause"]
     assert [[tool.name for tool in tools_for(turn[3])] for turn in turns] == [viewer] * 3
     summarise = {"question": "summarise"}
     assert asks == [

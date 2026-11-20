@@ -3,9 +3,10 @@
 Before any network I/O a call passes the egress policy, is checked against the profile's effective
 capabilities (declared ∩ what the dialect can express) and against the budgets. While in flight it
 reserves its worst case (input estimate + ``max_output_tokens``), so concurrent calls cannot
-overshoot, and a reply without usage is charged that worst case. The budgets that outlive a client
-(``STANDING``) start from ``prior``, what its caller says was charged before it. Every attempt and every
-refusal appends a payload-free row to ``call_log``; an answered attempt's holds what it was charged.
+overshoot, and a reply without usage is charged and priced at that worst case, marked estimated; so is an
+attempt that timed out, which a provider may bill. The budgets that outlive a client (``STANDING``) start
+from ``prior``, what its caller says was charged before it. Every attempt and every refusal appends a
+payload-free row to ``call_log``; an answered or timed-out attempt's holds what it was charged.
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ from deltasleuth.llm.model import (
     Overloaded,
     ProviderError,
     RateLimited,
+    Usage,
 )
 from deltasleuth.llm.policy import EgressPolicy, check_egress
 from deltasleuth.llm.profiles import STANDING, Budgets, Gate, LLMProfile
@@ -53,7 +55,7 @@ class ClientCounters:
     denied: int = 0  # refused before any network I/O
     input_tokens: int = 0  # as reported
     output_tokens: int = 0
-    estimated_tokens: int = 0  # worst cases charged for replies without usage
+    estimated_tokens: int = 0  # worst cases charged for replies without usage and timed-out attempts
     cache_read_tokens: int = 0
     tool_calls: int = 0
     cost_micros: int = 0
@@ -65,7 +67,7 @@ class TurnMeter:
 
     budgets: Budgets
     calls: int = 0
-    input_tokens: int = 0  # reported, or the estimate when a reply had no usage
+    input_tokens: int = 0  # reported, or the estimate when a reply had no usage or an attempt timed out
     reserved_input_tokens: int = 0  # estimates of calls still in flight
     tool_calls: int = 0
     started: float = field(default_factory=time.monotonic)
@@ -163,7 +165,7 @@ class LLMClient:
         worst_case = estimate + request.max_output_tokens
         # Reserved before the first await, so a concurrent call checks against it.
         with self._reservation(worst_case, estimate, turn):
-            response = await self._send(request, row)
+            response = await self._send(request, row, turn)
             self._account(response, nbytes, worst_case, estimate, turn)
         return response
 
@@ -206,7 +208,7 @@ class LLMClient:
             if turn is not None:
                 turn.reserved_input_tokens -= turn_tokens
 
-    async def _send(self, request: LLMRequest, row: dict[str, Any]) -> LLMResponse:
+    async def _send(self, request: LLMRequest, row: dict[str, Any], turn: TurnMeter | None) -> LLMResponse:
         caching = self.effective.prompt_caching != "none"
         async for attempt in stamina.retry_context(
             on=_retry_backoff,
@@ -216,10 +218,12 @@ class LLMClient:
             wait_max=8.0,
         ):
             with attempt:
-                return await self._attempt(request, row | {"attempt": attempt.num}, caching)
+                return await self._attempt(request, row | {"attempt": attempt.num}, caching, turn)
         raise AssertionError("unreachable: stamina re-raises the last error")  # pragma: no cover
 
-    async def _attempt(self, request: LLMRequest, row: dict[str, Any], caching: bool) -> LLMResponse:
+    async def _attempt(
+        self, request: LLMRequest, row: dict[str, Any], caching: bool, turn: TurnMeter | None
+    ) -> LLMResponse:
         async with self.gate.semaphore:
             if self.gate.limiter is not None:
                 await self.gate.limiter.acquire()
@@ -235,16 +239,24 @@ class LLMClient:
                     "http_status": err.status,
                     "provider_code": err.provider_code,
                 }
+                if err.error_class == "Timeout":  # the provider may have answered, and billed, it anyway
+                    failure |= self._timed_out(_worst(request, row), turn)
                 self.call_log.append(row | failure | {"latency_ms": _ms(started)})
                 raise
-        latency, usage = _ms(started), response.usage
+        latency, usage, worst = _ms(started), response.usage, _worst(request, row)
         # What ``_account`` charges the call: its reported tokens, or its worst case.
-        worst_case = row["estimated_input_tokens"] + request.max_output_tokens
-        charged = usage.input + usage.output if usage.reported else worst_case
+        charged = usage.input + usage.output if usage.reported else worst.input + worst.output
         self.call_log.append(
-            row | self._outcome(response) | {"usage_charged": charged, "latency_ms": latency}
+            row | self._outcome(response, worst) | {"usage_charged": charged, "latency_ms": latency}
         )
         return replace(response, latency_ms=float(latency))
+
+    def _timed_out(self, worst: Usage, turn: TurnMeter | None) -> dict[str, Any]:
+        """Charge a timed-out attempt its worst case, as a reply without usage is: what its row adds."""
+        self.counters.estimated_tokens += worst.input + worst.output
+        if turn is not None:
+            turn.input_tokens += worst.input
+        return {"usage_charged": worst.input + worst.output, "usage_estimated": True}
 
     def _account(
         self, response: LLMResponse, nbytes: int, worst_case: int, estimate: int, turn: TurnMeter | None
@@ -257,8 +269,10 @@ class LLMClient:
             counters.cost_micros += cost_micros(usage, price) if price is not None else 0
             if nbytes >= _CALIBRATION_BYTES and usage.input > 0:
                 self._densest = min(self._densest or math.inf, nbytes / usage.input)
-        else:
-            counters.estimated_tokens += worst_case  # fail-closed; estimates are never priced
+        else:  # fail-closed: charged and priced at its worst case
+            counters.estimated_tokens += worst_case
+            worst = Usage(input=estimate, output=worst_case - estimate)
+            counters.cost_micros += cost_micros(worst, price) if price is not None else 0
         counters.tool_calls += len(response.tool_calls)
         if turn is not None:
             turn.calls += 1
@@ -277,7 +291,8 @@ class LLMClient:
             "request_hash": hashlib.sha256(_canonical(request)).hexdigest(),
         }
 
-    def _outcome(self, response: LLMResponse) -> dict[str, Any]:
+    def _outcome(self, response: LLMResponse, worst: Usage) -> dict[str, Any]:
+        """What an answered attempt's row holds; a reply without usage is priced at its ``worst`` case."""
         usage, price = response.usage, self.profile.pricing
         row = {
             "model_reported": response.model_reported,
@@ -286,9 +301,11 @@ class LLMClient:
             "provider_stop": response.provider_stop,
             "ignored_tool_calls": response.ignored_tool_calls,
         } | {f"usage_{name}": value for name, value in asdict(usage).items()}
-        if usage.reported and price is not None:
+        if not usage.reported:
+            row["usage_estimated"] = True
+        if price is not None:
             row |= {
-                "cost_micros": cost_micros(usage, price),
+                "cost_micros": cost_micros(usage if usage.reported else worst, price),
                 "currency": price.currency,
                 "price_version": price.version,
             }
@@ -303,6 +320,11 @@ class LLMClient:
         else:
             reason = f"local:{exc.error_class}"
         self.call_log.append(row | {"error_class": exc.error_class, "denial_reason": reason})
+
+
+def _worst(request: LLMRequest, row: dict[str, Any]) -> Usage:
+    """The most a call may use: its input estimate and its whole output limit."""
+    return Usage(input=row["estimated_input_tokens"], output=request.max_output_tokens)
 
 
 def _canonical(request: LLMRequest) -> bytes:

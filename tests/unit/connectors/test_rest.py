@@ -23,7 +23,7 @@ from deltasleuth.connectors.http import TargetGate
 from deltasleuth.connectors.rest import RestConnector
 from deltasleuth.core.canonical.encoding import content_hash
 from deltasleuth.core.secrets import SecretError
-from deltasleuth.core.types import RetryPolicy, Side, SideConfig, Target, TargetAuth
+from deltasleuth.core.types import Pagination, RetryPolicy, Side, SideConfig, Target, TargetAuth
 from tests.conftest import evidence_store
 
 from .conftest import MakeConnector, Recorder, Served, Start, fast_execution, side_config
@@ -264,6 +264,23 @@ class TestRedirectsAndLimits:
         obs = await (await start(status(200, b"z" * 1000), max_body_bytes=1000)).fetch("K1", side_config())
         assert obs.error_class is None and len(obs.body or b"") == 1000
 
+    async def test_a_target_may_declare_a_smaller_body_cap(self, served: Served) -> None:
+        base = await served(status(200, b"z" * 5000)) + "/api"
+
+        async def fetched(declared: int | None, **kwargs: int) -> tuple[str | None, int]:
+            target = Target("t", base, allow_private_network=True, max_body_bytes=declared)
+            conn = RestConnector(target, fast_execution(), **kwargs)
+            try:
+                obs = await conn.fetch("K1", side_config())
+            finally:
+                await conn.aclose()
+            return obs.error_class, len(obs.body or b"")
+
+        assert await fetched(None) == (None, 5000)  # the default takes it
+        assert await fetched(1000) == ("resource_limit", 0)
+        assert await fetched(5000) == (None, 5000)
+        assert await fetched(9000, max_body_bytes=1000) == ("resource_limit", 0)  # the caller's, if smaller
+
     async def test_oversized_5xx_stays_retryable(self, start: Start, recorder: Recorder) -> None:
         def reply(request: web.Request) -> web.Response:
             return web.Response(status=503, body=b"e" * 5000) if recorder.count == 1 else ok(request)
@@ -429,6 +446,40 @@ class TestSSRF:
             obs = await conn.fetch(key, side_config())
             assert json.loads(obs.body or b"")["host"] == f"svc.test:{port}"
         assert calls == ["svc.test", "svc.test"]
+
+    @pytest.mark.parametrize(
+        "base_url", ["http://169.254.169.254/api", "http://[fe80::1]:8080/api", "http://[::ffff:a9fe:a9fe]/api"]
+    )
+    async def test_a_never_literal_is_refused_with_the_opt_in(
+        self, base_url: str, make_connector: MakeConnector
+    ) -> None:
+        conn = make_connector(base_url, allow_private_network=True)
+        with pytest.raises(UnsafeTargetError, match="never a target"):
+            await conn.fetch("K1", side_config())
+        listing = side_config("/keys", pagination=Pagination(kind="link_header", items_path="$.items"))
+        with pytest.raises(UnsafeTargetError, match="never a target"):
+            await anext(conn.walk(listing))
+
+    async def test_an_opted_in_name_rebound_to_the_metadata_service_gets_no_call(
+        self, served: Served, make_connector: MakeConnector, recorder: Recorder
+    ) -> None:
+        def reply(request: web.Request) -> web.Response:
+            response = web.json_response({"host": request.host})
+            response.force_close()  # each key opens a new connection, resolved again
+            return response
+
+        port = URL(await served(reply)).port
+        auth = TargetAuth(kind="bearer", secret_ref=UNREAD_REF)
+        conn = make_connector(
+            f"http://svc.test:{port}/api",
+            auth=auth,
+            resolver=resolver_for(["127.0.0.1"], ["169.254.169.254"]),
+            secret_reader=lambda ref: "tok-000123",
+        )
+        assert (await conn.fetch("K1", side_config())).http_status == 200
+        with pytest.raises(UnsafeTargetError, match="never a target"):
+            await conn.fetch("K2", side_config())
+        assert recorder.count == 1
 
 
 class TestPoliteness:

@@ -24,7 +24,7 @@ from pydantic import TypeAdapter
 
 from deltasleuth.config import NotifySettings
 from deltasleuth.connectors import notify
-from deltasleuth.connectors.notify import Outcome, Sender
+from deltasleuth.connectors.notify import Delivery, Sender
 from deltasleuth.core.notify import refusal
 from mocks.notify import Authority, Proxy, Receiver, SmtpSink
 from tests.conftest import Loopback
@@ -48,7 +48,7 @@ def _settings(channels: dict[str, Any], **options: Any) -> NotifySettings:
 
 async def _send(
     settings: NotifySettings, name: str, body: str = '{"format": "deltasleuth-notify/1"}'
-) -> Outcome:
+) -> Delivery:
     sender = Sender(settings)
     try:
         return await sender.send(settings.channels[name], {"delivery_id": "N-" + "0" * 26, "body": body})
@@ -136,20 +136,20 @@ async def test_the_signing_key_is_read_at_every_send(
 @pytest.mark.parametrize(
     ("status", "retry_after", "expected"),
     [
-        (503, None, Outcome("retry", "http_5xx", 503)),
-        (500, None, Outcome("retry", "http_5xx", 500)),
-        (429, "30", Outcome("retry", "http_429", 429, 30.0)),
-        (408, None, Outcome("retry", "http_408", 408)),
-        (425, None, Outcome("retry", "http_425", 425)),
-        (301, None, Outcome("dead", "http_3xx", 301)),
-        (404, None, Outcome("dead", "http_4xx", 404)),
-        (403, None, Outcome("dead", "http_4xx", 403)),  # Slack's invalid_token, no_service
-        (999, None, Outcome("retry", "http_5xx", None)),  # not HTTP's: retried, its status never stored
-        (600, None, Outcome("retry", "http_5xx", None)),
+        (503, None, Delivery("retry", "http_5xx", 503)),
+        (500, None, Delivery("retry", "http_5xx", 500)),
+        (429, "30", Delivery("retry", "http_429", 429, 30.0)),
+        (408, None, Delivery("retry", "http_408", 408)),
+        (425, None, Delivery("retry", "http_425", 425)),
+        (301, None, Delivery("dead", "http_3xx", 301)),
+        (404, None, Delivery("dead", "http_4xx", 404)),
+        (403, None, Delivery("dead", "http_4xx", 403)),  # Slack's invalid_token, no_service
+        (999, None, Delivery("retry", "http_5xx", None)),  # not HTTP's: retried, its status never stored
+        (600, None, Delivery("retry", "http_5xx", None)),
     ],
 )
 async def test_http_answers_are_closed_codes(
-    receiver: tuple[Receiver, str, str], status: int, retry_after: str | None, expected: Outcome
+    receiver: tuple[Receiver, str, str], status: int, retry_after: str | None, expected: Delivery
 ) -> None:
     found, base, ref = receiver
     found.failures.append((status, retry_after))
@@ -448,33 +448,33 @@ async def test_smtp_implicit_tls_and_none(authority: Authority, loopback: Loopba
 @pytest.mark.parametrize(
     ("sink", "expected"),
     [
-        ({"starttls": False}, Outcome("dead", "smtp_no_starttls")),
-        ({"replies": {"GREETING": "421 busy"}}, Outcome("retry", "smtp_temporary", 421)),
-        ({"replies": {"MAIL": "451 try later"}}, Outcome("retry", "smtp_temporary", 451)),
-        ({"replies": {"MAIL": "550 no"}}, Outcome("dead", "smtp_permanent", 550)),
-        ({"replies": {"AUTH": "535 bad credentials"}}, Outcome("dead", "smtp_permanent", 535)),
-        ({"replies": {"RCPT": ["550 unknown", "550 unknown"]}}, Outcome("dead", "smtp_permanent", 550)),
-        ({"replies": {"RCPT": ["450 busy", "550 unknown"]}}, Outcome("retry", "smtp_temporary", 450)),
-        ({"replies": {"RCPT": ["550 unknown"]}}, Outcome("sent", "recipients_refused", 250)),
-        ({"replies": {"END": "452 full"}}, Outcome("retry", "smtp_temporary", 452)),
+        ({"starttls": False}, Delivery("dead", "smtp_no_starttls")),
+        ({"replies": {"GREETING": "421 busy"}}, Delivery("retry", "smtp_temporary", 421)),
+        ({"replies": {"MAIL": "451 try later"}}, Delivery("retry", "smtp_temporary", 451)),
+        ({"replies": {"MAIL": "550 no"}}, Delivery("dead", "smtp_permanent", 550)),
+        ({"replies": {"AUTH": "535 bad credentials"}}, Delivery("dead", "smtp_permanent", 535)),
+        ({"replies": {"RCPT": ["550 unknown", "550 unknown"]}}, Delivery("dead", "smtp_permanent", 550)),
+        ({"replies": {"RCPT": ["450 busy", "550 unknown"]}}, Delivery("retry", "smtp_temporary", 450)),
+        ({"replies": {"RCPT": ["550 unknown"]}}, Delivery("sent", "recipients_refused", 250)),
+        ({"replies": {"END": "452 full"}}, Delivery("retry", "smtp_temporary", 452)),
         # smtplib's own refusals are permanent, never smtp_no_starttls: STARTTLS without AUTH, SMTPS
         # without AUTH, no AUTH mechanism in common
         (
             {"replies": {"EHLO": "250-sink\r\n250-STARTTLS\r\n250 8BITMIME"}},
-            Outcome("dead", "smtp_permanent"),
+            Delivery("dead", "smtp_permanent"),
         ),
         (
             {"implicit": True, "replies": {"EHLO": "250-sink\r\n250 8BITMIME"}},
-            Outcome("dead", "smtp_permanent"),
+            Delivery("dead", "smtp_permanent"),
         ),
         (
             {"replies": {"EHLO": "250-sink\r\n250-AUTH GSSAPI\r\n250-STARTTLS\r\n250 8BITMIME"}},
-            Outcome("dead", "smtp_permanent"),
+            Delivery("dead", "smtp_permanent"),
         ),
     ],
 )
 async def test_smtp_answers_are_closed_codes(
-    authority: Authority, loopback: Loopback, tmp_path: Path, sink: dict[str, Any], expected: Outcome
+    authority: Authority, loopback: Loopback, tmp_path: Path, sink: dict[str, Any], expected: Delivery
 ) -> None:
     server = SmtpSink(authority, **sink)
     loopback.names["smtp.test"] = ["127.0.0.1"]

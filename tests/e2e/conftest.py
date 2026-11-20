@@ -110,8 +110,9 @@ class _LLM(BaseHTTPRequestHandler):
         self.requests.append(body)
         last = body["messages"][-1]
         message: dict[str, Any] = {"role": "assistant", "content": None}
-        if last["role"] == "tool":
-            data = json.loads(last["content"])["data"]
+        framed = json.loads(last["content"]) if last["role"] == "tool" else {}
+        if framed.get("tool") == "get_run_summary":  # not the root cause a fixed question is given
+            data = framed["data"]
             cause, different = data["root_causes"][0]["root_cause_id"], data["counters"]["different"]
             message["content"] = f"{different} keys differ; the most probable root cause is [{cause}]."
         else:

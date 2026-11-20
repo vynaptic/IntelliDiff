@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
 from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable, Hashable, Iterator, Mapping
@@ -29,7 +28,7 @@ from jsonschema import Draft202012Validator
 from deltasleuth import approvals, licence, prechecks, readiness, schedules
 from deltasleuth.agent import tools as chat
 from deltasleuth.agent.prompt import frame
-from deltasleuth.agent.tools import _CAUSE, _RUN, COMPARE_LIMIT, Scope, ToolError, _cell, _pick, _picks
+from deltasleuth.agent.tools import _CAUSE, _RUN, COMPARE_LIMIT, Scope, ToolError, _cell, _pick, _picks, taken
 from deltasleuth.auth.principal import Principal, Throttle
 from deltasleuth.config import McpSettings
 from deltasleuth.connectors.tables import code  # the one name of a connector this package takes
@@ -56,10 +55,6 @@ PAGE, ROWS = 10, 20  # a list's rows unless asked, and at most (list_runs: RUNS,
 RUNS = 12
 TEXT = 128  # characters a new tool's string argument holds at most
 WAIT = 10.0  # seconds a call waits for a slot
-BIGINT = 2**63  # PostgreSQL's bigint holds the integers below it, down to its negative
-# What no string argument holds: a NUL, which the store takes in no text, or an unpaired surrogate, which
-# is not UTF-8. A stored key may hold any other control character its spec's pattern admits.
-UNSTORED = re.compile(r"[\x00\ud800-\udfff]")
 LIMITED = ("compare_key", "get_readiness")  # at most COMPARE_LIMIT calls a minute per caller
 FAULT = "internal error: request {} names it in the server log"
 UNTRUSTED = (
@@ -500,22 +495,6 @@ CATALOGUE = {
 _VALIDATORS = {spec.name: Draft202012Validator(spec.input_schema) for spec in CATALOGUE.values()}
 
 
-def _taken(args: Mapping[str, Any]) -> dict[str, Any]:
-    """``args``, which their schema admits, as the tools and the store take them, refused otherwise: a
-    number written as a float is the integer it equals (``integer`` admits 5.0, and no schema takes any
-    other number), none is beyond PostgreSQL's bigint, and no string holds a NUL or an unpaired surrogate."""
-    taken = {}
-    for name, value in args.items():
-        if isinstance(value, float):
-            value = int(value)
-        if isinstance(value, int) and not -BIGINT <= value < BIGINT:
-            raise ToolError(f"invalid arguments: {name!r} is beyond a 64-bit integer")
-        if isinstance(value, str) and UNSTORED.search(value):
-            raise ToolError(f"invalid arguments: {name!r} holds a NUL or an unpaired surrogate")
-        taken[name] = value
-    return taken
-
-
 def unserved(settings: McpSettings, spec: ToolSpec) -> str | None:
     """Why the settings do not serve ``spec``: the first data class of its results they do
     not list, else ``mcp.work`` for a work tool they do not list; None when they serve it."""
@@ -623,7 +602,7 @@ async def _answered(
         raise ToolError(f"{spec.name} needs the {spec.role} role")
     if (error := next(_VALIDATORS[spec.name].iter_errors(args), None)) is not None:
         raise ToolError(f"invalid arguments: {error.message}")
-    args = _taken(args)
+    args = taken(args)  # as the chat's tools take theirs
     if spec.name in LIMITED and not limits.limited.hit((who.actor, spec.name)):
         raise ToolError(f"rate limited: at most {COMPARE_LIMIT} {spec.name} calls a minute per caller")
     async with limits.slot(who.actor):

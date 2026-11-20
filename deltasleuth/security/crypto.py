@@ -12,6 +12,7 @@ import hmac
 import json
 import os
 import re
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -37,6 +38,18 @@ _REFUSED = "sealed value does not authenticate"
 
 class KeyringError(ValueError):
     """The keyring is unreadable or lacks a KEK; the message names a file, line or KEK id only."""
+
+
+class MaskedAlike(ValueError):
+    """``count`` keys share their masked key with another: one masked key holds one key's row, results
+    and findings, so it cannot stand for two. The message counts the keys and names none."""
+
+    def __init__(self, count: int) -> None:
+        super().__init__(
+            f"{count} keys are one key once masked (they differ only in Unicode normal form): give each key"
+            " in one form"
+        )
+        self.count = count
 
 
 def key_id(prefix: str, key: bytes) -> str:
@@ -181,7 +194,11 @@ class Sealer:
             raise ValueError(_REFUSED) from None
 
     def seal_keys(self, keys: Mapping[str, str]) -> dict[str, bytes]:
-        """Raw key -> masked key, as a run's keys are given, into masked key -> ``key_enc``."""
+        """Raw key -> masked key, as a run's keys are given, into masked key -> ``key_enc``. Keys that
+        share a masked key raise ``MaskedAlike``: one of them would be lost."""
+        if len(set(keys.values())) < len(keys):
+            shared = Counter(keys.values())
+            raise MaskedAlike(sum(n for n in shared.values() if n > 1))
         return {masked: self.seal("run_key", 0, masked, raw.encode()) for raw, masked in keys.items()}
 
     def open_row(self, row: Mapping[str, Any]) -> dict[str, Any]:

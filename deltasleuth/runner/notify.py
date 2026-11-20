@@ -34,7 +34,7 @@ from typing import Any
 from deltasleuth import approvals, notifications
 from deltasleuth.auth.principal import WORKER
 from deltasleuth.config import NotifySettings
-from deltasleuth.connectors.notify import Outcome, Sender
+from deltasleuth.connectors.notify import Delivery, Sender
 from deltasleuth.connectors.retry import retry_delay
 from deltasleuth.context import Context
 from deltasleuth.core import jsonio
@@ -424,7 +424,7 @@ class Notifier:
                     conn, head["delivery_id"], notify.timeout_seconds + LEASE_GRACE_S
                 )
 
-    async def _record(self, name: str, head: repo.Row, outcome: Outcome) -> None:
+    async def _record(self, name: str, head: repo.Row, outcome: Delivery) -> None:
         """Record an attempt: sent, due again after a backoff (``Retry-After`` a floor), or dead."""
         notify, attempts, delivery_id = self.notify, head["attempts"], head["delivery_id"]
         assert notify is not None

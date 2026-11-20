@@ -256,16 +256,18 @@ async def _purge_cycle(
 
 async def _drain(ctx: Context, done: Summary) -> None:
     """Delete the blobs queued over 24 h ago that no observation names, ``DRAIN`` per transaction under
-    the exclusive blob lock; the others stay (shared), and every drained address leaves the queue."""
+    the exclusive blob lock; the others stay (shared), and every drained address leaves the queue. A batch's
+    files are unlinked and each directory that lost one synced once before its addresses leave the queue, so
+    after a crash a queued blob is either gone for good or still queued."""
     while True:
         async with ctx.pool.connection() as conn:
             await repo.lock_blobs(conn, exclusive=True)
             queued = await repo.gc_due(conn, DRAIN)
             kept = await repo.referenced(conn, queued)
-            for address in queued:
-                if address not in kept and (freed := await asyncio.to_thread(ctx.evidence.delete, address)):
-                    done.blobs_deleted += 1
-                    done.bytes += freed
+            unused = [address for address in queued if address not in kept]
+            for freed in (await asyncio.to_thread(ctx.evidence.delete_all, unused)).values():
+                done.blobs_deleted += freed > 0
+                done.bytes += freed
             done.blobs_shared += len(kept)
             await repo.gc_done(conn, queued)
         if len(queued) < DRAIN:

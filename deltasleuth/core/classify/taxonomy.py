@@ -1,4 +1,4 @@
-"""Taxonomy registry: core codes as ``ds.taxonomy_codes`` seeds them, plus packs.
+"""Taxonomy registry: the core codes, held in this module, plus those of the active domain pack.
 
 A domain pack is any ``deltasleuth.packs.<module>`` exposing a ``PACK``: it adds domain-level
 codes and display aliases of core codes (``MISSING_ENTITY`` for ``MISSING_DOCUMENT``). Findings
@@ -25,7 +25,7 @@ class TaxonomyError(ValueError):
 
 @dataclass(frozen=True)
 class TaxonomyCode:
-    """One registry row (``ds.taxonomy_codes``)."""
+    """One code of the registry."""
 
     code: str
     pack: str

@@ -34,6 +34,7 @@ from deltasleuth.llm.model import (
     ToolCallPart,
     ToolResultPart,
     Usage,
+    model_name,
     safe_code,
 )
 from deltasleuth.llm.profiles import Capabilities, LLMProfile
@@ -166,7 +167,7 @@ def from_wire(message: Any) -> LLMResponse:
         message=Message(Role.ASSISTANT, tuple(parts) or (TextPart(""),)),
         stop_reason=_STOP.get(stop or "", "other"),
         usage=_usage(message.usage),
-        model_reported=message.model,
+        model_reported=model_name(message.model),
         response_id=message.id,
         provider_stop=stop,
     )

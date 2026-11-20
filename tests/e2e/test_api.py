@@ -113,18 +113,21 @@ def test_explain_and_summarise_are_cited_or_refused(serve: Any, make_stack: Any,
         pdf = pdf_text(client.get(f"/v1/runs/{run_id}/reports/report.pdf").content)
     if not ai:
         assert [(d.status_code, d.json()) for d in drafts] == [(503, {"detail": "AI disabled"})] * 3
-        assert sent == [] and "No chat answers were given about this run." in pdf
+        assert sent == [] and "No chat answer of this cycle cites a tool result." in pdf
         return
     assert [d.status_code for d in drafts] == [201] * 3
     explained, summarised, refused = (d.json()["messages"][-1] for d in drafts)
     assert [m["citations"] for m in (explained, summarised, refused)] == [[first], [first], []]
     problem = f"the answer does not cite [{other}], the root cause asked about"
     assert refused["content"] == prompt.abstain([problem])
-    # report.pdf's annex holds each draft as any chat answer, the refusal too
+    # report.pdf's annex holds each cited draft as any chat answer, never the refusal
     assert pdf.count(explained["content"]) == 2 and "AI-generated, not evidence" in pdf
-    assert all(f"{d.json()['session_id']}:" in pdf for d in drafts)
-    stored = [d.json()["messages"][0]["content"] for d in drafts]
-    assert stored[0].startswith(prompt.EXPLAIN.format(id=first) + "\n\n") and stored[1] == prompt.SUMMARISE
+    assert [d.json()["session_id"] in pdf for d in drafts] == [True, True, False]
+    stored = [d.json()["messages"][:2] for d in drafts]
+    assert stored[1][0]["content"] == prompt.SUMMARISE
+    assert stored[0][0]["content"] == prompt.EXPLAIN.format(id=first)  # its root cause: a tool result
+    given = stored[0][1]
+    assert (given["role"], json.loads(given["content"])["data"]["root_cause_id"]) == ("tool", first)
     offered = {tool["function"]["name"] for request in sent for tool in request["tools"]}
     assert "compare_key" not in offered  # developer mode is an operator; a fixed question's agent a viewer
     assert [v[:3] for v in raw_pii("customer") if v in json.dumps(sent)] == []

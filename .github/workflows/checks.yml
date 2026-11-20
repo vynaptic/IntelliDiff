@@ -40,7 +40,8 @@ jobs:
       - name: Lint
         run: uv run --frozen ruff check deltasleuth mocks tests examples tools
       - name: Python tests
-        run: uv run --frozen pytest -q -p no:cacheprovider
+        # typer draws its help as a coloured terminal when GITHUB_ACTIONS is set; the tests read plain text
+        run: env -u GITHUB_ACTIONS uv run --frozen pytest -q -p no:cacheprovider
       - name: Install the UI's dependencies
         run: npm --prefix web ci
       - name: UI tests

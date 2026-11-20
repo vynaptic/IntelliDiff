@@ -1,5 +1,17 @@
 """The answer contract: at least one inline citation [F-…] [O-…] [RC-…] [K:<masked key>], each an
-id that this session's tool results returned, and no number that no tool result holds.
+id that this session's tool results returned, and no number that no tool result holds. Sentence by
+sentence: one that states a number or names an outcome cites at least one such id, and each number it
+states stands in the record of an id it cites. A sentence that does neither may stand uncited.
+
+A record is a mapping of a tool result that holds a citable id, with everything nested in it: a finding,
+a root cause, a side's observation, a key's view. A number that stands in no record (a run's counters,
+beside its root causes) is the record of every id its result holds. A sentence ends at a line break, or
+at a full stop, question or exclamation mark before a space; citations that open the next sentence are
+the ones before it too (``It differs. [F-…]``).
+
+A sentence names an outcome when it holds an outcome's name or its plain form (``MISMATCH``, ``match``,
+``differ``, ``missing``, ``not found``, ...), or a verdict on the run (``certified``, ``approved``,
+``signed off``, ``cut-over``), unless ``not``, ``never`` or ``no`` stands right before the verdict.
 
 A number is read in each of these forms and judged by its value:
 
@@ -12,9 +24,10 @@ A number is read in each of these forms and judged by its value:
 
 A count in a shorthand (2.4M, 1e6, 1.250.000) is refused as written unless a tool result shows it so.
 
-No number: digits inside a token, an id, a masked key or a version; an ordinal (``first``, ``2nd``); a
-number word joined to another word by a hyphen (``four-eyes``, ``one-shot``); a side's name; the word
-``one`` on its own, which is mostly a pronoun; and ``two`` before the pair's own noun (``the two sides``)."""
+No number: digits inside a token, an id, a masked key, a code (``ORG-000007``) or a version; an ordinal
+(``first``, ``2nd``); a number word joined to another word by a hyphen (``four-eyes``, ``one-shot``); a
+side's name; the word ``one`` on its own, which is mostly a pronoun; and ``two`` before the pair's own noun
+(``the two sides``)."""
 
 from __future__ import annotations
 
@@ -22,7 +35,10 @@ import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from decimal import Decimal
+from itertools import pairwise
 from typing import Any
+
+from deltasleuth.core.types import Outcome, Verdict
 
 CITATION = re.compile(r"\[((?:F|O|RC)-[0-9A-Za-z]+|K:[^\]\n]+)\]")
 # What a number's digits may carry attached: a unit of time or size, a share, or a multiplier's x.
@@ -33,10 +49,10 @@ UNITS = (
 )  # fmt: skip
 _GAP = " \u00a0\u2007\u2009\u202f'\u2019"  # what groups of three digits stand behind, a comma aside
 _APART = re.compile(f"[{_GAP}]")
-# 1,234 and 1 234 are one number, .97 is one, and 250ms is one with its unit; digits inside a token, an id
-# or a version are not a number.
+# 1,234 and 1 234 are one number, .97 is one, and 250ms is one with its unit; digits inside a token, an id,
+# a code behind a word and a hyphen (ORG-000007) or a version are not a number.
 NUMBER = re.compile(
-    rf"(?<![\w.])(?P<digits>(?:\d{{1,3}}(?:[{_GAP}]\d{{3}})+|\d(?:[\d,]*\d)?)(?:\.\d+)?|\.\d+)"
+    rf"(?<![\w.])(?<![A-Za-z_]-)(?P<digits>(?:\d{{1,3}}(?:[{_GAP}]\d{{3}})+|\d(?:[\d,]*\d)?)(?:\.\d+)?|\.\d+)"
     rf"(?P<unit>(?i:{'|'.join(UNITS)}))?(?!\w|\.\d)"
 )
 # A count NUMBER does not read: with a magnitude (2.4M, 37k, 3bn) or an exponent (1e6), or grouped by dots
@@ -87,36 +103,91 @@ _CITABLE = {
     "key_masked": "K:",
     "sample_keys": "K:",
 }
+# The outcomes by their names (an underscore read as a space too) and their plain forms; and a verdict on
+# the run, which no tool result holds, unless ``not``, ``never`` or ``no`` stands right before it.
+_NAMES = sorted({value.lower().replace("_", "[ _]") for value in (*Outcome, *Verdict)}, key=len, reverse=True)
+OUTCOME = re.compile(
+    rf"\b(?:(?:{'|'.join(_NAMES)})s?|(?:mis)?match(?:es|ed|ing)?|differ\w*|missing|not found"
+    r"|drift(?:ed|ing)?)\b",
+    re.IGNORECASE,
+)
+VERDICT = re.compile(
+    r"(?<!\bnot )(?<!\bnever )(?<!\bno )\b(?:certif\w*|approv\w*|attest\w*|sign(?:s|ed|ing)?[- ]?off"
+    r"|cut[- ]?over)\b",
+    re.IGNORECASE,
+)
+# Where a sentence ends: a line break, or a full stop, question or exclamation mark (and what closes a
+# quote or bracket) before a space, but not after an abbreviation.
+_END = re.compile(r"\n|[.!?]+[\"'\u2019\u201d)\]]*(?=\s)")
+_ABBREVIATED = re.compile(r"(?:^|[\s(])(?:e\.g|i\.e|etc|vs|cf|approx|incl|no|nr|fig)$", re.IGNORECASE)
+_LEADING = re.compile(rf"\s*(?:{CITATION.pattern}[\s,;:]*)+")  # citations that open a sentence
+_EXCERPT = 80  # characters of a sentence the repair request quotes
 
 
 @dataclass
 class Evidence:
-    """The citable ids and the numbers of a session's tool results, and the shorthand its texts show (a
-    value such as ``6M``)."""
+    """The citable ids and the numbers of a session's tool results, the numbers of the records each id
+    stands in (``held``), and the shorthand its texts show (a value such as ``6M``)."""
 
     ids: set[str] = field(default_factory=set)
     numbers: set[Decimal] = field(default_factory=set)
     shorthand: set[str] = field(default_factory=set)
+    held: dict[str, set[Decimal]] = field(default_factory=dict)
 
-    def add(self, data: Any, name: str | None = None) -> None:
-        """Take in one tool result's data (``name``: the field holding it)."""
+    def add(self, data: Any) -> None:
+        """Take in one tool result's data: each number under the ids of the records it stands in, and one
+        that stands in no record under every id the result holds."""
+        loose: set[Decimal] = set()
+        found: set[str] = set()
+        self._add(data, (), loose, found)
+        for cited in found:
+            self.held.setdefault(cited, set()).update(loose)
+
+    def _add(self, data: Any, owners: tuple[str, ...], loose: set[Decimal], found: set[str]) -> None:
+        """Take in ``data``, which stands in the records of ``owners``."""
         if isinstance(data, dict):
-            for k, v in data.items():
-                self.add(v, k)
+            own = _ids(data)
+            self.ids.update(own)
+            found.update(own)
+            for value in data.values():
+                self._add(value, (*owners, *own), loose, found)
         elif isinstance(data, list):
-            for v in data:
-                self.add(v, name)
-        elif isinstance(data, str):
-            self.numbers.update(value for _, value in stated(data))
-            # Each group of a spaced number is also a value of its own: "10 250" may be two numbers.
-            self.numbers.update(
-                _number(group) for found in NUMBER.finditer(data) for group in _APART.split(found["digits"])
-            )
-            self.shorthand.update(SHORTHAND.findall(data))
-            if name in _CITABLE:
-                self.ids.add(_CITABLE[name] + data)
-        elif isinstance(data, int | float | Decimal) and not isinstance(data, bool):
-            self.numbers.add(Decimal(str(data)))
+            for value in data:
+                self._add(value, owners, loose, found)
+        else:
+            values = _values(data)
+            self.numbers.update(values)
+            if isinstance(data, str):
+                self.shorthand.update(SHORTHAND.findall(data))
+            for owner in owners:
+                self.held.setdefault(owner, set()).update(values)
+            if not owners:
+                loose.update(values)
+
+
+def _ids(record: dict[str, Any]) -> set[str]:
+    """The citable ids a mapping holds itself. Only the ``_CITABLE`` fields hold ids: an id-shaped string
+    inside a value is data, not evidence."""
+    ids = set()
+    for name, prefix in _CITABLE.items():
+        value = record.get(name)
+        for item in value if isinstance(value, list) else [value]:
+            if isinstance(item, str):
+                ids.add(prefix + item)
+    return ids
+
+
+def _values(data: Any) -> set[Decimal]:
+    """The numbers a scalar holds."""
+    if isinstance(data, str):
+        values = {value for _, value in stated(data)}
+        # Each group of a spaced number is also a value of its own: "10 250" may be two numbers.
+        return values | {
+            _number(group) for found in NUMBER.finditer(data) for group in _APART.split(found["digits"])
+        }
+    if isinstance(data, int | float | Decimal) and not isinstance(data, bool):
+        return {Decimal(str(data))}
+    return set()
 
 
 def check(
@@ -125,7 +196,7 @@ def check(
     """The answer's citations (first-use order) and its problems, none when it is valid. ``must``: the
     root cause a fixed question asked about, which the answer has to cite. ``shown``: the problems are for
     a reader (the abstention), not for the model's repair: an unknown citation's text is the model's own,
-    so it is named by its kind unless it has a stored id's shape."""
+    so it is named by its kind unless it has a stored id's shape, and a sentence by its place."""
     cited = tuple(dict.fromkeys(CITATION.findall(answer)))
     unknown = dict.fromkeys(_named(c) if shown else f"[{c}]" for c in cited if c not in evidence.ids)
     problems = [f"{c} is not an id of this session's tool results" for c in unknown]
@@ -141,9 +212,58 @@ def check(
         problems.append("the answer is empty")
     elif not cited:
         problems.append("the answer cites no tool result")
+    else:
+        problems += dict.fromkeys(_unsupported(answer, evidence, shown))
     if must is not None and must not in cited:
         problems.append(f"the answer does not cite [{must}], the root cause asked about")
     return cited, problems
+
+
+def _unsupported(answer: str, evidence: Evidence, shown: bool) -> Iterator[str]:
+    """What each sentence lacks: a citation of a returned id, when it states a number or names an outcome,
+    or, of a number some tool result holds, a cited id whose record holds it."""
+    for n, (sentence, cited) in enumerate(sentences(answer), 1):
+        bare = CITATION.sub(" ", sentence)
+        numbers = stated(bare)
+        claims = bool(OUTCOME.search(bare) or VERDICT.search(bare))
+        known = [c for c in cited if c in evidence.ids]
+        where = f"sentence {n}" if shown else f'the sentence "{_excerpt(sentence)}"'
+        if not known:
+            written = ", ".join(dict.fromkeys(said for said, _ in numbers))
+            said = ([f"states {written}"] if numbers else []) + (["names an outcome"] if claims else [])
+            if said:
+                yield f"{where} {' and '.join(said)} but cites no tool result"
+            continue
+        held = set().union(*(evidence.held.get(c, set()) for c in known))
+        for written, value in numbers:
+            if value in evidence.numbers and value not in held:  # else: no tool result holds it at all
+                yield f"{written} in {where} appears in no record it cites"
+
+
+def sentences(answer: str) -> list[tuple[str, tuple[str, ...]]]:
+    """The answer's sentences, each with the citations it holds and those that open the sentence after it."""
+    # Where a sentence ends is read with each citation blanked: a masked key may hold a full stop.
+    blank = CITATION.sub(lambda found: "#" * len(found[0]), answer)
+    cuts = [0]
+    for end in _END.finditer(blank):
+        if end[0] == "\n" or not _ABBREVIATED.search(blank, 0, end.start()):
+            cuts.append(end.end())
+    cuts.append(len(answer))
+    parts = [answer[start:stop].strip() for start, stop in pairwise(cuts)]
+    parts = [part for part in parts if part]
+    found = [tuple(CITATION.findall(part)) for part in parts]
+    opened = [
+        tuple(CITATION.findall(lead[0])) if (lead := _LEADING.match(part)) else () for part in parts
+    ]
+    return [
+        (part, tuple(dict.fromkeys(found[i] + (opened[i + 1] if i + 1 < len(parts) else ()))))
+        for i, part in enumerate(parts)
+    ]
+
+
+def _excerpt(sentence: str) -> str:
+    said = " ".join(sentence.split())
+    return said if len(said) <= _EXCERPT else said[: _EXCERPT - 1] + "…"
 
 
 def stated(text: str) -> list[tuple[str, Decimal]]:
@@ -211,8 +331,10 @@ def _number(text: str) -> Decimal:
 
 def _named(cited: str) -> str:
     """An unknown citation as a reader is told of it: an id of the stored shape as cited, any other by its
-    kind alone (a masked key may be any text, so a ``K:`` citation always)."""
+    kind alone (a masked key may be any text, so a ``K:`` citation always). Never in brackets, which the UI
+    would draw as a citation the server accepted."""
     if _STORED.fullmatch(cited):
-        return f"[{cited}]"
-    kind = "K:" if cited.startswith("K:") else cited.partition("-")[0] + "-"
-    return f"a [{kind}...] citation"
+        return cited
+    if cited.startswith("K:"):
+        return "a K:... citation"
+    return f"an {cited.partition('-')[0]}-... citation"

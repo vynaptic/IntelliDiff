@@ -701,7 +701,7 @@ export interface AttestedSample {
   draw_id: string;
   method: 'bottom_k' | 'rate';
   salt_label: string;
-  nonce: string;
+  nonce: string | null; // withheld below rule_approver
   salt_sha256: string;
   drawn_at: string;
   draw_seq: number;

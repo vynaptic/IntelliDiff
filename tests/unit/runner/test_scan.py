@@ -363,6 +363,39 @@ async def test_keys_out_of_order_fail_the_run(
     assert opened == [0, 0] and (run["scan"]["matched"], run["scan"]["candidates"]) == (0, 0)
 
 
+@pytest.mark.parametrize("batch", [10_000, 1], ids=["one checkpoint", "a checkpoint each"])
+async def test_keys_found_that_mask_alike_fail_the_run_counted_never_dropped(
+    open_harness: OpenHarness,
+    databases: Callable[[str], str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    batch: int,
+) -> None:
+    """Side a holds one invented key in NFC, side b the same key in NFD: two keys, each on one side, that
+    a token masks alike. No masked key can hold a result for each, so the run fails saying so; the keys
+    its scan saved are the keys it counted, and its error names no key."""
+    alike = {"a": "ORG-\u00c401", "b": "ORG-A\u030801"}
+    monkeypatch.setattr(scanning, "BATCH", batch)
+    targets = {}
+    for side, key in alike.items():
+        seed = f"""
+            CREATE TABLE users (userid text PRIMARY KEY, email text);
+            INSERT INTO users VALUES ('ORG-000123', 'u'), ('{key}', 'u');
+        """  # noqa: S608 (invented keys)
+        (tmp_path / f"dsn_{side}").write_text(databases(seed))
+        targets[f"db-{side}"] = {"dsn_ref": f"file:{tmp_path / f'dsn_{side}'}", "rate_per_s": 1000}
+    spec = SPEC | {"key": SPEC["key"] | {"class": "identifier"}}
+    async with open_harness(json.dumps({"targets": targets})) as h:
+        run_id = await create_run(h.ctx, await h.spec(json.dumps(spec)), "batch", who=TESTER)
+        run = await h.finish(run_id, (*repo.TERMINAL, "paused"))
+        async with h.ctx.pool.connection() as conn:
+            rows, _ = await repo.list_keys(conn, run_id)
+    assert run["status"] == "failed"
+    assert re.fullmatch(r"KeysMaskAlike: the scan found (2 keys|a key) .*Unicode normal form.*", run["error"])
+    assert not any(key in run["error"] for key in alike.values())
+    assert run["scan"]["candidates"] == len(rows) == (0 if batch > 1 else 1)
+
+
 async def test_a_run_an_engine_s_error_fails_shows_where_and_its_log_line_names_the_keys(
     open_harness: OpenHarness,
     databases: Callable[[str], str],

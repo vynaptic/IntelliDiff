@@ -7,6 +7,7 @@ import asyncio
 import json
 import re
 from dataclasses import replace
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -14,8 +15,12 @@ import pytest
 from deltasleuth.agent import AIDisabled, Answer, answer, prompt
 from deltasleuth.agent.prompt import frame
 from deltasleuth.agent.tools import COMPARE_LIMIT, cause_facts
+from deltasleuth.approvals import ApprovalRequired
 from deltasleuth.auth.principal import expand
 from deltasleuth.core.types import ChangeType, Finding, KeyResult, Outcome, SideState, SideStateKind
+from deltasleuth.llm.client import LLMClient
+from deltasleuth.llm.model import LLMRequest, Message, TextPart
+from deltasleuth.llm.policy import EgressPolicy
 from deltasleuth.reports.pdf import report_document
 from deltasleuth.store import repo
 from tests.conftest import TESTER
@@ -162,27 +167,158 @@ async def test_compare_key_is_masked_and_rate_limited_per_asker(scripted, make_c
     assert compared[-1] == another.actor and len(compared) == COMPARE_LIMIT + 1
 
 
-async def test_a_failing_tool_never_loses_the_turn(scripted, make_ctx, monkeypatch) -> None:
-    """A runner refusal goes back to the model; any other failure ends the turn, which is stored."""
+async def test_a_failing_tool_never_loses_the_turn(scripted, make_ctx, monkeypatch, caplog) -> None:
+    """A refusal goes back to the model in its own words. Any other failure is a fault: the model reads
+    that one happened and none of its text, which may quote a key or a value; the log names its type and
+    where it was raised, never its message; the turn goes on and is stored."""
     llm = await scripted("openai_chat")
     ctx = make_ctx(llm)
     seeded, sid = await _session(ctx)
-    errors = [ValueError("1 key(s) do not match key.pattern"), RuntimeError("the database is gone")]
+    errors = [
+        ApprovalRequired("spec 1 (agent-demo 1.0.0) needs a four-eyes approval of clear before it runs"),
+        ValueError(f"key {RAW_KEY} does not match key.pattern"),
+        KeyError(RAW_EMAIL),
+        RuntimeError(f"the database lost {RAW_KEY}"),
+    ]
 
     async def compare_one(*_: Any, **__: Any) -> KeyResult:
         raise errors.pop(0)
 
     monkeypatch.setattr("deltasleuth.runner.compare_one", compare_one)
     call = ("compare_key", {"key": seeded.key})
-    llm.say("", call).say("", call)
+    llm.say("", call).say("", call).say("", call).say("", call).say("Nothing compared.").say("Nothing.")
 
-    with pytest.raises(RuntimeError):
-        await answer(ctx, sid, "Compare it now, twice.", TESTER)
+    reply = await answer(ctx, sid, "Compare it now, four times.", TESTER)
 
     messages, calls = await _stored(ctx, sid)
-    assert [m["role"] for m in messages] == ["user", "tool", "assistant"]
-    assert json.loads(messages[1]["content"])["error"] == "1 key(s) do not match key.pattern"
-    assert (messages[2]["content"], calls) == ("No answer: the turn failed.", [None, None])
+    assert [m["role"] for m in messages] == ["user", "tool", "tool", "tool", "tool", "assistant"]
+    told = [json.loads(m["content"])["error"] for m in messages[1:5]]
+    assert told == [
+        "spec 1 (agent-demo 1.0.0) needs a four-eyes approval of clear before it runs",
+        *[prompt.FAULT] * 3,
+    ]
+    assert reply.abstained and messages[5]["content"] == reply.text and calls == [None] * 6
+    assert RAW_KEY not in llm.sent() and RAW_EMAIL not in llm.sent()
+    logged = [r.getMessage() for r in caplog.records if r.name == "deltasleuth.agent"]
+    assert len(logged) == 3 and all(f"session {sid}" in line for line in logged)
+    kinds = [line.split(": ", 1)[1].split(" at ")[0] for line in logged]
+    assert kinds == ["ValueError", "KeyError", "RuntimeError"]
+    assert all(" at agent/tools.py:" in line for line in logged)
+    assert RAW_KEY not in caplog.text and RAW_EMAIL not in caplog.text
+
+
+async def test_each_key_the_chat_reads_is_a_key_view_of_the_session(scripted, make_ctx, monkeypatch) -> None:
+    """get_observations and a compare that succeeds each write key.view as the API and MCP write one, the
+    asker's via the session, with the turn; a read that fails writes none."""
+    llm = await scripted("openai_chat")
+    ctx = make_ctx(llm)
+    seeded, sid = await _session(ctx)
+
+    async def compare_one(ctx: Any, spec_id: int, key: str, *, who: Any) -> KeyResult:
+        side = SideState(SideStateKind.COMPLETE)
+        return KeyResult(key, Outcome.MATCH, side, side)
+
+    monkeypatch.setattr("deltasleuth.runner.compare_one", compare_one)
+    llm.say("", ("get_observations", {"key": seeded.key}), ("get_observations", {"key": "tok:x"}))
+    llm.say("", ("compare_key", {"key": seeded.key})).say("Read.").say("Read.")
+
+    await answer(ctx, sid, "Read it.", TESTER)
+
+    async with ctx.pool.connection() as conn:
+        cur = await conn.execute(
+            "SELECT actor, action, object, detail FROM ds.audit_log WHERE action = 'key.view' ORDER BY id"
+        )
+        rows = await cur.fetchall()
+    viewed = {"key_masked": seeded.key, "cycle": 1, "via": f"chat:{sid}"}
+    assert [(*row[:3], {name: row[3][name] for name in viewed}) for row in rows] == [
+        (TESTER.actor, "key.view", seeded.run_id, viewed)
+    ] * 2
+
+
+@pytest.mark.parametrize(
+    ("args", "problem"),
+    [
+        ({"key": "tok\u0000x"}, "invalid arguments: 'key' holds a NUL or an unpaired surrogate"),
+        (
+            {"path_pattern": "$.n\u0000"},
+            "invalid arguments: 'path_pattern' holds a NUL or an unpaired surrogate",
+        ),
+    ],
+)
+async def test_an_argument_the_store_cannot_take_is_a_refusal_the_model_reads(
+    args: dict[str, Any], problem: str, scripted, make_ctx
+) -> None:
+    """A NUL passes the schema, and the store refuses it: the model is told so, and the turn answers."""
+    llm = await scripted("openai_chat")
+    ctx = make_ctx(llm)
+    seeded, sid = await _session(ctx)
+    cause = seeded.causes["$.total"]
+    llm.say("", ("get_findings", args)).say("", ("get_run_summary", {})).say(f"The total differs [{cause}].")
+
+    reply = await answer(ctx, sid, "What differs?", TESTER)
+
+    told = json.loads(llm.tool_results(1)[0].removeprefix("ERROR: "))
+    assert told == {"tool": "get_findings", "error": problem}
+    assert (reply.citations, reply.abstained) == ((cause,), False)
+
+
+async def _said(ctx: Any, session_id: str, *turns: tuple[str, str]) -> None:
+    """Earlier turns of the session, each a question and its answer, stored as the agent stores them."""
+    async with ctx.pool.connection() as conn:
+        sealer = await ctx.sealer(conn, (await repo.get_chat_session(conn, session_id))["run_id"])
+        for asked, said in turns:
+            for role, content in (("user", asked), ("assistant", said)):
+                await repo.append_chat_message(conn, session_id, role, {"content": content}, sealer)
+
+
+async def test_only_the_newest_turns_that_fit_half_a_call_are_replayed(scripted, make_ctx) -> None:
+    """Whole turns, oldest dropped first, so that a long chat still leaves a call room for the question and
+    the tool results; the answer may still cite what the dropped turns' tool results returned."""
+    llm = await scripted("openai_chat")
+    ctx = make_ctx(llm, budgets={"max_input_tokens_per_call": 4000})
+    seeded, sid = await _session(ctx)
+    earlier = [(f"Question {n}? " + "q" * 2000, f"Answer {n}. " + "a" * 2000) for n in range(1, 5)]
+    await _said(ctx, sid, *earlier)
+    cause = seeded.causes["$.total"]
+    llm.say("", ("get_run_summary", {})).say(f"The total differs [{cause}].")
+
+    reply = await answer(ctx, sid, "And now?", TESTER)
+
+    assert (reply.citations, reply.abstained) == ((cause,), False)
+    replayed = [m["content"] for m in llm.requests[0]["messages"][1:-1]]
+    assert replayed == list(earlier[-1])  # one turn fits half the budget, two do not
+    async with LLMClient.from_profile(ctx.llm.get(PROFILE), egress=EgressPolicy("test")) as client:
+        def size(*turns: tuple[str, str]) -> int:
+            pairs = [pair for turn in turns for pair in zip(("user", "assistant"), turn, strict=True)]
+            said = [Message(role, (TextPart(text),)) for role, text in pairs]
+            return client.estimate_input_tokens(LLMRequest(tuple(said)))
+
+        assert size(earlier[-1]) <= 2000 < size(*earlier[-2:])
+
+
+async def test_a_result_that_would_overflow_the_next_call_is_refused_with_a_hint(scripted, make_ctx) -> None:
+    """A wide key's view and fifty of its findings do not fit a small call: the model reads that it should
+    ask for fewer rows, which it does, and the turn answers instead of running out of budget. The view it
+    never read is no key view."""
+    llm = await scripted("openai_chat")
+    ctx = make_ctx(llm, budgets={"max_input_tokens_per_call": 3000})
+    seeded, sid = await _session(ctx, note_b="n" * 100_000, wide=60)
+    total = seeded.findings["$.total"]
+    llm.say("", ("get_observations", {"key": seeded.key}))
+    llm.say("", ("get_findings", {"key": seeded.key, "limit": 50}))
+    llm.say("", ("get_findings", {"key": seeded.key, "path_pattern": "$.total", "limit": 1}))
+    llm.say(f"The total differs [{total}].")
+
+    reply = await answer(ctx, sid, "What differs?", TESTER)
+
+    assert (reply.citations, reply.abstained) == ((total,), False)
+    refused = [{"tool": name, "error": prompt.TOO_LARGE} for name in ("get_observations", "get_findings")]
+    assert [json.loads(r.removeprefix("ERROR: ")) for r in llm.tool_results(2)] == refused
+    messages, _ = await _stored(ctx, sid)
+    assert [json.loads(m["content"]) for m in messages[1:3]] == refused
+    async with ctx.pool.connection() as conn:
+        cur = await conn.execute("SELECT count(*) FROM ds.audit_log WHERE action = 'key.view'")
+        assert (await cur.fetchone())[0] == 0
 
 
 async def test_the_tool_call_budget_forces_an_answer(scripted, make_ctx) -> None:
@@ -226,6 +362,23 @@ async def test_a_cut_off_reply_is_not_an_answer(scripted, make_ctx) -> None:
     assert "capabilities.max_output" in reply.text  # the operator is told what to change
     assert len(llm.requests) == 2  # no repair is spent on it
     assert llm.requests[0]["max_completion_tokens"] == 8192  # the profile's declared max_output
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+async def test_a_reply_that_stops_for_a_reason_no_dialect_names_is_no_answer(dialect, scripted, make_ctx):
+    """An unknown stop reason may be a cut or a filter: without tool calls the reply is not checked as an
+    answer, and no repair is spent on it. With tool calls the calls run."""
+    llm = await scripted(dialect)
+    ctx = make_ctx(llm)
+    seeded, sid = await _session(ctx)
+    cause = seeded.causes["$.total"]
+    llm.say("", ("get_run_summary", {}), stop="paused_by_gateway")
+    llm.say(f"The total differs [{cause}]", stop="paused_by_gateway")
+
+    reply = await answer(ctx, sid, "What differs?", TESTER)
+
+    assert reply.abstained and "other: the model gave no complete answer" in reply.text
+    assert len(llm.requests) == 2 and json.loads(llm.tool_results(1)[0])["tool"] == "get_run_summary"
 
 
 async def test_the_profile_limits_hold_across_questions(scripted, make_ctx) -> None:
@@ -433,6 +586,34 @@ async def test_the_stored_calls_are_summed_as_they_were_charged(make_ctx) -> Non
     assert no_one == {"per_run_tokens": 0, "per_actor_tokens_per_day": 0}
 
 
+async def test_a_call_row_keeps_what_the_client_computed(scripted, make_ctx) -> None:
+    """The price version, currency, request hash, stop, attempt, data classes, host and input estimate stay
+    with each stored call, in its usage, beside what it was charged; a timed-out call's charge counts."""
+    llm = await scripted("openai_chat")
+    price = {"version": "p-2026-11", "currency": "EUR", "input_per_mtok": 2, "output_per_mtok": 8}
+    ctx = make_ctx(llm, pricing=price)
+    seeded, sid = await _session(ctx)
+    llm.say("", ("get_run_summary", {})).say(f"The total differs [{seeded.causes['$.total']}].")
+
+    await answer(ctx, sid, "What differs?", TESTER)
+    await _charged(ctx, sid, 7000, error_class="Timeout", usage_reported=None, usage_estimated=True)
+
+    async with ctx.pool.connection() as conn:
+        cur = await conn.execute("SELECT usage, cost, error FROM ds.llm_calls WHERE session_id = %s", (sid,))
+        rows = await cur.fetchall()
+        spent = await repo.chat_tokens(conn, seeded.run_id, TESTER.actor)
+    (first, second, late) = rows
+    assert first[0] | {
+        "price_version": "p-2026-11", "currency": "EUR", "stop": "tool_use", "attempt": 1,
+        "data_classes": ["production_clear_declared", "production_tokenised"], "host": "127.0.0.1",
+        "input": 50, "output": 10, "charged": 60, "reported": True,
+    } == first[0]  # fmt: skip
+    assert re.fullmatch(r"[0-9a-f]{64}", first[0]["request_hash"]) and first[0]["estimated_input_tokens"] > 0
+    assert (second[0]["stop"], first[1], second[1]) == ("end_turn", Decimal("0.00018"), Decimal("0.00018"))
+    assert (late[0]["charged"], late[0]["estimated"], late[2]) == (7000, True, "Timeout")
+    assert spent["per_run_tokens"] == 60 + 60 + 7000
+
+
 async def test_ai_off_refuses_to_answer(make_ctx) -> None:
     ctx = make_ctx(None)
     _, sid = await _session(ctx)
@@ -465,7 +646,7 @@ async def test_the_agent_acts_for_the_asker(scripted, make_ctx, monkeypatch) -> 
     await answer(ctx, sid, "Compare it.", TESTER)
 
     offered = [[tool["function"]["name"] for tool in request["tools"]] for request in llm.requests]
-    assert offered[0] == ["get_run_summary", "get_findings", "get_observations"]
+    assert offered[0] == ["get_run_summary", "get_findings", "get_observations", "get_root_cause"]
     assert offered[-1] == [*offered[0], "compare_key"]
     assert refused["error"] == "compare_key needs the operator role"
     assert [(who.actor, who.via) for who in asked] == [(TESTER.actor, f"chat:{sid}")]
@@ -489,9 +670,14 @@ async def _explain(ctx: Any, sid: str, about: dict[str, Any] | None) -> Answer:
     return await answer(ctx, sid, question, VIEWER, about=about)
 
 
-async def test_an_explanation_cites_its_root_cause_and_takes_its_facts_as_evidence(scripted, make_ctx):
-    """No tool is called: the id, the sample key and the count are evidence because the question held them."""
-    llm = await scripted("openai_chat")
+@pytest.mark.parametrize("dialect", DIALECTS)
+async def test_an_explanation_cites_its_root_cause_and_takes_its_facts_as_evidence(
+    dialect, scripted, make_ctx
+) -> None:
+    """No tool is called: the id, the sample key and the count are evidence because the root cause's facts
+    came as the result of a root_cause tool call, never inside the question, where a planted member name
+    or key would read as the asker's words."""
+    llm = await scripted(dialect)
     ctx = make_ctx(llm)
     seeded, sid, about = await _explaining(ctx)
     cause = about["root_cause_id"]
@@ -501,8 +687,22 @@ async def test_an_explanation_cites_its_root_cause_and_takes_its_facts_as_eviden
     reply = await _explain(ctx, sid, about)
 
     assert (reply.text, reply.citations, reply.abstained) == (text, (cause, f"K:{seeded.key}"), False)
-    asked = f"{prompt.EXPLAIN.format(id=cause)}\n\n{frame('root_cause', about)}"
-    assert llm.requests[0]["messages"][1]["content"] == f"Scope: run {seeded.run_id}.\n\n{asked}"
+    asked = f"Scope: run {seeded.run_id}.\n\n{prompt.EXPLAIN.format(id=cause)}"
+    facts = frame("get_root_cause", about)
+    sent = llm.requests[0]["messages"]
+    if dialect == "openai_chat":
+        (made,) = sent[2]["tool_calls"]
+        assert [m["role"] for m in sent] == ["system", "user", "assistant", "tool"]
+        assert (sent[1]["content"], sent[3]["content"]) == (asked, facts)
+        assert made["function"]["name"] == "get_root_cause"
+        assert json.loads(made["function"]["arguments"]) == {"root_cause_id": cause}
+    else:
+        (made,) = sent[1]["content"]
+        assert [m["role"] for m in sent] == ["user", "assistant", "user"]
+        expected = ([{"type": "text", "text": asked}], "get_root_cause", {"root_cause_id": cause})
+        assert (sent[0]["content"], made["name"], made["input"]) == expected
+        assert sent[2]["content"] == [{"type": "tool_result", "tool_use_id": made["id"], "content": facts}]
+    assert facts not in json.dumps(next(m for m in sent if m["role"] == "user"))
     async with ctx.pool.connection() as conn:
         bare = await repo.create_chat_session(conn, seeded.run_id, created_by=TESTER.actor)
     llm.say(text).say(text)
@@ -565,7 +765,8 @@ async def test_a_count_written_in_shorthand_is_refused(scripted, make_ctx) -> No
 
 async def test_a_refusal_holds_no_text_the_model_wrote_in_a_citation(scripted, make_ctx) -> None:
     """The repair request quotes the model's unknown citation back to it; the refusal, which is stored and
-    printed in report.pdf's annex, names it by its kind: nothing of the reply is shown."""
+    shown in the chat, names it by its kind: nothing of the reply is shown. report.pdf's annex prints no
+    refusal."""
     llm = await scripted("openai_chat")
     ctx = make_ctx(llm)
     seeded, sid, about = await _explaining(ctx)
@@ -580,17 +781,33 @@ async def test_a_refusal_holds_no_text_the_model_wrote_in_a_citation(scripted, m
 
     assert len(llm.requests) == 2  # the model reads its own text in the one repair request
     assert f"[K:{sentence}] is not an id" in llm.requests[1]["messages"][-1]["content"]
-    problem = "a [K:...] citation is not an id of this session's tool results"
+    problem = "a K:... citation is not an id of this session's tool results"
     assert (reply.text, reply.citations, reply.abstained) == (prompt.abstain([problem]), (), True)
     last = (await _stored(ctx, sid))[0][-1]
     assert (last["content"], last["citations"]) == (reply.text, [])
     annex = "\n".join((await report_document(ctx, seeded.run_id)).sections[-1].lines)
-    assert problem in annex and "CERTIFIED" not in annex
+    assert problem not in annex and "CERTIFIED" not in annex  # an abstention cites nothing: never printed
+
+
+async def test_a_claim_beside_a_citation_elsewhere_is_repaired_then_refused(scripted, make_ctx) -> None:
+    """The repair names the sentence and what it lacks; the abstention a reader is shown, its place only."""
+    llm = await scripted("openai_chat")
+    ctx = make_ctx(llm)
+    _, sid, about = await _explaining(ctx)
+    floating = f"The run is certified and approved for cut-over.\n\nUnrelated: [{about['root_cause_id']}]"
+    llm.say(floating).say(floating)
+
+    reply = await _explain(ctx, sid, about)
+
+    named = 'the sentence "The run is certified and approved for cut-over." names an outcome'
+    assert named in llm.requests[1]["messages"][-1]["content"]
+    shown = "sentence 1 names an outcome but cites no tool result"
+    assert (reply.text, reply.citations, reply.abstained) == (prompt.abstain([shown]), (), True)
 
 
 async def test_a_wrong_count_another_result_holds_passes(scripted, make_ctx) -> None:
-    """The limit of the number rule: it asks that a number stands in a tool result, not what it counts.
-    The group has 1 key; 12 is side B's total in its finding."""
+    """The limit of the number rule: it asks that a number stands in a record the sentence cites, not what
+    it counts. The group has 1 key; 12 is side B's total in its finding, which names the root cause."""
     llm = await scripted("openai_chat")
     ctx = make_ctx(llm)
     _, sid, about = await _explaining(ctx)
@@ -621,8 +838,9 @@ async def test_a_numbered_list_is_repaired_by_plain_sentences(scripted, make_ctx
 
 
 async def test_a_fixed_question_sends_only_masked_facts(scripted, make_ctx) -> None:
-    """Explain gives the root cause as get_run_summary sends it, and stores it, framed, with the question;
-    Summarise gives nothing. A viewer's tools, and no raw key or value on the wire."""
+    """Explain gives the root cause as get_run_summary sends it, and stores it as the result of a
+    get_root_cause tool call after the question; Summarise gives nothing. A viewer's tools, and no raw key
+    or value on the wire."""
     llm = await scripted("openai_chat")
     ctx = make_ctx(llm)
     seeded, sid, about = await _explaining(ctx)
@@ -636,12 +854,16 @@ async def test_a_fixed_question_sends_only_masked_facts(scripted, make_ctx) -> N
     replies = await _explain(ctx, sid, about), await answer(ctx, other, prompt.SUMMARISE, VIEWER)
 
     assert not [reply for reply in replies if reply.abstained]
-    facts = frame("root_cause", about)
-    assert json.loads(facts)["data"] == json.loads(llm.tool_results(1)[0])["data"]["root_causes"][0]
-    asked = [(await _stored(ctx, session))[0][0]["content"] for session in (sid, other)]
-    assert asked == [f"{prompt.EXPLAIN.format(id=cause)}\n\n{facts}", prompt.SUMMARISE]
+    facts = frame("get_root_cause", about)
+    assert json.loads(facts)["data"] == json.loads(llm.tool_results(1)[1])["data"]["root_causes"][0]
+    stored = [(await _stored(ctx, session))[0] for session in (sid, other)]
+    asked = [messages[0]["content"] for messages in stored]
+    assert asked == [prompt.EXPLAIN.format(id=cause), prompt.SUMMARISE]
+    made = {"id": "get_root_cause", "name": "get_root_cause", "arguments": {"root_cause_id": cause}}
+    given = stored[0][1]
+    assert (given["role"], given["content"], given["tool_calls"]) == ("tool", facts, [made])
     sent = [llm.requests[n]["messages"][1]["content"] for n in (0, 2)]  # each turn's first request
     assert sent == [f"Scope: run {seeded.run_id}.\n\n{question}" for question in asked]
     offered = {tool["function"]["name"] for request in llm.requests for tool in request["tools"]}
-    assert offered == {"get_run_summary", "get_findings", "get_observations"}
+    assert offered == {"get_run_summary", "get_findings", "get_observations", "get_root_cause"}
     assert not [raw for raw in (RAW_KEY, RAW_EMAIL) if raw in llm.sent() or raw in asked[0]]

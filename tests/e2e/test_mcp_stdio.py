@@ -20,9 +20,13 @@ from typing import Any
 import psycopg
 import pytest
 from mcp import Client, StdioServerParameters, stdio_client
+from psycopg_pool import AsyncConnectionPool
 
+from deltasleuth.config import load_settings
+from deltasleuth.core.secrets import read_secret
 from deltasleuth.mcp import tools
 from deltasleuth.runner import create_run
+from deltasleuth.store.db import migrate
 from mocks.registry import pair_dir
 from tests.conftest import TESTER
 
@@ -74,7 +78,11 @@ def frame(method: str, params: dict[str, Any] | None = None, *, n: int | None = 
 async def started(
     repo_root: Path, settings: Path, code: str = DS, *args: str, stderr: int = asyncio.subprocess.PIPE
 ) -> asyncio.subprocess.Process:
-    """``ds mcp ARGS`` with pipes for its three streams, as an agent's host starts it."""
+    """``ds mcp ARGS`` with pipes for its three streams, as an agent's host starts it, on a database
+    migrated first, as ``ds migrate`` does: ``ds mcp`` applies no migration."""
+    dsn = read_secret(load_settings(settings).database_dsn_ref)
+    async with AsyncConnectionPool(dsn, min_size=1, max_size=1, open=False) as pool:
+        await migrate(pool)
     argv = [sys.executable, "-c", code, "mcp", *args, "--config", str(settings)]
     env = {name: value for name, value in os.environ.items() if name not in ("DS_OPERATOR", "DS_CONFIG")}
     pipe = asyncio.subprocess.PIPE
@@ -99,7 +107,7 @@ async def ended(process: asyncio.subprocess.Process) -> tuple[int, str, str]:
 
 
 async def test_stdout_holds_only_frames(make_stack: Any, repo_root: Path, pg_dsn: str) -> None:
-    stack = make_stack(TARGETS, mcp=MCP)  # a fresh database: every migration is pending
+    stack = make_stack(TARGETS, mcp=MCP)  # a fresh database, migrated: its keys are made as ds mcp starts
     process = await started(repo_root, stack.settings, NOISY)
     try:
         hello = await answered(process, frame("initialize", HELLO, n=1))
@@ -142,7 +150,7 @@ async def test_stdout_holds_only_frames(make_stack: Any, repo_root: Path, pg_dsn
     # What the process, its descriptor and its child wrote to "stdout" is on stderr, once for each call.
     assert [sum(line == stray for line in lines) for stray in STRAYS] == [2, 2, 2]
     migrated = [json.loads(line) for line in lines if line.startswith("{")]
-    assert "system.migrate" in {row["action"] for row in migrated}  # the SIEM copy of its own audit rows
+    assert "keys.created" in {row["action"] for row in migrated}  # the SIEM copy of its own audit rows
     calls = [line for line in lines if line.startswith("tool=")]
     shape = r"tool=(\S+) actor=local:\S+ run=- bytes=\d+ ms=\d+ error=([01]) request_id=(C-[0-9a-f]{16})"
     seen = [re.fullmatch(shape, line).groups() for line in calls]  # type: ignore[union-attr]

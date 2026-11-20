@@ -262,6 +262,34 @@ def test_a_sampled_sign_off_judges_later_draws_at_request_and_decision(open_clie
     )
 
 
+def test_a_sampled_sign_off_s_review_withholds_its_draw_s_nonce_below_rule_approver(
+    open_client: OpenClient,
+) -> None:
+    """A sampled sign-off attests its draw. Its review shows that draw as the draw's own route does: below
+    rule_approver without its nonce or a stratum's u_max, from rule_approver up with both."""
+    with open_client(auth={"oidc": OIDC}) as client:
+        world = world_of(client)
+        dave = person_of(client, "dave", "operator")
+        signed_run, signed = draw(client, world, PROFILE)
+        request = client.post(f"/v1/runs/{signed_run}/cycles/1/signoff", headers=dave).json()
+        callers = {
+            "viewer": Callers(client).token("viewer"),
+            "operator": dave,
+            "rule_approver": person_of(client, "erin", "rule_approver"),
+        }
+        seen = {
+            role: client.get(f"/v1/approvals/{request['approval_id']}", headers=headers).json()["attests"]
+            for role, headers in callers.items()
+        }
+    for role in ("viewer", "operator"):
+        below = seen[role]["sample"]
+        assert below["draw_id"] == signed and below["nonce"] is None
+        assert below["strata"] and all("u_max" not in s for s in below["strata"])
+        assert seen[role] | {"sample": None} == seen["rule_approver"] | {"sample": None}  # nothing else
+    approver = seen["rule_approver"]["sample"]
+    assert len(approver["nonce"]) == 32 and all(s["u_max"] for s in approver["strata"])
+
+
 def test_a_sampling_spec_approval_s_review_lists_its_population_s_ledger(open_client: OpenClient) -> None:
     with open_client(auth={"oidc": OIDC}) as client:
         world = world_of(client)

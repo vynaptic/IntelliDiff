@@ -15,7 +15,15 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.hashes import SHA256
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-from deltasleuth.security.crypto import Keyring, KeyringError, Sealer, create_keyring, fingerprint, key_id
+from deltasleuth.security.crypto import (
+    Keyring,
+    KeyringError,
+    MaskedAlike,
+    Sealer,
+    create_keyring,
+    fingerprint,
+    key_id,
+)
 
 KEK_1, KEK_2 = "11" * 32, "a2" * 32
 REFUSED = "sealed value does not authenticate"
@@ -144,6 +152,13 @@ class TestSealer:
             sealer.open_row(row | {"key_enc": sealed["ORG-1"]})
         with pytest.raises(ValueError, match=REFUSED):  # moved to another run, its wrapped data key too
             Sealer(b"r" * 32, OTHER_RUN).open_row(row)
+
+    def test_keys_that_mask_alike_are_refused_naming_no_key(self) -> None:
+        nfc, nfd = "ORG-\u00c401", "ORG-A\u030801"  # one invented key in two Unicode forms
+        masked = "tok:identifier:v1:AAAA"
+        with pytest.raises(MaskedAlike, match=r"^2 keys ") as refused:
+            Sealer(b"r" * 32, RUN).seal_keys({nfc: masked, "ORG-000123": "ORG-000123", nfd: masked})
+        assert refused.value.count == 2 and "ORG-" not in str(refused.value)
 
     def test_rows_open_their_headers_and_chat(self) -> None:
         sealer = Sealer(b"r" * 32, RUN)

@@ -456,7 +456,7 @@ def test_the_command_prints_the_head_or_the_first_break(pg_dsn: str, tmp_path: P
     def ds(*args: Any) -> Any:
         return CliRunner().invoke(app, [str(a) for a in [*args, "--config", config]])
 
-    assert ds("init").exit_code == 0
+    assert ds("init").exit_code == ds("migrate").exit_code == 0  # only the services migrate as they start
     first = ds("audit", "verify")  # its start writes keys.created rows, before it reads the chain
     head, rows = asyncio.run(_stored(pg_dsn))
     assert head is not None and len(rows) == head["seq"]

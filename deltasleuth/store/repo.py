@@ -20,7 +20,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Container, Mappi
 from contextlib import asynccontextmanager
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, LiteralString
+from typing import Any, LiteralString, cast
 
 from psycopg import AsyncConnection, errors
 from psycopg.rows import dict_row
@@ -30,7 +30,16 @@ from psycopg_pool import AsyncConnectionPool
 from deltasleuth.auth.principal import Principal
 from deltasleuth.connectors.base import utc_iso
 from deltasleuth.core import jsonio
-from deltasleuth.core.types import CompiledSpec, KeyResult, Observation, RootCause, Side
+from deltasleuth.core.types import (
+    CompiledSpec,
+    KeyResult,
+    Observation,
+    Outcome,
+    RootCause,
+    Side,
+    Verdict,
+    derive_verdict,
+)
 from deltasleuth.security.crypto import Sealer, chat_context
 
 Conn = AsyncConnection[Any]
@@ -673,21 +682,23 @@ async def complete_inline(conn: Conn, run_id: str, cycle: int, key_masked: str) 
 
 
 async def schedule_recheck(
-    conn: Conn, run_id: str, cycle: int, key_masked: str, owner: str, available_at: datetime
+    conn: Conn, run_id: str, cycle: int, key_masked: str, owner: str, wait_s: float
 ) -> bool:
-    """Give up ``owner``'s lease and make the key due at ``available_at`` for its next pass."""
-    return await schedule_rechecks(conn, run_id, cycle, {key_masked: available_at}, owner) == 1
+    """Give up ``owner``'s lease and make the key due ``wait_s`` seconds after the database's now for its
+    next pass."""
+    return await schedule_rechecks(conn, run_id, cycle, {key_masked: wait_s}, owner) == 1
 
 
 async def schedule_rechecks(
-    conn: Conn, run_id: str, cycle: int, due: Mapping[str, datetime], owner: str
+    conn: Conn, run_id: str, cycle: int, due: Mapping[str, float], owner: str
 ) -> int:
-    """``schedule_recheck`` for each masked key and its due time; how many ``owner`` still held."""
+    """``schedule_recheck`` for each masked key and its wait in seconds, on the database's clock; how many
+    ``owner`` still held."""
     return await _changed(
         conn,
-        """UPDATE ds.run_keys k SET state = 'recheck', pass_no = pass_no + 1, available_at = d.at,
-               lease_owner = NULL, lease_until = NULL
-           FROM unnest(%s::text[], %s::timestamptz[]) AS d (key_masked, at)
+        """UPDATE ds.run_keys k SET state = 'recheck', pass_no = pass_no + 1,
+               available_at = now() + d.wait * interval '1 second', lease_owner = NULL, lease_until = NULL
+           FROM unnest(%s::text[], %s::float8[]) AS d (key_masked, wait)
            WHERE k.run_id = %s AND k.cycle = %s AND k.key_masked = d.key_masked AND k.state = 'leased'
              AND k.lease_owner = %s""",
         (list(due), list(due.values()), run_id, cycle, owner),
@@ -695,16 +706,16 @@ async def schedule_rechecks(
 
 
 async def schedule_retries(
-    conn: Conn, run_id: str, cycle: int, due: Mapping[str, datetime], owner: str
+    conn: Conn, run_id: str, cycle: int, due: Mapping[str, float], owner: str
 ) -> int:
-    """Give up ``owner``'s lease of each masked key and read it again from its first pass at its due time,
-    one more retry, its stored result's reason appended to ``attrs.retried``;
+    """Give up ``owner``'s lease of each masked key and read it again from its first pass its wait in seconds
+    after the database's now, one more retry, its stored result's reason appended to ``attrs.retried``;
     how many ``owner`` still held."""
     moved = await _rows(
         conn,
         """UPDATE ds.run_keys k SET state = 'pending', pass_no = 1, retries = retries + 1,
-               available_at = d.at, lease_owner = NULL, lease_until = NULL
-           FROM unnest(%s::text[], %s::timestamptz[]) AS d (key_masked, at)
+               available_at = now() + d.wait * interval '1 second', lease_owner = NULL, lease_until = NULL
+           FROM unnest(%s::text[], %s::float8[]) AS d (key_masked, wait)
            WHERE k.run_id = %s AND k.cycle = %s AND k.key_masked = d.key_masked AND k.state = 'leased'
              AND k.lease_owner = %s
            RETURNING k.key_masked""",
@@ -1027,13 +1038,18 @@ async def save_key_results(
 
 
 async def unexplained_critical(conn: Conn, run_id: str) -> dict[str, int]:
-    """Each key's unsuppressed CRITICAL findings in its latest result (any cycle), by masked key."""
+    """Each key's unsuppressed CRITICAL findings in its latest result (any cycle), by masked key; a key whose
+    latest result has none is left out."""
     rows = await _rows(
         conn,
-        """SELECT DISTINCT ON (r.key_masked) r.key_masked,
-                  count(*) FILTER (WHERE f.severity = 'CRITICAL' AND NOT f.suppressed) AS critical
-           FROM ds.results r LEFT JOIN ds.findings f USING (run_id, cycle, key_masked)
-           WHERE r.run_id = %s GROUP BY r.key_masked, r.cycle ORDER BY r.key_masked, r.cycle DESC""",
+        """SELECT key_masked, critical FROM (
+               SELECT DISTINCT ON (r.key_masked) r.key_masked, count(f.seq) AS critical
+               FROM ds.results r LEFT JOIN ds.findings f
+                   ON (f.run_id, f.cycle, f.key_masked) = (r.run_id, r.cycle, r.key_masked)
+                  AND f.severity = 'CRITICAL' AND NOT f.suppressed
+               WHERE r.run_id = %s
+               GROUP BY r.key_masked, r.cycle ORDER BY r.key_masked, r.cycle DESC) latest
+           WHERE critical > 0""",
         (run_id,),
     )
     return {r["key_masked"]: r["critical"] for r in rows}
@@ -1494,7 +1510,7 @@ async def get_chat_session(conn: Conn, session_id: str) -> Row | None:
 
 
 async def chat_answers(conn: Conn, run_id: str) -> list[Row]:
-    """Every assistant answer given about the run, oldest first, ``sealed`` (the report's AI annex)."""
+    """Every assistant answer given about the run, oldest first, ``sealed`` (the evidence pack's hash)."""
     return await _rows(
         conn,
         """SELECT s.session_id, s.key AS key_masked, m.seq, m.role, m.cycle, m.sealed, m.citations,
@@ -1506,10 +1522,50 @@ async def chat_answers(conn: Conn, run_id: str) -> list[Row]:
     )
 
 
+async def annex_answers(conn: Conn, run_id: str, cycle: int, limit: int) -> tuple[list[Row], int]:
+    """The newest ``limit`` answers given in the run's ``cycle`` that cite a tool result (an abstention and
+    a failed turn cite none), oldest first, and how many such answers there are. Each is ``sealed``, with
+    its ``asked_by`` (the session's creator, by name) and its ``question``: the user message before it,
+    a row to open as the answer is, or None."""
+    rows = await _rows(
+        conn,
+        """SELECT s.session_id, s.key AS key_masked, m.seq, m.role, m.cycle, m.sealed, m.citations,
+                  m.created_at, ds.actor_name(s.created_by) AS asked_by, q.seq AS q_seq, q.cycle AS q_cycle,
+                  q.sealed AS q_sealed, count(*) OVER () AS total
+           FROM ds.chat_messages m JOIN ds.chat_sessions s USING (session_id)
+           LEFT JOIN LATERAL (
+               SELECT u.seq, u.cycle, u.sealed FROM ds.chat_messages u
+               WHERE u.session_id = m.session_id AND u.role = 'user' AND u.seq < m.seq
+               ORDER BY u.seq DESC LIMIT 1
+           ) q ON true
+           WHERE s.run_id = %s AND m.cycle = %s AND m.role = 'assistant' AND m.citations <> '[]'::jsonb
+           ORDER BY m.created_at DESC, s.session_id DESC, m.seq DESC
+           LIMIT %s""",
+        (run_id, cycle, limit),
+    )
+    total = rows[0]["total"] if rows else 0
+    for row in rows:
+        seq, at, sealed = row.pop("q_seq"), row.pop("q_cycle"), row.pop("q_sealed")
+        asked = {"session_id": row["session_id"], "seq": seq, "role": "user", "cycle": at, "sealed": sealed}
+        row["question"] = None if seq is None else asked
+        del row["total"]
+    return rows[::-1], total
+
+
+# What a stored model call keeps in ``usage`` beside its ``usage_*`` fields: what its cost was priced at,
+# what was asked (by hash), how it stopped, which attempt it was, what it carried, where it went and its
+# input estimate.
+_CALL_FACTS = (
+    "price_version", "currency", "request_hash", "stop", "attempt", "data_classes", "host",
+    "estimated_input_tokens",
+)  # fmt: skip
+
+
 async def insert_llm_call(conn: Conn, session_id: str | None, call: Mapping[str, Any]) -> str:
-    """Record one ``LLMClient.call_log`` entry; ``usage`` keeps its ``usage_*`` fields."""
+    """Record one ``LLMClient.call_log`` entry; ``usage`` keeps its ``usage_*`` fields and ``_CALL_FACTS``."""
     call_id = "L-" + secrets.token_hex(8)
     usage = {name.removeprefix("usage_"): value for name, value in call.items() if name.startswith("usage_")}
+    usage |= {name: call[name] for name in _CALL_FACTS if call.get(name) is not None}
     micros = call.get("cost_micros")
     await conn.execute(
         """INSERT INTO ds.llm_calls (call_id, session_id, profile_id, model_reported, usage, cost,
@@ -2474,12 +2530,45 @@ async def set_run_approval(
 
 # -- sample draws -----------------------------------------------------
 _DRAW_LOCK = 0x4453534D  # pg advisory lock "DSSM", with each population id: a live bottom_k run's draws
-# Whether a finding of the key of the row ``k`` is under a bug rule, which makes its KNOWN_DIFF DIFFERENT.
-# ``k`` is a row of cycle ``%(c)s`` of run ``%(r)s``: named, they keep the subquery to that cycle's findings
-# (hashed over ``k``'s columns it would read every run's).
-_BUG: LiteralString = """EXISTS (SELECT 1 FROM ds.findings f
-                                WHERE f.run_id = %(r)s AND f.cycle = %(c)s AND f.key_masked = k.key_masked
-                                  AND f.rule_id IS NOT NULL AND f.rule_classification = 'bug')"""
+
+
+def _bug(row: LiteralString = "k", cycle: LiteralString = "%(c)s") -> LiteralString:
+    """Whether a finding of the key of the result ``row`` is under a bug rule, the ``bug`` that
+    ``types.derive_verdict`` reads. ``row`` is a result of cycle ``cycle`` of run ``%(r)s``: named, they keep
+    the subquery to that cycle's findings (hashed over the row's columns it would read every run's)."""
+    return f"""EXISTS (SELECT 1 FROM ds.findings f
+                       WHERE f.run_id = %(r)s AND f.cycle = {cycle} AND f.key_masked = {row}.key_masked
+                         AND f.rule_id IS NOT NULL AND f.rule_classification = 'bug')"""  # noqa: S608
+
+
+def _verdict_is(verdict: Verdict, row: LiteralString = "k", cycle: LiteralString = "%(c)s") -> LiteralString:
+    """True where ``types.derive_verdict`` gives the result ``row`` (as ``_bug``'s) ``verdict``, false
+    elsewhere (NULL without a result). Its outcome lists are that function's answers, taken at import, so
+    no statement can read an outcome otherwise. The outcomes that can have the verdict come first, for
+    results_outcome_idx; the bug rule's subquery is asked only of an outcome whose verdict it decides."""
+    plain = [o for o in Outcome if derive_verdict(o, False) is verdict]
+    bugged = [o for o in Outcome if derive_verdict(o, True) is verdict]
+
+    def among(outcomes: Sequence[Outcome]) -> str:
+        assert all(o.value.isupper() for o in outcomes)  # a fixed word: safe as a literal
+        return f"{row}.outcome IN ({', '.join(f"'{o.value}'" for o in outcomes)})" if outcomes else "false"
+
+    arms = [among([o for o in plain if o in bugged])]
+    if with_bug := [o for o in bugged if o not in plain]:
+        arms.append(f"{among(with_bug)} AND {_bug(row, cycle)}")
+    if without_bug := [o for o in plain if o not in bugged]:
+        arms.append(f"{among(without_bug)} AND NOT {_bug(row, cycle)}")
+    either = [o for o in Outcome if o in plain or o in bugged]
+    return cast(LiteralString, f"({among(either)} AND ({' OR '.join(arms)}))")
+
+
+_BUG = _bug()
+# The result ``k`` of cycle ``%(c)s`` of run ``%(r)s`` is DIFFERENT, or MATCH, as ``types.derive_verdict``
+# reads it; and its verdict. Every statement that tells discrepant keys apart reads these.
+_DIFFERENT = _verdict_is(Verdict.DIFFERENT)
+_MATCH = _verdict_is(Verdict.MATCH)
+_VERDICT: LiteralString = f"""CASE WHEN {_DIFFERENT} THEN 'DIFFERENT' WHEN {_MATCH} THEN 'MATCH'
+                                   ELSE 'INDETERMINATE' END"""
 
 
 def new_draw_id() -> str:
@@ -2933,12 +3022,11 @@ _LISTED: LiteralString = """SELECT v.labelling_id, v.run_id, v.cycle, v.salt, v.
             + (v.selection #>> '{counts,agreed,drawn}')::int AS item_count,
         v.accuracy #- '{discrepant,by_cause}' #- '{accepted,by_rule}' AS accuracy
     FROM ds.labellings v JOIN ds.runs r ON r.run_id = v.run_id JOIN ds.specs s ON s.spec_id = r.spec_id"""
-# The population of the result ``k``: what ``types.derive_verdict`` calls DIFFERENT is discrepant.
-_POPULATION: LiteralString = f"""CASE
-        WHEN k.outcome IN ('MISMATCH', 'NOT_FOUND_A', 'NOT_FOUND_B') THEN 'discrepant'
-        WHEN k.outcome = 'KNOWN_DIFF' THEN CASE WHEN {_BUG} THEN 'discrepant' ELSE 'accepted' END
-        WHEN k.outcome = 'NOISE_ONLY' THEN 'accepted'
-        WHEN k.outcome = 'MATCH' THEN 'agreed' ELSE 'indeterminate' END"""
+# The population of the result ``k``: what ``types.derive_verdict`` calls DIFFERENT is discrepant; of what
+# it calls MATCH, a key read identical is agreed and the rest (noise, or a difference a rule explains)
+# accepted.
+_POPULATION: LiteralString = f"""CASE WHEN {_DIFFERENT} THEN 'discrepant'
+        WHEN k.outcome = 'MATCH' THEN 'agreed' WHEN {_MATCH} THEN 'accepted' ELSE 'indeterminate' END"""
 _BY_DIGEST: LiteralString = 'digest, key_masked COLLATE "C", cause COLLATE "C"'
 _DRAWN: LiteralString = "population, key_masked, cause, digest, NULL::int AS seq, NULL::bigint AS n"
 
@@ -3428,8 +3516,6 @@ async def lock_pairs(conn: Conn) -> None:
 
 # -- notifications ----------------------------------------------------
 
-_DISCREPANT = ["MISMATCH", "NOT_FOUND_A", "NOT_FOUND_B"]
-_CLEAN = ["MATCH", "NOISE_ONLY", "KNOWN_DIFF"]  # read identical, or explained
 # A level fact of a cycle ``c``, as text; null where the cycle does not hold it.
 _LEVEL_FACTS: dict[str, LiteralString] = {
     "mismatch_rate": "nullif(c.counters->>'mismatch_rate', 'unavailable')",
@@ -3534,37 +3620,37 @@ async def root_cause_changes(conn: Conn, run_id: str, cycle: int) -> Row:
     )
 
 
+# The result ``cur`` of cycle ``%(c)s`` DIFFERENT or MATCH, and ``prev``, of the cycle before, DIFFERENT.
+_CUR_DIFFERENT = _verdict_is(Verdict.DIFFERENT, "cur")
+_CUR_MATCH = _verdict_is(Verdict.MATCH, "cur")
+_PREV_DIFFERENT = _verdict_is(Verdict.DIFFERENT, "prev", "%(c)s - 1")
+
+
 async def discrepant_changes(
     conn: Conn, run_id: str, cycle: int, *, read_all_before: bool, read_all: bool
 ) -> Row:
-    """Over the keys read in both the cycle and the one before, ``newly``
-    discrepant (MISMATCH, NOT_FOUND_A or NOT_FOUND_B) in it and not before, and ``no_longer`` discrepant, read
-    MATCH, NOISE_ONLY or KNOWN_DIFF in it; O(discrepant keys), from each cycle's discrepant subset
-    (results_outcome_idx). In a cycle that read every key (``read_all_before`` for the one before,
-    ``read_all`` for this one: a table scan's, run to its end and uncut) a key without a result was read
-    identical; so is every key before cycle 1."""
+    """Over the keys read in both the cycle and the one before, ``newly`` discrepant in it and not before,
+    and ``no_longer`` discrepant, read MATCH in it. Discrepant is DIFFERENT as ``types.derive_verdict`` and
+    the counters read it: MISMATCH, NOT_FOUND_A or NOT_FOUND_B, or KNOWN_DIFF under a bug rule; MATCH is
+    read identical, noise, or a difference a rule that is no bug rule explains. O(discrepant keys), from
+    each cycle's results of the outcomes that can be discrepant (results_outcome_idx). In a cycle that read
+    every key (``read_all_before`` for the one before, ``read_all`` for this one: a table scan's, run to its
+    end and uncut) a key without a result was read identical; so is every key before cycle 1."""
     return await _row(  # type: ignore[return-value]
         conn,
-        """SELECT
+        f"""SELECT
              (SELECT count(*) FROM ds.results cur
               LEFT JOIN ds.results prev ON (prev.run_id, prev.cycle, prev.key_masked)
                                            = (cur.run_id, cur.cycle - 1, cur.key_masked)
-              WHERE cur.run_id = %(r)s AND cur.cycle = %(c)s AND cur.outcome = ANY(%(d)s)
-                AND (prev.outcome <> ALL(%(d)s) OR prev.outcome IS NULL AND (%(before)s OR %(c)s = 1)))
+              WHERE cur.run_id = %(r)s AND cur.cycle = %(c)s AND {_CUR_DIFFERENT}
+                AND (prev.outcome IS NULL AND (%(before)s OR %(c)s = 1) OR NOT {_PREV_DIFFERENT}))
                AS newly,
              (SELECT count(*) FROM ds.results prev
               LEFT JOIN ds.results cur ON (cur.run_id, cur.cycle, cur.key_masked)
                                           = (prev.run_id, prev.cycle + 1, prev.key_masked)
-              WHERE prev.run_id = %(r)s AND prev.cycle = %(c)s - 1 AND prev.outcome = ANY(%(d)s)
-                AND (cur.outcome = ANY(%(clean)s) OR cur.outcome IS NULL AND %(all)s)) AS no_longer""",
-        {
-            "r": run_id,
-            "c": cycle,
-            "d": _DISCREPANT,
-            "clean": _CLEAN,
-            "before": read_all_before,
-            "all": read_all,
-        },
+              WHERE prev.run_id = %(r)s AND prev.cycle = %(c)s - 1 AND {_PREV_DIFFERENT}
+                AND ({_CUR_MATCH} OR cur.outcome IS NULL AND %(all)s)) AS no_longer""",  # noqa: S608
+        {"r": run_id, "c": cycle, "before": read_all_before, "all": read_all},
     )
 
 
@@ -4080,6 +4166,9 @@ async def set_readiness(conn: Conn, run_id: str, cycle: int, record: Mapping[str
     )
 
 
+_PREV_DIFFERENT_K = _verdict_is(Verdict.DIFFERENT, "k", "%(p)s")  # a result ``k`` of cycle ``%(p)s``
+
+
 async def cycle_changes(conn: Conn, run_id: str, cycle: int) -> Row:
     """How the cycle's DIFFERENT keys (MISMATCH, NOT_FOUND_A or NOT_FOUND_B, or KNOWN_DIFF under a bug rule:
     those still owed a recheck too) moved since the cycle before: ``new`` in this one only,
@@ -4090,17 +4179,15 @@ async def cycle_changes(conn: Conn, run_id: str, cycle: int) -> Row:
     (``enable_nestloop`` off for this statement, in the caller's transaction): the statistics do not know a
     cycle that has just ended, and a nested loop over its results is quadratic. So the cost is the
     discrepant keys of both cycles and, at worst, one pass over the cycle's results."""
-    different: LiteralString = f"(k.outcome = ANY(%(d)s) OR (k.outcome = 'KNOWN_DIFF' AND {_BUG}))"
     planned = await _value(
         conn, "SELECT current_setting('enable_nestloop'), set_config('enable_nestloop', 'off', true)", ()
     )
     found = await _row(
         conn,
         f"""WITH cur AS (SELECT k.key_masked FROM ds.results k
-                         WHERE k.run_id = %(r)s AND k.cycle = %(c)s AND {different}),
+                         WHERE k.run_id = %(r)s AND k.cycle = %(c)s AND {_DIFFERENT}),
                  prev AS (SELECT k.key_masked FROM ds.results k
-                          WHERE k.run_id = %(r)s AND k.cycle = %(p)s
-                            AND {different.replace("%(c)s", "%(p)s")})
+                          WHERE k.run_id = %(r)s AND k.cycle = %(p)s AND {_PREV_DIFFERENT_K})
             SELECT count(*) FILTER (WHERE prev.key_masked IS NULL) AS new,
                    count(*) FILTER (WHERE cur.key_masked IS NOT NULL AND prev.key_masked IS NOT NULL)
                        AS persistent,
@@ -4111,7 +4198,7 @@ async def cycle_changes(conn: Conn, run_id: str, cycle: int) -> Row:
             LEFT JOIN ds.results read
                  ON cur.key_masked IS NULL
                 AND (read.run_id, read.cycle, read.key_masked) = (%(r)s, %(c)s, prev.key_masked)""",  # noqa: S608
-        {"r": run_id, "c": cycle, "p": cycle - 1, "d": _DISCREPANT},
+        {"r": run_id, "c": cycle, "p": cycle - 1},
     )
     await conn.execute("SELECT set_config('enable_nestloop', %s, true)", (planned,))
     return found  # type: ignore[return-value]

@@ -12,8 +12,9 @@ The agent acts for the asker: the model is offered only the tools the asker's ro
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from jsonschema import Draft202012Validator
@@ -35,8 +36,13 @@ MAX_FINDINGS = 50
 DEFAULT_FINDINGS = 20  # keeps a turn's growing history inside the per-call input budget
 MAX_DOC_BYTES = 4096
 MAX_CELL_CHARS = 512  # one value cell
+MAX_ARG_CHARS = 1024  # a string argument: longer than any cell a result shows
 TOP_CAUSES = 10
 COMPARE_LIMIT = 10  # compare_key calls a minute per caller
+BIGINT = 2**63  # PostgreSQL's bigint holds the integers below it, down to its negative
+# What no string argument holds: a NUL, which the store takes in no text, or an unpaired surrogate, which
+# is not UTF-8. A stored key may hold any other control character its spec's pattern admits.
+UNSTORED = re.compile(r"[\x00\ud800-\udfff]")
 
 _RUN = (
     "run_id", "spec_id", "spec_name", "spec_version", "mode", "status", "cycle", "stop_reason", "counters",
@@ -72,6 +78,8 @@ class Scope:
     run_id: str
     who: Principal  # the asker, ``via`` the session
     compares: Rate | None = None  # what compare_key counts against, by actor; None: the caller limits it
+    # The stored keys the calls read, each with its cycle (get_observations, compare_key): a key view each.
+    views: list[tuple[str, int]] = field(default_factory=list)
 
 
 def _tool(name: str, description: str, required: tuple[str, ...], **properties: Any) -> ToolSpec:
@@ -79,8 +87,8 @@ def _tool(name: str, description: str, required: tuple[str, ...], **properties: 
     return ToolSpec(name, description, schema | {"additionalProperties": False})
 
 
-_KEY = {"type": "string", "description": "masked key, as tool results show it"}
-_TEXT = {"type": "string"}
+_TEXT = {"type": "string", "maxLength": MAX_ARG_CHARS}
+_KEY = _TEXT | {"description": "masked key, as tool results show it"}
 
 TOOLS = (
     _tool("get_run_summary", "This chat's run: status, counters, progress, top 10 root causes, for graph "
@@ -94,11 +102,14 @@ TOOLS = (
           limit={"type": "integer", "minimum": 1, "maximum": MAX_FINDINGS}),
     _tool("get_observations", "One key's result, masked canonical A and B (first 4 KiB each), findings and "
           "O- ids.", ("key",), key=_KEY),
+    _tool("get_root_cause", "One root cause (RC- id) of the run's current cycle: what its findings share, "
+          "how many keys and findings it holds, and sample keys.", ("root_cause_id",),
+          root_cause_id=_TEXT | {"pattern": "^RC-[0-9a-f]{12}$"}),
     _tool("compare_key", "Compare one key of the run again now, under the run's spec (one-shot).", ("key",),
           key=_KEY),
 )  # fmt: skip
 NEEDS = {"get_run_summary": "viewer", "get_findings": "viewer", "get_observations": "viewer",
-         "compare_key": "operator"}  # fmt: skip
+         "compare_key": "operator", "get_root_cause": "viewer"}  # fmt: skip
 
 
 def clear_declared(spec: CompiledSpec) -> bool:
@@ -122,7 +133,23 @@ async def run_tool(ctx: Context, scope: Scope, name: str, args: Mapping[str, Any
     error = next(_VALIDATORS[name].iter_errors(args), None)
     if error is not None:
         raise ToolError(f"invalid arguments: {error.message}")
-    return await _IMPLS[name](ctx, scope, **(args or {}))
+    return await _IMPLS[name](ctx, scope, **taken(args or {}))
+
+
+def taken(args: Mapping[str, Any]) -> dict[str, Any]:
+    """``args``, which their schema admits, as the tools and the store take them, refused otherwise: a
+    number written as a float is the integer it equals (``integer`` admits 5.0, and no schema takes any
+    other number), none is beyond PostgreSQL's bigint, and no string holds a NUL or an unpaired surrogate."""
+    kept = {}
+    for name, value in args.items():
+        if isinstance(value, float):
+            value = int(value)
+        if isinstance(value, int) and not -BIGINT <= value < BIGINT:
+            raise ToolError(f"invalid arguments: {name!r} is beyond a 64-bit integer")
+        if isinstance(value, str) and UNSTORED.search(value):
+            raise ToolError(f"invalid arguments: {name!r} holds a NUL or an unpaired surrogate")
+        kept[name] = value
+    return kept
 
 
 async def _run_summary(ctx: Context, scope: Scope) -> Any:
@@ -191,6 +218,7 @@ async def _observations(ctx: Context, scope: Scope, key: str) -> Any:
         spec = await ctx.spec(conn, run["spec_id"])
         result = detail["result"] or {}
         sides = {f"side_{s}": await _side(ctx, conn, spec, run, result.get(f"obs_{s}_id")) for s in "ab"}
+    scope.views.append((key, detail["cycle"]))
     return {
         "key_masked": key,
         "cycle": detail["cycle"],  # the one read: a soak's key has a row a cycle
@@ -225,6 +253,7 @@ async def _compare_key(ctx: Context, scope: Scope, key: str) -> Any:
     except Unconnected as exc:  # its message names the target's host, port and account: the model gets none
         raise ToolError(exc.brief) from None
     findings = [mask_finding(f, spec, ctx.tokeniser) for f in result.findings[:DEFAULT_FINDINGS]]
+    scope.views.append((key, detail["cycle"]))
     return {
         "spec_id": spec_id,
         "key_masked": key,
@@ -263,6 +292,15 @@ async def _side(
     return side
 
 
+async def _root_cause(ctx: Context, scope: Scope, root_cause_id: str) -> Any:
+    async with ctx.pool.connection() as conn:
+        rows = await repo.list_root_causes(conn, scope.run_id)
+    row = next((row for row in rows if row["root_cause_id"] == root_cause_id), None)
+    if row is None:
+        raise ToolError(f"no root cause {root_cause_id} in the run's current cycle")
+    return cause_facts(row)
+
+
 def _state(state: SideState) -> dict[str, Any]:
     return {"state": state.kind.value, "reason": state.reason}
 
@@ -292,5 +330,6 @@ _IMPLS = {
     "get_findings": _findings,
     "get_observations": _observations,
     "compare_key": _compare_key,
+    "get_root_cause": _root_cause,
 }
 _VALIDATORS = {t.name: Draft202012Validator(t.input_schema) for t in TOOLS}

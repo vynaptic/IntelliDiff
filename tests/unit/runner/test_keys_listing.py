@@ -88,3 +88,42 @@ async def test_key_path_selects_the_parts(open_harness: OpenHarness) -> None:
                 await resolve_keys(h.ctx, spec)
     finally:
         await server.close()
+
+
+@pytest.mark.parametrize(
+    ("allowed", "listed"), [(23, True), (22, False)], ids=["within", "over"]
+)
+async def test_a_listing_holds_more_values_than_one_answer_up_to_its_own_bound(
+    open_harness: OpenHarness, monkeypatch: pytest.MonkeyPatch, allowed: int, listed: bool
+) -> None:
+    """A key listing is read once, its pages merged into one answer, so it may hold more values than a
+    key's answer: its own bound (``LISTING_MAX_VALUES``) holds for a page, for the pages merged and for
+    the merged answer's parse. Ten keys as objects of one member, over two pages, hold 23 values: the
+    answer, its array and its ``next``, ten objects and ten ids."""
+    from deltasleuth.runner import keys
+
+    monkeypatch.setattr(keys, "LISTING_MAX_VALUES", allowed)
+    pages = {
+        None: {"items": [{"id": f"K{n:03}"} for n in range(1, 6)], "next": "c2"},
+        "c2": {"items": [{"id": f"K{n:03}"} for n in range(6, 11)], "next": None},
+    }
+
+    async def listing(request: web.Request) -> web.Response:
+        return web.json_response(pages[request.query.get("cursor")])
+
+    app = web.Application()
+    app.router.add_get("/list", listing)
+    server = TestServer(app, host="127.0.0.1")
+    await server.start_server()
+    try:
+        async with open_harness(TARGETS.format(base=f"http://127.0.0.1:{server.port}", rate=500)) as h:
+            text = spec_text().replace("  source: {kind: list, keys: [K001, K002, K003]}\n", LISTED)
+            spec = compile_spec(parse_yaml_text(text), targets=h.ctx.targets)
+            if listed:
+                resolved = await resolve_keys(h.ctx, spec)
+                assert len(resolved[0] if isinstance(resolved, tuple) else resolved) == 10
+            else:
+                with pytest.raises(ValueError, match="not read completely"):
+                    await resolve_keys(h.ctx, spec)
+    finally:
+        await server.close()
