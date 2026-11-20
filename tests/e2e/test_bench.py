@@ -35,6 +35,12 @@ from .conftest import Stack, store_spec, table_spec
 pytestmark = [pytest.mark.e2e, pytest.mark.db]
 
 
+@pytest.fixture(autouse=True)
+def private_benchmark_label(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Scope the harness guard, cleanup and assertions to this test's containers."""
+    monkeypatch.setattr(bench, "LABEL", f"deltasleuth.bench.test.{uuid.uuid4().hex}")
+
+
 def run(tmp: Path, *args: str) -> Result:
     (tmp / "out").mkdir(exist_ok=True)
     (tmp / "work").mkdir(exist_ok=True)
@@ -58,7 +64,7 @@ def kept(tmp: Path) -> tuple[Path, dict[str, Any]]:
 
 
 def leftovers(tmp: Path) -> list[str]:
-    argv = ["docker", "ps", "-aq", "--filter", "label=deltasleuth.bench"]
+    argv = ["docker", "ps", "-aq", "--filter", f"label={bench.LABEL}"]
     labelled = subprocess.run(argv, capture_output=True, text=True, check=True).stdout.split()
     return labelled + [p.name for p in (tmp / "work").iterdir()]
 
