@@ -1,4 +1,4 @@
-"""The file reader in the image, on Linux under the
+"""The file reader and a judge process in the image, on Linux under the
 compose hardening. ``DS_IMAGE=<image>`` runs them; nothing is pulled and nothing installed.
 
 The image holds no pytest and no tests: each test is one ``docker run --rm --pull never --network none`` of
@@ -128,6 +128,43 @@ async def main():
           "MiB, its resident size at", peak[1] // 1024, "MiB |", round(took), "s | ended:", made.cause)
 asyncio.run(main())
 """
+JUDGE_SPEC = """\
+apiVersion: deltasleuth/v1
+kind: ComparisonSpec
+metadata: {name: image-judge, version: "1.0.0", owner: tests}
+normalizerVersion: "1.1.0"
+key:
+  {name: item_id, type: string, pattern: "^K[0-9]{3}$", class: business_code,
+   source: {kind: list, keys: [K001]}}
+sides:
+  a: {role: legacy, target: svc-a, request: {method: GET, path: "/a/{{ key }}"}, notFound: {status: [404]}}
+  b: {role: new, target: svc-b, request: {method: GET, path: "/b/{{ key }}"}, notFound: {status: [404]}}
+compare:
+  fields: [{path: "$.status", severity: HIGH}]
+security: {unlisted: tokenize, clear: ["$.status", "$.id"]}
+recheck: {delay: 0s, times: 1}
+"""
+JUDGE = f"""
+import asyncio, json
+from datetime import date
+from deltasleuth.core.spec import compile_spec
+from deltasleuth.core.spec.documents import parse_yaml_text
+from deltasleuth.core.types import AuthoritativeAbsence, Observation, Side, TargetCapabilities
+from deltasleuth.runner import judges
+spec = compile_spec(parse_yaml_text({JUDGE_SPEC!r}))
+absent = TargetCapabilities(authoritative_absence=AuthoritativeAbsence((404,)))
+caps = {{"svc-a": absent, "svc-b": absent}}
+def read(side, status):
+    body = json.dumps({{"id": "K001", "status": status}}).encode()
+    return Observation("K001", side, 200, body, "2026-11-20T08:00:00Z")
+items = [("K001", {{Side.A: read(Side.A, "ACTIVE"), Side.B: read(Side.B, "PAUSED")}}, {{}})]
+pool = judges.Judges(1)
+try:
+    (answer,) = asyncio.run(pool.judge(spec, caps, items, date(2026, 11, 20)))
+    print("judge:", answer.outcome.value, len(answer.findings), "finding(s), by process", len(pool.pids))
+finally:
+    pool.close()
+"""
 F12 = (
     r"ReaderDied: side a: the file reader's process ended 3 times \((SIG[A-Z]+|exit [0-9]+)\) while only this"
     r" side's files were being read: they are read no more until DeltaSleuth restarts"
@@ -214,6 +251,12 @@ def test_the_self_test_passes(ran: Callable[..., Any], native: bool) -> None:
     warned = [line for line in done.stderr.splitlines() if native or "inherited" not in line]
     assert warned[0] == ENDED % "SIGSEGV" and len(warned) <= 2
     assert all(re.fullmatch(re.escape(ENDED) % r"(SIG[A-Z]+|exit [0-9]+)", line) for line in warned)
+
+
+def test_a_judge_process_judges_under_the_hardening(ran: Callable[..., Any]) -> None:
+    """A judge starts in the image as the app starts it (this interpreter, no variable, the root as its
+    directory, a read-only file system and no capability) and judges a group."""
+    assert _line(ran(JUDGE, whole=True)) == "judge: MISMATCH 1 finding(s), by process 1"
 
 
 def test_a_fault_ends_the_reader_s_process_alone(ran: Callable[..., Any]) -> None:

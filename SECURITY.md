@@ -180,7 +180,7 @@ finding on another build is re-checked on that one.
   Values are compared as the account reads them: a database that masks or redacts both sides alike
   reads as a match, and the certificate says only whose view of the rows was compared. That the account
   cannot write is its grants' doing, not DeltaSleuth's.
-- Judge processes (`worker.judge_processes`, off by default): each is a fresh interpreter (fork then
+- Judge processes (`worker.judge_processes`, 0 to switch off): each is a fresh interpreter (fork then
   exec at once), with no environment variable and no argument but its own file, and holds no keyring,
   tokeniser key, evidence key or setting; a comparison that needs the tokeniser goes back to the app.
   The app sends each key's read bodies and response headers unmasked on a pipe to its own child, as

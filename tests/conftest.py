@@ -31,7 +31,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 from pymysql.constants import CLIENT
 
-from deltasleuth import licence
+from deltasleuth import config, licence
 from deltasleuth.auth.principal import ROLES, Principal
 from deltasleuth.evidence.store import EvidenceStore
 from deltasleuth.security.crypto import DataKey, Keyring, Sealer, key_id
@@ -64,6 +64,9 @@ TIER_PAIRS = {"community": 2, "pro": 5, "enterprise": "unlimited"}
 BUILDS = ("vendor_keys", "open_build")  # ``build``'s parameters: a test of both asks for it first
 
 
+_HOST_JUDGES = config.judges_by_default  # as the build defines it, before the session replaces it
+
+
 @pytest.fixture(scope="session", autouse=True)
 def open_build() -> Iterator[None]:
     """The build under test is open: ``licence.VENDOR_KEYS`` is empty for the
@@ -71,6 +74,22 @@ def open_build() -> Iterator[None]:
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(licence, "VENDOR_KEYS", ())
         yield
+
+
+@pytest.fixture(scope="session", autouse=True)
+def judged_in_a_thread() -> Iterator[None]:
+    """Settings that name no ``worker.judge_processes`` judge in a thread of the worker's own process for
+    the session, whatever the host's CPUs, so a test that patches the judging sees its patch; a test that
+    wants judge processes names them, and ``host_judges`` restores the host's default."""
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(config, "judges_by_default", lambda: 0)
+        yield
+
+
+@pytest.fixture
+def host_judges(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The judge processes that settings naming none get on this host (``config.judges_by_default``)."""
+    monkeypatch.setattr(config, "judges_by_default", _HOST_JUDGES)
 
 
 @pytest.fixture

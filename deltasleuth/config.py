@@ -264,6 +264,15 @@ class PackSettings:
     signing_key_ref: SecretRef
 
 
+JUDGES = 2  # judge processes a host of JUDGES + 2 CPUs or more runs when the settings name none
+
+
+def judges_by_default() -> int:
+    """Judge processes when the settings name none: ``JUDGES`` where the host keeps two CPUs beside them for
+    the app's own loop and the API, fewer on a smaller host, none on two CPUs or fewer."""
+    return max(0, min(JUDGES, (os.process_cpu_count() or 1) - 2))
+
+
 def _judges(value: int) -> int:
     most = os.process_cpu_count() or 1
     if value > most:
@@ -275,12 +284,14 @@ def _judges(value: int) -> int:
 @dataclass(frozen=True)
 class WorkerSettings:
     """The worker's slots; ``judge_processes`` judge the slots' groups in processes of their own, which hold
-    no key (0: in a thread of the worker's own process)."""
+    no key (0: in a thread of the worker's own process; unnamed: ``judges_by_default``)."""
 
     concurrency: PosInt = 4
     lease_seconds: PosInt = 120
     poll_seconds: Annotated[float, Field(gt=0)] = 1.0
-    judge_processes: Annotated[int, Field(strict=True, ge=0), AfterValidator(_judges)] = 0
+    judge_processes: Annotated[int, Field(strict=True, ge=0), AfterValidator(_judges)] = field(
+        default_factory=lambda: judges_by_default()  # looked up at each load: a test may replace it
+    )
 
 
 @with_config(_CLOSED)

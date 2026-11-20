@@ -932,10 +932,17 @@ def test_mcp_settings_are_refused_with_the_contract_s_messages(
     assert _refusal(tmp_path, mcp=mcp) == refusal
 
 
-def test_judge_processes_are_none_unless_asked_and_at_most_the_cpus(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.usefixtures("host_judges")
+@pytest.mark.parametrize(("cpus", "judges"), [(None, 0), (1, 0), (2, 0), (3, 1), (4, 2), (16, 2)])
+def test_judge_processes_by_default_leave_two_cpus_and_are_two_at_most(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cpus: int | None, judges: int
 ) -> None:
-    assert _load(tmp_path).worker.judge_processes == 0  # judged in a thread, as before the setting
+    monkeypatch.setattr(config.os, "process_cpu_count", lambda: cpus)
+    assert _load(tmp_path).worker.judge_processes == judges
+    assert _load(tmp_path, worker={"judge_processes": 0}).worker.judge_processes == 0  # in a thread
+
+
+def test_judge_processes_named_are_at_most_the_cpus(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(config.os, "process_cpu_count", lambda: 4)
     assert _load(tmp_path, worker={"judge_processes": 4}).worker.judge_processes == 4
     assert _refusal(tmp_path, worker={"judge_processes": 5}) == (
