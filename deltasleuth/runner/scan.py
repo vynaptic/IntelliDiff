@@ -1,15 +1,20 @@
 """The table scan: the key source of a batch or soak run over two tables.
 
-Each side streams (key texts, row hash) in code-point order from one read-only snapshot of its engine, and a
-side whose keys come out of that order fails the run. A merge counts the identical rows and queues every
-other key for the worker's per-key reads while it goes on. It runs synchronously over each fetched batch and
-awaits only for the next: a task per row costs 16x. Each side fetches its next batch ahead, while the merge
-reads the one before and while the other side fetches its own. Progress is checkpointed with the keys found,
-so a restart, a pause or a lost connection resumes after the last saved key and counts nothing twice. The keys
-found and the point the scan resumes after are sealed under the run's data key; checkpoints are numbered, so
-a scanner saves only on the checkpoint it read. Each pass reads both catalogues on its own sessions before a
-cursor opens (the schema guard's look): a table that is no longer what the run's plan reads pauses the run
-there, and the pass ends without failing it (``drift.Tripped``). A pass with a file side takes the file
+Each side streams (key texts, row hash) in key order from one read-only snapshot of its engine, and a side
+whose keys come out of that order fails the run. Key order is the code-point order of the key texts, but a
+key part the run's plan orders as an integer (``integers``: a whole-number column on both sides, read as
+itself) orders by its value, so each side reads it through its index and resumes by range; the merge, its
+guard on each side's order and the resume bound compare keys by that rank. A merge counts the identical
+rows and queues every other key for the worker's per-key reads while it goes on. It runs synchronously
+over each fetched batch and awaits only for the next: a task per row costs 16x. Each side fetches its next
+batch ahead, while the merge reads the one before and while the other side fetches its own. Progress is
+checkpointed with the keys found, so a restart, a pause or a lost connection resumes after the last saved
+key and counts nothing twice. The keys found and the point the scan resumes after are sealed under the
+run's data key; checkpoints are numbered, so a scanner saves only on the checkpoint it read. Each pass reads
+both catalogues on its own sessions before a cursor opens (the schema guard's look): a table that is no
+longer what the run's plan reads pauses the run there, and the pass ends without failing it
+(``drift.Tripped``); a key column the plan orders as an integer that its engine no longer orders so fails
+the run (``KeyOrderChanged``), whose saved bound is of that order. A pass with a file side takes the file
 reader's one sort before either snapshot opens, so no database's snapshot sits idle while the pass waits for
 another run's sort.
 
@@ -20,7 +25,7 @@ spec's recheck policy.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 from datetime import UTC, datetime
 from typing import Any
@@ -30,6 +35,7 @@ import psycopg
 from deltasleuth.connectors.base import utc_now_iso
 from deltasleuth.connectors.tables import (
     Engine,
+    KeyOrderChanged,
     KeysOutOfOrder,
     Plan,
     Relation,
@@ -55,6 +61,7 @@ BATCH = 10_000  # merged keys per checkpoint
 SLICE = 1_000  # merged keys between two turns of the event loop: about 3 ms of the merge
 MAX_KEY_BYTES = 1024  # a run key
 Key = tuple[str, ...]
+Rank = tuple[int | str, ...]  # what keys merge by: a key's texts, an integer part's value in its place
 _ALIKE = "(they differ only in Unicode normal form): no result could tell them apart"
 
 
@@ -74,6 +81,26 @@ def new_scan() -> dict[str, Any]:
         "snapshots_b",
     )  # fmt: skip
     return {"done": False, "after": None, "first_at": None, "last_at": None} | dict.fromkeys(counters, 0)
+
+
+def _whole(text: str) -> int:
+    """The value of a key part ordered as an integer; ValueError for a text that is not a whole number
+    written once, which would rank alike with another text."""
+    value = int(text)
+    if str(value) != text:
+        raise ValueError(text)
+    return value
+
+
+def _ranking(parts: int, integers: Sequence[int]) -> Callable[[Key], Rank] | None:
+    """What a side's keys merge by: each part's text, but the value of a part the plan orders as an
+    integer; None where every part is a text, so the key is its own rank."""
+    if not integers:
+        return None
+    if parts == 1:
+        return lambda key: (_whole(key[0]),)
+    wanted = set(integers)
+    return lambda key: tuple(_whole(part) if i in wanted else part for i, part in enumerate(key))
 
 
 class _Stream:
@@ -101,11 +128,42 @@ class _Stream:
         self._rows: list[tuple[Any, ...]] = []
         self._i, self._eof = 0, False
         self._head: Key | None = None  # the key of row ``_i``, once it passed the guard
-        self._floor, self._bound = after, True  # the key before it: the resume bound, then each row's
+        self.rank: Rank = ()  # the head's rank (``_ranking``)
+        self._ranked = _ranking(self._parts, plan.get("integers") or ())
+        self._after = after  # the resume bound's texts
+        # The rank of the key before the head: the resume bound's, then each row's.
+        self._floor, self._bound = None if after is None else self._rank(after), True
         self.check: Callable[[], Awaitable[None]] | None = None
         self.group_rows = 0
         self.serial: asyncio.Lock | None = None  # both cursors share a single target slot
         self._ahead: asyncio.Task[list[tuple[Any, ...]] | None] | None = None  # the next batch, being fetched
+
+    def _rank(self, key: Key) -> Rank:
+        if self._ranked is None:
+            return key
+        try:
+            return self._ranked(key)
+        except ValueError:
+            not_one = "a key part the plan orders as an integer is not one"
+            raise KeysOutOfOrder(f"side {self._side}: {not_one}") from None
+
+    def confirm(self) -> None:
+        """Fail the pass where this pass's catalogue says a key column the plan orders as an integer is of a
+        type its engine does not order so (``Engine.integral``): the scan's saved bound is of that order,
+        and no pass reads in another. A column the catalogue no longer holds is the schema guard's, or its
+        statement's, to refuse."""
+        if self.relation is None:
+            return
+        columns = {column.name: column for column in self.relation.columns}
+        for i in self._plan.get("integers") or ():
+            name = self._plan["keys"][i]
+            column = columns.get(name)
+            if column is not None and not self._engine.integral(column.cls or "", column.declared):
+                raise KeyOrderChanged(
+                    f"side {self._side}: key column {name!r} is {column.declared} now, which this run's scan"
+                    " cannot order as the integer it was planned as: start a new run, which plans the table"
+                    " as it is now"
+                )
 
     async def open(self) -> None:
         """Send the scan's statement, which pins the side, and begin fetching its first batch. The engine is
@@ -114,7 +172,7 @@ class _Stream:
         character set and collation where that catalogue names them (``seen_collations``), by which a MySQL
         side whose key columns its plan recorded in a collation that orders them as their key texts orders
         and resumes by them (``mysql.scan_sql``); the run's plan is not changed."""
-        bound = None if self._floor is None else [part.encode() for part in self._floor]
+        bound = None if self._after is None else [part.encode() for part in self._after]
         said: dict[str, Any] = {}
         if self.relation is not None:
             seen = {c.name: list(c.collation) for c in self.relation.columns if c.collation}
@@ -139,8 +197,8 @@ class _Stream:
                 ahead.exception()  # retrieved: not logged as never retrieved
 
     async def head(self) -> Key | None:
-        """The key of the next row, None at the end. A key below the one before it, or a first key not
-        after the resume bound, raises ``KeysOutOfOrder``: whatever the engine's
+        """The key of the next row, None at the end, its rank as ``rank``. A key ranked below the one before
+        it, or a first key not ranked after the resume bound, raises ``KeysOutOfOrder``: whatever the engine's
         collation did, a mis-sorted side fails the run and never mis-pairs a key."""
         if self._head is None and not self._eof:
             while self._i == len(self._rows):
@@ -154,9 +212,10 @@ class _Stream:
                 await asyncio.sleep(0)  # its first step sends it: the merge yields nothing until the next
                 self._rows, self._i = fetched, 0
             key = self._rows[self._i][: self._parts]
-            if self._floor is not None and (key < self._floor or (self._bound and key == self._floor)):
+            rank = key if self._ranked is None else self._rank(key)
+            if self._floor is not None and (rank < self._floor or (self._bound and rank == self._floor)):
                 raise KeysOutOfOrder(f"side {self._side}: the population's keys came out of order")
-            self._head = self._floor = key
+            self._head, self._floor, self.rank = key, rank, rank
             self._bound = False
         return self._head
 
@@ -217,6 +276,15 @@ async def _snapshots(
         yield streams[Side.A], streams[Side.B]
 
 
+async def _lowest(a: _Stream, b: _Stream) -> Key | None:
+    """The lower ranked of the two sides' next keys, None at both ends: of equal ranks they are one key, a
+    part's rank being its text or its value."""
+    head_a, head_b = await a.head(), await b.head()
+    if head_a is None:
+        return head_b
+    return head_a if head_b is None or a.rank <= b.rank else head_b
+
+
 class _Stopped(Exception):
     def __init__(self, reason: str | None) -> None:
         self.reason = reason
@@ -258,6 +326,8 @@ async def scan(ctx: Context, run_id: str) -> str | None:
         seen = {"a": a.relation, "b": b.relation}  # before either cursor opens, every cycle and resume
         if await drift.check(ctx, run, spec, seen, "scan" if after is None else "resume"):
             raise drift.Tripped(run_id)
+        a.confirm()
+        b.confirm()
         await a.open()
         await b.open()
         state["first_at"], state["last_at"] = state.get("first_at") or opened, opened
@@ -284,10 +354,9 @@ async def scan(ctx: Context, run_id: str) -> str | None:
         a.check = b.check = check
         try:
             while True:
-                heads = [h for h in (await a.head(), await b.head()) if h is not None]
-                if not heads:
+                key = await _lowest(a, b)
+                if key is None:
                     break
-                key = min(heads)
                 text = encode_key(key)
                 usable = bool(text) and len(text.encode()) <= MAX_KEY_BYTES
                 final = usable and conditions.max_keys == state["candidates"] + len(found) + 1

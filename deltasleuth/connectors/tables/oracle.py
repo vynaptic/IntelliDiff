@@ -108,6 +108,7 @@ _HEX = re.compile(r"\\x((?:[0-9a-fA-F]{2})*)")
 _NUMBER = re.compile(r"-?[0-9]+(?:\.[0-9]+)?")
 _MOMENT = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}(?:[ T][0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?)?")
 _SCALED = re.compile(r"NUMBER\((\*|[0-9]+),([0-9]+)\)")
+_WHOLE = re.compile(r"NUMBER\((?:[0-9]+|\*,0)\)")  # of scale 0, as ``_column`` declares it
 _LENGTH = re.compile(r"\(([0-9]+)")
 _MOMENTS = 'SYYYY-MM-DD"T"HH24:MI:SS'  # the year signed: YYYY prints 44 BC and AD 44 alike
 # The settings every statement relies on, then what the session says of them and of itself.
@@ -242,18 +243,25 @@ class _Primitives:
         # In any other character set a text's own bytes are not its code points' order: its UTF-8 are.
         return text if self._utf8 else f"UTL_I18N.STRING_TO_RAW({text}, 'AL32UTF8')"
 
+    def whole(self, column: str, cls: str, declared: str) -> str:
+        return f"t.{self.ident(column)}"
+
     def exact(self, order: str, part: str, binds: compose.Binds) -> str | None:
         if not part:  # '' is NULL there: the key text of no row
             return None
         return f"{order} = {_bind(binds, part if self._utf8 else part.encode())}"
 
-    def after(self, orders: Sequence[str], bound: Sequence[bytes], binds: compose.Binds) -> str:
+    def after(self, orders: Sequence[str], bound: Sequence[bytes | int], binds: compose.Binds) -> str:
         """No row comparison exists there: (o1 > a) OR (o1 = a AND o2 > b). An empty part is NULL to the
-        server, where > '' is never true: any text is after it and none equals it."""
+        server, where > '' is never true: any text is after it and none equals it. An integer is its
+        number, which a NUMBER holds exactly to 38 digits."""
         arms: list[str] = []
         equal: list[str] = []
         for order, part in zip(orders, bound, strict=True):
-            value = _bind(binds, part.decode() if self._utf8 else part) if part else None
+            if isinstance(part, int):
+                value: str | None = f"TO_NUMBER({_bind(binds, str(part))})"
+            else:
+                value = _bind(binds, part.decode() if self._utf8 else part) if part else None
             greater = f"{order} > {value}" if value else f"{order} IS NOT NULL"
             arms.append(f"({' AND '.join([*equal, greater])})")
             equal.append(f"{order} = {value}" if value else "1 = 0")
@@ -523,6 +531,11 @@ class Oracle:
     def built(self, column: str, cls: str, declared: str, key: bool) -> str | None:
         return (PRIMITIVES.key_text if key else PRIMITIVES.render)(column, cls, declared)
 
+    def integral(self, cls: str, declared: str) -> bool:
+        """A NUMBER of scale 0, INTEGER's among them, and an unconstrained NUMBER, whose key text is a whole
+        number's below 1E38 (another's has none): never a negative scale's, which may pass 38 digits."""
+        return (cls == "integer" and _WHOLE.fullmatch(declared) is not None) or declared == "NUMBER"
+
     async def connect(self, target: Target, *, timeout_s: float = 0) -> _Session:
         database = target.database
         assert database is not None
@@ -644,10 +657,12 @@ class Oracle:
 
     async def scan(self, session: _Session, side: Plan, after: Sequence[bytes] | None) -> AsyncIterator[Rows]:
         """Each fetched batch is canonicalised and hashed off the event loop; the columns the server
-        hashed itself come as 32 bytes a row."""
+        hashed itself come as 32 bytes a row. A key the plan orders by integer values is read through its
+        index (``_indexed``)."""
         size = _fetch(side, [*side["keys"], *compose.worker_columns(side)])
         digested = compose.digested(session.dialect, side)
-        return session.stream(*compose.scan(session.dialect, side, after), size, digested)
+        statement, binds = compose.scan(session.dialect, side, after)
+        return session.stream(_indexed(session.dialect, side, statement), binds, size, digested)
 
     def census(self, session: _Session, side: Plan) -> AsyncIterator[Rows]:
         return session.stream(*compose.census(session.dialect, side), _fetch(side, side["keys"]))
@@ -673,6 +688,18 @@ class Oracle:
     async def duplicates(self, session: _Session, side: Plan) -> tuple[int, int]:
         keys, rows = (await session.query(*compose.duplicates(session.dialect, side)))[0]
         return int(keys), int(rows)
+
+
+def _indexed(d: _Primitives, side: Plan, statement: str) -> str:
+    """The scan's statement asking for the index whose leading columns are its key columns, ascending, where
+    the plan orders a key part by its value (``integers``) and every part is ordered by its column itself:
+    the optimiser, reckoning on reading every row, would sort the whole table, or all of it after a resume
+    bound, in its temporary space, where that index reads it in order and resumes by range. Without such an
+    index the hint is ignored; any other scan is the optimiser's."""
+    columns = [d.ident(column) for column in side["keys"]]
+    if not side.get("integers") or compose.orders(d, side) != [f"t.{column}" for column in columns]:
+        return statement
+    return statement.replace("SELECT ", f"SELECT /*+ INDEX_ASC(t ({' '.join(columns)})) */ ", 1)
 
 
 def _spelled(owner: str, name: str, folded: bool = True) -> dict[str, str]:

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -410,6 +411,21 @@ def test_an_oracle_statement_s_parts() -> None:
     assert block.endswith(" || STANDARD_HASH(STANDARD_HASH(t.\"C60\", 'SHA256'), 'SHA256'), 'SHA256')")
 
 
+def test_an_oracle_scan_of_a_key_ordered_by_its_values_asks_for_its_index() -> None:
+    """A part the plan orders as an integer is ordered by its column and bounded by its number; where every
+    part is ordered by its column the scan asks for the index those columns lead, which its optimiser,
+    reckoning on every row, would otherwise trade for a sort. Any other scan is left as it was."""
+    whole = O_PLAIN | {"integers": [0]}
+    statement, binds = compose.scan(BOUND, whole, [b"-41"])
+    assert statement.endswith(' AND ((t."ID" > TO_NUMBER(:b0))) ORDER BY t."ID"') and binds == {"b0": "-41"}
+    hinted = oracle._indexed(BOUND, whole, statement)
+    assert hinted == statement.replace("SELECT ", 'SELECT /*+ INDEX_ASC(t ("ID")) */ ', 1)
+    # By its text, as before; and a part ordered by an expression (a CHAR's RTRIM) leaves the optimiser be.
+    for side in (O_PLAIN, O_MAPPED | {"key_maps": [None] * 3, "integers": [1]}):
+        statement = compose.scan(BOUND, side, None)[0]
+        assert oracle._indexed(BOUND, side, statement) == statement and "/*+" not in statement
+
+
 def test_an_arm_is_ordered_by_position_whatever_its_columns_are_named() -> None:
     # A compared column and a key named S, in both cases: ordered by an alias s, Oracle refuses the
     # statement (ORA-00960), so the selected row comes first by the flag's position.
@@ -632,6 +648,21 @@ def test_a_files_statement_s_parts() -> None:
     assert "hive_partitioning=$r_hive, hive_types=$r_types) AS t" in parquet["census"][0]
     assert parquet["frame"][0].endswith(', encode(t."branch")')  # ties broken by the strata, binary
     assert csv["probe"][0].endswith(" LIMIT 0") and csv["null_keys"][0].startswith("SELECT COUNT(*) FROM ")
+
+
+def test_a_file_side_orders_a_key_part_the_plan_orders_as_an_integer_by_its_value() -> None:
+    """A CSV field declared an integer is sorted by the number of its key text, a Parquet integer by itself,
+    and a resume bound's integer is bound as a decimal of 38 digits, which compares with either exactly."""
+    statement, binds = compose.scan(duck.PRIMITIVES, CSV_SIDE | {"integers": [0]}, [b"-41"])
+    value = 'TRY_CAST(t."id" AS DECIMAL(38,0))'
+    assert statement.endswith(f" AND (({value} > CAST($v2 AS DECIMAL(38,0)))) ORDER BY {value}")
+    assert binds["v2"] == Decimal(-41)
+    parquet = PARQUET_SIDE | {"key_maps": [None, None], "integers": [1]}
+    statement, binds = compose.scan(duck.PRIMITIVES, parquet, [b"eu", b"7"])
+    number = "CAST($v4 AS DECIMAL(38,0))"  # after its filter's values
+    bound = f'((encode(t."branch") > $v3) OR (encode(t."branch") = $v3 AND t."no" > {number}))'
+    assert statement.endswith(f" AND {bound} ORDER BY encode(t.\"branch\"), t.\"no\"")
+    assert (binds["v3"], binds["v4"]) == (b"eu", Decimal(7))
 
 
 def test_a_file_pair_s_scan_hashes_in_duckdb(tmp_path: Path) -> None:

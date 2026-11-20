@@ -1,9 +1,10 @@
 """A measurement, run by hand (``DS_PERF=1``): one table scan of 1,000,000 rows a side, then the same scan
 killed at 90% and resumed. It prints the rows a second, the time to the first row and the temporary bytes
 each side's server wrote (its sort's spill), for a key a "C"-collation text primary key serves and for an
-integer key, whose text order no index gives. On MySQL it prints the same of a VARCHAR primary key in
-utf8mb4_0900_bin, read by its key column and, as before, by its key text's bytes, with the rows each side's
-server sorted and the merge passes and temporary files its sorts took."""
+integer key, which the run's plan orders by its value, so its primary key serves it too. On MySQL it prints
+the same of a VARCHAR primary key in utf8mb4_0900_bin, read by its key column and, as before, by its key
+text's bytes, with the rows each side's server sorted and the merge passes and temporary files its sorts
+took."""
 
 from __future__ import annotations
 

@@ -360,6 +360,21 @@ def across(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[TargetRegis
     return load_targets(tmp_path / "targets.yaml"), a, b
 
 
+def _doc(a: dict[str, Any], b: dict[str, Any], key: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The spec document of table ``a`` on db-a against table ``b`` on db-b, of ``key`` (a string's when
+    None)."""
+    return {
+        "apiVersion": "deltasleuth/v1", "kind": "ComparisonSpec",
+        "metadata": {"name": "tables", "version": "1.0.0", "owner": "tests"}, "normalizerVersion": "1.1.0",
+        "key": key or {"name": "userid", "type": "string"}, "compare": {},
+        "recheck": {"delay": "0s", "times": 1},
+        "sides": {
+            "a": {"role": "legacy", "target": "db-a", "table": a},
+            "b": {"role": "new", "target": "db-b", "table": b},
+        },
+    }  # fmt: skip
+
+
 def _pair(a: dict[str, Any], b: dict[str, Any], types: dict[str, Any] | None = None) -> Any:
     table_a = {"name": "ledger", "keyColumns": ["id"]} | a
     return compiled(table_a, {"name": "books", "keyColumns": ["id"]} | b, types=types)
@@ -379,11 +394,13 @@ async def test_a_pair_across_engines_stores_engines_classes_and_one_rendering(
         "tls": True,
         "classes": {"Id": "integer", "Code": "char", "Amount": "decimal", "Flag": "integer"},
         "declared": {"Id": "int", "Code": "char(3)", "Amount": "decimal(10,2)", "Flag": "tinyint(1)"},
+        "integers": [0],  # an int and a bigint: the scan orders the key by its value
     }  # fmt: skip
-    assert {name: stored["b"][name] for name in ("engine", "classes", "digest")} == {
+    assert {name: stored["b"][name] for name in ("engine", "classes", "digest", "integers")} == {
         "engine": "postgresql",
         "classes": {"id": "integer", "code": "text", "amount": "decimal"},
         "digest": ["amount", "code"],  # the worker hashes every compared column on both sides
+        "integers": [0],
     }
     assert (stored["rendering"], stored["only_a"], stored["only_b"]) == (1, [], [])
     mixed = await plan(targets, compiled({"name": "ledger", "keyColumns": ["id"], "columns": ["code"]}))
@@ -392,6 +409,70 @@ async def test_a_pair_across_engines_stores_engines_classes_and_one_rendering(
         [],
         1,
     )
+
+
+PADDED = {"kind": "prefix_pad", "prefix": "K-", "width": 6, "sideType": "integer"}
+
+
+@pytest.mark.parametrize(
+    ("a", "b", "integers"),
+    [
+        ({}, {}, [0]),
+        ({"keyColumns": ["code", "id"]}, {"keyColumns": ["code", "id"]}, [1]),  # a char and a text: by text
+        ({"keyColumns": ["id", "flag"]}, {"keyColumns": ["id", "id"]}, [0, 1]),  # a tinyint(1) is a number
+        ({}, {"keyColumns": ["shape"]}, None),  # an int against a text: both by text
+        ({"keyColumns": [{"name": "id", "keyMap": PADDED}]}, {}, None),  # its key text is its map's
+    ],
+    ids=["one", "composite", "both", "int against text", "key map"],
+)
+async def test_a_pair_records_the_key_parts_its_scan_orders_as_integers(
+    across: tuple[TargetRegistry, FakeEngine, FakeEngine],
+    a: dict[str, Any],
+    b: dict[str, Any],
+    integers: list[int] | None,
+) -> None:
+    """A key part whose column is, on both sides, read as itself and of a type its engine writes and orders
+    as a whole number is recorded in both sides' plans; a plan whose key has none records nothing."""
+    targets, _, _ = across
+    tables = [{"name": name, "keyColumns": ["id"], "columns": ["code"]} | more for name, more in (
+        ("ledger", a), ("books", b))]  # fmt: skip
+    parts = len(tables[0]["keyColumns"])
+    key = {"name": "pair", "type": "composite", "parts": ["first", "second"]} if parts == 2 else None
+    stored = await plan(targets, compile_spec(_doc(*tables, key=key)))
+    assert stored is not None
+    assert stored["a"].get("integers") == stored["b"].get("integers") == integers
+
+
+@pytest.mark.parametrize(
+    ("engine", "cls", "declared", "integral"),
+    [
+        *[("postgresql", "integer", declared, True) for declared in ("smallint", "integer", "bigint")],
+        ("postgresql", "decimal", "numeric(10,0)", False),
+        ("postgresql", "text", "text", False),
+        *[
+            ("mysql", "integer", declared, True)
+            for declared in ("tinyint(1)", "smallint", "mediumint", "int", "int unsigned", "bigint unsigned")
+        ],
+        ("mysql", "integer", "int(5) unsigned zerofill", True),  # its key text is cast to the number first
+        ("mysql", "integer", "year", False),  # 0 is 0000
+        ("mysql", "integer", "bit(8)", False),
+        ("mysql", "decimal", "decimal(10,0)", False),
+        *[("oracle", "integer", declared, True) for declared in ("NUMBER(10)", "NUMBER(38)", "NUMBER(*,0)")],
+        ("oracle", "decimal", "NUMBER", True),  # a whole number's key text, none for another
+        ("oracle", "integer", "NUMBER(10,-2)", False),  # may pass 38 digits
+        ("oracle", "decimal", "NUMBER(10,2)", False),
+        ("oracle", "decimal", "FLOAT(126)", False),
+        *[("files", "integer", declared, True) for declared in ("TINYINT", "BIGINT", "UINTEGER", "UBIGINT")],
+        *[("files", "integer", declared, False) for declared in ("HUGEINT", "UHUGEINT")],  # 39 digits
+        ("files", "integer", f"{duck.FIELD} as integer", True),
+        ("files", "text", duck.FIELD, False),
+        ("files", "decimal", "DECIMAL(18,0)", False),
+    ],
+)
+def test_an_engine_says_which_key_columns_order_as_their_values(
+    engine: str, cls: str, declared: str, integral: bool
+) -> None:
+    assert ENGINES[engine].integral(cls, declared) is integral
 
 
 @pytest.mark.parametrize(

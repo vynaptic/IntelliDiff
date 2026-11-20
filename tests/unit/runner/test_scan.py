@@ -709,3 +709,193 @@ async def test_a_pass_takes_the_one_sort_before_a_database_snapshot_opens(
     assert held == [] and len(sorting) == 1
     assert (state["rows_a"], state["rows_b"], state["matched"], state["done"]) == (6, 6, 6, True)
     assert waited <= state["first_at"] <= sorting[0]
+
+
+# --- keys the plan orders as integers -----------------------------------------------------------------
+
+# Keys -15 to 30 and 100 on side a; on side b -5 is missing, 1000 is extra, and 9 and 100 differ: keys whose
+# texts' order (-5, 10, 100, 1000, 9) is not their values'.
+WHOLE_A = """
+    CREATE TABLE users (userid integer PRIMARY KEY, email text);
+    INSERT INTO users SELECT g, 'u' || g FROM generate_series(-15, 30) g;
+    INSERT INTO users VALUES (100, 'u100');
+"""
+WHOLE_B = """
+    CREATE TABLE users (userid {kind} PRIMARY KEY, email text);
+    INSERT INTO users SELECT g, 'u' || g FROM generate_series(-15, 30) g WHERE g <> -5;
+    INSERT INTO users VALUES (100, 'x'), (1000, 'u1000');
+    UPDATE users SET email = 'x' WHERE email = 'u9';
+"""
+WHOLE_FOUND = {"-5": "NOT_FOUND_B", "9": "MISMATCH", "100": "MISMATCH", "1000": "NOT_FOUND_A"}
+
+
+def _whole(databases: Callable[[str], str], tmp_path: Path, kind: str = "bigint") -> str:
+    """The targets file of WHOLE_A on side a and WHOLE_B, its key of ``kind``, on side b."""
+    targets = {}
+    for side, seed in (("a", WHOLE_A), ("b", WHOLE_B.format(kind=kind))):
+        (tmp_path / f"dsn_{side}").write_text(databases(seed))
+        targets[f"db-{side}"] = {"dsn_ref": f"file:{tmp_path / f'dsn_{side}'}", "rate_per_s": 1000}
+    return json.dumps({"targets": targets})
+
+
+def _sent(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any]]]:
+    """Each scan statement PostgreSQL's engine sends, as text, with its parameters."""
+    sent: list[tuple[str, dict[str, Any]]] = []
+    real = postgresql.queries.scan_sql
+
+    def scan_sql(side: tables.Plan, after: Sequence[bytes] | None) -> Any:
+        statement, params = real(side, after)
+        sent.append((statement.as_string(None), params))
+        return statement, params
+
+    monkeypatch.setattr(postgresql.queries, "scan_sql", scan_sql)
+    return sent
+
+
+async def _lost_after_a_checkpoint(h: Harness, run_id: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A pass of the run's scan that saves its first checkpoint, then loses its connection."""
+    save = scanning._save
+
+    async def saved_then_lost(*args: Any, **options: Any) -> bool:
+        await save(*args, **options)
+        raise psycopg.OperationalError("the connection was lost")
+
+    with monkeypatch.context() as lost, pytest.raises(psycopg.OperationalError):
+        lost.setattr(scanning, "_save", saved_then_lost)
+        await scanning.scan(h.ctx, run_id)
+
+
+@pytest.mark.parametrize("pair", ["integers", "int against text", "unrecorded"])
+async def test_keys_merge_and_resume_in_the_order_the_plan_records(
+    open_harness: OpenHarness,
+    databases: Callable[[str], str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    pair: str,
+) -> None:
+    """An integer against a bigint key is ordered by its values on both sides, through each primary key,
+    and resumes from an integer bound after the checkpoint a lost connection left: the merge pairs every
+    key and counts none twice. Against a text key, and in a run planned before the order was recorded, the
+    keys are merged in their texts' order, as before, with the same result."""
+    monkeypatch.setattr(scanning, "BATCH", 10)
+    sent = _sent(monkeypatch)
+    kind = "text" if pair == "int against text" else "bigint"
+    async with open_harness(_whole(databases, tmp_path, kind)) as h:
+        run_id = await create_run(h.ctx, await h.spec(json.dumps(SPEC)), "batch", who=TESTER)
+        if pair == "unrecorded":
+            async with h.ctx.pool.connection() as conn:
+                dropped = "params #- '{tables,a,integers}' #- '{tables,b,integers}'"
+                await conn.execute(f"UPDATE ds.runs SET params = {dropped} WHERE run_id = %s", (run_id,))  # noqa: S608
+        await _lost_after_a_checkpoint(h, run_id, monkeypatch)
+        assert await scanning.scan(h.ctx, run_id) is None
+        run = await h.run(run_id)
+        async with h.ctx.pool.connection() as conn:
+            rows, _ = await repo.list_keys(conn, run_id)
+            sealer = await h.ctx.sealer(conn, run_id)
+        finished = await h.finish(run_id)
+        results = await h.results(run_id)
+    planned = run["params"]["tables"]
+    recorded = [0] if pair == "integers" else None
+    assert planned["a"].get("integers") == planned["b"].get("integers") == recorded
+    state = run["scan"]
+    assert (state["checkpoint"], state["snapshots_a"], state["done"]) == (5, 2, True)  # 48 keys; resumed
+    assert (state["rows_a"], state["rows_b"], state["matched"], state["candidates"]) == (47, 47, 44, 4)
+    assert sorted(sealer.open_row(row)["key"] for row in rows) == sorted(WHOLE_FOUND)
+    assert finished["status"] == "completed"
+    assert {key: result["outcome"] for key, result in results.items()} == WHOLE_FOUND
+    (first, _), (resumed, params) = sent[0], sent[2]  # each pass sends side a's statement, then side b's
+    if pair == "integers":
+        # The tenth key merged, -6, is the bound: the side's index serves the order and the bound.
+        assert first.endswith(' ORDER BY t."userid"') and resumed.endswith(' ORDER BY t."userid"')
+        assert '(t."userid") > (%(a0)s::int8)' in resumed and params["a0"] == -6
+    else:
+        # By the key texts: -1, -10, ..., -15, -2, -3, -4, the tenth key merged.
+        assert first.endswith(' ORDER BY (t."userid"::text COLLATE "C")')
+        assert '((t."userid"::text COLLATE "C")) > (%(a0)s::text)' in resumed and params["a0"] == "-4"
+
+
+@pytest.mark.parametrize("guarded", [True, False], ids=["the guard looks", "the guard's look not made"])
+async def test_a_key_column_that_no_longer_orders_as_an_integer_reads_no_row_in_another_order(
+    open_harness: OpenHarness,
+    databases: Callable[[str], str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    guarded: bool,
+) -> None:
+    """A key column the plan orders as an integer and that is text when a later pass reads its catalogue
+    is not read in another order, its checkpoint's bound being an integer's: the schema guard pauses the
+    run, as for any column of another class; where its look was not made, the pass fails the run before
+    a cursor opens. Neither merges a key again."""
+    monkeypatch.setattr(scanning, "BATCH", 10)
+    async with open_harness(_whole(databases, tmp_path)) as h:
+        run_id = await create_run(h.ctx, await h.spec(json.dumps(SPEC)), "batch", who=TESTER)
+        await _lost_after_a_checkpoint(h, run_id, monkeypatch)
+        with psycopg.connect((tmp_path / "dsn_b").read_text(), autocommit=True) as conn:
+            conn.execute("ALTER TABLE users ALTER COLUMN userid TYPE text")
+        if not guarded:
+
+            async def unchecked(*args: Any, **options: Any) -> bool:
+                return False  # as when the guard's own look could not be made
+
+            monkeypatch.setattr(scanning.drift, "check", unchecked)
+        with pytest.raises(scanning.drift.Tripped if guarded else tables.KeyOrderChanged) as exc:
+            await scanning.scan(h.ctx, run_id)
+        run = await h.run(run_id)
+    if guarded:
+        assert (run["status"], run["stop_reason"]) == ("paused", scanning.drift.SCHEMA_PAUSE)
+    else:
+        assert str(exc.value) == (
+            "side b: key column 'userid' is text now, which this run's scan cannot order as the integer it"
+            " was planned as: start a new run, which plans the table as it is now"
+        )
+    assert (run["scan"]["checkpoint"], run["scan"]["rows_a"], run["scan"]["matched"]) == (1, 10, 10)
+
+
+async def test_an_integer_key_against_a_csv_field_declared_an_integer_merges_and_resumes_by_value(
+    open_harness: OpenHarness,
+    databases: Callable[[str], str],
+    tmp_path: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A PostgreSQL integer key against a CSV field declared an integer (007 is 7): the file side is sorted
+    by the field's value and resumed after an integer bound, the database side read through its primary
+    key, and every key pairs, none counted twice."""
+    exports = tmp_path_factory.mktemp("exports").resolve()
+    fields = [(n, "x" if n in (9, 100) else f"u{n}") for n in [*range(-15, 31), 100, 1000] if n != -5]
+    written = "".join(f"{'007' if n == 7 else n}|{email}\n" for n, email in fields)
+    (exports / "users.csv").write_text("userid|email\n" + written)
+    (tmp_path / "dsn_a").write_text(databases(WHOLE_A))
+    targets = {
+        "db-a": {"dsn_ref": f"file:{tmp_path / 'dsn_a'}", "rate_per_s": 1000},
+        "fx": {"engine": "files", "root": str(exports), "settle_s": 0, "allow_writable": True},
+    }
+    dialect = {"columns": ["userid", "email"], "delimiter": "|", "header": True}
+    dialect["keys"] = {"userid": {"as": "integer"}}
+    file = {"path": "users.csv", "format": "csv", "csv": dialect}
+    table = {"name": "users", "keyColumns": ["userid"]}
+    sides = SPEC["sides"] | {"b": {"role": "new", "target": "fx", "table": table | {"file": file}}}
+    sorts: list[str] = []
+    real = duck.Cursor.execute
+
+    async def execute(self: duck.Cursor, statement: str, *args: Any, **kwargs: Any) -> None:
+        if " ORDER BY " in statement:
+            sorts.append(statement)
+        await real(self, statement, *args, **kwargs)
+
+    monkeypatch.setattr(duck.Cursor, "execute", execute)
+    monkeypatch.setattr(scanning, "BATCH", 10)
+    async with open_harness(json.dumps({"targets": targets}), files={"roots_under": str(exports)}) as h:
+        spec_id = await h.spec(json.dumps(SPEC | {"sides": sides}))
+        run_id = await create_run(h.ctx, spec_id, "batch", who=TESTER)
+        await _lost_after_a_checkpoint(h, run_id, monkeypatch)
+        assert await scanning.scan(h.ctx, run_id) is None
+        run = await h.finish(run_id)
+        results = await h.results(run_id)
+    assert run["params"]["tables"]["a"]["integers"] == run["params"]["tables"]["b"]["integers"] == [0]
+    state = run["scan"]
+    assert (state["rows_a"], state["rows_b"], state["matched"], state["candidates"]) == (47, 47, 44, 4)
+    assert run["status"] == "completed" and {k: r["outcome"] for k, r in results.items()} == WHOLE_FOUND
+    by_value = ' ORDER BY TRY_CAST(t."userid" AS DECIMAL(38,0))'
+    ordered = [statement for statement in sorts if statement.endswith(by_value)]
+    assert len(ordered) == 2 and "> CAST($" in ordered[1] and "> CAST($" not in ordered[0]  # then resumed

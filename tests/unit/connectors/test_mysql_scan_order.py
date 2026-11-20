@@ -2,8 +2,10 @@
 padding, orders and bounds the scan itself, so the primary key or unique index that holds it streams the rows
 and resumes by range, with no sort: a VARCHAR in utf8mb4_0900_bin, which compares a text's UTF-8 bytes as they
 are, and a BINARY or VARBINARY, whose bytes sort as their key text (\\x and lower-case hexadecimal digits)
-does. Any other key, and one whose collation the run's plan did not record or this pass's catalogue names
-otherwise, keeps the order of its key text's bytes, which the server sorts."""
+does. A key part the plan orders as an integer orders and bounds the scan by its column, also beside such a
+text, and past a bound no column of its type holds. Any other key, and one whose collation the run's plan did
+not record or this pass's catalogue names otherwise, keeps the order of its key text's bytes, which the
+server sorts."""
 
 from __future__ import annotations
 
@@ -34,7 +36,14 @@ VARCHAR: Key = ("k", "text", "varchar(20)", UTF8_BIN)
 VARBINARY: Key = ("b", "bytes", "varbinary(4)", BINARY)
 
 
-def side(*keys: Key, seen: Any = True, key_maps: Any = None, schema: str = "s", name: str = "keys") -> Plan:
+def side(
+    *keys: Key,
+    seen: Any = True,
+    key_maps: Any = None,
+    schema: str = "s",
+    name: str = "keys",
+    integers: list[int] | None = None,
+) -> Plan:
     """A MySQL side's plan of ``keys`` and one compared integer ``n``, each key's collation as its plan
     recorded it, and as this pass's catalogue names it (``seen``: True, the same; None, not told; else what
     it names), as a scan pass tells its engine."""
@@ -50,6 +59,8 @@ def side(*keys: Key, seen: Any = True, key_maps: Any = None, schema: str = "s", 
         found["collations"] = recorded
     if seen is not None:
         found["seen_collations"] = recorded if seen is True else seen
+    if integers:
+        found["integers"] = integers
     return found
 
 
@@ -119,6 +130,47 @@ def test_a_scan_resumes_by_its_key_columns_where_the_bound_is_their_values(
         assert f" AND {bound} ORDER BY t.`k`" in statement or f" AND {bound} ORDER BY t.`b`" in statement, (
             statement
         )
+
+
+INT: Key = ("i", "integer", "int", None)
+WIDE: Key = ("w", "integer", "bigint unsigned", None)
+CI: Key = ("k", "text", "varchar(20)", ["utf8mb4", "utf8mb4_0900_ai_ci"])  # its own order is not its text's
+
+
+@pytest.mark.parametrize(
+    ("keys", "integers", "after", "order", "bound"),
+    [
+        ([INT], [0], None, "t.`i`", None),
+        ([INT], [0], ["-5"], "t.`i`", "((t.`i` > -5))"),
+        ([WIDE], [0], ["18446744073709551616"], "t.`w`", "((t.`w` > 18446744073709551616))"),
+        (
+            [VARCHAR, INT],
+            [1],
+            ["a", "7"],
+            "t.`k`, t.`i`",
+            "((t.`k` > _utf8mb4 X'61') OR (t.`k` = _utf8mb4 X'61' AND t.`i` > 7))",
+        ),
+        (
+            [CI, INT],
+            [1],
+            ["a", "7"],
+            "CAST(CONVERT(t.`k` USING utf8mb4) AS BINARY), t.`i`",
+            "(CAST(CONVERT(t.`k` USING utf8mb4) AS BINARY), t.`i`) > (X'61', 7)",
+        ),
+        ([INT, VARCHAR], [], ["7", "a"], BY_BYTES, None),  # a plan that orders no part as an integer
+    ],
+    ids=["one", "resumed", "past its type", "beside a text", "beside a sorted text", "unrecorded"],
+)
+def test_an_integer_part_orders_and_bounds_the_scan_by_its_column(
+    keys: list[Key], integers: list[int], after: list[str] | None, order: str, bound: str | None
+) -> None:
+    statement = engine_module.scan_sql(side(*keys, integers=integers), after and [p.encode() for p in after])
+    if order == BY_BYTES:
+        assert _order(statement).startswith(BY_BYTES) and "t.`i` >" not in statement, statement
+    else:
+        assert _order(statement) == f"ORDER BY {order}", statement
+    if bound is not None:
+        assert f" AND {bound} ORDER BY " in statement, statement
 
 
 # --- on MySQL ---------------------------------------------------------------------------------------
@@ -366,3 +418,84 @@ def test_the_native_order_is_the_canonical_order(
                 == expected
             ), resumed
 
+
+
+# Each integer key: its declaration and its plan; n is 1 to 100,000.
+WHOLE = {
+    "int": ("k INT PRIMARY KEY", "n - 50000", [("k", "integer", "int", None)], ["40000"]),
+    "unsigned": (
+        "k BIGINT UNSIGNED PRIMARY KEY", "CAST(n AS UNSIGNED) * 184467440737095",
+        [("k", "integer", "bigint unsigned", None)], ["18446744073709500000"],
+    ),
+    "composite": (
+        "k VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin, i INT, PRIMARY KEY (k, i)",
+        "CONCAT('R', n % 50), n - 50000",
+        [("k", "text", "varchar(20)", UTF8_BIN), ("i", "integer", "int", None)],
+        ["R7", "-40000"],
+    ),
+}  # fmt: skip
+
+
+@pytest.mark.db
+@pytest.mark.mysql
+@pytest.mark.parametrize("key", list(WHOLE))
+def test_an_integer_key_streams_from_its_primary_key_and_resumes_by_range(
+    conn: pymysql.connections.Connection, database: str, key: str
+) -> None:
+    declared, values, keys, bound = WHOLE[key]
+    numbered = "WITH RECURSIVE g (n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM g WHERE n < 100000)"
+    seed = f"INSERT INTO whole {numbered} SELECT {values}, n FROM g"  # noqa: S608 (constants)
+    _rows(conn, f"DROP TABLE IF EXISTS whole; CREATE TABLE whole ({declared}, n INT); {seed}")
+    _rows(conn, "ANALYZE TABLE whole")
+    integers = [i for i, part in enumerate(keys) if part[1] == "integer"]
+    for after in (None, [part.encode() for part in bound]):
+        planned = side(*keys, schema=database, name="whole", integers=integers)
+        explained = _rows(conn, f"EXPLAIN {engine_module.scan_sql(planned, after)}")
+        ((*_, access, _, used, _, _, _, _, extra),) = explained
+        assert (access, used) == ("range" if after else "index", "PRIMARY"), (access, used, extra)
+        assert "filesort" not in (extra or ""), extra
+        # By the key texts' bytes, as a plan without the record reads: the whole table, sorted.
+        unrecorded = side(*keys, schema=database, name="whole")
+        ((*_, extra),) = _rows(conn, f"EXPLAIN {engine_module.scan_sql(unrecorded, after)}")
+        assert "Using filesort" in extra, extra
+
+
+SIGNED = st.integers(min_value=-(2**63), max_value=2**63 - 1)
+UNSIGNED = st.integers(min_value=0, max_value=2**64 - 1)
+FAR = st.integers(min_value=-(2**70), max_value=2**70)  # a bound another side may hold, past either type
+
+
+@pytest.mark.db
+@pytest.mark.mysql
+@settings(max_examples=40, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(
+    st.lists(
+        st.tuples(SIGNED, UNSIGNED), min_size=1, max_size=40, unique_by=(lambda r: r[0], lambda r: r[1])
+    ),
+    st.data(),
+)
+def test_the_integer_order_is_the_order_of_the_values(
+    conn: pymysql.connections.Connection,
+    database: str,
+    rows: list[tuple[int, int]],
+    data: st.DataObject,
+) -> None:
+    """A signed and an unsigned BIGINT key are read in the order of their values, through their index, and
+    from the point a bound gives: one of their keys, or a number neither type holds."""
+    _rows(
+        conn,
+        "DROP TABLE IF EXISTS valued; CREATE TABLE valued (s BIGINT NOT NULL, u BIGINT UNSIGNED NOT NULL,"
+        " n INT, UNIQUE KEY by_s (s), UNIQUE KEY by_u (u))",
+    )
+    with conn.cursor() as cursor:
+        cursor.executemany("INSERT INTO valued VALUES (%s, %s, 0)", rows)
+    for position, (column, declared) in enumerate((("s", "bigint"), ("u", "bigint unsigned"))):
+        index = f"by_{column}"
+        planned = side((column, "integer", declared, None), schema=database, name="valued", integers=[0])
+        read = [int(key) for (key,) in _keys(conn, engine_module.scan_sql(planned, None), 1)]
+        assert read == sorted(row[position] for row in rows)
+        for after in (data.draw(st.sampled_from(read)), data.draw(FAR)):
+            resumed = engine_module.scan_sql(planned, [str(after).encode()])
+            expected = [value for value in read if value > after]
+            assert [int(key) for (key,) in _keys(conn, resumed, 1)] == expected, resumed
+            assert [int(key) for (key,) in _keys(conn, _forced(resumed, index), 1)] == expected

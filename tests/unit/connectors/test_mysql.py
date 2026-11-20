@@ -754,7 +754,9 @@ async def test_a_sort_that_fills_the_temporary_directory_is_temp_space(
 ) -> None:
     # 32 MiB of two compared columns the worker hashes, sorted in a directory of 16 MiB: the server's
     # code is 3 (observed on 8.4.11), none of 1021, 1028 and 1114. As any other code it was tried three
-    # times, each a whole sort, before the run failed as refused.
+    # times, each a whole sort, before the run failed as refused. The plan orders the INT key by its value,
+    # so its scan reads it through the primary key and sorts nothing; a plan made before that was recorded
+    # orders it by its key text's bytes, which the server sorts.
     database = cramped.database(
         "CREATE TABLE wide (id INT PRIMARY KEY, a VARCHAR(400), b VARCHAR(400));"
         " SET SESSION cte_max_recursion_depth = 100000;"
@@ -768,9 +770,12 @@ async def test_a_sort_that_fills_the_temporary_directory_is_temp_space(
     table = {"name": "wide", "keyColumns": ["id"]}
     mapped = {"a": {"as": "string"}, "b": {"as": "string"}}
     stored = await plan(targets, compiled(table, table, types={"a": mapped, "b": mapped}))
-    assert stored is not None and stored["a"]["digest"] == ["a", "b"]
+    assert stored is not None and stored["a"]["digest"] == ["a", "b"] and stored["a"]["integers"] == [0]
     async with MYSQL.snapshot(targets.get("db-a")) as session:
-        batches = await MYSQL.scan(session, stored["a"], None)
+        assert sum([len(batch) async for batch in await MYSQL.scan(session, stored["a"], None)]) == 40000
+    unrecorded = {member: value for member, value in stored["a"].items() if member != "integers"}
+    async with MYSQL.snapshot(targets.get("db-a")) as session:
+        batches = await MYSQL.scan(session, unrecorded, None)
         with pytest.raises(TableError) as exc:
             await anext(batches)
     assert (type(exc.value), str(exc.value)) == (TargetTempSpace, "MySQL 3")  # at first sight

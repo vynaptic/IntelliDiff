@@ -639,6 +639,43 @@ async def test_a_file_side_scans_in_code_point_order(tmp_path: Path) -> None:
     await session.close()
 
 
+# Keys whose texts' order is not their values' (-17, -5, 0, 7, 9, 10, 100, 1000, 18446744073709551615).
+WHOLE = [10, 9, -5, 1000, 100, 0, -17, 7, 2**64 - 1]
+
+
+@pytest.mark.parametrize("form", ["csv", "parquet"])
+async def test_a_file_side_scans_a_key_the_plan_orders_as_an_integer_by_its_value(
+    tmp_path: Path, form: str
+) -> None:
+    """A CSV field declared an integer (007 is 7) or a Parquet UBIGINT that the plan orders as an integer is
+    sorted by its value, and resumes after a bound by value: one of its keys, or a number no file holds."""
+    root = tmp_path / "files" / "root"
+    root.mkdir(parents=True)
+    if form == "csv":
+        texts = ["007" if n == 7 else str(n) for n in WHOLE[:-1]]  # a CSV integer is of 38 digits at most
+        (root / "t.csv").write_text("".join(f"{text}|v\n" for text in texts))
+        table = csv_table("t.csv", ["id", "v"], header=False, keys={"id": {"as": "integer"}})
+        values = sorted(WHOLE[:-1])
+    else:
+        listed = ", ".join(f"({n})" for n in WHOLE if n >= 0)
+        select = f"SELECT CAST(k AS UBIGINT) AS id, 'v' AS v FROM (VALUES {listed}) t(k)"  # noqa: S608
+        unrestricted().execute(f"COPY ({select}) TO '{root / 't.parquet'}' (FORMAT parquet)")
+        table = {"name": "t", "keyColumns": ["id"], "file": {"path": "t.parquet", "format": "parquet"}}
+        values = sorted(n for n in WHOLE if n >= 0)
+    plan, found = await planned(tmp_path, table)
+    assert tables.ENGINES["files"].integral(plan["classes"]["id"], plan["declared"]["id"])
+    plan["integers"] = [0]  # as a pair of two table sides plans it
+    assert [row[0] for row in await scanned(found, plan)] == [str(n) for n in values]
+    engine = duck.Files()
+    for after in ("9", str(-(10**30)), str(10**30)):
+        async with engine.snapshot(found.get("exports")) as session:
+            batches = await engine.scan(session, plan, [after.encode()])
+            resumed = [row[0] async for batch in batches for row in batch]
+        assert resumed == [str(n) for n in values if n > int(after)], after
+    del plan["integers"]  # a plan without the record: by the key texts' bytes, as before
+    assert [row[0] for row in await scanned(found, plan)] == sorted((str(n) for n in values), key=str.encode)
+
+
 async def test_a_file_changed_under_a_scan_fails_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A scan's files are stat-checked after each fetched batch, and hashed again when its rows end."""
     monkeypatch.setattr(duck, "BATCH", 2)

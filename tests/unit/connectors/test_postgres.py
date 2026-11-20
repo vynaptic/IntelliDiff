@@ -46,6 +46,7 @@ SEED = """
     INSERT INTO ci_keys_too VALUES ('X1', 'upper'), ('x1', 'lower');
 """
 Connect = Callable[[Plan], TableConnector]
+WHOLE = {"integers": [0]}  # an int key on both sides: its scan orders it by its value
 
 
 def side(relation: str, key: str, /, **columns: str) -> Plan:
@@ -107,8 +108,8 @@ async def test_explicit_columns_pair_by_canonical_name(targets: TargetRegistry) 
         },
     )
     assert await plan(targets, spec) == {
-        "a": side("users", "userid", email="email", name="name"),
-        "b": side("users_v", "user_id", email="Email", name="full_name"),
+        "a": side("users", "userid", email="email", name="name") | WHOLE,
+        "b": side("users_v", "user_id", email="Email", name="full_name") | WHOLE,
         "only_a": [],
         "only_b": [],
     }
@@ -119,8 +120,8 @@ async def test_omitted_columns_compare_the_names_both_sides_have(targets: Target
         {"name": "users", "keyColumns": ["userid"]}, {"name": "users_v", "keyColumns": ["user_id"]}
     )
     assert await plan(targets, spec) == {
-        "a": side("users", "userid", email="email"),
-        "b": side("users_v", "user_id", email="Email"),
+        "a": side("users", "userid", email="email") | WHOLE,
+        "b": side("users_v", "user_id", email="Email") | WHOLE,
         "only_a": ["name", "seen", "legacy_flag"],
         "only_b": ["full_name", "version"],
     }
@@ -132,8 +133,8 @@ async def test_names_match_as_spelled_else_as_postgresql_folds_them(targets: Tar
         {"name": "Mixed", "keyColumns": ["Id"], "columns": ["Email"]},
     )
     assert await plan(targets, spec) == {
-        "a": side("users", "userid", email="email"),  # the catalogue's spelling
-        "b": side("Mixed", "Id", email="Email"),
+        "a": side("users", "userid", email="email") | WHOLE,  # the catalogue's spelling
+        "b": side("Mixed", "Id", email="Email") | WHOLE,
         "only_a": [],
         "only_b": [],
     }

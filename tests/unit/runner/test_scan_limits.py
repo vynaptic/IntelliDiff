@@ -41,6 +41,46 @@ async def test_duplicate_group_memory_does_not_grow_with_its_rows() -> None:
     assert rows == (200_000, None)
 
 
+def _ranked(plan: dict[str, Any], rows: list[tuple[str, ...]], after: tuple[str, ...] | None = None) -> Any:
+    """A side of ``plan`` streaming ``rows`` (each its key parts) from the resume bound ``after``."""
+
+    async def batches() -> AsyncIterator[list[tuple[Any, ...]]]:
+        yield [(*row, DIGEST) for row in rows]
+
+    stream = scanning._Stream("a", plan, None, None, after, None)
+    stream._batches = batches()
+    return stream
+
+
+async def _heads(stream: Any) -> list[tuple[tuple[str, ...], tuple[Any, ...]]]:
+    found = []
+    while (key := await stream.head()) is not None:
+        found.append((key, stream.rank))
+        await stream.take(key)
+    return found
+
+
+async def test_a_key_part_the_plan_orders_as_an_integer_ranks_by_its_value() -> None:
+    """A part the plan orders as an integer ranks by its value, -5 before 9 before 10, the key's other parts
+    by their texts, and so does the resume bound: a first key not ranked after it, or a text that is no whole
+    number written once (it would rank alike with another), fails the run. Without the record every part
+    ranks by its text."""
+    plan = {"keys": ["k", "n"], "integers": [1]}
+    rows = [("x", "-5"), ("x", "9"), ("x", "10"), ("x", "100"), ("y", "-7")]
+    assert [rank for _, rank in await _heads(_ranked(plan, rows))] == [
+        ("x", -5), ("x", 9), ("x", 10), ("x", 100), ("y", -7),
+    ]  # fmt: skip
+    assert [key for key, _ in await _heads(_ranked(plan, rows[2:], ("x", "9")))] == rows[2:]
+    with pytest.raises(scanning.KeysOutOfOrder, match="came out of order"):
+        await _heads(_ranked(plan, rows[1:], ("x", "9")))  # the bound itself
+    with pytest.raises(scanning.KeysOutOfOrder, match="came out of order"):
+        await _heads(_ranked({"keys": ["k", "n"]}, rows))  # by their texts, 10 is before 9
+    for text in ("007", "-0", "+5", " 5", "1_000", "\u0665", "x"):
+        with pytest.raises(scanning.KeysOutOfOrder) as exc:
+            await _heads(_ranked(plan, [("x", "1"), ("x", text)]))
+        assert str(exc.value) == "side a: a key part the plan orders as an integer is not one"  # no key
+
+
 def _harness(monkeypatch: pytest.MonkeyPatch, source: Source, stop: dict[str, Any]) -> SimpleNamespace:
     run = {"scan": scanning.new_scan(), "spec_id": 1, "params": {}, "cycle": 1,
            "started_at": datetime.now(UTC)}

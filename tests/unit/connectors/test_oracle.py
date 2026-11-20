@@ -35,7 +35,7 @@ from deltasleuth.connectors.tables import (
     preflight,
 )
 from deltasleuth.connectors.tables import oracle as engine_module
-from deltasleuth.core.spec import TargetRegistry, load_targets
+from deltasleuth.core.spec import TargetRegistry, compile_spec, load_targets
 from deltasleuth.core.types import ExecutionConfig, Observation
 from tests.conftest import OracleServer, make_ca
 
@@ -666,6 +666,80 @@ async def test_a_scan_orders_keys_by_code_point(targets: TargetRegistry) -> None
         census = [row async for batch in ORACLE.census(session, side) for row in batch]
         nulls = await ORACLE.null_keys(session, side)
     assert (census, nulls) == ([("2024-02-29 00:00:00",)], 1)
+
+
+# Keys of 2010 to 202000 by tens, and -5, 9, 10, 100 and 1000, whose texts' order is not their values'.
+WHOLE_SEED = (
+    "CREATE TABLE {table} (k PRIMARY KEY, v) AS SELECT CAST(LEVEL * 10 + 2000 AS {declared}), 1"
+    " FROM DUAL CONNECT BY LEVEL <= 20000;"
+    " INSERT INTO {table} SELECT COLUMN_VALUE, 2 FROM TABLE(sys.odcinumberlist(-5, 9, 10, 100, 1000))"
+)
+
+
+@pytest.mark.parametrize("declared", ["NUMBER(10)", "INTEGER", "NUMBER"])
+async def test_an_integer_key_is_read_in_the_order_of_its_values_through_its_index(
+    oracle_server: OracleServer, targets: TargetRegistry, schema: str, declared: str
+) -> None:
+    """A key of NUMBER(p), INTEGER or NUMBER is ordered and bounded by its value (10 after 9, -5 first), so
+    its primary key serves the scan and its resume, with no sort, also past a bound no NUMBER(10) holds."""
+    table = f"whole_{declared.replace('(', '_').replace(')', '')}"
+    oracle_server.execute(WHOLE_SEED.format(table=table, declared=declared), schema)
+    side = await _planned(targets, {"name": table, "keyColumns": ["k"]})
+    assert side["integers"] == [0]
+    far = str(10**37).encode()
+    async with ORACLE.snapshot(targets.get("db-a")) as session:
+        keys = [row[0] async for batch in await ORACLE.scan(session, side, None) for row in batch]
+        after = [row[0] async for batch in await ORACLE.scan(session, side, [b"10"]) for row in batch]
+        past = [row[0] async for batch in await ORACLE.scan(session, side, [far]) for row in batch]
+        before = [row[0] async for batch in await ORACLE.scan(session, side, [b"-" + far]) for row in batch]
+    assert keys[:7] == ["-5", "9", "10", "100", "1000", "2010", "2020"] and len(keys) == 20005
+    assert after == keys[3:] and past == [] and before == keys
+    for bound in (None, [b"100"]):
+        statement, binds = compose.scan(engine_module.PRIMITIVES, side, bound)
+        statement = engine_module._indexed(engine_module.PRIMITIVES, side, statement)
+        explained = oracle_server.execute(
+            f"EXPLAIN PLAN FOR {statement}; SELECT operation, options FROM plan_table",  # noqa: S608
+            schema,
+            **binds,
+        )
+        assert ("SORT", "ORDER BY") not in explained, explained
+        assert ("INDEX", "RANGE SCAN" if bound else "FULL SCAN") in explained, explained
+
+
+async def test_a_composite_key_with_an_integer_part_streams_from_its_index(
+    oracle_server: OracleServer, targets: TargetRegistry, schema: str
+) -> None:
+    """A VARCHAR2 and a NUMBER(10) part: ordered by the text's code points, then the number's value, through
+    the primary key, and resumed after a bound of both, by ranges of that index."""
+    oracle_server.execute(
+        "CREATE TABLE paired (k, n, v, PRIMARY KEY (k, n)) AS SELECT"
+        " CAST('R' || MOD(LEVEL, 50) AS VARCHAR2(10)), CAST(LEVEL - 10000 AS NUMBER(10)), 1"
+        " FROM DUAL CONNECT BY LEVEL <= 20000",
+        schema,
+    )
+    table = {"name": "paired", "keyColumns": ["k", "n"], "columns": ["v"]}
+    single = compiled({"name": "paired", "keyColumns": ["k"]}, {"name": "paired", "keyColumns": ["k"]}).raw
+    composite = {"name": "pair", "type": "composite", "parts": ["k", "n"]}
+    sides = {s: single["sides"][s] | {"table": table} for s in "ab"}
+    stored = await plan(targets, compile_spec(single | {"key": composite, "sides": sides}))
+    assert stored is not None
+    side = stored["a"]
+    assert side["integers"] == [1]
+    async with ORACLE.snapshot(targets.get("db-a")) as session:
+        keys = [row[:2] async for batch in await ORACLE.scan(session, side, None) for row in batch]
+        bound = [b"R7", b"-9943"]
+        after = [row[:2] async for batch in await ORACLE.scan(session, side, bound) for row in batch]
+    ranked = [(text, int(number)) for text, number in keys]
+    assert ranked == sorted(ranked) and len(keys) == 20000 and keys[0] == ("R0", "-9950")
+    assert after == [key for key in keys if (key[0], int(key[1])) > ("R7", -9943)]
+    statement, binds = compose.scan(engine_module.PRIMITIVES, side, [b"R7", b"-9943"])
+    explained = oracle_server.execute(
+        f"EXPLAIN PLAN FOR {engine_module._indexed(engine_module.PRIMITIVES, side, statement)};"  # noqa: S608
+        " SELECT operation, options FROM plan_table",
+        schema,
+        **binds,
+    )
+    assert ("SORT", "ORDER BY") not in explained and ("INDEX", "RANGE SCAN") in explained, explained
 
 
 async def test_outside_al32utf8_a_text_key_is_ordered_by_its_utf8_bytes(targets: TargetRegistry) -> None:

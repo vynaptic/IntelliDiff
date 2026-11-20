@@ -141,17 +141,22 @@ def scan_sql(side: Plan, after: Sequence[bytes] | None) -> tuple[sql.Composed, P
     In a UTF-8 database (``side["charset"]``, what the session's catalogue says of the server) the "C"
     collation compares a text's UTF-8 bytes, so the key texts are ordered and bounded as they are: a key
     column of text or varchar in that collation is then read and resumed by range through its index,
-    unsorted. In any other encoding they are ordered by their UTF-8 bytes, which the server sorts."""
+    unsorted. In any other encoding they are ordered by their UTF-8 bytes, which the server sorts. A key
+    part the plan orders as an integer (``integers``) is ordered and bounded by its column itself, in any
+    encoding, so an integer key is read and resumed through its index too."""
     params: Params = {}
     keys = _canonical_keys(side, params)
     text = side.get("charset") == "UTF8"
-    order = _join(keys if text else [sql.SQL("convert_to({}, 'UTF8')").format(k) for k in keys])
+    integers = set(side.get("integers") or ())
+    orders: list[sql.Composable] = []
+    for i, (column, key) in enumerate(zip(side["keys"], keys, strict=True)):
+        if i in integers:
+            orders.append(sql.SQL("t.{}").format(sql.Identifier(column)))
+        else:
+            orders.append(key if text else sql.SQL("convert_to({}, 'UTF8')").format(key))
     conditions = _population(side, params)
     if after is not None:
-        params |= {f"a{i}": part.decode() if text else part for i, part in enumerate(after)}
-        cast = sql.SQL("{}::text" if text else "{}")
-        bound = _join([cast.format(sql.Placeholder(f"a{i}")) for i in range(len(after))])
-        conditions.append(sql.SQL("({}) > ({})").format(order, bound))
+        conditions += _after(orders, after, integers, text, params)
     digest = side.get("digest") or []
     plain = {name: col for name, col in side["columns"].items() if name not in digest}
     select = [*keys, sql.SQL("sha256(convert_to(to_jsonb(r.*)::text, 'UTF8'))")]
@@ -161,14 +166,47 @@ def scan_sql(side: Plan, after: Sequence[bytes] | None) -> tuple[sql.Composed, P
         mapped = {name: side["columns"][name] for name in digest}
         laterals.append(sql.SQL("CROSS JOIN LATERAL (SELECT {}) AS m").format(_document(mapped)))
     statement = sql.SQL("SELECT {} FROM {} AS t {} WHERE {} ORDER BY {}").format(
-        _join(select), _table(side), sql.SQL(" ").join(laterals), _join(conditions, " AND "), order
+        _join(select), _table(side), sql.SQL(" ").join(laterals), _join(conditions, " AND "), _join(orders)
     )
     return statement, params
 
 
+_BIGINT = range(-(2**63), 2**63)
+
+
+def _after(
+    orders: Sequence[sql.Composable], after: Sequence[bytes], integers: set[int], text: bool, params: Params
+) -> list[sql.Composable]:
+    """The keys after the resume bound, as one row comparison an index on the key columns serves. A part
+    ordered as an integer is bound as a bigint, which a smallint, an integer and a bigint column compare
+    with through their index. A bound part past a bigint's range (another side's key) ends the comparison
+    at the parts before it: past its largest, no row of the column equals or passes it, so a key is after
+    the bound where those parts are; before its smallest, every row passes it, so also where they equal
+    it. With no part before it, no key is after the bound, or every one is."""
+    items: list[sql.Composable] = []
+    values: list[sql.Composable] = []
+    operator = ">"
+    for i, (order, part) in enumerate(zip(orders, after, strict=True)):
+        if i in integers:
+            value = int(part)
+            if value not in _BIGINT:
+                operator = ">" if value > 0 else ">="
+                break
+            params[f"a{i}"] = value
+            values.append(sql.SQL("{}::int8").format(sql.Placeholder(f"a{i}")))
+        else:
+            params[f"a{i}"] = part.decode() if text else part
+            values.append(sql.SQL("{}::text" if text else "{}").format(sql.Placeholder(f"a{i}")))
+        items.append(order)
+    if not items:
+        return [] if operator == ">=" else [sql.SQL("false")]
+    return [sql.SQL("({}) {} ({})").format(_join(items), sql.SQL(operator), _join(values))]
+
+
 def census_sql(side: Plan) -> tuple[sql.Composed, Params]:
-    """The population's canonical key parts, in ``scan_sql``'s order: the key census of a key-list run. A
-    key held by several rows comes once per row."""
+    """The population's canonical key parts, in the UTF-8 byte order of their texts (``scan_sql``'s but for
+    a part a scan orders as an integer): the key census of a key-list run. A key held by several rows comes
+    once per row."""
     params: Params = {}
     keys = _canonical_keys(side, params)
     order = _join([sql.SQL("convert_to({}, 'UTF8')").format(k) for k in keys])

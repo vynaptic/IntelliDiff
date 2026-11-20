@@ -789,6 +789,59 @@ async def test_a_killed_scan_of_a_key_in_its_byte_order_reads_and_resumes_it_by_
     assert " AND ((t.`userid` > _utf8mb4 X'" in statements[1]  # after the last saved key
 
 
+# Keys -15 to 30 and 100 on side a; on side b -5 is missing, 1000 is extra and 9 and 100 differ: keys whose
+# texts' order (-5, 10, 100, 1000, 9) is not their values'.
+WHOLE_A = [(n, f"u{n}") for n in [*range(-15, 31), 100]]
+WHOLE_B = [(n, "x" if n in (9, 100) else f"u{n}") for n in [*range(-15, 31), 100, 1000] if n != -5]
+WHOLE_KEYS = {"postgresql": "bigint", "mysql": "INT", "oracle": "NUMBER(10)"}
+WHOLE_TEXT = {"postgresql": "text", "mysql": "VARCHAR(20)", "oracle": "VARCHAR2(20)"}
+
+
+def _whole(engine: str, rows: list[tuple[int, str]]) -> str:
+    values = ", ".join(f"({n}, '{email}')" for n, email in rows)
+    table = f"users (userid {WHOLE_KEYS[engine]} PRIMARY KEY, email {WHOLE_TEXT[engine]})"
+    return f"CREATE TABLE {table}; INSERT INTO users VALUES {values}"  # noqa: S608 (constants)
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        ("postgresql", "mysql"),
+        pytest.param("mysql", "oracle", marks=oracle),
+        pytest.param("oracle", "postgresql", marks=oracle),
+    ],
+)
+async def test_a_killed_scan_of_integer_keys_across_engines_merges_and_resumes_by_value(
+    engines: Callable[..., Stack], monkeypatch: pytest.MonkeyPatch, a: str, b: str
+) -> None:
+    from deltasleuth.runner import scan as scanning
+
+    # An integer key on both sides, of each engine's own type, is ordered by its value on both and resumed
+    # from an integer bound after the worker died before its third checkpoint committed: every key pairs.
+    monkeypatch.setattr(scanning, "BATCH", 10)
+    saves, real_save = 0, repo.save_scan
+
+    async def dying_save(*args: Any, **kwargs: Any) -> bool:
+        nonlocal saves
+        saves += 1
+        if saves == 3:
+            raise psycopg.OperationalError("killed")
+        return await real_save(*args, **kwargs)
+
+    monkeypatch.setattr(repo, "save_scan", dying_save)
+    doc = table_spec(sides=both({"name": "users", "keyColumns": ["userid"]}))
+    stack = engines((a, _whole(a, WHOLE_A)), (b, _whole(b, WHOLE_B)), lease_seconds=2)
+    async with stack.context() as ctx:
+        run = await finish(ctx, await create_run(ctx, await store_spec(ctx, doc), "batch", who=TESTER))
+        found = await results(ctx, run["run_id"])
+    assert run["params"]["tables"]["a"]["integers"] == run["params"]["tables"]["b"]["integers"] == [0]
+    assert (run["status"], scanned(run)) == ("completed", (47, 47, 0, 0, 44, 4))
+    assert run["scan"]["snapshots_a"] == 2  # one pass lost, one resumed
+    assert {key: r["outcome"] for key, r in found.items()} == {
+        "-5": "NOT_FOUND_B", "9": "MISMATCH", "100": "MISMATCH", "1000": "NOT_FOUND_A",
+    }  # fmt: skip
+
+
 @oracle
 async def test_a_killed_scan_resumes_past_an_empty_key_part_on_oracle(
     engines: Callable[..., Stack], monkeypatch: pytest.MonkeyPatch

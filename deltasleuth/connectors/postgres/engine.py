@@ -43,6 +43,7 @@ _CLASSES = {
     "bytea": "bytes",
     **dict.fromkeys(("json", "jsonb"), "json"),
 }
+_INTEGRAL = ("smallint", "integer", "bigint")  # whose ::text is the number, written once
 
 # The relation as spelled, else as PostgreSQL folds unquoted names; its live columns in order, those
 # the role may read, those LIKE can match (text, in a deterministic collation before PostgreSQL 18),
@@ -117,6 +118,9 @@ class PostgreSQL:
 
     def built(self, column: str, cls: str, declared: str, key: bool) -> str | None:
         return None  # a key's text is its ::text, a row its to_jsonb, of whatever type the column holds
+
+    def integral(self, cls: str, declared: str) -> bool:
+        return cls == "integer" and declared in _INTEGRAL
 
     async def connect(self, target: Target, *, timeout_s: float = 0) -> psycopg.AsyncConnection:
         try:

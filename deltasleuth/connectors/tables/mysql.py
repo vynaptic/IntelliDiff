@@ -122,6 +122,9 @@ _NATIVE = {
     _BINARY: re.compile(r"(?:var)?binary\([0-9]+\)"),
 }
 _HEXED = re.compile(rb"\\x((?:[0-9a-f]{2})*)")  # the key text of bytes, as a resume bound holds it
+# The integer types whose key text is the number written once (a ZEROFILL one's is cast first), and which
+# order as it: not a YEAR, whose 0 is 0000, nor a BIT, whose order is its bytes'.
+_INTEGRAL = re.compile(r"(?:tiny|small|medium|big)?int(?:\([0-9]+\))?(?: unsigned)?(?: zerofill)?")
 # The relation as spelled, else the one name equal ignoring case; only columns the account holds a
 # privilege on are listed. Its primary key's columns, by their place in it, those the account may not
 # read among them. Each column's character set and collation: NULL but for a text's.
@@ -195,11 +198,15 @@ class _Primitives:
     def order(self, text: str) -> str:
         return f"CAST({text} AS BINARY)"
 
+    def whole(self, column: str, cls: str, declared: str) -> str:
+        return f"t.{self.ident(column)}"
+
     def exact(self, order: str, part: str, binds: compose.Binds) -> str:
         return f"{order} = X'{part.encode().hex()}'"
 
-    def after(self, orders: Sequence[str], bound: Sequence[bytes], binds: compose.Binds) -> str:
-        return f"({', '.join(orders)}) > ({', '.join(f"X'{part.hex()}'" for part in bound)})"
+    def after(self, orders: Sequence[str], bound: Sequence[bytes | int], binds: compose.Binds) -> str:
+        values = [str(part) if isinstance(part, int) else f"X'{part.hex()}'" for part in bound]
+        return f"({', '.join(orders)}) > ({', '.join(values)})"
 
     def render(self, column: str, cls: str, declared: str) -> str:
         return self.rendered(f"t.{self.ident(column)}", cls, declared)
@@ -270,8 +277,9 @@ PRIMITIVES = _Primitives()
 
 class _Native(_Primitives):
     """``compose.scan``'s primitives for a side whose key columns all order as their key texts' code points
-    do (``_natively``): each column itself orders the scan and bounds its resume, so the index that holds
-    them streams the rows and resumes by range, with no sort."""
+    do (``_natively``), or as their values where the plan orders them as integers: each column itself orders
+    the scan and bounds its resume, so the index that holds them streams the rows and resumes by range,
+    with no sort."""
 
     def __init__(self, side: Plan) -> None:
         typed = [(column, side["classes"][column], side["declared"][column]) for column in side["keys"]]
@@ -281,32 +289,39 @@ class _Native(_Primitives):
     def order(self, text: str) -> str:
         return self._columns[text]
 
-    def after(self, orders: Sequence[str], bound: Sequence[bytes], binds: compose.Binds) -> str:
+    def after(self, orders: Sequence[str], bound: Sequence[bytes | int], binds: compose.Binds) -> str:
         """(o1 > a) OR (o1 = a AND o2 > b): the optimiser reads that form as ranges of the index, a row
         comparison as no range. A text is compared in its column's collation, bytes as the value their key
-        text writes."""
+        text writes, an integer as its number."""
         arms: list[str] = []
         equal: list[str] = []
         for order, part in zip(orders, bound, strict=True):
-            value = f"_utf8mb4 X'{part.hex()}'"
-            if order in self._bytes:
+            if isinstance(part, int):
+                value = str(part)
+            elif order in self._bytes:
                 hexed = _HEXED.fullmatch(part)
                 assert hexed is not None  # any other bound is read by the key texts' bytes (``_natively``)
                 value = f"X'{hexed[1].decode()}'"
+            else:
+                value = f"_utf8mb4 X'{part.hex()}'"
             arms.append(f"({' AND '.join([*equal, f'{order} > {value}'])})")
             equal.append(f"{order} = {value}")
         return f"({' OR '.join(arms)})"
 
 
 def _natively(side: Plan, after: Sequence[bytes] | None) -> _Native | None:
-    """The primitives that order and bound the side's scan by its key columns themselves: where each is read
-    as itself (no key map), its collation as the run's plan recorded it is the one this pass's catalogue
-    names (``seen_collations``), and that collation orders its declared type as its key texts' code points
-    (``_NATIVE``); and where each part of the resume bound that a column of bytes reads is a key text of
-    bytes. None: by the key texts' bytes. A plan made before collations were recorded holds none."""
+    """The primitives that order and bound the side's scan by its key columns themselves: where each is a
+    part the plan orders as an integer (``integers``), or is read as itself (no key map), its collation as
+    the run's plan recorded it is the one this pass's catalogue names (``seen_collations``), and that
+    collation orders its declared type as its key texts' code points (``_NATIVE``); and where each part of
+    the resume bound that a column of bytes reads is a key text of bytes. None: by the key texts' bytes. A
+    plan made before collations were recorded holds none."""
     planned, seen = side.get("collations") or {}, side.get("seen_collations") or {}
+    integers = set(side.get("integers") or ())
     bound: Sequence[bytes | None] = after or [None] * len(side["keys"])
-    for column, key_map, part in zip(side["keys"], key_maps(side), bound, strict=True):
+    for i, (column, key_map, part) in enumerate(zip(side["keys"], key_maps(side), bound, strict=True)):
+        if i in integers:
+            continue  # by its value (``whole``)
         collation = planned.get(column)
         if collation is None or (key_map and key_map["kind"] != "identity"):
             return None
@@ -322,8 +337,8 @@ def _natively(side: Plan, after: Sequence[bytes] | None) -> _Native | None:
 
 def scan_sql(side: Plan, after: Sequence[bytes] | None) -> str:
     """The scan's statement (``compose.scan``): ordered and bounded by the key columns themselves where
-    their own order is their key texts' (``_natively``), else by the key texts' bytes, which the server
-    sorts."""
+    their own order is their key texts', or their values' where the plan orders them as integers
+    (``_natively``), else by the key texts' bytes, which the server sorts."""
     return compose.scan(_natively(side, after) or PRIMITIVES, side, after)[0]
 
 
@@ -648,6 +663,9 @@ class MySQL:
     def built(self, column: str, cls: str, declared: str, key: bool) -> str | None:
         return (PRIMITIVES.key_text if key else PRIMITIVES.render)(column, cls, declared)
 
+    def integral(self, cls: str, declared: str) -> bool:
+        return cls == "integer" and _INTEGRAL.fullmatch(declared) is not None
+
     async def connect(self, target: Target, *, timeout_s: float = 0) -> _Session:
         database = target.database
         assert database is not None
@@ -749,7 +767,7 @@ class MySQL:
     async def scan(self, session: _Session, side: Plan, after: Sequence[bytes] | None) -> AsyncIterator[Rows]:
         """Each fetched batch is canonicalised and hashed off the event loop, in the session's thread; the
         columns the server hashed itself come as 32 bytes a row. A key of columns whose own order is their key
-        texts' streams from its index (``scan_sql``)."""
+        texts', or of integers the plan orders by their values, streams from its index (``scan_sql``)."""
         return session.stream(scan_sql(side, after), compose.digested(PRIMITIVES, side))
 
     def census(self, session: _Session, side: Plan) -> AsyncIterator[Rows]:

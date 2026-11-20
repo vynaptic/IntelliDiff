@@ -4,9 +4,10 @@ its target's engine.
 Names resolve as spelled, else as the engine folds or matches an unquoted name. A plan is stored with
 its run, so the run reads the same columns, filter and maps even after a table changes. A pair with a
 side on MySQL or Oracle also stores each table side's engine and its columns' classes, checked across
-the pair, and which compared columns the worker hashes: the engine hashes the others. Problems raise
-``ValueError`` naming sides, tables and columns, never values; ``issues`` lists them without raising, for
-a table pre-check.
+the pair, and which compared columns the worker hashes: the engine hashes the others. A pair of two table
+sides stores the key parts its scan orders as integers, so every pass of the run reads in one order.
+Problems raise ``ValueError`` naming sides, tables and columns, never values; ``issues`` lists them without
+raising, for a table pre-check.
 """
 
 from __future__ import annotations
@@ -280,8 +281,11 @@ def _planned(
         if len(found) == 2:
             digest = _worker_columns(found, engines, relations)
         result["rendering"] = render.RENDERING
+    integers = _integers(found, engines, relations) if len(found) == 2 else []
     for side in found.values():
         side["digest"] = digest
+        if integers:
+            side["integers"] = integers
     return refused, result
 
 
@@ -517,6 +521,24 @@ def _paired(found: Mapping[str, Plan], engines: Mapping[str, str], refused: list
             elif family_a != family_b:
                 both = f"is {_a(family_a)} ({declared_a}) and side b's {_a(family_b)}"
                 refused.append(f"side a: column {canonical!r} {both}: {_bridge(read)}")
+
+
+def _integers(
+    found: Mapping[str, Plan], engines: Mapping[str, str], relations: Mapping[str, Relation]
+) -> list[int]:
+    """The key parts a scan of the pair orders and bounds by their values (``integers``): each read as
+    itself on both sides, of a type whose key text its engine writes as a whole number in that number's
+    order (``Engine.integral``). Any other part, and every part of a plan made before this was recorded,
+    is ordered by its key text's code points."""
+    by = {name: {column.name: column for column in relations[name].columns} for name in ("a", "b")}
+    parts = []
+    for i, maps in enumerate(zip(key_maps(found["a"]), key_maps(found["b"]), strict=True)):
+        if any(m and m["kind"] != "identity" for m in maps):
+            continue  # its key text is its map's
+        typed = {name: by[name][found[name]["keys"][i]] for name in ("a", "b")}
+        if all(ENGINES[engines[name]].integral(c.cls or "", c.declared) for name, c in typed.items()):
+            parts.append(i)
+    return parts
 
 
 def _worker_columns(

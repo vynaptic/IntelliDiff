@@ -52,6 +52,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppres
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from functools import partial
 from importlib.metadata import version
 from pathlib import Path
@@ -1097,6 +1098,9 @@ _CLASSES = dict.fromkeys(_BITS, "integer") | {
     **dict.fromkeys(("TIMESTAMP_S", "TIMESTAMP_MS", "TIMESTAMP", "TIMESTAMP_NS"), "timestamp"),
 }  # fmt: skip
 _KEYS = ("text", "char", "integer", "decimal", "date", "bytes")  # the classes a file's key may be
+# The integers a scan may order by their values: of 64 bits at most, so of 20 digits at most (a HUGEINT
+# may hold 39), and a CSV field declared an integer, whose key text holds 38 digits at most.
+_INTEGRAL = (*(name for name, bits in _BITS.items() if abs(bits) <= 64), f"{FIELD} as integer")
 # What a filter's literal compared with a column of the class must be, and what it is cast to.
 _MOMENT = r"[0-9]{4}-[0-9]{2}-[0-9]{2}"
 _CLOCK = r"[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?"
@@ -1315,15 +1319,24 @@ class _Primitives:
     def order(self, text: str) -> str:
         return f"encode({text})"
 
+    def whole(self, column: str, cls: str, declared: str) -> str:
+        """A Parquet integer itself; a CSV field as the number its key text writes."""
+        name = f"t.{self.ident(column)}"
+        return f"TRY_CAST({name} AS DECIMAL(38,0))" if _csv(declared) else name
+
     def exact(self, order: str, part: str, binds: compose.Binds) -> str:
         return f"{order} = {_bind(binds, part.encode())}"
 
-    def after(self, orders: Sequence[str], bound: Sequence[bytes], binds: compose.Binds) -> str:
-        """(o1 > a) OR (o1 = a AND o2 > b), each part bound as bytes."""
+    def after(self, orders: Sequence[str], bound: Sequence[bytes | int], binds: compose.Binds) -> str:
+        """(o1 > a) OR (o1 = a AND o2 > b), each part bound as bytes, or an integer as a decimal of 38 digits,
+        which any integer of the scan's compares with exactly."""
         arms: list[str] = []
         equal: list[str] = []
         for order, part in zip(orders, bound, strict=True):
-            value = _bind(binds, part)
+            if isinstance(part, int):
+                value = f"CAST({_bind(binds, Decimal(part))} AS DECIMAL(38,0))"
+            else:
+                value = _bind(binds, part)
             arms.append(f"({' AND '.join([*equal, f'{order} > {value}'])})")
             equal.append(f"{order} = {value}")
         return f"({' OR '.join(arms)})"
@@ -2128,6 +2141,9 @@ class Files:
 
     def built(self, column: str, cls: str, declared: str, key: bool) -> str | None:
         return (PRIMITIVES.key_text if key else PRIMITIVES.render)(column, cls, declared)
+
+    def integral(self, cls: str, declared: str) -> bool:
+        return cls == "integer" and declared in _INTEGRAL
 
     async def connect(self, target: Target, *, timeout_s: float = 0) -> _Session:
         return _Session(target, timeout_s)

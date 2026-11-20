@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
+from deltasleuth.connectors.postgres.engine import PostgreSQL
 from deltasleuth.connectors.tables import Plan, Relation
 from deltasleuth.connectors.tables.engine import Column, Figure
 from deltasleuth.context import Context
@@ -126,6 +127,9 @@ class FakeEngine:
 
     def built(self, column: str, cls: str, declared: str, key: bool) -> str | None:
         return None  # as PostgreSQL's
+
+    def integral(self, cls: str, declared: str) -> bool:
+        return PostgreSQL().integral(cls, declared)
 
     def _met(self, method: str, target: str, detail: Any = None) -> None:
         self.events.append((method, target, detail))

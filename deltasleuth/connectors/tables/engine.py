@@ -139,6 +139,12 @@ class Engine[S: Session](Protocol):
         text, any other's rendering; None where no statement is built of a declared type. The
         schema guard compares two declared types'."""
 
+    def integral(self, cls: str, declared: str) -> bool:
+        """Whether a key column of this class and declared type, read as itself, has as its key text a
+        whole number of at most 38 digits as it is written once (an optional minus, no leading zero) and
+        orders as that number: a scan orders and bounds such a key part by its value when both sides'
+        are."""
+
     async def connect(self, target: Target, *, timeout_s: float = 0) -> S:
         """A read-only session; ``timeout_s`` bounds each statement (0: no bound)."""
 
@@ -171,7 +177,9 @@ class Engine[S: Session](Protocol):
 
     async def scan(self, session: S, side: Plan, after: Sequence[bytes] | None) -> AsyncIterator[Rows]:
         """The population's (key parts..., digest) in key order after ``after``, in fetched batches; its
-        statement is sent before it returns, so both sides of a scan are pinned when they are opened."""
+        statement is sent before it returns, so both sides of a scan are pinned when they are opened. The key
+        order is the code-point order of the key texts, but a part the plan names in ``integers`` orders as
+        its value (``integral``)."""
 
     def census(self, session: S, side: Plan) -> AsyncIterator[Rows]:
         """The population's (key parts...) in key order, in fetched batches."""
@@ -284,6 +292,12 @@ NOT_READY = ("export_absent", "unsettled", "stale", "unstamped", "planning")
 
 class KeysOutOfOrder(ValueError):
     """A side's keys came below their predecessor, or not after the resume bound."""
+
+
+class KeyOrderChanged(TableError):
+    """A key column the run's plan orders as an integer is of a type the pass's catalogue says its engine
+    does not order so: the scan's saved bound is of that order, so the pass reads no row. Its code is the
+    whole text, naming the side, the column and its declared type."""
 
 
 class Refusal(Invalid):

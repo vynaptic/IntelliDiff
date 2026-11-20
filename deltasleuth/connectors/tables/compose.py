@@ -42,11 +42,15 @@ class Dialect(Protocol):
     def order(self, text: str) -> str:
         """What sorts a key text by its code points."""
 
+    def whole(self, column: str, cls: str, declared: str) -> str:
+        """What sorts a key column a scan orders as an integer (``Engine.integral``) by its value."""
+
     def exact(self, order: str, part: str, binds: Binds) -> str | None:
         """An order expression equal to a key's part; None when no key text can be the part."""
 
-    def after(self, orders: Sequence[str], bound: Sequence[bytes], binds: Binds) -> str:
-        """The keys after the resume bound, by their order expressions."""
+    def after(self, orders: Sequence[str], bound: Sequence[bytes | int], binds: Binds) -> str:
+        """The keys after the resume bound, by their order expressions: a key text's UTF-8 bytes, or the
+        value of a part ordered as an integer."""
 
     def render(self, column: str, cls: str, declared: str) -> str:
         """The column's value as the text or bytes ``render`` canonicalises."""
@@ -239,19 +243,36 @@ def rows(d: Dialect, side: Plan, asked: Mapping[str, Sequence[Sequence[str]]]) -
 
 def scan(d: Dialect, side: Plan, after: Sequence[bytes] | None) -> tuple[str, Binds]:
     """The population's key texts, the hash of its engine columns when it has any and its worker columns'
-    rendered values, in the code-point order of the key texts, after the key whose parts are ``after``."""
+    rendered values, in the code-point order of the key texts, after the key whose parts are ``after``. A
+    part the plan orders as an integer (``integers``) is ordered and bounded by its value instead."""
     binds: Binds = {}
     keys = _keys(d, side, binds)
-    orders = [d.order(key) for key in keys]
+    integers = set(side.get("integers") or ())
+    orders = _orders(d, side, keys)
     population = _population(d, side, keys, binds)
     if after is not None:
-        population += f" AND {d.after(orders, after, binds)}"
+        bound = [int(part) if i in integers else part for i, part in enumerate(after)]
+        population += f" AND {d.after(orders, bound, binds)}"
     select = [*keys, *_hashed(d, side), *_rendered(d, side, worker_columns(side))]
     return _select(d, side, select, population, orders), binds
 
 
+def _orders(d: Dialect, side: Plan, keys: Sequence[str]) -> list[str]:
+    integers = set(side.get("integers") or ())
+    return [
+        d.whole(column, *_typed(side, column)) if i in integers else d.order(key)
+        for i, (column, key) in enumerate(zip(side["keys"], keys, strict=True))
+    ]
+
+
+def orders(d: Dialect, side: Plan) -> list[str]:
+    """What orders ``scan``'s rows, part by part."""
+    return _orders(d, side, _keys(d, side, {}))
+
+
 def census(d: Dialect, side: Plan) -> tuple[str, Binds]:
-    """The population's key texts in ``scan``'s order: a key held by several rows comes once a row."""
+    """The population's key texts in the code-point order of the key texts (``scan``'s but for a part a scan
+    orders as an integer): a key held by several rows comes once a row."""
     binds: Binds = {}
     keys = _keys(d, side, binds)
     return _select(d, side, keys, _population(d, side, keys, binds), [d.order(key) for key in keys]), binds
