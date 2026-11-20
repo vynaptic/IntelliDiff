@@ -2,7 +2,7 @@
 
     uv run python tools/bench.py run --out DIR [--rows 100k,1M,10M] [--scenarios sparse,dense,clustered,graph]
         [--shape narrow|wide] [--repeat 3] [--server file:/abs/admin-dsn] [--work DIR] [--timeout 240]
-        [--stall 10] [--max-rss BYTES] [--allow-dirty]
+        [--stall 10] [--max-rss BYTES] [--judges N] [--allow-dirty]
     uv run python tools/bench.py report FILE... [--draft] [--extrapolate ROWS]
     uv run python tools/bench.py clean [--server file:/abs/admin-dsn] [--work DIR]
 
@@ -239,6 +239,7 @@ class Options:
     limits: Limits
     allow_dirty: bool
     ds: Path
+    judges: int | None = None  # worker.judge_processes; None: the settings name none
 
 
 def sizes(text: str, option: str = "--rows") -> list[int]:
@@ -339,6 +340,8 @@ def _refuse_arguments(
     admin = (server, _admin(server)) if server else None
     if not out.is_dir():
         fail(f"--out {out} is not a folder")
+    if (judges := given.get("judges")) is not None and judges > (most := os.process_cpu_count() or 1):
+        fail(f"--judges {judges}: at most this host's CPU count, {most}")
     picked = [name for name in SCENARIOS if name in names]  # the table pairs first, then the links
     return Options(out, chosen, picked, shape, server=admin, parent=parent, ds=ds, **given)
 
@@ -637,11 +640,13 @@ def _specs() -> dict[str, dict[str, Any]]:
     }  # fmt: skip
 
 
-def _files(work: str) -> dict[str, dict[str, Any]]:
-    """What ds reads, with ``work`` the work folder ("<work>" in the result's profile)."""
+def _files(work: str, judges: int | None = None) -> dict[str, dict[str, Any]]:
+    """What ds reads, with ``work`` the work folder ("<work>" in the result's profile); ``judges`` its
+    worker.judge_processes, unnamed when None (ds's default for the host)."""
+    worker = WORKER | ({} if judges is None else {"judge_processes": judges})
     settings = {"database_dsn_ref": f"file:{work}/dsn_run", "evidence_dir": f"{work}/evidence",
                 "workspace_dir": f"{work}/workspace", "targets_file": f"{work}/targets.json",
-                "worker": WORKER}  # fmt: skip
+                "worker": worker}  # fmt: skip
     target = {"rate_per_s": 1000, "max_concurrency": 4}
     return {
         "settings.json": settings,
@@ -1197,14 +1202,14 @@ def _prepare(bench: Bench) -> int:
             _create(conn, bench, part)
     for part in ("a", "b", "store", "run"):
         dsv.create(bench.work / f"dsn_{part}", f"{bench.db.dsn(bench.database(part))}\n".encode(), 0o600)
-    for name, doc in _files(str(bench.work)).items():
+    for name, doc in _files(str(bench.work), bench.opts.judges).items():
         (bench.work / name).write_text(json.dumps(doc, indent=1))
     _ds(bench, "init", "--config", str(bench.work / "settings.json"))
     return _rss_bytes(_ds(bench, "migrate", "--config", str(bench.work / "settings-store.json")).ru_maxrss)
 
 
-def _profile(baseline: int) -> dict[str, Any]:
-    files = _files("<work>")
+def _profile(baseline: int, judges: int | None = None) -> dict[str, Any]:
+    files = _files("<work>", judges)
     specs = {name: {"sha256": hashlib.sha256(json.dumps(doc, indent=1).encode()).hexdigest(), "document": doc}
              for name, doc in _specs().items()}  # fmt: skip
     return {"settings": files["settings.json"], "targets": files["targets.json"], "specs": specs,
@@ -1263,14 +1268,15 @@ def _bench(bench: Bench, facts: dict[str, Any], started: datetime) -> int:
         measured_on, baseline = environment(bench, facts["image_id"]), _prepare(bench)
         options = {"rows": opts.rows, "scenarios": opts.scenarios, "shape": opts.shape, "repeat": opts.repeat,
                    "server": opts.server is not None, "timeout_min": opts.limits.timeout_min,
-                   "stall_min": opts.limits.stall_min, "max_rss_bytes": opts.limits.max_rss}  # fmt: skip
+                   "stall_min": opts.limits.stall_min, "max_rss_bytes": opts.limits.max_rss,
+                   "judges": opts.judges}  # fmt: skip
         bench.result = {
             "format": FORMAT, "bench_id": bench.id, "complete": False,
             "started": f"{started:%Y-%m-%dT%H:%M:%SZ}", "ended": None, "publishable": False, "problems": [],
             "commit": {"sha": facts["sha"], "dirty": facts["dirty"]}, "version": installed("deltasleuth"),
             "uv_lock_sha256": hashlib.sha256((release.ROOT / "uv.lock").read_bytes()).hexdigest(),
-            "options": options, "environment": measured_on, "profile": _profile(baseline), "sizes": [],
-            "notes": [],
+            "options": options, "environment": measured_on, "profile": _profile(baseline, opts.judges),
+            "sizes": [], "notes": [],
         }  # fmt: skip
         _write(bench)
         for at, rows in enumerate(opts.rows):
@@ -1333,6 +1339,9 @@ def run(
     max_rss: Annotated[
         int | None, typer.Option(min=1, help="ds's memory limit (default: 60% of it).")
     ] = None,
+    judges: Annotated[
+        int | None, typer.Option(min=0, help="ds's worker.judge_processes (default: ds's for the host).")
+    ] = None,
     allow_dirty: Annotated[
         bool, typer.Option("--allow-dirty", help="Run uncommitted code: unpublishable.")
     ] = False,
@@ -1341,7 +1350,7 @@ def run(
     truth per repetition, one result file rewritten after each."""
     limits = Limits(timeout, stall, max_rss or int(0.6 * _memory()))
     opts = _refuse_arguments(out, rows, scenarios, shape, server, work, repeat=repeat, limits=limits,
-                             allow_dirty=allow_dirty)  # fmt: skip
+                             allow_dirty=allow_dirty, judges=judges)  # fmt: skip
     env, facts = _refuse_environment(opts)
     bench_id, started = secrets.token_hex(4), datetime.now(UTC)
     folder = opts.parent.resolve() / f"dsbench-{bench_id}"
@@ -1528,7 +1537,8 @@ def _conditions(path: Path, result: dict[str, Any]) -> str:
             f" {hashlib.sha256(path.read_bytes()).hexdigest()}): observed on {hardware}, synthetic data;"
             f" {where}; PostgreSQL {pg['version']}{image} with {settings} holding"
             f" both sources and the control plane; topology {env['topology']}, rtt {env['rtt_ms']} ms; worker"
-            f" concurrency {w['concurrency']}, lease {w['lease_seconds']} s, poll {w['poll_seconds']} s;"
+            f" concurrency {w['concurrency']}, lease {w['lease_seconds']} s, poll {w['poll_seconds']} s,"
+            f" judge processes {w.get('judge_processes', 'by default')};"
             f" {result['options']['shape']} rows.")  # fmt: skip
 
 

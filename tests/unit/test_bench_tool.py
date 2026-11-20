@@ -4,6 +4,7 @@ runs that need PostgreSQL are tests/e2e/test_bench.py's."""
 
 from __future__ import annotations
 
+import contextlib
 import getpass
 import hashlib
 import itertools
@@ -549,6 +550,9 @@ def test_conditions_say_stock_only_for_the_image_s_settings(tmp_path: Path) -> N
             " server's hardware is not recorded), synthetic data; a dedicated server; PostgreSQL 16.14 with"
             " non-stock settings (shared_buffers 16GB, work_mem 256MB) holding") in tuned  # fmt: skip
     assert "stock" not in bench.CAVEAT  # the caveat defers to the conditions line, for a tuned server too
+    assert "poll 0.05 s, judge processes by default;" in stock
+    made["profile"] = bench._profile(10**8, judges=0)
+    assert "poll 0.05 s, judge processes 0;" in bench._conditions(path, made)
 
 
 def test_report_warns_changed_code_and_mixed_hosts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -942,6 +946,7 @@ def test_refusals_by_stage(stubs: Stubs, tmp_path: Path, monkeypatch: pytest.Mon
         ("--server", f"file:{tmp_path / 'service'}"): "--server: the admin DSN names a service: write its"
         " parameters in the file",
         ("--out", str(tmp_path / "none")): f"--out {tmp_path / 'none'} is not a folder",
+        ("--judges", "100000"): f"--judges 100000: at most this host's CPU count, {os.process_cpu_count()}",
         ("--server", f"file:{tmp_path / 'remote'}"): "the server's DSN names a remote host with sslmode"
         " prefer: use sslmode=verify-full, since the benchmark connects as a superuser",
     }  # fmt: skip
@@ -1195,6 +1200,34 @@ def test_result_holds_no_secret_or_host(stubs: Stubs, monkeypatch: pytest.Monkey
             json.dumps(kept["profile"]["specs"]["bench-tables"]["document"], indent=1).encode()
         ).hexdigest()
     )
+
+
+@pytest.mark.parametrize("judges", [None, 0, 2])
+def test_judges_are_the_worker_s_judge_processes(
+    stubs: Stubs, monkeypatch: pytest.MonkeyPatch, judges: int | None
+) -> None:
+    """``--judges`` is ds's worker.judge_processes, in both settings files ds reads, the result's profile and
+    its options; without it the settings name none, and ds judges as it does by default on the host."""
+    written: dict[str, Any] = {}
+
+    def ds(b: bench.Bench, *args: str) -> Any:
+        for name in ("settings.json", "settings-store.json"):
+            written[name] = json.loads((b.work / name).read_text())["worker"]
+        return SimpleNamespace(ru_maxrss=1)
+
+    monkeypatch.setattr(bench, "environment", lambda *_: ENVIRONMENT)
+    monkeypatch.setattr(bench.Bench, "admin", lambda _: contextlib.nullcontext())
+    monkeypatch.setattr(bench, "_create", lambda *_: None)
+    monkeypatch.setattr(bench, "_ds", ds)
+    monkeypatch.setattr(bench, "_size", fake_size(10**6))
+    named = [] if judges is None else ["--judges", str(judges)]
+    done = stubs.bench("--allow-dirty", "--scenarios", "sparse", *named)
+    assert done.exit_code == 0, done.output
+    worker = bench.WORKER | ({} if judges is None else {"judge_processes": judges})
+    assert written == {"settings.json": worker, "settings-store.json": worker}
+    [path] = stubs.out.iterdir()
+    kept = json.loads(path.read_text())
+    assert (kept["options"]["judges"], kept["profile"]["settings"]["worker"]) == (judges, worker)
 
 
 def test_clean_removes_marked_work_folders(stubs: Stubs) -> None:
