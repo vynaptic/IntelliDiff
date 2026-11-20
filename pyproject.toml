@@ -64,7 +64,7 @@ packages = ["deltasleuth"]
 
 [tool.uv]
 # Supply-chain cooldown: resolve only releases at least 3 days old.
-exclude-newer = "2026-09-21T00:00:00Z"
+exclude-newer = "2026-11-06T00:00:00Z"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

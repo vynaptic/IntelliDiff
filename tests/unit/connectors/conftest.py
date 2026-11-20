@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 from aiohttp import web
+from multidict import CIMultiDict
 
 from deltasleuth.connectors.rest import RestConnector
 from deltasleuth.core.types import (
@@ -68,7 +69,7 @@ class Recorder:
                 "method": request.method,
                 "raw_path": request.raw_path,
                 "query": list(request.query.items()),
-                "headers": dict(request.headers),
+                "headers": CIMultiDict(request.headers),  # a header name is case-insensitive
                 "body": await request.read(),
             }
         )
