@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import importlib
+import pkgutil
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from deltasleuth.llm import adapters
 from deltasleuth.llm.model import DataClass, EgressDenied
 from deltasleuth.llm.policy import EgressPolicy, check_egress
 from deltasleuth.llm.profiles import (
+    DIALECTS,
     STANDING,
     Budgets,
     Capabilities,
@@ -259,3 +263,23 @@ def test_only_the_example_gateway_profile_may_serve_the_chat(repo_root: Path, tm
 
 def test_the_example_documents_a_gateway_auth_header(repo_root: Path, tmp_path: Path) -> None:
     assert _example(repo_root, tmp_path).get("gateway").auth == ("api-key", "Bearer")
+
+
+def test_the_dialects_are_the_adapter_modules_and_declare_their_credential_header() -> None:
+    """A dialect is one module of ``deltasleuth.llm.adapters``: the profiles know exactly those, in the order
+    they are listed, each with the credential header its module declares."""
+    modules = {m.name for m in pkgutil.iter_modules(adapters.__path__)} - {"base"}
+    assert set(DIALECTS) == modules and DIALECTS == ("openai_chat", "anthropic_messages")
+    for name in DIALECTS:
+        module = importlib.import_module(f"deltasleuth.llm.adapters.{name}")
+        assert module.DIALECT == module.Adapter.dialect == name
+        assert _profile(dialect=name).auth == module.AUTH
+    listed = [importlib.import_module(f"{adapters.__name__}.{name}").LISTED for name in DIALECTS]
+    assert listed == sorted(listed)
+
+
+def test_an_unknown_dialect_is_refused_naming_the_known_ones() -> None:
+    with pytest.raises(ProfileError) as refused:
+        _profile(dialect="gemini_chat")
+    known = "Input should be 'openai_chat' or 'anthropic_messages'"  # as before the dialects were derived
+    assert str(refused.value) == f"/profiles/prof/dialect: {known}"

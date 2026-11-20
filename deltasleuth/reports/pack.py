@@ -40,7 +40,7 @@ from typing import Any
 from deltasleuth import approvals, licence
 from deltasleuth.auth.principal import Principal
 from deltasleuth.connectors.base import utc_iso
-from deltasleuth.connectors.tables import manifest, relation
+from deltasleuth.connectors.tables import manifest, named, relation
 from deltasleuth.context import Context
 from deltasleuth.core import jsonio, sampling
 from deltasleuth.core.canonical.encoding import sha256_hex
@@ -685,7 +685,7 @@ def _subject(facts: _Facts) -> dict[str, Any]:
             }
             | {name: plan[name] for name in ("engine", "server") if name in plan}
             | ({"server": read["server"]} if "engine" in plan and read.get("server") else {})
-            | ({"files": _files(plan)} if plan.get("engine") == "files" else {})
+            | ({"files": _files(plan)} if plan and named(plan).fixed else {})
             for side, cfg in facts.spec.sides.items()
             for plan, read in [(tables.get(side.value) or {}, counted.get(side.value) or {})]
         },

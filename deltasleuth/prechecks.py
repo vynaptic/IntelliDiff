@@ -275,7 +275,7 @@ def _declared(ctx: Context, target_id: str) -> None:
         raise Refused(404, f"target {target_id} is not declared")
     if ctx.targets.get(target_id).engine is None:
         raise Refused(422, f"target {target_id} is a service: a table pre-check reads database targets")
-    if ctx.targets.get(target_id).engine == "files":
+    if not tables.of(ctx.targets.get(target_id)).prechecked:
         raise Refused(422, precheck.FILE_SIDE)
 
 

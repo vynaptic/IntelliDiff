@@ -31,6 +31,7 @@ from pymysql.cursors import SSCursor
 from deltasleuth.connectors import netguard
 from deltasleuth.connectors.tables import compose, render
 from deltasleuth.connectors.tables.engine import (
+    CAST_KEY,
     Asked,
     Column,
     Figure,
@@ -53,7 +54,7 @@ from deltasleuth.connectors.tables.engine import (
     unreachable,
 )
 from deltasleuth.connectors.tables.keys import Plan
-from deltasleuth.core import jsonio
+from deltasleuth.core import engines, jsonio
 from deltasleuth.core.secrets import read_secret
 from deltasleuth.core.types import DatabaseTarget, Target
 
@@ -545,6 +546,7 @@ class MySQL:
     """``connectors.tables.Engine`` over PyMySQL."""
 
     name = "mysql"
+    traits = engines.ENGINES[name]
     arms = 200
     unfit = (KeyUnfit, UnicodeEncodeError)  # the server's codes, and a lone surrogate, which has no UTF-8
     fold = None  # a column's name matches in any case
@@ -553,6 +555,19 @@ class MySQL:
     sum_digits = 65  # a DECIMAL's
     empty_null = False
     retry_alone = True
+    native = False
+    percent_placeholder = False  # every value is a literal: nothing is interpolated
+    fixed = False
+    spill_budget = False
+    utf8_keys = False
+    prechecked = True
+    unkeyable = CAST_KEY
+    hash_charsets = False
+    observed = "8.4"
+    full_charset = None
+
+    def planning(self) -> contextlib.AbstractAsyncContextManager[None]:
+        return contextlib.nullcontext()
 
     def built(self, column: str, cls: str, declared: str, key: bool) -> str | None:
         return (PRIMITIVES.key_text if key else PRIMITIVES.render)(column, cls, declared)

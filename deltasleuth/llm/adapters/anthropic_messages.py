@@ -39,7 +39,9 @@ from deltasleuth.llm.model import (
 )
 from deltasleuth.llm.profiles import Capabilities, LLMProfile
 
-DIALECT = "anthropic_messages"
+DIALECT = "anthropic_messages"  # a profile's ``dialect``: this module's name
+AUTH = ("x-api-key", None)  # a credential's header and scheme, unless the profile says
+LISTED = 1  # its place where the known dialects are named
 _STOP: dict[str, StopReason] = {
     "end_turn": "end_turn",
     "stop_sequence": "end_turn",

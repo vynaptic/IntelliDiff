@@ -460,9 +460,11 @@ def test_the_command_prints_the_head_or_the_first_break(pg_dsn: str, tmp_path: P
     first = ds("audit", "verify")  # its start writes keys.created rows, before it reads the chain
     head, rows = asyncio.run(_stored(pg_dsn))
     assert head is not None and len(rows) == head["seq"]
-    assert (first.exit_code, first.stdout) == (
+    lines = first.stdout.splitlines()  # then what it checked outside the database, and the roles
+    assert (first.exit_code, lines[0], lines[-1]) == (
         0,
-        f"chain: {head['seq']} row(s) verified\nhead: row {head['seq']} {head['hash']}\n",
+        f"chain: {head['seq']} row(s) verified",
+        f"head: row {head['seq']} {head['hash']}",
     )
     (tmp_path / "siem.jsonl").write_text("\n".join(repo.siem_line(r) for r in rows) + "\n\n")
     against = ds("audit", "verify", "--siem", tmp_path / "siem.jsonl")

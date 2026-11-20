@@ -37,7 +37,7 @@ from deltasleuth.runner.runs import run_status, stop_run
 from deltasleuth.security import rawvalues
 from deltasleuth.store import repo
 
-LOCK_ID = 0x44535047  # pg advisory lock "DSPG": one purger per database
+LOCK_ID = repo.PURGE_LOCK  # one purger per database
 CHUNK = 5_000  # keys (run_keys.seq) purged per transaction: well under a second each
 DRAIN = 500  # blob addresses per blob-lock transaction
 PRECHECKS = 1_000  # table pre-checks deleted per transaction
@@ -126,8 +126,7 @@ async def _sole(ctx: Context) -> AsyncIterator[None]:
     """Hold the purge lock for the block, on a connection of its own closed however the block ends
     (which frees the lock); PurgeBusy while another purger holds it."""
     async with await psycopg.AsyncConnection.connect(ctx.pool.conninfo, autocommit=True) as lock:
-        taken = (await (await lock.execute("SELECT pg_try_advisory_lock(%s)", (LOCK_ID,))).fetchone())[0]  # type: ignore[index]
-        if not taken:
+        if not await repo.try_purge_lock(lock):
             raise PurgeBusy(BUSY)
         yield
 

@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from deltasleuth.core.classify.signatures import signature_hash
+from deltasleuth.core.masking import Tokeniser, mask_key, mask_member_key, mask_path_pattern
 from deltasleuth.core.types import (
     ChangeType,
     CompiledSpec,
@@ -28,7 +29,6 @@ from deltasleuth.core.types import (
     RuleClassification,
     Severity,
 )
-from deltasleuth.security.tokenise import Tokeniser, mask_key, mask_member_key, mask_path_pattern
 
 SAMPLE_KEYS = 5
 MIN_FANOUT_KEYS = 2

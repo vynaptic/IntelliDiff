@@ -22,6 +22,7 @@ from deltasleuth.core.jsonio import (
     ResourceLimitError,
     parse_json,
 )
+from deltasleuth.core.masking import mask_path_pattern
 from deltasleuth.core.types import (
     JSON,
     CompiledSpec,
@@ -33,7 +34,6 @@ from deltasleuth.core.types import (
     TargetCapabilities,
     TruncationIndicators,
 )
-from deltasleuth.security.tokenise import mask_path_pattern
 
 _ERROR_REASONS = {"timeout": "timeout", "http_429": "rate_limited", "circuit_open": "circuit_open"}
 _UNPARSED = object()  # the body of a response that failed to parse
@@ -58,7 +58,10 @@ def observe(
         return failure
     if duplicate:
         return SideState.incomplete("duplicate_member_name", "body repeats a member name (RFC 8259)")
-    paging = _paging_state(obs, side_cfg, capabilities, doc)
+    try:
+        paging = _paging_state(obs, side_cfg, capabilities, doc)
+    except CanonicalError as exc:  # a truncation path's filter past its bound, as a select's below
+        return SideState.incomplete("unparseable", exc.describe(lambda p: mask_path_pattern(p, spec)))
     if paging is not None:
         return paging
     try:

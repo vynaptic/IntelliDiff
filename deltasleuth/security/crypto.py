@@ -7,6 +7,7 @@ hashes that identify a key without revealing it; errors and reprs carry ids, nev
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
@@ -134,6 +135,19 @@ def fingerprint(path: str | os.PathLike[str]) -> Keyring:
 def chat_context(session_id: str, seq: int, role: str) -> str:
     """The context a chat message is sealed with: its session, position and role."""
     return f"{session_id}\x1f{seq}\x1f{role}"
+
+
+def seal_after(sealer: Sealer, cycle: int, parts: list[str]) -> dict[str, str]:
+    """The point a scan resumes after, as ``state["after"]`` stores it: the key's parts, sealed."""
+    sealed = sealer.seal("scan_after", cycle, "", json.dumps(parts).encode())
+    return {"enc": base64.b64encode(sealed).decode("ascii")}
+
+
+def opened_after(sealer: Sealer, cycle: int, after: dict[str, str] | None) -> list[str] | None:
+    """The key's parts a scan resumes after, from its sealed ``state["after"]``; None before any."""
+    if after is None:
+        return None
+    return json.loads(sealer.open("scan_after", cycle, "", base64.b64decode(after["enc"])))
 
 
 def create_keyring(path: Path) -> None:

@@ -39,6 +39,9 @@ from deltasleuth.llm.model import (
 )
 from deltasleuth.llm.profiles import Capabilities, LLMProfile, WireOptions
 
+DIALECT = "openai_chat"  # a profile's ``dialect``: this module's name
+AUTH = ("Authorization", "Bearer")  # a credential's header and scheme, unless the profile says
+LISTED = 0  # its place where the known dialects are named
 _STOP: dict[str, StopReason] = {
     "stop": "end_turn",
     "tool_calls": "tool_use",
@@ -51,7 +54,7 @@ OPENAI_WIRE = WireOptions()  # what the OpenAI API itself accepts
 
 
 class Adapter:
-    dialect: ClassVar[str] = "openai_chat"
+    dialect: ClassVar[str] = DIALECT
     version: ClassVar[str] = f"openai_chat/1+openai-{openai.__version__}"
     expressible: ClassVar[Capabilities] = Capabilities(tool_calling=True, prompt_caching="automatic")
 

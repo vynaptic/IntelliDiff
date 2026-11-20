@@ -103,6 +103,7 @@ async def test_a_kill_during_l2_resumes_to_the_same_rows_and_counts(
 ) -> None:
     import psycopg
 
+    from deltasleuth.connectors.postgres.errors import wrapped
     from deltasleuth.runner import graph
     from deltasleuth.runner import scan as scanning
 
@@ -111,8 +112,8 @@ async def test_a_kill_during_l2_resumes_to_the_same_rows_and_counts(
 
     async def dying(*args: Any, **kwargs: Any) -> Any:
         calls.append(1)
-        if len(calls) == 2:  # the second run's scanner loses a database during L2
-            raise psycopg.OperationalError("killed")
+        if len(calls) == 2:  # the second run's scanner loses a database during L2, as graph parity says it
+            raise wrapped(psycopg.OperationalError("killed"))
         return await real(*args, **kwargs)
 
     monkeypatch.setattr(graph, "analyse", dying)

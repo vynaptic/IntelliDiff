@@ -15,6 +15,7 @@ from deltasleuth.connectors.tables.engine import (
     FilesChanged,
     KeysOutOfOrder,
     KeyUnfit,
+    LimitPassed,
     NotReady,
     ReaderDied,
     Refusal,
@@ -30,9 +31,11 @@ from deltasleuth.connectors.tables.engine import (
     TargetTempSpace,
     TargetUnreachable,
     code,
+    engine_name,
     named,
     of,
     planned,
+    shown,
 )
 from deltasleuth.connectors.tables.keys import Plan, decode_key, encode_key, side_values
 from deltasleuth.connectors.tables.plan import (
@@ -60,6 +63,7 @@ __all__ = [
     "FilesChanged",
     "KeyUnfit",
     "KeysOutOfOrder",
+    "LimitPassed",
     "NotReady",
     "Plan",
     "Planned",
@@ -81,6 +85,7 @@ __all__ = [
     "code",
     "decode_key",
     "encode_key",
+    "engine_name",
     "issues",
     "key_plan",
     "named",
@@ -93,6 +98,7 @@ __all__ = [
     "relation",
     "resolved",
     "sealed",
+    "shown",
     "side_values",
     "unsealed",
 ]

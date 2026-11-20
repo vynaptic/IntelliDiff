@@ -23,11 +23,10 @@ import shutil
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from functools import partial
 from pathlib import Path
-from typing import Any, LiteralString
+from typing import Any
 
 import psycopg
 import zstandard
-from psycopg.types.json import Jsonb
 
 from deltasleuth.auth.principal import Principal
 from deltasleuth.config import Settings
@@ -37,9 +36,7 @@ from deltasleuth.core.secrets import read_secret
 from deltasleuth.errors import Invalid
 from deltasleuth.evidence.fsio import fsync_dir
 from deltasleuth.evidence.store import EvidenceCorruptedError, EvidenceStore
-from deltasleuth.runner.scan import seal_after
-from deltasleuth.runner.worker import LOCK_ID
-from deltasleuth.security.crypto import chat_context
+from deltasleuth.security.crypto import chat_context, seal_after
 from deltasleuth.store import db, repo
 
 LEGACY = Path("blobs", "sha256")  # under the evidence directory
@@ -57,6 +54,7 @@ INTERRUPTED = "interrupted: run 'ds keys migrate' again to continue"
 _FILE = re.compile(r"([0-9a-f]{64})\.zst")
 Rows = list[tuple[Any, ...]]
 Phase = Callable[[Context], AsyncIterator[int]]
+Select = Callable[[repo.Conn, tuple[Any, ...], int], Awaitable[Rows]]
 
 
 async def migrate(settings: Settings, who: Principal, *, accept_missing: bool = False) -> dict[str, int]:
@@ -67,8 +65,7 @@ async def migrate(settings: Settings, who: Principal, *, accept_missing: bool = 
     dsn = read_secret(settings.database_dsn_ref)
     await db.admitted(dsn)  # the lock's connection is the first: a refusal is said as by every command
     async with await psycopg.AsyncConnection.connect(dsn, autocommit=True) as lock:
-        taken = (await (await lock.execute("SELECT pg_try_advisory_lock(%s)", (LOCK_ID,))).fetchone())[0]
-        if not taken:
+        if not await repo.try_worker_lock(lock):
             raise Invalid("stop the app first: docker compose stop app")
         if not accept_missing:  # before Context.open, which would already apply 006
             await _refuse_absent(lock, settings.evidence_dir)
@@ -85,8 +82,7 @@ async def migrate(settings: Settings, who: Principal, *, accept_missing: bool = 
 
 async def _seal(ctx: Context, counts: dict[str, int]) -> None:
     async with ctx.pool.connection() as conn:
-        cur = await conn.execute("SELECT 1 FROM ds.schema_version WHERE version = %s", (db.SEALED,))
-        sealed = await cur.fetchone() is not None
+        sealed = await repo.schema_applied(conn, db.SEALED)
     for name, phase in PHASES:
         if sealed and name not in ("blobs", "missing_blobs"):
             continue  # 007 dropped the plaintext columns: only legacy blobs can be left
@@ -105,14 +101,7 @@ async def _refuse_absent(conn: psycopg.AsyncConnection, evidence_dir: Path) -> N
     each would be recorded as missing, most likely because ``evidence_dir`` names the wrong directory.
     It runs on any schema from 001 on, before anything is migrated, so a refusal changes nothing."""
     legacy = evidence_dir / LEGACY
-    [table] = await (await conn.execute("SELECT to_regclass('ds.observations')")).fetchone()  # type: ignore[misc]
-    if table is None:  # an empty database: nothing to refuse
-        return
-    cur = await conn.execute(
-        """SELECT EXISTS (SELECT 1 FROM ds.observations WHERE content_hash LIKE 'sha256:%')
-                  AND NOT EXISTS (SELECT 1 FROM ds.observations WHERE content_hash LIKE 'hk1:%')"""
-    )
-    [named] = await cur.fetchone()  # type: ignore[misc]
+    named = await repo.legacy_blobs_only(conn)  # None on an empty database: nothing to refuse
     if named and not await asyncio.to_thread(_listed, legacy, 1):
         raise Invalid(
             f"observations name legacy blobs, but {legacy} holds none: check evidence_dir, or run 'ds keys"
@@ -159,7 +148,7 @@ async def _batches(
     ctx: Context,
     *,
     first: tuple[Any, ...],
-    select: LiteralString,
+    select: Select,
     seal: Callable[[Context, repo.Conn, Rows], Awaitable[None]],
 ) -> AsyncIterator[int]:
     """The rows ``select`` finds after a keyset position (its first columns; ``first`` to start), a
@@ -167,7 +156,7 @@ async def _batches(
     after = first
     while True:
         async with ctx.pool.connection() as conn:
-            rows = await (await conn.execute(select, (*after, BATCHES[name]))).fetchall()
+            rows = await select(conn, after, BATCHES[name])
             if rows:
                 await seal(ctx, conn, rows)
         if not rows:
@@ -192,12 +181,7 @@ async def _keys(ctx: Context, conn: repo.Conn, rows: Rows) -> None:
         (await ctx.sealer(conn, run_id)).seal("run_key", 0, masked, key.encode())
         for run_id, _, _, masked, key in rows
     ]
-    await conn.execute(
-        """UPDATE ds.run_keys k SET key_enc = u.enc, key = NULL
-           FROM unnest(%s::text[], %s::int[], %s::int[], %s::bytea[]) AS u (run_id, cycle, seq, enc)
-           WHERE (k.run_id, k.cycle, k.seq) = (u.run_id, u.cycle, u.seq)""",
-        (_column(rows, 0), _column(rows, 1), _column(rows, 2), sealed),
-    )
+    await repo.seal_legacy_keys(conn, _column(rows, 0), _column(rows, 1), _column(rows, 2), sealed)
 
 
 async def _headers(ctx: Context, conn: repo.Conn, rows: Rows) -> None:
@@ -208,12 +192,7 @@ async def _headers(ctx: Context, conn: repo.Conn, rows: Rows) -> None:
         )
         for run_id, obs_id, cycle, headers in rows
     ]
-    await conn.execute(
-        """UPDATE ds.observations o SET headers_enc = u.enc, headers = NULL
-           FROM unnest(%s::text[], %s::text[], %s::bytea[]) AS u (run_id, obs_id, enc)
-           WHERE (o.run_id, o.obs_id) = (u.run_id, u.obs_id)""",
-        (_column(rows, 0), _column(rows, 1), sealed),
-    )
+    await repo.seal_legacy_headers(conn, _column(rows, 0), _column(rows, 1), sealed)
 
 
 async def _chat(ctx: Context, conn: repo.Conn, rows: Rows) -> None:
@@ -223,24 +202,16 @@ async def _chat(ctx: Context, conn: repo.Conn, rows: Rows) -> None:
         text = jsonio.dumps(repo.storable({"content": content, "tool_calls": tool_calls}))
         context = chat_context(session_id, seq, role)
         sealed.append((await ctx.sealer(conn, run_id)).seal("chat", cycle, context, text.encode()))
-    await conn.execute(
-        """UPDATE ds.chat_messages m SET sealed = u.enc, content = NULL, tool_calls = NULL
-           FROM unnest(%s::text[], %s::int[], %s::bytea[]) AS u (session_id, seq, enc)
-           WHERE (m.session_id, m.seq) = (u.session_id, u.seq)""",
-        (_column(rows, 0), _column(rows, 1), sealed),
-    )
+    await repo.seal_legacy_chat(conn, _column(rows, 0), _column(rows, 1), sealed)
 
 
 async def _scans(ctx: Context, conn: repo.Conn, rows: Rows) -> None:
     """As ``scan.scan`` checkpoints the point a running scan resumes after."""
-    params = [
-        (Jsonb({"after": seal_after(await ctx.sealer(conn, run_id), cycle, after)}), run_id, cycle)
+    sealed = [
+        (seal_after(await ctx.sealer(conn, run_id), cycle, after), run_id, cycle)
         for run_id, cycle, after in rows
     ]
-    async with conn.cursor() as cur:
-        await cur.executemany(
-            "UPDATE ds.scans SET state = state || %s WHERE run_id = %s AND cycle = %s", params
-        )
+    await repo.seal_legacy_scans(conn, sealed)
 
 
 # -- phase 6: blobs -----------------------------------------------------------------------------------
@@ -264,12 +235,7 @@ async def _missing(ctx: Context) -> AsyncIterator[int]:
     its reads answer as for any missing blob."""
     while True:
         async with ctx.pool.connection() as conn:
-            cur = await conn.execute(
-                """SELECT DISTINCT content_hash FROM ds.observations
-                   WHERE content_hash LIKE 'sha256:%%' LIMIT %s""",
-                (BATCHES["missing_blobs"],),
-            )
-            gone = [content_hash for (content_hash,) in await cur.fetchall()]
+            gone = await repo.legacy_blob_names(conn, BATCHES["missing_blobs"])
             await _repoint(conn, ctx.evidence, [(old, missing_address(ctx.evidence, old)) for old in gone])
         if not gone:
             return
@@ -304,12 +270,7 @@ def _written(evidence: EvidenceStore, evidence_dir: Path, digests: Sequence[str]
 async def _repoint(conn: repo.Conn, evidence: EvidenceStore, moved: Sequence[tuple[str, str]]) -> None:
     """Point the observations naming each legacy address, or its missing placeholder (recorded by an
     earlier run while the blob was absent), at the new address."""
-    if moved:
-        async with conn.cursor() as cur:
-            await cur.executemany(
-                "UPDATE ds.observations SET content_hash = %s WHERE content_hash IN (%s, %s)",
-                [(new, old, missing_address(evidence, old)) for old, new in moved],
-            )
+    await repo.repoint_observations(conn, [(new, old, missing_address(evidence, old)) for old, new in moved])
 
 
 def _unlink(paths: Sequence[Path]) -> None:
@@ -326,9 +287,7 @@ PHASES: tuple[tuple[str, Phase], ...] = (
             _batches,
             "runs",
             first=("",),
-            select="""SELECT run_id FROM ds.runs r
-                      WHERE run_id > %s AND NOT EXISTS (SELECT 1 FROM ds.data_keys k WHERE k.scope = r.run_id)
-                      ORDER BY run_id LIMIT %s""",
+            select=repo.legacy_runs,
             seal=_data_keys,
         ),
     ),
@@ -338,9 +297,7 @@ PHASES: tuple[tuple[str, Phase], ...] = (
             _batches,
             "keys",
             first=("", 0, -1),
-            select="""SELECT run_id, cycle, seq, key_masked, key FROM ds.run_keys
-                      WHERE (run_id, cycle, seq) > (%s, %s, %s) AND key_enc IS NULL
-                      ORDER BY run_id, cycle, seq LIMIT %s""",
+            select=repo.legacy_keys,
             seal=_keys,
         ),
     ),
@@ -350,9 +307,7 @@ PHASES: tuple[tuple[str, Phase], ...] = (
             _batches,
             "headers",
             first=("", ""),
-            select="""SELECT run_id, obs_id, cycle, headers FROM ds.observations
-                      WHERE (run_id, obs_id) > (%s, %s) AND headers_enc IS NULL
-                      ORDER BY run_id, obs_id LIMIT %s""",
+            select=repo.legacy_headers,
             seal=_headers,
         ),
     ),
@@ -362,10 +317,7 @@ PHASES: tuple[tuple[str, Phase], ...] = (
             _batches,
             "chat_messages",
             first=("", 0),
-            select="""SELECT m.session_id, m.seq, m.role, m.cycle, m.content, m.tool_calls, s.run_id
-                      FROM ds.chat_messages m JOIN ds.chat_sessions s USING (session_id)
-                      WHERE (m.session_id, m.seq) > (%s, %s) AND m.sealed IS NULL
-                      ORDER BY m.session_id, m.seq LIMIT %s""",
+            select=repo.legacy_chat,
             seal=_chat,
         ),
     ),
@@ -375,9 +327,7 @@ PHASES: tuple[tuple[str, Phase], ...] = (
             _batches,
             "scans",
             first=("", 0),
-            select="""SELECT run_id, cycle, state->'after' FROM ds.scans
-                      WHERE (run_id, cycle) > (%s, %s) AND jsonb_typeof(state->'after') = 'array'
-                      ORDER BY run_id, cycle LIMIT %s""",
+            select=repo.legacy_scans,
             seal=_scans,
         ),
     ),

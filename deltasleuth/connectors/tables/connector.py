@@ -30,7 +30,6 @@ from deltasleuth.connectors.tables.engine import (
     Row,
     Session,
     SnapshotLost,
-    TableError,
     TargetAuthRefused,
     TargetRefused,
     TargetTempSpace,
@@ -54,8 +53,10 @@ def relation(side: Plan) -> str:
 
 
 class TableConnector:
-    """``Connector`` over one table side of a run's plan, through one session of its engine; ``prefetch``
-    reads a batch of keys in one statement, and ``fetch`` then takes each without one."""
+    """``BatchConnector`` over one table side of a run's plan, through one session of its engine;
+    ``prefetch`` reads a batch of keys in one statement, and ``fetch`` then takes each without one."""
+
+    credentials: tuple[str, ...] = ()  # a session's credential is never sent with a key
 
     def __init__(self, target: Target, execution: ExecutionConfig, side: Plan, *, gate: TargetGate) -> None:
         self._target, self._timeout_s, self._gate, self._side = target, execution.total_timeout_s, gate, side
@@ -182,14 +183,14 @@ class TableConnector:
                 # An outage, a refused login, the guard, or a server's code a later read may not meet; a
                 # full disk or a privilege gone propagates and fails the run, but a file
                 # side's read met its sort's budget, which the spec's retries read again.
-                if isinstance(exc, TargetTempSpace) and self._engine.name != "files":
+                if isinstance(exc, TargetTempSpace) and not self._engine.spill_budget:
                     raise
                 await self.aclose()  # the next read opens a fresh session
                 rows, failure = None, "timeout" if isinstance(exc, TIMEOUT) else "connect_error"
                 if isinstance(exc, TargetAuthRefused):
                     failure = "auth_error"  # the run pauses: a stale password is not tried in a loop
-                coded = failure == "timeout" or isinstance(exc, TableError | UnsafeTargetError)
-                detail = code(exc) if coded else "OperationalError"  # psycopg's outages share a name
+                # An outage's code, or the one name an engine gives every outage (``TableError.detail``)
+                detail = code(exc) if failure == "timeout" else getattr(exc, "detail", None) or code(exc)
         if rows is None and failure == "unfit" and len(keys) > 1:
             # A key its column cannot hold: halve the batch until that key stands alone.
             first, second = dict(items[: len(items) // 2]), dict(items[len(items) // 2 :])

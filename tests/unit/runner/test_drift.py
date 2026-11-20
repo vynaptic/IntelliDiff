@@ -24,6 +24,7 @@ from deltasleuth import approvals
 from deltasleuth.auth.principal import WORKER
 from deltasleuth.connectors import tables
 from deltasleuth.connectors.postgres import engine as postgresql
+from deltasleuth.connectors.postgres import errors as pg_errors
 from deltasleuth.connectors.tables.engine import Column, Relation
 from deltasleuth.core import precheck
 from deltasleuth.core.canonical.encoding import sha256_hex
@@ -745,7 +746,7 @@ async def test_a_fault_of_the_guard_fails_open_with_its_row(
         raise KeyError("a bug")
 
     monkeypatch.setattr(precheck, "changes", broken)
-    with caplog.at_level(logging.WARNING, logger="deltasleuth.guard"), pytest.raises(psycopg.Error):
+    with caplog.at_level(logging.WARNING, logger="deltasleuth.guard"), pytest.raises(tables.TargetDenied):
         await scanning.scan(ctx, run_id)  # the pass went on, and met the dropped column itself
     assert logged(caplog) == [f"schema guard: run {run_id} not checked: KeyError"]
     run = await pair.h.run(run_id)
@@ -1069,14 +1070,39 @@ async def test_a_misclassified_error_at_v5_still_fails(pair: Pair, monkeypatch: 
     ctx = pair.h.ctx
     run_id = await create_run(ctx, await pair.spec(), "batch", ["1", "2"], who=TESTER)
 
-    async def rows(self: Any, conn: Any, side: Any, asked: Any) -> Any:
-        raise psycopg.errors.UndefinedColumn("a function's column, not the table's")
+    async def rows(self: Any, conn: Any, side: Any, asked: Any) -> Any:  # as the adapter raises it
+        raise pg_errors.wrapped(psycopg.errors.UndefinedColumn("a function's column, not the table's"))
 
     monkeypatch.setattr(postgresql.PostgreSQL, "rows", rows)
     run = await pair.h.finish(run_id)
     assert (run["status"], run["stop_reason"]) == ("failed", None)
     assert re.fullmatch("UndefinedColumn" + AT, run["error"])
     assert drifts(await pair.audited(run_id)) == [] and run["guard"]["checked"]["where"] == "read"
+
+
+async def test_the_store_s_undefined_column_is_no_schema_drift(
+    pair: Pair, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The store answering UndefinedColumn while a pass is saved (a schema it was not migrated to, say) is
+    a failure of the store's: it fails the run as a bug does, and the guard never looks at the compared
+    tables for it, since a side's denied class is the seam's ``TargetDenied`` and never psycopg's."""
+    ctx = pair.h.ctx
+    run_id = await create_run(ctx, await pair.spec(), "batch", ["1", "2"], who=TESTER)
+    looked: list[str] = []
+
+    async def save_key_results(*args: Any, **kwargs: Any) -> Any:
+        raise psycopg.errors.UndefinedColumn("column \"verdict\" of relation \"results\" does not exist")
+
+    async def failed(ctx: Any, run_id: str) -> bool:
+        looked.append(run_id)
+        return False
+
+    monkeypatch.setattr(repo, "save_key_results", save_key_results)
+    monkeypatch.setattr(drift, "failed", failed)
+    run = await pair.h.finish(run_id)
+    assert (run["status"], run["stop_reason"]) == ("failed", None)
+    assert re.fullmatch("UndefinedColumn" + AT, run["error"]) and looked == []
+    assert drifts(await pair.audited(run_id)) == []
 
 
 # -- every text ----------------------------------------------------------------------------------------

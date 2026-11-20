@@ -54,7 +54,7 @@ async def health(ctx: Ctx) -> Response:
     ``worker.stale_after`` (a ``--no-worker`` one only shows it)."""
     try:
         async with ctx.pool.connection(timeout=3) as conn:
-            await conn.execute("SELECT 1")
+            await repo.ping(conn)
             swept = await repo.last_sweep(conn)
     except psycopg.OperationalError:  # the pool's timeout among them
         raise HTTPException(

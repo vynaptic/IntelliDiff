@@ -56,7 +56,7 @@ set once) or `soak` (the same comparison in repeated cycles).
 3. **Leases and the single active worker.** One worker per database holds a PostgreSQL advisory lock; any other waits. Its slots lease due keys and renew the leases. A group's observations, results and findings are saved in one transaction, and a lost lease rolls it back. A killed worker costs only the keys in flight and never duplicates a result. The worker checks its lock every third of a lease period on a connection with TCP keepalives; a check not answered in that time counts as a lost lock, and its slots stop. A free slot leases a key of the run with the fewest groups in flight, so runs share the worker. Beside a side of fixed files a group is 2,000 keys, one pass over the files, judged and saved 200 at a time.
 4. **Fetch both sides.** One connector per side reads under its target's gate: the rate budget (`rate_per_s`, default 20), the in-flight cap, retries with backoff and a circuit breaker. Each read, a failed one included, is stored as evidence before its row: each blob file is fsynced, then each directory once a group. A key whose read the open breaker or a target's Retry-After pause refused unsent goes back unjudged, due when the target may be read again, up to ten times; then it is judged as read.
 5. **Observe.** Each read is judged against the declared contract and becomes `COMPLETE`, `ABSENT`, `INCOMPLETE` or `ERROR`. A side is `ABSENT` only when the spec and the target both declare that answer an authoritative not-found.
-6. **Select and map.** A service side applies `select` (JSONPath) and `map` (JSONata). A table side maps its declared columns to canonical fields. Both sides give one canonical shape. JSONata calculates in doubles and writes 15 digits, so a number of more than 15 significant digits goes into a map as a stand-in: moving it is exact, and a map that calculates with it or writes it as text leaves the side `INCOMPLETE`. A map's regular expressions run on the `regex` engine under the map's time bound, written to match what Python's `re` matches; one with a repeat inside a repeat is refused when the spec loads, and one that reads a string of more than 10,000 characters leaves the side `INCOMPLETE`.
+6. **Select and map.** A service side applies `select` (JSONPath) and `map` (JSONata). A table side maps its declared columns to canonical fields. Both sides give one canonical shape. JSONata calculates in doubles and writes 15 digits, so a number of more than 15 significant digits goes into a map as a stand-in: moving it is exact, and a map that calculates with it or writes it as text leaves the side `INCOMPLETE`. A map's regular expressions run on the `regex` engine under the map's time bound, written to match what Python's `re` matches; one with a repeat inside a repeat is refused when the spec loads, and one that reads a string of more than 10,000 characters leaves the side `INCOMPLETE`. A map's pattern that cannot be written so (`\B`, a back-reference, a conditional, a scoped flag) is refused when the spec loads. A path's `match()` and `search()` run on the same engine: a pattern the path writes is checked when the spec loads, one the answer supplies as it runs, and the patterns of one evaluation share a 1-second bound.
 7. **Normalise.** Per-field normaliser chains run on a copy. Arrays are matched as `ordered`, `set`, `keyed` or `multiset`. The raw tree and the normalised tree are both kept and hashed.
 8. **Diff.** A structural diff compares the two documents, with `exact`, `tolerance` or `similarity` per field. A difference that a normaliser or a tolerance removed is still reported, at severity `INFO`. Member names pair by their NFC form, as the canonical hash writes them; two names of one object sharing a form pair only when spelled alike.
 9. **Classify.** Each finding gets a taxonomy code, a severity, a value class and a signature. Known-difference rules mark matching findings as suppressed. The key's outcome is `MATCH`, `MISMATCH`, `KNOWN_DIFF`, `NOT_FOUND_A`, `NOT_FOUND_B`, `DRIFT` or `INCONCLUSIVE`.
@@ -80,15 +80,15 @@ and Teams messages from the audit chain.
 | `deltasleuth/core/spec` | Spec loading, validation and compilation, `spec.schema.json`, and the target registry. |
 | `deltasleuth/core/canonical` | Observe, select and map, projection, normalisers, array rewriting, canonical encoding. |
 | `deltasleuth/core/diff`, `deltasleuth/core/classify` | The structural diff; outcomes, taxonomy, value classes, signatures, known differences, root causes. |
-| `deltasleuth/core/*.py` | Shared types and pure logic: exact JSON, sampling, cron, readiness, pre-checks, notification events. |
+| `deltasleuth/core/*.py` | Shared types and pure logic: exact JSON, masking (the tokenisation policy, the keyed tokeniser and masked renditions, `masking.py`), what targets and specs may declare of each database engine (`engines.py`), sampling, cron, readiness, pre-checks, notification events. |
 | `deltasleuth/connectors` | The connector protocol, REST calls, paging, templating, retries, the breaker, the network guard, captured samples, and the notification senders (webhook and e-mail). |
-| `deltasleuth/connectors/tables`, `deltasleuth/connectors/postgres` | The engine seam, the column plan and per-key reads; PostgreSQL, MySQL, Oracle and the DuckDB file reader. |
+| `deltasleuth/connectors/tables`, `deltasleuth/connectors/postgres` | The engine seam, the column plan and per-key reads; PostgreSQL, MySQL, Oracle and the DuckDB file reader. Each engine declares its behaviour as members of `Engine`, and its adapter turns its driver's errors into the seam's `TableError` classes. |
 | `deltasleuth/runner` | Runs, key sets, the worker, table scans, rechecks, stop conditions, cycle ends, sampling, purge, schedules, the notifier. |
 | `deltasleuth/store` | Every SQL query (`repo.py`), the migrations (`migrations/*.sql`, applied by `db.py`, each stored with its SHA-256, comments and layout aside: a start refuses a newer database or a changed file, and only `ds serve`, `ds worker` and `ds migrate` apply them) and the audit chain check. |
 | `deltasleuth/evidence` | The encrypted, content-addressed evidence store. |
 | `deltasleuth/reports` | CSV exports, the PDF report, evidence packs, and the measuring and adjudication sheets. |
 | `deltasleuth/agent`, `deltasleuth/llm`, `deltasleuth/mcp` | The cited chat agent; the model port and its dialect adapters; the MCP server. |
-| `deltasleuth/auth`, `deltasleuth/security` | Principals, roles, API tokens, sessions and OIDC; tokenisation, encryption keys and pack signing. |
+| `deltasleuth/auth`, `deltasleuth/security` | Principals, roles, API tokens, sessions and OIDC; the tokeniser's key file, encryption keys, sealing and pack signing. |
 | `deltasleuth/profiler` | Drafts a spec from paired samples or from two tables. |
 | `deltasleuth/packs` | Domain packs. `entity_linking` is the optional example. |
 | `deltasleuth/*.py` | Settings (`config.py`), the shared context, and the service modules for approvals, schedules, readiness, pre-checks, notifications, targets, licences, spec storing (`specs.py`) and refusals (`errors.py`). |
@@ -158,13 +158,14 @@ A connector turns a key and a side into one observation. It never judges the ans
 
 - **REST services** ([rest.py](../deltasleuth/connectors/rest.py)): `GET` and `POST` (GraphQL included), request templates, cursor, offset, page and link-header pagination, same-origin requests only; each page is parsed and merged in a worker thread.
 - **Captured samples** ([files.py](../deltasleuth/connectors/files.py)): paired responses saved as files, for a run without live calls.
-- **PostgreSQL, MySQL and Oracle tables and views**: read-only sessions behind one `Engine` protocol ([engine.py](../deltasleuth/connectors/tables/engine.py)). The engines share one key order and one canonical rendering, so any two can be paired, also with a service.
+- **PostgreSQL, MySQL and Oracle tables and views**: read-only sessions behind one `Engine` protocol ([engine.py](../deltasleuth/connectors/tables/engine.py)). The engines share one key order and one canonical rendering, so any two can be paired, also with a service. An adapter's driver errors leave it as the seam's `TableError` classes, so a compared database's failure is never taken for the store's.
 - **CSV and Parquet files**: read in place by DuckDB, which runs in a child reader process ([reader.py](../deltasleuth/connectors/tables/reader.py)) limited to the declared directories. A fault in DuckDB ends that process only. The files are pinned by hash when a run is created.
 
-To add a service-like source, implement the `Connector` protocol in
-[base.py](../deltasleuth/connectors/base.py) (`fetch` and `aclose`) and select it in `connect` in
-`deltasleuth/runner/compare.py`. To add a database engine, implement `Engine`, add it to the `ENGINES`
-registry, add its name to the target schema in `deltasleuth/core/spec/targets.py`, and give its types a
+To add a kind of source, implement `Connector` in [base.py](../deltasleuth/connectors/base.py) (`fetch`,
+`aclose`, `credentials`), and `BatchConnector` to read groups of keys, and add the kind to `CONNECTORS` in
+`deltasleuth/runner/compare.py` (selected by `Target.kind`) and to `SIDE_MEMBERS` in `deltasleuth/core/types.py`.
+To add a database engine, implement every member of `Engine`, turn its driver's errors into `TableError`
+classes, add it to the `ENGINES` registry and its row to `deltasleuth/core/engines.py`, and give its types a
 class in `deltasleuth/connectors/tables/render.py`.
 
 ## 8. Security model
@@ -177,7 +178,7 @@ The policy for reporting a vulnerability is in [SECURITY.md](../SECURITY.md).
 - **Credentials only by file reference.** Every secret is a `file:` reference. Credentials are never read from environment variables, and a spec cannot carry one.
 - **Tokenisation and masking.** Protected values become keyed HMAC tokens, separated by value class, before they are stored for display. Under the unlisted default, a member name that reads as data (an e-mail address, digits) is tokenised as `free_text`. Raw keys, headers and chat text are sealed under a data key per run.
 - **Encrypted evidence and retention.** Evidence blobs are compressed, encrypted with AES-256-GCM and named by a keyed hash. Data keys are wrapped by key-encryption keys held outside the database. Ended cycles are purged after 90 days (`standard`) or 365 days (`audit`) by default. A hold keeps a run.
-- **Hash-chained audit log.** `ds.audit_log` is append-only by trigger. Each row is chained in `ds.audit_chain`, and `ds audit verify` checks the chain.
+- **Hash-chained audit log.** `ds.audit_log` is append-only by trigger. Each row is chained in `ds.audit_chain`, and `ds audit verify` checks the chain against itself, a SIEM export and the anchor the services keep outside the database: the chain's head, keyed under a key the tokeniser key derives, in the workspace's `audit-anchor.json` and the log at start, at each sweep and at stop, moving only forward, so a chain cut short or rewritten is refused. A role that owns the schema can switch the triggers off: with `migrate_dsn_ref` only `ds migrate` acts as the owner, and the app's role holds the data rights `ds db grants` prints.
 - **Four-eyes approvals and sign-off.** Under OIDC, a spec version that shows values clear, suppresses findings, filters the population or reshapes a side's answer (`map`, or a `select` of part of it) runs only after a person who did not write it approves its content hash. An ended cycle is signed off by a person who neither wrote the spec, started the run nor requested the sign-off. A signed-off cycle can be issued as a signed evidence pack.
 
 ## 9. The AI layer
@@ -227,15 +228,15 @@ rows a side has not been measured. Against a real service, the target's rate bud
 
 Extension points that exist today:
 
-- **Connector and engine**: the `Connector` and `Engine` protocols (section 7).
-- **Model dialect**: one module in `deltasleuth/llm/adapters`, loaded by the profile's `dialect` name.
+- **Connector and engine**: the `Connector` (and `BatchConnector`) and `Engine` protocols, chosen by `Target.kind` and the engine registry (section 7).
+- **Model dialect**: one module in `deltasleuth/llm/adapters`, named as the profile's `dialect` and declaring `DIALECT`, `AUTH` and `LISTED`; the profiles read the known dialects from the package.
 - **Domain pack**: a module in `deltasleuth/packs` that exposes a `PACK` of taxonomy codes and aliases. `entity_linking` is the example: it names differences between entities and their links, such as organisations and their members.
 - **Report format**: one entry in `FORMATS` in `deltasleuth/reports/__init__.py`.
 
 Not built. Each item is a possible enhancement with no date. The spec loader refuses those a spec can name.
 
-- Further database engines, for example SQL Server or MariaDB: one more `Engine`.
-- Graph read connectors (a graph database as a side) and graph mode for service responses (`canonical.mode: graph`): a new connector and a projection in `deltasleuth/core/canonical`.
+- Further database engines, for example SQL Server or MariaDB: one more `Engine` and its row in `core/engines.py`.
+- Graph read connectors (a graph database as a side): a new kind in `CONNECTORS`; graph mode for service responses (`canonical.mode: graph`): a projection in `deltasleuth/core/canonical`.
 - Files in object storage and fixed-width files: the files engine.
 - SQL template sides, the `lookup` key map, session and collation settings on a table side, the key sources `csv`, `sql` and `run_keys`, and `sampling.mode: hash`.
 - Noise calibration and noise masks: `deltasleuth/core/classify`. The `NOISE_ONLY` outcome is reserved for them.

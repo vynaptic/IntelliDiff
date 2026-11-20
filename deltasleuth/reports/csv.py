@@ -25,6 +25,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
+from deltasleuth.connectors.tables import engine_name
 from deltasleuth.context import Context
 from deltasleuth.core.jsonio import number_text
 from deltasleuth.core.types import INCONCLUSIVE_PRECEDENCE, Confirmation, DriftReason, Outcome
@@ -394,7 +395,7 @@ def _table_cells(data: RunData) -> Row:
         "rows_skipped_a": scan.get("skipped_a"), "rows_skipped_b": scan.get("skipped_b"),
         "columns_only_a": "; ".join(tables["only_a"]), "columns_only_b": "; ".join(tables["only_b"]),
         **{f"filter_{s}": filters(data.spec).get(s, "") for s in "ab"},
-        **{f"engine_{s}": t.get("engine", "postgresql") if (t := tables.get(s)) else "" for s in "ab"},
+        **{f"engine_{s}": engine_name(t) if (t := tables.get(s)) else "" for s in "ab"},
         **{f"rows_rejected_{s}": (tables.get(s) or {}).get("rejected") for s in "ab"},
         **{f"keys_repeated_{s}": scan.get(f"repeated_{s}") for s in "ab"},
     }  # fmt: skip

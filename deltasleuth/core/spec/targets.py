@@ -24,6 +24,7 @@ from cryptography import x509
 from jsonschema import Draft202012Validator
 
 from deltasleuth.core.canonical.paths import jsonpath_error, normalise_query
+from deltasleuth.core.engines import ENGINES, declared_by
 from deltasleuth.core.jsonio import DEFAULT_MAX_BYTES
 from deltasleuth.core.spec.documents import read_document
 from deltasleuth.core.spec.errors import SpecError, SpecIssue, TargetsError, UnknownTargetError, pointer
@@ -64,7 +65,7 @@ _ENGINE_ONLY = {
     "allow_unencrypted": {"type": "boolean"},
 }
 _NOT_ENGINE = ("dsn_ref", "base_url", "auth", "capabilities", "allow_insecure_http", "max_body_bytes")
-_PORTS = {"mysql": 3306, "oracle": 1521}
+_ENDPOINTS = declared_by("endpoint")  # the engines a target names by host, port, database and user
 # A header's name and a target's id end at \Z: Python's $ would pass one that ends in a line break.
 _HEADER = {
     "description": "The credential's header; headers the HTTP client owns are refused.",
@@ -115,7 +116,7 @@ _TARGETS_SCHEMA: dict[str, Any] = {
                 },
                 "engine": {
                     "description": "A database at a declared endpoint, or files in a mounted directory.",
-                    "enum": ["mysql", "oracle", "files"],
+                    "enum": [*_ENDPOINTS, *declared_by("files")],
                 },
                 **_ENGINE_ONLY,
                 **_FILES_ONLY,
@@ -126,7 +127,7 @@ _TARGETS_SCHEMA: dict[str, Any] = {
                     "then": {"not": {"anyOf": [{"required": [name]} for name in _SERVICE_ONLY]}},
                 },
                 {
-                    "if": {"required": ["engine"], "properties": {"engine": {"enum": ["mysql", "oracle"]}}},
+                    "if": {"required": ["engine"], "properties": {"engine": {"enum": _ENDPOINTS}}},
                     "then": {
                         "required": ["host", "user", "password_ref"],
                         "not": {"anyOf": [{"required": [name]} for name in [*_NOT_ENGINE, *_FILES_ONLY]]},
@@ -257,9 +258,9 @@ class TargetRegistry:
         return self._targets[target_id]
 
     def live(self, target_id: str) -> Target:
-        """The target for a live connector; refuses a file-sample-only target (no base_url, no database)."""
+        """The target for a live connector; refuses a file-sample-only target (a service without base_url)."""
         target = self.get(target_id)
-        if not (target.base_url or target.engine):
+        if target.kind == "service" and not target.base_url:
             message = "a live connector needs base_url; this target is declared for file samples only"
             raise TargetsError(
                 [SpecIssue(pointer(("targets", target_id, "base_url")), message, "missing_base_url")]
@@ -334,7 +335,7 @@ def _target(target_id: str, entry: dict[str, Any], base_dir: Path, issues: list[
             base_url = _base_url(entry, auth["kind"])
         except _Refused as exc:
             issues.append(SpecIssue(pointer((*at, "base_url")), str(exc), exc.code))
-    files = entry.get("engine") == "files"
+    files = entry.get("engine") in declared_by("files")
     if files:
         _files(entry, at, issues)
     more = tuple((m["header"], _file_ref(m["secret_ref"], base_dir) or "") for m in auth.get("more", ()))
@@ -413,13 +414,14 @@ def _database(
 ) -> DatabaseTarget:
     """An engine target's endpoint; its problems are added to ``issues``."""
     engine, host = entry["engine"], entry["host"]
-    own, other = ("database", "service") if engine == "mysql" else ("service", "database")
+    traits = ENGINES[engine]
+    own, other = ("database", "service") if traits.names == "database" else ("service", "database")
     dn, name = entry.get("tls_server_dn"), entry.get("tls_verify_name", True)
     plain = entry.get("allow_unencrypted", False)
     refused = []
     if own not in entry or other in entry:
         refused.append(f"engine {engine} needs {own} and takes no {other}")
-    if dn is not None and engine == "mysql":
+    if dn is not None and traits.server_dn == "refused":
         refused.append("tls_server_dn is Oracle's")
     elif dn is not None and not _is_subject(dn):
         written = "CN=crm-db.bank.example,O=Bank, no space after a comma"
@@ -430,9 +432,9 @@ def _database(
     elif not name:
         if "tls_ca_ref" not in entry or dn is not None:
             refused.append("tls_verify_name: false needs tls_ca_ref and takes no tls_server_dn")
-    elif engine == "oracle" and dn is None:
+    elif traits.server_dn == "required" and dn is None:
         subject = "the server certificate's subject"
-        refused.append(f"engine oracle with TLS needs tls_server_dn ({subject}), or tls_verify_name: false")
+        refused.append(f"engine {engine} with TLS needs tls_server_dn ({subject}), or tls_verify_name: false")
     issues += [SpecIssue(pointer(at), message, "invalid_database_target") for message in refused]
 
     def issue(code: str, message: str) -> None:
@@ -451,7 +453,7 @@ def _database(
     return DatabaseTarget(
         engine=engine,
         host=host,
-        port=entry.get("port", _PORTS[engine]),
+        port=entry.get("port", traits.port),
         name=entry.get(own, ""),
         user=entry["user"],
         password_ref=_file_ref(entry["password_ref"], base_dir) or "",

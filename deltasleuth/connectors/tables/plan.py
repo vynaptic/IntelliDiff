@@ -16,13 +16,14 @@ import contextlib
 import json
 import math
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 from deltasleuth.connectors.tables import duck, render
 from deltasleuth.connectors.tables.connector import relation
 from deltasleuth.connectors.tables.engine import (
+    ENGINES,
     ERRORS,
     REFUSED,
     Engine,
@@ -48,7 +49,6 @@ _BRIDGES = {
     ("timestamp", "instant"): "{{as: timestamp, naiveTimezone: ...}} on both",
 }
 _CASTS = "compare a view that casts it"
-_FILE_KEY = "cannot be a key in a file: export it as text, a whole number, a decimal or a date"
 # What a CSV column's text pairs with, declared: the csv.keys or typeMap type of a family.
 _AS = {"number": "decimal", "instant": "timestamp", "mapped timestamp": "timestamp"} | {
     family: family for family in ("date", "timestamp", "boolean", "json", "bytes")
@@ -91,9 +91,7 @@ async def planning(targets: TargetRegistry, spec: CompiledSpec, *, scanning: boo
     and, ``scanning``, the sort of the run's file sides ``files.spill``."""
     tables = _tables(spec)
     relations = {}
-    filed = any(targets.live(cfg.target).engine == "files" for cfg in tables.values())
-    # One files.plan_s for the run's file sides, and few creations planning files at once.
-    async with duck.creating() if filed else contextlib.nullcontext():
+    async with _planning(of(targets.live(cfg.target)) for cfg in tables.values()):
         for name, cfg in tables.items():
             target, table = targets.live(cfg.target), cfg.table
             assert table is not None
@@ -127,14 +125,14 @@ async def key_plan(targets: TargetRegistry, cfg: SideConfig) -> Plan:
     assert table is not None
     engine, refused = of(target), []
     try:
-        async with duck.creating() if target.engine == "files" else contextlib.nullcontext():
+        async with engine.planning():
             session = await _connected(engine, target, who)
             try:
                 found = await described(engine, session, who, table.schema, table.name, side=cfg)
             finally:
                 await session.close()
             side = _side_plan(target, cfg, found, (), refused)
-            if not refused and target.engine != "postgresql":
+            if not refused and not engine.native:
                 _classed(name, side, target.engine or "", found, refused)
             if refused:
                 raise Invalid(refused[0])
@@ -258,7 +256,7 @@ def _planned(
         found["b"]["columns"] = {c: b[c] for c in found["a"]["columns"]}
     for name, side in found.items():  # two empty rows would be MATCH to the scan, INCONCLUSIVE per key
         compared = list(side["columns"].values())  # a column on one side only is never read
-        if targets.live(tables[name].target).engine == "postgresql":
+        if of(targets.live(tables[name].target)).percent_placeholder:
             _readable_names(name, compared, refused)
         readable = {c.name for c in relations[name].columns if c.readable}
         _granted(name, relation(side), compared, readable, refused)
@@ -270,7 +268,7 @@ def _planned(
         return refused, result
     digest = sorted({c for side in found.values() for c in side["types"]})  # converted on both sides
     engines = {name: targets.live(cfg.target).engine or "" for name, cfg in tables.items()}
-    if set(engines.values()) != {"postgresql"}:
+    if len(set(engines.values())) > 1 or not all(ENGINES[engine].native for engine in engines.values()):
         for name, side in found.items():
             _classed(name, side, engines[name], relations[name], refused)
         if len(found) == 2 and not refused:
@@ -329,7 +327,7 @@ def _side_plan(
     for unlike in [c for c in _like_columns(filtered) if c in present and c not in likeable]:
         why = "LIKE and ILIKE match text in a deterministic collation: compare a view that casts it"
         _refuse(refused, f"side {side}: column {unlike!r} cannot be matched: {why}")  # else only on a row
-    if target.engine == "postgresql":  # compared columns once they are known
+    if engine.percent_placeholder:  # compared columns once they are known
         _readable_names(side, [schema, name, *keys, *filter_columns], refused)
     listed = list(columns.values()) if table.columns is not None else []
     read = [c for c in [*keys, *filter_columns, *listed] if c in present]
@@ -413,10 +411,11 @@ def _endpoint(target: Target) -> str:
 
 
 def _why(exc: BaseException) -> str:
-    """Why a connect was refused: an engine's code and what it means, the guard's address, or libpq's
-    first line, which names the host and user, never the password."""
+    """Why a connect was refused: an engine's code and what it means, or the first line of its driver's
+    text where the engine keeps it (``TableError.said``: libpq's names the host and user, never the
+    password), or the guard's address."""
     if isinstance(exc, TableError):
-        return _answered(exc)
+        return exc.said[:300] if exc.said else _answered(exc)
     return (str(exc).splitlines() or [type(exc).__name__])[0][:300]
 
 
@@ -441,7 +440,7 @@ def _classed(name: str, side: Plan, engine: str, relation: Relation, refused: li
     for column in side["keys"]:
         if not by[column].keyable:
             shown = f"key column {column!r} ({by[column].declared})"
-            why = _FILE_KEY if engine == "files" else f"cannot be a key: {_CASTS}"
+            why = ENGINES[engine].unkeyable
             _refuse(refused, f"side {name}: {shown} {why}")
     facts = relation.facts
     side |= {
@@ -526,7 +525,7 @@ def _worker_columns(
     large value."""
     a, b = found["a"], found["b"]
     sets = [(relations[name].facts["charset"], relations[name].facts.get("national")) for name in ("a", "b")]
-    if engines["a"] != engines["b"] or (engines["a"] == "oracle" and sets[0] != sets[1]):
+    if engines["a"] != engines["b"] or (ENGINES[engines["a"]].hash_charsets and sets[0] != sets[1]):
         return sorted(a["columns"])
     large = {column.name for column in relations["a"].columns if column.lob}
     worker = []
@@ -567,6 +566,16 @@ def _granted(side: str, relation: str, columns: list[str], readable: set[str], r
         )
 
 
+@contextlib.asynccontextmanager
+async def _planning(engines: Iterable[Engine]) -> AsyncIterator[None]:
+    """What the creation of a run holds while its sides are planned: each of their engines' ``planning``,
+    once an engine (one ``files.plan_s`` for its file sides, say)."""
+    async with contextlib.AsyncExitStack() as stack:
+        for engine in {engine.name: engine for engine in engines}.values():
+            await stack.enter_async_context(engine.planning())
+        yield
+
+
 def _readable_names(side: str, names: list[str], refused: list[str]) -> None:
     """Refuse a name the statements would hold with a %, which the driver reads as a placeholder."""
     for percent in [n for n in names if "%" in n]:
@@ -599,5 +608,5 @@ async def probed(engine: Engine, session: Session, name: str, side: Plan) -> Non
     except Refusal as exc:  # a literal that is not of its column's class, a strata column no frame holds
         raise Invalid(f"side {name}: {exc}") from None
     except ERRORS as exc:  # a pattern or a literal of the spec: the message names no value
-        why = (str(exc).splitlines() or [type(exc).__name__])[0][:300]
+        why = exc.said or (str(exc).splitlines() or [type(exc).__name__])[0][:300]
         raise Invalid(f"side {name}: the database refuses the filter or key map: {why}") from None

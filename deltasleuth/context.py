@@ -7,7 +7,8 @@ share one event loop. The keyring and the tokeniser key are ``file:`` secrets na
 ``encryption``; without it (developer mode) they are the workspace's
 ``kek`` and ``tokeniser.key``, created only by ``init_workspace`` (``ds init``): a new tokeniser key
 would give every value a new token, and no run could be compared with an older one. The tokeniser
-key also derives the evidence store's observation-id key and the sign-in cookie's key.
+key also derives the evidence store's observation-id key, the sign-in cookie's key and the audit chain's
+anchor key, none of which the database holds.
 """
 
 from __future__ import annotations
@@ -49,6 +50,7 @@ from deltasleuth.store.db import NEEDS_MIGRATION, SEALED, WAIT, admitted, migrat
 KEK_FILE = "kek"  # developer mode's keyring, in the workspace
 _EVIDENCE_ID_LABEL = b"deltasleuth/obs_id/v1"
 _LOGIN_LABEL = b"deltasleuth/login/v1"
+_ANCHOR_LABEL = b"deltasleuth/audit_anchor/v1"
 Capabilities = Mapping[str, TargetCapabilities]  # by target id
 
 
@@ -94,6 +96,12 @@ def login_key(tokeniser_key: bytes) -> bytes:
     return hmac.new(tokeniser_key, _LOGIN_LABEL, hashlib.sha256).digest()
 
 
+def anchor_key(tokeniser_key: bytes) -> bytes:
+    """The key of the audit chain's anchor (``store.chain``): whoever holds only the database's role cannot
+    write an anchor the app would take for its own."""
+    return hmac.new(tokeniser_key, _ANCHOR_LABEL, hashlib.sha256).digest()
+
+
 def _capabilities(declared: dict[str, Any]) -> TargetCapabilities:
     absence, truncation = declared["authoritative_absence"], declared["truncation_indicators"]
     if absence is not None:
@@ -118,6 +126,7 @@ class Context:
     missing_keks: Mapping[str, int] = field(default_factory=dict)  # KEK id -> data keys it wraps
     kek: str | None = None  # the KEK new data keys are wrapped under (None: the current one)
     signer: PackSigner | None = None  # the evidence packs' signing key, which only the server loads
+    anchor_key: bytes = field(default=b"", repr=False)  # empty: no anchor is written or read
     # target id -> its gate, shared by the worker, compares and key listings: one rate budget
     gates: dict[str, TargetGate] = field(default_factory=dict)
     _sealers: dict[str, Sealer] = field(default_factory=dict, repr=False)  # run id -> its sealer
@@ -185,7 +194,9 @@ class Context:
 
         ``apply_migrations`` False (each command but ``ds serve``, ``ds worker``, ``ds migrate`` and ``ds
         keys migrate``) applies none and creates nothing: a pending migration ends the open with
-        ContextError ``NEEDS_MIGRATION``, and a database this build cannot run on with MigrationError.
+        ContextError ``NEEDS_MIGRATION``, and a database this build cannot run on with MigrationError. With
+        ``migrate_dsn_ref`` the schema's owner migrates, so ``ds serve`` and ``ds worker`` apply none either,
+        and ``ds keys migrate`` applies its own with that address.
 
         ``oidc`` (the server only) builds the IdP client in oidc mode: it reads the client credential
         and fetches the IdP's discovery document. Other entry points never contact the IdP. ``rewrap``
@@ -221,8 +232,10 @@ class Context:
         try:
             with opening():
                 await opened.open(wait=True, timeout=WAIT)
-            if apply_migrations:
+            if apply_migrations and settings.migrate_dsn_ref is None:
                 await migrate(opened, upto=SEALED - 1 if migrating else None)
+            elif apply_migrations and migrating and (owner := settings.migrate_dsn_ref):
+                await _migrated(owner, upto=SEALED - 1)
             elif await pending(opened):
                 raise ContextError(NEEDS_MIGRATION)
             loaded = await keys.start(opened, keyring, rewrap=rewrap)
@@ -237,7 +250,17 @@ class Context:
                 await client.start()
             yield cls(
                 settings, opened, targets, Tokeniser(key), evidence, llm, client, keyring, loaded.missing,
-                kek=loaded.kek, signer=signer,
+                kek=loaded.kek, signer=signer, anchor_key=anchor_key(key),
             )  # fmt: skip
         finally:
             await opened.close()
+
+
+async def _migrated(ref: str, upto: int) -> None:
+    """The migrations up to ``upto``, applied with the schema owner's address (``migrate_dsn_ref``)."""
+    dsn = read_secret(ref)
+    await admitted(dsn)
+    async with AsyncConnectionPool(dsn, open=False, min_size=1, max_size=1) as owner:
+        with opening():
+            await owner.open(wait=True, timeout=WAIT)
+        await migrate(owner, upto=upto)

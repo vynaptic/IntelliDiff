@@ -21,6 +21,7 @@ import pytest
 from deltasleuth.connectors import tables
 from deltasleuth.connectors.base import UnsafeTargetError
 from deltasleuth.connectors.http import TargetGate
+from deltasleuth.connectors.postgres.errors import wrapped
 from deltasleuth.core import sampling
 from deltasleuth.core.spec import TargetRegistry, compile_spec
 from deltasleuth.core.spec.documents import parse_yaml_text
@@ -241,12 +242,12 @@ async def test_read_refusals_are_value_errors(
         engine("describe")
         # A fault of the target, by its code alone.
         faults = [
-            ("census", psycopg.errors.QueryCanceled("x"), "timed out after 3600 s (QueryCanceled)"),
+            ("census", wrapped(psycopg.errors.QueryCanceled("x")), "timed out after 3600 s (QueryCanceled)"),
             ("census", tables.StatementTimeout("MySQL 3024"), "timed out after 3600 s (MySQL 3024)"),
             ("census", tables.SnapshotLost("ORA-01555"), "could not be held in one snapshot (ORA-01555)"),
             ("null_keys", tables.TargetRefused("MySQL 1105"), "could not be read (MySQL 1105)"),
-            ("census", psycopg.OperationalError("the server at db.bank.example closed"), "could not be read"
-             " (OperationalError)"),
+            ("census", wrapped(psycopg.OperationalError("the server at db.bank.example closed")),
+             "could not be read (OperationalError)"),
             ("snapshot", UnsafeTargetError("10.1.2.3 is a private address"), "could not be read"
              " (UnsafeTargetError)"),
             ("snapshot", tables.TargetAuthRefused("ORA-01017"), "could not be read: the target refused the"

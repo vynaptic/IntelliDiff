@@ -31,9 +31,9 @@ from typing import Any
 from deltasleuth.core import jsonio
 from deltasleuth.core.canonical.encoding import sha256_hex
 from deltasleuth.core.classify.patterns import name
+from deltasleuth.core.masking import canonical_policy
 from deltasleuth.core.spec import where
 from deltasleuth.core.types import SecurityPolicy
-from deltasleuth.security.policy import canonical_policy
 
 FORMAT = 1  # of a pair's result (ds.precheck_pairs.result)
 NOT = (

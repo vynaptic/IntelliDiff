@@ -97,6 +97,14 @@ def test_minimal_spec_is_clean(minimal_spec: dict[str, Any], things_targets: Tar
         ("key/source", {**_LISTING, "keyPath": "$.id["}, "/key/source/keyPath", "invalid_jsonpath"),
         ("sides/b/map", '{"id": id, "parts": [components.{"sku": code}', "/sides/b/map", "invalid_jsonata"),
         ("sides/b/map", '{"id": $replace(id, /^(T+)+$/, "")}', "/sides/b/map", "invalid_jsonata"),
+        ("sides/b/map", '{"id": $replace(id, /\\BT/, "")}', "/sides/b/map", "invalid_jsonata"),
+        ("sides/b/select", "$.data[?match(@.id, '(T+)+')]", "/sides/b/select", "invalid_jsonpath"),
+        (
+            "sides/b/truncation/flagPaths",
+            ["$.meta[?search(@.note, '(?:\\\\w+\\\\s?)*$')]"],
+            "/sides/b/truncation/flagPaths/0",
+            "invalid_jsonpath",
+        ),
         ("knownDiffs", [dict(_RULE, when="path == '$.x' &&")], "/knownDiffs/0/when", "invalid_cel"),
         ("compare/valueFilter", "change_type != 'missing_in_b'", "/compare/valueFilter", "invalid_cel"),
         ("sides/a/notFound/when", "'absent'", "/sides/a/notFound/when", "invalid_cel"),  # not a bool

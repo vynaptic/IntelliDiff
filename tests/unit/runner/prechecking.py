@@ -102,6 +102,7 @@ class FakeEngine:
     name, arms, unfit = "postgresql", 200, ()
     fold, hides, grant = staticmethod(str.lower), False, "SELECT"
     sum_digits, empty_null = None, False
+    native, percent_placeholder, fixed, prechecked = True, True, False, True  # as PostgreSQL's
 
     def __init__(self, *relations: Relation, pause: float = 0.0) -> None:
         self.held = {found.name: found for found in relations}

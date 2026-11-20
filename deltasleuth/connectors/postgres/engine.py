@@ -1,24 +1,26 @@
 """PostgreSQL behind the engine seam: today's sessions and statements, unchanged, and the catalogue query
 of the column plan. In a pair with another engine its rows take the canonical form of rendering 1 and the
-worker hashes them.
+worker hashes them. Whatever psycopg raises on a session leaves as the seam's error (``errors.wrapped``).
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
+import sys
 from collections.abc import AsyncIterator, Sequence
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any
 
 import psycopg
 
 # The modules, not their names: the seam's registry imports this module while ``queries`` may be loading.
-from deltasleuth.connectors.postgres import queries, session
+from deltasleuth.connectors.postgres import errors, queries, session
 from deltasleuth.connectors.tables import render
-from deltasleuth.connectors.tables.engine import Asked, Column, Figure, Relation, Row, Rows, sized
+from deltasleuth.connectors.tables.engine import CAST_KEY, Asked, Column, Figure, Relation, Row, Rows, sized
 from deltasleuth.connectors.tables.keys import Plan
-from deltasleuth.core import jsonio
+from deltasleuth.core import engines, jsonio
 from deltasleuth.core.types import Target
 
 BATCH = 10_000  # rows per fetch
@@ -90,25 +92,42 @@ class PostgreSQL:
     """``connectors.tables.Engine`` over psycopg; a session is a ``psycopg.AsyncConnection``."""
 
     name = "postgresql"
+    traits = engines.ENGINES[name]
     arms = 200
-    unfit = session.UNFIT
+    unfit = (errors.Unfit, UnicodeEncodeError)  # a type's input, or the encoding
     fold = staticmethod(str.lower)
     hides = False
     grant = "SELECT"
     sum_digits = None  # a numeric sum is exact
     empty_null = False
     retry_alone = True
+    native = True  # to_jsonb renders a row, and the server hashes it
+    percent_placeholder = True  # psycopg's
+    fixed = False
+    spill_budget = False
+    utf8_keys = False
+    prechecked = True
+    unkeyable = CAST_KEY
+    hash_charsets = False
+    observed = None
+    full_charset = None
+
+    def planning(self) -> AbstractAsyncContextManager[None]:
+        return contextlib.nullcontext()
 
     def built(self, column: str, cls: str, declared: str, key: bool) -> str | None:
         return None  # a key's text is its ::text, a row its to_jsonb, of whatever type the column holds
 
     async def connect(self, target: Target, *, timeout_s: float = 0) -> psycopg.AsyncConnection:
-        return await session.connect(target, timeout_s=timeout_s)
+        try:
+            return await session.connect(target, timeout_s=timeout_s)
+        except psycopg.Error as exc:  # libpq's first line names the host and the user, never a password
+            raise errors.wrapped(exc, said=True) from None
 
     def snapshot(
         self, target: Target, *, timeout_s: float = 0
     ) -> AbstractAsyncContextManager[psycopg.AsyncConnection]:
-        return session.snapshot(target, timeout_s=timeout_s)
+        return _snapshot(target, timeout_s)
 
     async def server(self, conn: psycopg.AsyncConnection) -> dict[str, Any]:
         return {
@@ -125,10 +144,11 @@ class PostgreSQL:
         self, conn: psycopg.AsyncConnection, schema: str | None, name: str, *, side: Any = None
     ) -> Relation | None:
         try:
-            cursor = await conn.execute(_RELATION, {"schema": schema, "name": name})
+            row = await (await conn.execute(_RELATION, {"schema": schema, "name": name})).fetchone()
         except psycopg.errors.InsufficientPrivilege:  # no USAGE on the schema
             return None
-        row = await cursor.fetchone()
+        except psycopg.Error as exc:
+            raise errors.wrapped(exc) from None
         if row is None:
             return None
         readable, likeable, enums = set(row[3] or ()), set(row[4] or ()), set(row[6] or ())
@@ -154,18 +174,25 @@ class PostgreSQL:
         return Relation(row[0], row[1], tuple(columns), facts)
 
     async def probe(self, conn: psycopg.AsyncConnection, side: Plan) -> None:
-        """Also compile the side's key maps' patterns (planning alone does not)."""
-        await conn.execute(*queries.probe_sql(side))
-        for rule in [m["toCanonical"] for m in side["key_maps"] if m and m["kind"] == "regex"]:
-            await conn.execute(
-                "SELECT regexp_replace('', %s, %s)", (f"^(?:{rule['pattern']})$", rule["replacement"])
-            )
+        """Also compile the side's key maps' patterns (planning alone does not). A refusal keeps the server's
+        first line: it names the spec's pattern or literal, never a row's value."""
+        try:
+            await conn.execute(*queries.probe_sql(side))
+            for rule in [m["toCanonical"] for m in side["key_maps"] if m and m["kind"] == "regex"]:
+                await conn.execute(
+                    "SELECT regexp_replace('', %s, %s)", (f"^(?:{rule['pattern']})$", rule["replacement"])
+                )
+        except psycopg.Error as exc:
+            raise errors.wrapped(exc, said=True) from None
 
     def large(self, side: Plan) -> bool:
         return False  # no type is classed a LOB here
 
     async def rows(self, conn: psycopg.AsyncConnection, side: Plan, asked: Asked) -> list[Row]:
-        found = await (await conn.execute(*queries.rows_sql(side, asked))).fetchall()
+        try:
+            found = await (await conn.execute(*queries.rows_sql(side, asked))).fetchall()
+        except psycopg.Error as exc:
+            raise errors.wrapped(exc) from None
         if not side.get("classes"):
             return found
         return [(i, _canonical(side, text), selected) for i, text, selected in found]
@@ -176,7 +203,10 @@ class PostgreSQL:
         """The digest of a plan with digest columns is the server's hash extended by the worker: off the
         event loop in a pair with another engine, on it in a PostgreSQL pair, as before the seam."""
         cursor = conn.cursor("ds_scan")
-        await cursor.execute(*queries.scan_sql(side, after))  # declared now: it takes the snapshot
+        try:
+            await cursor.execute(*queries.scan_sql(side, after))  # declared now: it takes the snapshot
+        except psycopg.Error as exc:
+            raise errors.wrapped(exc) from None
         if not side.get("digest"):
             return _fetched(cursor)
         # In a pair with another engine every compared column comes with each row.
@@ -191,10 +221,16 @@ class PostgreSQL:
 
     async def null_keys(self, conn: psycopg.AsyncConnection, side: Plan) -> int:
         statement, params = queries.null_keys_sql(side)
-        return (await (await conn.execute(statement, params)).fetchone())[0]  # type: ignore[index]
+        try:
+            return (await (await conn.execute(statement, params)).fetchone())[0]  # type: ignore[index]
+        except psycopg.Error as exc:
+            raise errors.wrapped(exc) from None
 
     async def relations(self, conn: psycopg.AsyncConnection, schema: str | None) -> list[tuple[str, str]]:
-        found = await (await conn.execute(_RELATIONS, {"schema": schema})).fetchall()
+        try:
+            found = await (await conn.execute(_RELATIONS, {"schema": schema})).fetchall()
+        except psycopg.Error as exc:
+            raise errors.wrapped(exc) from None
         return [(name, _KINDS.get(kind, "table")) for name, kind in found]
 
     async def figures(
@@ -203,17 +239,51 @@ class PostgreSQL:
         statement, params = queries.figures_sql(side, wanted)
         # Without a parameter the driver reads no placeholder: a plan made of a catalogue alone, which
         # has neither filter nor key map, may name a column that holds a %.
-        return list(await (await conn.execute(statement, params or None)).fetchone())  # type: ignore[arg-type]
+        try:
+            return list(await (await conn.execute(statement, params or None)).fetchone())  # type: ignore[arg-type]
+        except psycopg.Error as exc:  # a pre-check's
+            raise errors.wrapped(exc, figure=True) from None
 
     async def duplicates(self, conn: psycopg.AsyncConnection, side: Plan) -> tuple[int, int]:
         statement, params = queries.duplicates_sql(side)
-        keys, rows = await (await conn.execute(statement, params or None)).fetchone()  # type: ignore[misc]
+        try:
+            keys, rows = await (await conn.execute(statement, params or None)).fetchone()  # type: ignore[misc]
+        except psycopg.Error as exc:  # a pre-check's
+            raise errors.wrapped(exc, figure=True) from None
         return keys, int(rows)
 
 
+@asynccontextmanager
+async def _snapshot(target: Target, timeout_s: float) -> AsyncIterator[psycopg.AsyncConnection]:
+    """``session.snapshot``, whose opening and ending raise the seam's errors. What the block raises is the
+    caller's, the store's errors among them, and passes as it is."""
+    opened = session.snapshot(target, timeout_s=timeout_s)
+    try:
+        conn = await opened.__aenter__()
+    except psycopg.Error as exc:
+        raise errors.wrapped(exc) from None
+    try:
+        yield conn
+    except BaseException:
+        try:
+            suppressed = await opened.__aexit__(*sys.exc_info())
+        except psycopg.Error as exc:  # a rollback that fails is the database's
+            raise errors.wrapped(exc) from None
+        if suppressed:
+            return
+        raise
+    try:
+        await opened.__aexit__(None, None, None)
+    except psycopg.Error as exc:
+        raise errors.wrapped(exc) from None
+
+
 async def _fetched(cursor: psycopg.AsyncServerCursor) -> AsyncIterator[Rows]:
-    while batch := await cursor.fetchmany(BATCH):
-        yield batch
+    try:
+        while batch := await cursor.fetchmany(BATCH):
+            yield batch
+    except psycopg.Error as exc:
+        raise errors.wrapped(exc) from None
 
 
 async def _sized(cursor: psycopg.AsyncServerCursor, text: int) -> AsyncIterator[Rows]:
@@ -221,9 +291,12 @@ async def _sized(cursor: psycopg.AsyncServerCursor, text: int) -> AsyncIterator[
     text (item ``text``): each fetch is of as many rows as hold ``BATCH_BYTES`` at the width of the widest
     row of the fetch before it, ``BATCH`` at most."""
     size = FIRST
-    while batch := await cursor.fetchmany(size):
-        yield batch
-        size = max(1, min(BATCH, BATCH_BYTES // max(len(row[text]) for row in batch)))
+    try:
+        while batch := await cursor.fetchmany(size):
+            yield batch
+            size = max(1, min(BATCH, BATCH_BYTES // max(len(row[text]) for row in batch)))
+    except psycopg.Error as exc:
+        raise errors.wrapped(exc) from None
 
 
 def _canonical(side: Plan, text: str) -> str | ValueError:
@@ -261,6 +334,9 @@ async def _stream(
 ) -> AsyncIterator[Rows]:
     """The statement's rows in fetched batches, through a named server-side cursor."""
     cursor = conn.cursor(name)
-    await cursor.execute(statement, params)
+    try:
+        await cursor.execute(statement, params)
+    except psycopg.Error as exc:
+        raise errors.wrapped(exc) from None
     async for batch in _fetched(cursor):
         yield batch

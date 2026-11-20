@@ -506,3 +506,21 @@ async def test_merged_pages_share_the_value_count(
     assert "value" in (obs.error_detail or "")
     monkeypatch.setattr(jsonio, "MAX_VALUES", 20)  # the same pages merged at the count: 16 items and 4
     assert ids(await (await start(reply)).fetch("K1", side_config(pagination=CURSOR))) == list(range(16))
+
+
+def test_a_path_past_its_bound_stops_the_walk_instead_of_failing_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A page's items or cursor path may hold a filter whose pattern the answer supplies: past its bound it
+    stops the walk, so the side is not read completely, never an exception out of the connector."""
+    from yarl import URL
+
+    from deltasleuth.connectors import paging
+    from deltasleuth.core.canonical.errors import MappingError
+
+    def bounded(path: str, doc: object) -> list[object]:
+        raise MappingError("a filter ran past the path's time bound (1000 ms)")
+
+    monkeypatch.setattr(paging, "_select", bounded)
+    walk = paging.PageWalk(Pagination(kind="cursor", items_path="$.items", cursor_path="$.next",
+                                      cursor_param="cursor"), stable_ordering=True)  # fmt: skip
+    walk.start(b'{"items": [1], "next": "c2"}', {}, URL("https://svc.example/list"))
+    assert walk.next is None and not walk.eof and "bound" in (walk.detail or "")

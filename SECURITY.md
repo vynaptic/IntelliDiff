@@ -142,6 +142,11 @@ finding on another build is re-checked on that one.
   spec name (off by default for Slack and Teams) and a link, never a key or value. Every address a send
   reaches is checked (link-local and metadata addresses never, private ones only with the channel's
   opt-in); behind `notify.proxy` only the declared host is checked, and the proxy resolves the rest.
+- The audit anchor covers the rows written before the services' last sweep; whoever runs code in the
+  app, or holds the tokeniser key and can write the workspace, can move it, so keep copies of its log
+  line off the host. Until a site gives the app a role of its own (`ds db grants`), whoever holds
+  `db_dsn` can switch the audit log's triggers off; the anchor then shows what they removed or
+  rewrote, not who.
 - The MCP server, which is off unless the settings have an `mcp` block: a
   tool result reaches the model host of the agent that asked for it, a host the installation does not
   run and DeltaSleuth's LLM egress policy does not govern; what a result may carry is the settings'

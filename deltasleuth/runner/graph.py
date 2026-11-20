@@ -6,6 +6,10 @@ every group takes O(1) memory. Only the groups that differ are read in full, and
 their members belong to are explored, each up to ``maxComponent`` members. A larger group or
 component is reported as oversized: counted, never classified, never dropped. Everything written
 is masked with the key's class.
+
+Graph parity is PostgreSQL's alone (the spec loader refuses it beside any engine whose ``graph_parity`` is
+false), so it reads its two sides through the PostgreSQL package's sessions and statements, not through
+the engine seam; what they raise leaves it as the seam's errors (``postgres.errors``).
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ import psycopg
 
 from deltasleuth.connectors import postgres as pg
 from deltasleuth.connectors.base import utc_now_iso
+from deltasleuth.connectors.postgres import errors as pg_errors
 from deltasleuth.context import Context
 from deltasleuth.core.types import CompiledSpec, Side
 from deltasleuth.security.tokenise import mask_key
@@ -71,7 +76,15 @@ class _Forest:
 
 async def analyse(ctx: Context, spec: CompiledSpec, tables: pg.Plan, state: Row) -> tuple[Row, list[Row]]:
     """The cycle's L2 summary (``ds.scans.state.graph``) and its ``ds.graph_diffs`` rows; the scan's
-    ``state["graph_at"]`` is when L2's own snapshots were taken."""
+    ``state["graph_at"]`` is when L2's own snapshots were taken. It reads the two sides alone, never the
+    store, so whatever psycopg raises in it is a side's, and leaves as the seam's error."""
+    try:
+        return await _analysed(ctx, spec, tables, state)
+    except psycopg.Error as exc:
+        raise pg_errors.wrapped(exc) from None
+
+
+async def _analysed(ctx: Context, spec: CompiledSpec, tables: pg.Plan, state: Row) -> tuple[Row, list[Row]]:
     graph, parts = spec.raw["graph"], list(spec.key.parts)
     members, groups = [parts.index(p) for p in graph["members"]], [parts.index(p) for p in graph["groups"]]
     cap = graph.get("maxComponent", 10_000)

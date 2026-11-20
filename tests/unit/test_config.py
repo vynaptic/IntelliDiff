@@ -304,7 +304,17 @@ def test_a_relative_secret_reference_is_the_settings_files(
     inside = ENCRYPTION | {"tokeniser_key_ref": "file:w/tokeniser"}  # in workspace_dir, not the directory's
     assert _refusal(tmp_path, auth=tokens, encryption=inside) == f"encryption.tokeniser_key_ref: {INSIDE}"
     members = set(re.findall(r"^    (\w+): .*\bSecretRef\b", Path(config.__file__).read_text(), re.M))
-    assert len(members) == 9 and all(name.endswith(("_ref", "_refs")) for name in members)  # the rule's reach
+    assert len(members) == 10 and all(name.endswith(("_ref", "_refs")) for name in members)  # its reach
+
+
+def test_migrate_dsn_ref_is_optional_and_a_secret_reference(tmp_path: Path) -> None:
+    """The schema owner's address, which ``ds migrate`` alone reads: absent, the app's role migrates."""
+    assert _load(tmp_path).migrate_dsn_ref is None
+    owner = _load(tmp_path, migrate_dsn_ref="file:owner_dsn").migrate_dsn_ref
+    assert owner == f"file:{tmp_path / 'owner_dsn'}"
+    assert _refusal(tmp_path, migrate_dsn_ref="postgresql://owner@db/ds") == (
+        "migrate_dsn_ref: String should match pattern '^file:.+'"
+    )
 
 
 def test_a_leftover_workspace_tokeniser_key_stops_every_entry_point(tmp_path: Path) -> None:

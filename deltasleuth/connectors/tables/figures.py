@@ -13,8 +13,6 @@ import time
 from collections.abc import Iterator, Sequence
 from typing import Any
 
-import psycopg
-
 from deltasleuth.connectors.tables.engine import (
     TIMEOUT,
     UNREACHABLE,
@@ -23,11 +21,11 @@ from deltasleuth.connectors.tables.engine import (
     Relation,
     Session,
     SnapshotLost,
-    TableError,
     TargetAuthRefused,
     TargetDenied,
     TargetTempSpace,
     code,
+    shown,
 )
 from deltasleuth.connectors.tables.keys import Plan
 
@@ -56,8 +54,6 @@ def failure(exc: BaseException, timeout_s: float, elapsed_s: float = 0) -> tuple
         return "timeout", f"{timeout_s:g}"
     if isinstance(exc, TargetAuthRefused):
         return "auth_refused", code(exc)
-    if isinstance(exc, psycopg.errors.ConfigurationLimitExceeded):  # temp_file_limit
-        return "temp_space", exc.sqlstate or code(exc)
     for cls, found in (
         (TargetTempSpace, "temp_space"),
         (SnapshotLost, "snapshot_lost"),
@@ -67,7 +63,7 @@ def failure(exc: BaseException, timeout_s: float, elapsed_s: float = 0) -> tuple
             return found, code(exc)
     if isinstance(exc, UNREACHABLE):
         return "unreachable", code(exc)
-    return "error", f"{type(exc).__name__}: {exc}" if isinstance(exc, TableError) else type(exc).__name__
+    return "error", shown(exc)
 
 
 async def read(

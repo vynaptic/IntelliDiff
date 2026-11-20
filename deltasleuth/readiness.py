@@ -476,7 +476,7 @@ async def brief(ctx: Context, name: str, *, whole: bool = False, most: int | Non
     from deltasleuth.runner import sample  # the runner's modules import this one
 
     async with ctx.pool.connection() as conn:
-        await conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")  # one snapshot
+        await repo.read_one_snapshot(conn)
         found = await judged(ctx, conn, only=name)
         item, policy = found.items[name], found.policies[name]
         worker = await worker_config(conn)

@@ -19,7 +19,7 @@ from typing import Any
 
 from deltasleuth.auth.principal import WORKER, Principal
 from deltasleuth.connectors.base import KeyRejectedError, utc_now_iso
-from deltasleuth.connectors.tables import Plan, RowsMoved, decode_key, planned, relation, unsealed
+from deltasleuth.connectors.tables import Plan, RowsMoved, decode_key, named, planned, relation, unsealed
 from deltasleuth.context import Context
 from deltasleuth.core.types import CompiledSpec, Side
 from deltasleuth.store import repo
@@ -69,7 +69,7 @@ def fixed(found: dict[str, Any], plan: Plan, verified: str | None, repeated: int
     """A census record of a file side holds no snapshots and no digest, but its files'
     count, bytes and times, whether its mount was read-only, its lines that were not rows, the lines its
     spec's csv.skip left unread and its keys held by several rows; any other side's record as it is."""
-    if plan.get("engine") != "files":
+    if not named(plan).fixed:
         return found
     held = {
         name: plan[name] for name in ("bytes", "pinned_at", "as_of", "modified_last", "mount", "rejected")
@@ -85,7 +85,7 @@ def engined(plan: Plan, server: str | None = None) -> dict[str, Any]:
     pair too, adds ``server``, the version the read met, which may be another than the plan's. A
     PostgreSQL pair's records are unchanged."""
     read = {"server": server} if server and "engine" in plan else {}
-    if plan.get("engine", "postgresql") == "postgresql":
+    if named(plan).native:
         return read
     return {"engine": plan["engine"], "consistency": plan["consistency"]} | read
 

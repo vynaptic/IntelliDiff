@@ -20,6 +20,7 @@ from deltasleuth.core.classify.signatures import signature_hash
 from deltasleuth.core.classify.taxonomy import DEFAULT_CODES, DomainPack, TaxonomyError, lookup, resolve_pack
 from deltasleuth.core.classify.value_class import value_class
 from deltasleuth.core.jsonio import cel_data
+from deltasleuth.core.masking import Tokeniser, mask_path_pattern, mask_pointer
 from deltasleuth.core.spec.expressions import cel_environment
 from deltasleuth.core.types import (
     ChangeType,
@@ -29,7 +30,6 @@ from deltasleuth.core.types import (
     RuleClassification,
     Severity,
 )
-from deltasleuth.security.tokenise import Tokeniser, mask_path_pattern, mask_pointer
 
 _STATUS = re.compile(r"[A-Z][A-Z_]*")
 

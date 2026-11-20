@@ -23,6 +23,7 @@ import pytest
 from deltasleuth.connectors import tables
 from deltasleuth.connectors.files import SampleWriter
 from deltasleuth.connectors.postgres import engine as postgresql
+from deltasleuth.connectors.postgres.errors import wrapped
 from deltasleuth.core.types import SideStateKind
 from deltasleuth.errors import Invalid
 from deltasleuth.evidence import store
@@ -1112,7 +1113,7 @@ async def test_rolling_reads_the_key_table_again(
 @pytest.mark.parametrize(
     ("error", "code"),
     [
-        (psycopg.OperationalError("server closed the connection unexpectedly"), "OperationalError"),
+        (wrapped(psycopg.OperationalError("server closed the connection unexpectedly")), "OperationalError"),
         (tables.TargetRefused("MySQL 1105"), "MySQL 1105"),
     ],
     ids=["PostgreSQL mid-stream", "a TableError"],
@@ -1208,7 +1209,7 @@ async def test_create_outage_is_422(
     ``ds run`` exits 2), by its code alone, and no run is written."""
     _, harness = on_tables(ITEMS)
     async with harness as h:
-        engine("census", psycopg.OperationalError("the server at keys.bank.example closed the connection"))
+        engine("census", wrapped(psycopg.OperationalError("the server at keys.bank.example closed it")))
         with pytest.raises(Invalid) as refused:  # the API answers its status and its message
             await _rolling(h, service)
         assert (refused.value.status, str(refused.value)) == (

@@ -10,10 +10,12 @@ import struct
 from typing import Any
 
 import oracledb
+import psycopg
 import pymysql
 import pytest
 
 from deltasleuth.connectors import tables
+from deltasleuth.connectors.postgres import errors as pg_errors
 from deltasleuth.connectors.tables import engine, mysql, oracle
 from deltasleuth.core.types import Target
 from deltasleuth.runner.cycle import failure
@@ -324,3 +326,39 @@ def test_an_oracle_number_s_class_and_declared_type_follow_its_scale() -> None:
     assert (floating.declared, floating.cls) == ("FLOAT(126)", "decimal")
     spatial = oracle._column(True, "G", "SDO_GEOMETRY", 1, None, None, 0, None, None)
     assert (spatial.declared, spatial.cls, spatial.keyable) == ("SDO_GEOMETRY", None, False)
+
+
+# What each psycopg error of a compared PostgreSQL database becomes behind the seam: the seam's class, by
+# what today's callers tell apart, with psycopg's class name as its name and its code.
+POSTGRES = [
+    (psycopg.errors.QueryCanceled(QUOTED), {}, tables.StatementTimeout, None),
+    (psycopg.OperationalError(QUOTED), {}, tables.TargetUnreachable, "OperationalError"),
+    (psycopg.errors.AdminShutdown(QUOTED), {}, tables.TargetUnreachable, "OperationalError"),
+    (psycopg.errors.ProgramLimitExceeded(QUOTED), {}, tables.LimitPassed, "OperationalError"),
+    (psycopg.errors.UndefinedColumn(QUOTED), {}, tables.TargetDenied, None),
+    (psycopg.errors.InsufficientPrivilege(QUOTED), {}, tables.TargetDenied, None),
+    (psycopg.errors.InsufficientPrivilege(QUOTED), {"figure": True}, pg_errors.Failed, None),
+    (psycopg.errors.InvalidTextRepresentation(QUOTED), {}, pg_errors.Unfit, None),
+    (psycopg.errors.FeatureNotSupported(QUOTED), {}, pg_errors.Failed, None),
+]
+
+
+@pytest.mark.parametrize(("exc", "options", "cls", "detail"), POSTGRES)
+def test_a_postgresql_error_is_the_seam_s_by_its_class_name_and_shows_no_text(
+    exc: psycopg.Error, options: dict[str, Any], cls: type[tables.TableError], detail: str | None
+) -> None:
+    found = pg_errors.wrapped(exc, **options)
+    assert isinstance(found, cls) and not isinstance(found, psycopg.Error)
+    assert type(found).__name__ == str(found) == tables.code(found) == type(exc).__name__
+    assert (found.said, found.detail, found.gloss) == (None, detail, None)
+    assert failure(found) == type(exc).__name__  # its class alone, as a failed run showed psycopg's
+    assert QUOTED not in repr(found) + str(found.args)
+
+
+def test_only_a_refused_connect_or_filter_keeps_the_driver_s_first_line() -> None:
+    said = pg_errors.wrapped(psycopg.OperationalError("connection to server failed\nDETAIL: more"), said=True)
+    assert (said.said, str(said)) == ("connection to server failed", "OperationalError")
+    full = pg_errors.wrapped(psycopg.errors.ConfigurationLimitExceeded(QUOTED), figure=True)
+    assert type(full) is tables.TargetTempSpace and str(full) == "53400"  # a pre-check records the code
+    store = psycopg.errors.UndefinedColumn("a column of the store's")  # never wrapped: the store's own
+    assert not isinstance(store, tables.TableError | tables.TargetDenied)

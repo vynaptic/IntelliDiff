@@ -102,6 +102,8 @@ def test_key_regex(pattern: str, ok: bool) -> None:
         ("$contains(a, /a**/)", "multiple repeat"),  # an invalid pattern is reported, not raised
         pytest.param("$contains(a, /" + "a" * 4001 + "/)", "at most 4000 characters", id="too-long"),
         ("$contains(a, /(?:(?:a{100}){100}){100}/)", "compilation work limit"),
+        ("$contains(a, /\\Bx/)", "runs without a time bound"),
+        ("$replace(a, /(\\d)\\1/, '')", "runs without a time bound"),
     ],
 )
 def test_a_map_regex_past_its_bounds_is_refused(source: str, fragment: str) -> None:

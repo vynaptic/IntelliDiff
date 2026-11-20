@@ -35,6 +35,9 @@ retention:                                       # days raw data is kept after e
 worker: {concurrency: 4, lease_seconds: 120, poll_seconds: 1}
 
 ## ---- optional blocks: remove the leading "# " of the lines you use; each loads as written ----
+## Database roles apart: the schema's owner, which only ds migrate reads (ds serve and ds worker then apply
+## no migration), while db_dsn names a role with data rights only: 'ds db grants --help' gives the steps.
+# migrate_dsn_ref: file:/run/secrets/db_owner_dsn
 ## AI chat: your gateway's profile in llm_profiles.yaml, and the llm_key secret in the site file. Without these three lines AI is off.
 # llm_profiles_file: llm_profiles.yaml
 # llm_profile: gateway

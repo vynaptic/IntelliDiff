@@ -18,12 +18,13 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-from collections.abc import Container, Mapping, Sequence
+from collections.abc import Callable, Container, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, Protocol
 
 from deltasleuth import targets as product
-from deltasleuth.connectors.base import Connector, KeyRejectedError, NotCapturedError
+from deltasleuth.connectors.base import BatchConnector, Connector, KeyRejectedError, NotCapturedError
 from deltasleuth.connectors.files import FileConnector, FileSampleSource, SampleError
 from deltasleuth.connectors.http import TargetGate
 from deltasleuth.connectors.rest import RestConnector
@@ -42,6 +43,7 @@ from deltasleuth.core.types import (
     Side,
     SideState,
     SideStateKind,
+    Target,
 )
 from deltasleuth.errors import Invalid
 from deltasleuth.evidence.store import EvidenceNotFoundError
@@ -70,6 +72,33 @@ def body_of(ctx: Context, obs: Observation) -> bytes | None:
         raise EvidenceMissing(f"evidence of {obs.obs_id} is missing (purged or lost)") from None
 
 
+def _service(target: Target, execution: ExecutionConfig, gate: TargetGate, **limits: Any) -> Connector:
+    try:
+        return RestConnector(
+            target,
+            execution,
+            gate=gate,
+            max_body_bytes=limits["max_body_bytes"],
+            max_values=limits["max_values"],
+        )
+    except SecretError:
+        if target.declared_in != "product":
+            raise  # an operator's own mount: the refusal names the file, never its content
+        # Stored by the product (``deltasleuth.targets``): no answer, log line or audit detail names its file.
+        unread = f"the stored credential of target {target.target_id} cannot be read: enter it again"
+        raise SecretError(unread) from None
+
+
+def _table(target: Target, execution: ExecutionConfig, gate: TargetGate, **limits: Any) -> Connector:
+    return TableConnector(target, execution, limits["table"] or {}, gate=gate)
+
+
+# The connector of each kind of target (``Target.kind``), made of the target, the run's execution, the
+# target's gate and ``limits``: ``table`` (the side's column plan, or None), ``max_body_bytes`` and
+# ``max_values``. Another kind of source is one more entry, whose connector may be a ``BatchConnector``.
+CONNECTORS: dict[str, Callable[..., Connector]] = {"service": _service, "database": _table, "files": _table}
+
+
 def connect(
     ctx: Context,
     target_id: str,
@@ -79,31 +108,56 @@ def connect(
     max_body_bytes: int = jsonio.DEFAULT_MAX_BYTES,
     max_values: int | None = None,
 ) -> Connector:
-    """A live connector to the target, under the process's one gate for it (``ctx.gates``: the rate
-    budget and slots every run on the target shares) and that gate's breaker for the ``circuitBreaker``
-    that ``execution`` declares; a database target reads the table side ``table`` of a run's column plan.
-    ``max_body_bytes`` caps a service's answer, its pages together (a trial of an endpoint reads less than
-    a run does), and ``max_values`` the values it holds (a key listing holds more). A change another
-    process made to the product's list of targets is taken in first."""
+    """A live connector to the target, of its kind (``CONNECTORS``), under the process's one gate for it
+    (``ctx.gates``: the rate budget and slots every run on the target shares) and that gate's breaker for
+    the ``circuitBreaker`` that ``execution`` declares; a database or files target reads the table side
+    ``table`` of a run's column plan. ``max_body_bytes`` caps a service's answer, its pages together (a
+    trial of an endpoint reads less than a run does), and ``max_values`` the values it holds (a key listing
+    holds more). A change another process made to the product's list of targets is taken in first."""
     product.follow(ctx)
     target = ctx.targets.live(target_id)
     gate = ctx.gates.setdefault(target_id, TargetGate.for_target(target))
-    if target.engine:
-        return TableConnector(target, execution, table or {}, gate=gate)
-    try:
-        return RestConnector(
-            target, execution, gate=gate, max_body_bytes=max_body_bytes, max_values=max_values
-        )
-    except SecretError:
-        if target.declared_in != "product":
-            raise  # an operator's own mount: the refusal names the file, never its content
-        # Stored by the product (``deltasleuth.targets``): no answer, log line or audit detail names its file.
-        unread = f"the stored credential of target {target_id} cannot be read: enter it again"
-        raise SecretError(unread) from None
+    limits = {"table": table, "max_body_bytes": max_body_bytes, "max_values": max_values}
+    return CONNECTORS[target.kind](target, execution, gate, **limits)
+
+
+class Reader(Protocol):
+    """A run's reads of its two sides, live (``LiveReader``) or captured (``FileReader``), as the worker
+    asks for them. ``batches``: a slot reads a group of keys (``prefetch``); ``large``: a side's reads may
+    hold large values; ``fixed``: the sides that read fixed files, whose first observation stands."""
+
+    @property
+    def fixed(self) -> frozenset[Side]: ...
+
+    @property
+    def batches(self) -> bool: ...
+
+    @property
+    def large(self) -> bool: ...
+
+    def reconnect(self) -> None: ...
+
+    def refused(self, reads: Mapping[Side, Observation]) -> float | None: ...
+
+    async def standing(self, firsts: Mapping[str, KeyResult]) -> dict[str, Held]: ...
+
+    async def ahead(self, keys: Sequence[str]) -> None: ...
+
+    async def prefetch(
+        self,
+        batches: Sequence[tuple[Sequence[str], Sequence[Side]]],
+        held: Mapping[str, Held] | None = None,
+        ahead: Sequence[str] = (),
+    ) -> None: ...
+
+    async def fetch(self, key: str, side: Side, *, run_id: str, call_seq: int) -> Observation: ...
+
+    async def aclose(self) -> None: ...
 
 
 class LiveReader:
-    """The spec's two sides, live; ``tables`` is the run's column plan (``params["tables"]``)."""
+    """The spec's two sides, live; ``tables`` is the run's column plan (``params["tables"]``). A side whose
+    connector is a ``BatchConnector`` reads groups of keys; any other reads its keys one by one."""
 
     def __init__(self, ctx: Context, spec: CompiledSpec, tables: Plan | None = None) -> None:
         self._ctx, self._sides, self._execution = ctx, spec.sides, spec.execution
@@ -121,6 +175,7 @@ class LiveReader:
         }
         self._replaced += self._connectors.values()
         self._connectors = fresh
+        self._batched = {side: c for side, c in fresh.items() if isinstance(c, BatchConnector)}
         self._gates = {side: self._ctx.gates[cfg.target] for side, cfg in self._sides.items()}
 
     def refused(self, reads: Mapping[Side, Observation]) -> float | None:
@@ -135,18 +190,16 @@ class LiveReader:
 
     @property
     def batches(self) -> bool:
-        """Whether a slot reads a group of keys (``prefetch``): every side is a table, or a table side
-        reads fixed files, each read of which is a pass over them whatever its keys;
-        a service side of such a pair then reads the group's keys one by one."""
-        tables = [c for c in self._connectors.values() if isinstance(c, TableConnector)]
-        return len(tables) == len(self._connectors) or any(c.fixed for c in tables)
+        """Whether a slot reads a group of keys (``prefetch``): every side reads groups, or a side reads
+        fixed files, each read of which is a pass over them whatever its keys; a side that reads keys one by
+        one (a service's) then reads the group's keys one by one."""
+        batched = self._batched.values()
+        return len(self._batched) == len(self._connectors) or any(c.fixed for c in batched)
 
     @property
     def fixed(self) -> frozenset[Side]:
         """The sides that read fixed files: what a read of one observed stands."""
-        return frozenset(
-            side for side, c in self._connectors.items() if isinstance(c, TableConnector) and c.fixed
-        )
+        return frozenset(side for side, c in self._batched.items() if c.fixed)
 
     async def standing(self, firsts: Mapping[str, KeyResult]) -> dict[str, Held]:
         """What a recheck of each key (``firsts``: its stored first result) does not read again: a side of
@@ -154,8 +207,8 @@ class LiveReader:
         group. A first read that failed observed no bytes, and files that do not answer the check keep
         nothing: those are read."""
         held: dict[str, Held] = {key: {} for key in firsts}
-        for side, connector in self._connectors.items():
-            if not (isinstance(connector, TableConnector) and connector.fixed):
+        for side, connector in self._batched.items():
+            if not connector.fixed:
                 continue
             seen = {key: kept for key, first in firsts.items() if (kept := _observed(first, side))}
             if seen and await connector.unchanged(self._sides[side]):
@@ -165,16 +218,14 @@ class LiveReader:
 
     @property
     def large(self) -> bool:
-        """Whether a table side's rows may hold large values: its keys are read few at a
-        time."""
-        return any(isinstance(c, TableConnector) and c.large for c in self._connectors.values())
+        """Whether a side's reads may hold large values: its keys are read few at a time."""
+        return any(c.large for c in self._batched.values())
 
     async def ahead(self, keys: Sequence[str]) -> None:
         """Read ``keys`` on each side of fixed files, one pass over them a side, for a
         group whose other side is then read few keys at a time: ``prefetch`` is told of them."""
         for side in self.fixed:
-            connector = self._connectors[side]
-            assert isinstance(connector, TableConnector)
+            connector = self._batched[side]
             connector.forget(keys)
             await connector.prefetch(keys, self._sides[side])
 
@@ -184,10 +235,11 @@ class LiveReader:
         held: Mapping[str, Held] | None = None,
         ahead: Sequence[str] = (),
     ) -> None:
-        """Read each batch of keys on each table side, in its sides' order, in one statement a side, but
-        the sides ``held`` keeps of a key (``standing``) and the sides of fixed files that ``ahead`` read
-        of its keys; what an earlier group left unread of these keys is dropped first, never served."""
-        tables = {side: c for side, c in self._connectors.items() if isinstance(c, TableConnector)}
+        """Read each batch of keys on each side that reads groups, in its sides' order, in one statement a
+        side, but the sides ``held`` keeps of a key (``standing``) and the sides of fixed files that
+        ``ahead`` read of its keys; what an earlier group left unread of these keys is dropped first, never
+        served."""
+        tables = self._batched
         before = {(key, side) for side in (self.fixed if ahead else ()) for key in ahead}
         for keys, _ in batches:  # groups of one run share the connectors, and lease distinct keys
             for side, connector in tables.items():
@@ -225,6 +277,29 @@ class FileReader:
         self._sides = spec.sides
         self.fixed: frozenset[Side] = frozenset()  # captured samples: no side reads a table
 
+    batches = False  # each key is read alone
+    large = False
+
+    def reconnect(self) -> None:
+        return None  # captured samples hold no credential
+
+    def refused(self, reads: Mapping[Side, Observation]) -> float | None:
+        return None  # no breaker or pause stands before a sample
+
+    async def standing(self, firsts: Mapping[str, KeyResult]) -> dict[str, Held]:
+        return {key: {} for key in firsts}
+
+    async def ahead(self, keys: Sequence[str]) -> None:
+        return None
+
+    async def prefetch(
+        self,
+        batches: Sequence[tuple[Sequence[str], Sequence[Side]]],
+        held: Mapping[str, Held] | None = None,
+        ahead: Sequence[str] = (),
+    ) -> None:
+        return None
+
     async def fetch(self, key: str, side: Side, *, run_id: str, call_seq: int) -> Observation:
         raw = self._raw.get(key)
         if raw is None:
@@ -235,8 +310,6 @@ class FileReader:
     async def aclose(self) -> None:
         return None
 
-
-Reader = LiveReader | FileReader
 
 
 def _observed(first: KeyResult, side: Side) -> tuple[str, SideState] | None:

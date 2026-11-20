@@ -291,3 +291,170 @@ def test_each_fed_action_still_carries_what_its_projector_reads(repo_root: Path)
         (function,) = [f for f in ast.walk(tree) if isinstance(f, ast.FunctionDef) and f.name == builder]
         (built,) = [r.value for r in ast.walk(function) if isinstance(r, ast.Return)]
         assert not FEED_READS[name] - _keys(built, function), f"{file}: {builder} builds {name} without them"
+
+
+# -- layers ----------------------------------------------------------------------------------------
+
+# What a module of deltasleuth.core may import from the rest of the package, and why. Every other import
+# of a core module names core: the engine's logic depends on nothing that reads, stores or serves.
+CORE_MAY_IMPORT = {
+    "deltasleuth.errors": "the shared refusal types, a module that imports nothing of the package",
+    "deltasleuth.packs": (
+        "the domain packs: taxonomy codes the registry discovers by module name, each a module of data that"
+        " imports core alone"
+    ),
+}
+# What the modules CORE_MAY_IMPORT names may import of the package themselves: nothing but core.
+ALLOWED_DEPENDS_ON = {"deltasleuth.errors": (), "deltasleuth.packs": ("deltasleuth.core",)}
+# The modules of deltasleuth.core that do I/O, and why; every other one computes on what it is given.
+CORE_IO = {
+    "core/secrets.py": "the one reader of a credential's file: reference",
+    "core/cron.py": "reads the version line of the tz data schedules fire by",
+    "core/spec/documents.py": "reads the spec or targets document its caller names",
+    "core/spec/schemas.py": "reads the package's own JSON schemas, a pack's among them",
+    "core/spec/_keypattern_process.py": "starts the child that bounds a key pattern's time and memory",
+    "core/spec/_keypattern_worker.py": "that child, which answers on its pipes under resource limits",
+}
+IO_MODULES = re.compile(
+    r"(subprocess|socket|ssl|select|selectors|threading|multiprocessing|asyncio|concurrent|resource|signal"
+    r"|fcntl|shutil|tempfile|http|urllib\.request|psycopg|psycopg_pool|aiohttp|httpx|duckdb|pymysql"
+    r"|oracledb)(\..*)?"
+)
+IO_CALLS = {"open", "read_text", "read_bytes", "write_text", "write_bytes", "stat", "iterdir", "glob"}
+IO_CALLS |= {"rglob", "unlink", "mkdir", "Popen"}
+# A statement over the store's schema, or one of its session locks.
+STORE_SQL = re.compile(r"\bds\.[a-z_]+\b|\bpg_(?:try_)?advisory", re.IGNORECASE)
+STATEMENT = re.compile(r"^\s*(?:SELECT|UPDATE|INSERT|DELETE|WITH|CREATE|SET|LOCK)\b", re.IGNORECASE)
+
+
+def _module(path: Path, package: Path) -> str:
+    parts = path.relative_to(package.parent).with_suffix("").parts
+    return ".".join(parts[:-1] if parts[-1] == "__init__" else parts)
+
+
+def _imports(path: Path, package: Path) -> list[tuple[int, str]]:
+    """The modules ``path`` imports at run time, by their absolute names: those under ``if TYPE_CHECKING:``
+    are types only and never run. ``from deltasleuth import x`` names ``deltasleuth.x``."""
+    tree, module = ast.parse(path.read_text()), _module(path, package)
+    typing_only = {
+        id(node)
+        for block in ast.walk(tree)
+        if isinstance(block, ast.If) and ast.unparse(block.test) in ("TYPE_CHECKING", "typing.TYPE_CHECKING")
+        for statement in block.body
+        for node in ast.walk(statement)
+    }
+    found = []
+    for node in ast.walk(tree):
+        if id(node) in typing_only:
+            continue
+        if isinstance(node, ast.Import):
+            found += [(node.lineno, alias.name) for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            if node.level:
+                here = module.split(".") if path.name == "__init__.py" else module.split(".")[:-1]
+                tail = [node.module] if node.module else []
+                base = ".".join([*here[: len(here) - node.level + 1], *tail])
+            named = [f"{base}.{alias.name}" for alias in node.names] if base == "deltasleuth" else [base]
+            found += [(node.lineno, name) for name in named]
+    return found
+
+
+def _within(name: str, prefixes: Any) -> bool:
+    return any(name == prefix or name.startswith(prefix + ".") for prefix in prefixes)
+
+
+def test_the_engine_imports_nothing_outside_core_but_what_is_named(repo_root: Path) -> None:
+    """A module of deltasleuth.core imports core, the standard library, third-party libraries and only the
+    modules CORE_MAY_IMPORT names; those import nothing of the package but core themselves."""
+    package = repo_root / "deltasleuth"
+    offenders = [
+        f"{path.relative_to(repo_root)}:{line} imports {name}"
+        for path in sorted((package / "core").rglob("*.py"))
+        for line, name in _imports(path, package)
+        if name.startswith("deltasleuth.")
+        and not _within(name, ("deltasleuth.core",))
+        and not _within(name, CORE_MAY_IMPORT)
+    ]
+    for allowed, may in ALLOWED_DEPENDS_ON.items():
+        dotted = package.parent / allowed.replace(".", "/")
+        files = sorted(dotted.rglob("*.py")) if dotted.is_dir() else [dotted.with_suffix(".py")]
+        offenders += [
+            f"{path.relative_to(repo_root)}:{line} imports {name}"
+            for path in files
+            for line, name in _imports(path, package)
+            if name.startswith("deltasleuth.") and not _within(name, may)
+        ]
+    assert offenders == []
+
+
+def test_only_the_named_engine_modules_do_io(repo_root: Path) -> None:
+    """No module of deltasleuth.core reads a file, starts a process or opens a connection, but those
+    CORE_IO names with the reason."""
+    package = repo_root / "deltasleuth"
+    doing: dict[str, list[str]] = {}
+    for path in sorted((package / "core").rglob("*.py")):
+        found = [
+            f"{line} imports {name}" for line, name in _imports(path, package) if IO_MODULES.fullmatch(name)
+        ]
+        for call in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(call, ast.Call):
+                continue
+            func = call.func
+            name = getattr(func, "id", None) or getattr(func, "attr", "")
+            on_os = isinstance(func, ast.Attribute) and ast.unparse(func.value) == "os"
+            if name in IO_CALLS or on_os:
+                found.append(f"{call.lineno} calls {name}")
+        if found:
+            doing[str(path.relative_to(package))] = found
+    assert sorted(doing) == sorted(CORE_IO), {name: doing[name] for name in set(doing) - set(CORE_IO)}
+
+
+def test_the_stores_sql_is_written_in_the_store_package_alone(repo_root: Path) -> None:
+    """Every statement over the store's schema ``ds``, and every session lock of the store, is in
+    deltasleuth/store (``repo.py``, one function a use case): no call of ``execute`` outside it is given
+    one, and no string outside it is one, whoever passes it on."""
+    package = repo_root / "deltasleuth"
+    offenders = []
+    for path in sorted(package.rglob("*.py")):
+        if path.is_relative_to(package / "store"):
+            continue
+        tree = ast.parse(path.read_text())
+        docstrings = {
+            id(node.body[0].value)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef)
+            and node.body
+            and isinstance(node.body[0], ast.Expr)
+            and isinstance(node.body[0].value, ast.Constant)
+        }
+        for node in ast.walk(tree):
+            where = f"{path.relative_to(repo_root)}:{getattr(node, 'lineno', 0)}"
+            if isinstance(node, ast.Call) and getattr(node.func, "attr", None) in ("execute", "executemany"):
+                texts = [t.value for a in node.args for t in ast.walk(a) if isinstance(t, ast.Constant)]
+                if any(isinstance(text, str) and STORE_SQL.search(text) for text in texts):
+                    offenders.append(f"{where} executes the store's SQL")
+            elif isinstance(node, ast.Constant) and isinstance(text := node.value, str):
+                if id(node) not in docstrings and STATEMENT.search(text) and STORE_SQL.search(text):
+                    offenders.append(f"{where} holds the store's SQL")
+    assert offenders == []
+
+
+# Packages that must not import another, and why.
+NEVER_IMPORTS = {
+    ("store", "deltasleuth.connectors"): "the store keeps what the connectors read, never how they read it",
+    ("store", "deltasleuth.runner"): "the runner calls the store",
+    ("security", "deltasleuth.runner"): "the runner seals and masks through security",
+}
+
+
+@pytest.mark.parametrize(("importer", "imported"), sorted(NEVER_IMPORTS))
+def test_a_package_does_not_reach_the_layer_above_it(repo_root: Path, importer: str, imported: str) -> None:
+    package = repo_root / "deltasleuth"
+    offenders = [
+        f"{path.relative_to(repo_root)}:{line} imports {name}"
+        for path in sorted((package / importer).rglob("*.py"))
+        for line, name in _imports(path, package)
+        if _within(name, (imported,))
+    ]
+    assert offenders == [], NEVER_IMPORTS[importer, imported]

@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import hashlib
 
+from deltasleuth.core.masking import mask_path_pattern
 from deltasleuth.core.types import CompiledSpec, Finding
-from deltasleuth.security.tokenise import mask_path_pattern
 
 
 def signature_hash(f: Finding, spec: CompiledSpec | None = None) -> str:

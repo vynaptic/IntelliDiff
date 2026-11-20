@@ -18,7 +18,6 @@ from pydantic import Field, ValidationError
 from deltasleuth import approvals, specs
 from deltasleuth.api.deps import Ctx, Payload, SpecAuthor, Viewer, issues_of, masked_body, need, ok, trial
 from deltasleuth.connectors.base import KeyRejectedError
-from deltasleuth.connectors.rest import RestConnector
 from deltasleuth.core.jsonio import JSONParseError, ResourceLimitError, parse_json
 from deltasleuth.core.spec import SecretError, SpecError, SpecIssue, compile_spec, validate_spec
 from deltasleuth.core.spec.assemble import content_hash
@@ -340,7 +339,7 @@ async def try_side(ctx: Ctx, who: SpecAuthor, sent: Request) -> Response:
     except SecretError:  # never its own text: a targets-file credential's names the file
         unread = f"the stored credential of target {target} cannot be read: enter it again"
         raise HTTPException(422, unread) from None
-    credentials = connector.credentials if isinstance(connector, RestConnector) else ()
+    credentials = connector.credentials
     try:
         obs = await connector.fetch(key, cfg, run_id="try")
     except KeyRejectedError:

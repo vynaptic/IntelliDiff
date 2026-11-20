@@ -25,7 +25,8 @@ import regex
 from cel_expr_python import cel
 from jsonata.jexception import JException
 
-from deltasleuth.core.canonical.mapping import RegexLimitError, RegexRefused, regex_engine, regex_work
+from deltasleuth.core.canonical.mapping import regex_engine
+from deltasleuth.core.canonical.regexes import RegexLimitError, RegexRefused, regex_work
 from deltasleuth.core.spec import _keypattern_process
 
 CelKind = Literal[

@@ -13,13 +13,13 @@ doubles and both results must agree.
 
 A map runs inside the shared server process, and a regular expression can backtrack for hours, so every
 regular expression literal of a map compiles through ``regex_engine``. It refuses a pattern that does not
-compile, one past a key pattern's size or compilation work bound, and a repeat inside a repeat
-(``RegexRefused``); an inner repeat that is possessive or atomic gives nothing back and is accepted. The
-pattern then runs on the ``regex`` engine, which stops at the map's time bound, written so that it matches
-exactly what Python's ``re`` matches: each ``\\d``, ``\\s``, ``\\w`` and ``\\b`` spelled out as the code
-points ``re`` gives it, and a case-insensitive character as the characters ``re`` folds to it. A pattern
-that cannot be written so (``\\B``, a back-reference, a scoped ``(?a:...)``) runs on ``re``. Either way it
-reads at most ``MAX_REGEX_INPUT`` characters of one string: a longer one fails the side.
+compile and one ``regexes`` refuses: too long, too much compilation work, or a repeat inside a repeat
+(``RegexRefused``). The pattern then runs on the ``regex`` engine, which stops at the map's time bound,
+written so that it matches exactly what Python's ``re`` matches: each ``\\d``, ``\\s``, ``\\w`` and ``\\b``
+spelled out as the code points ``re`` gives it, and a case-insensitive character as the characters ``re``
+folds to it. A pattern that cannot be written so (``\\B``, a back-reference, a conditional, a scoped
+``(?a:...)``) would run on ``re`` without a time bound, so it is refused too. A pattern reads at most
+``MAX_REGEX_INPUT`` characters of one string: a longer one fails the side.
 """
 
 from __future__ import annotations
@@ -28,7 +28,6 @@ import math
 import re
 import sys
 import time
-import warnings
 from collections.abc import Callable, Sequence
 from contextvars import ContextVar
 from decimal import Decimal
@@ -45,6 +44,15 @@ from jsonata.utils import Utils
 from deltasleuth.core.canonical.encoding import exact_json, sha256_hex
 from deltasleuth.core.canonical.errors import ExpressionError, MappingError
 from deltasleuth.core.canonical.paths import find
+from deltasleuth.core.canonical.regexes import (
+    MAX_REGEX_INPUT,
+    RegexRefused,
+    parse,
+    refused,
+    shown,
+    too_long,
+    unbounded,
+)
 from deltasleuth.core.jsonio import number_text
 from deltasleuth.core.types import JSON
 
@@ -55,11 +63,6 @@ MAP_TIMEOUT_MS = 2000
 MAP_MAX_DEPTH = 500
 # The significant digits JSONata keeps when it writes a number as text; a double holds them all.
 EXACT_DIGITS = 15
-# A map's regular expression: the characters of one string it reads, and a key pattern's bounds on its size
-# and on its compilation work (finite repeats expanded).
-MAX_REGEX_INPUT = 10_000
-MAX_REGEX_CHARS = 4000
-MAX_REGEX_WORK = 16_000
 _DEADLINE: ContextVar[float | None] = ContextVar("map_deadline", default=None)  # the running map's
 
 
@@ -217,16 +220,8 @@ class _Codec:
 # -- regular expressions ----------------------------------------------------------------------------------
 
 
-class RegexRefused(ExpressionError):
-    """A map's regular expression that may not run: its message names the pattern, never a value."""
-
-
-class RegexLimitError(ValueError):
-    """A parsed pattern past its compilation work bound."""
-
-
 class _Unwritable(Exception):
-    """A construct the ``regex`` engine cannot be given with ``re``'s meaning."""
+    """A construct the ``regex`` engine cannot be given with ``re``'s meaning: its message names it."""
 
 
 def regex_engine(pattern: str, flags: RegexFlags) -> _Bounded:
@@ -237,93 +232,30 @@ def regex_engine(pattern: str, flags: RegexFlags) -> _Bounded:
 
 @lru_cache(maxsize=256)
 def _bounded(pattern: str, flags: int) -> _Bounded:
-    shown = f"/{pattern if len(pattern) <= 40 else pattern[:40] + '…'}/"
-    if len(pattern) > MAX_REGEX_CHARS:
-        limit = f"a map's is at most {MAX_REGEX_CHARS} characters"
-        raise RegexRefused(f"regular expression {shown} is too long: {limit}")
+    if why := too_long(pattern):
+        raise refused(pattern, why)
     try:
         compiled = re.compile(pattern, flags)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", FutureWarning)  # re.compile surfaced them
-            parsed = _parser.parse(pattern, flags)
+        parsed = parse(pattern, flags)
     except (re.error, OverflowError, RecursionError) as exc:
-        raise RegexRefused(f"regular expression {shown} is not valid: {exc}") from None
+        raise RegexRefused(f"regular expression {shown(pattern)} is not valid: {exc}") from None
+    if why := unbounded(parsed):
+        raise refused(pattern, why)
     try:
-        regex_work(parsed, MAX_REGEX_WORK)
-    except RegexLimitError:
-        why = "exceeds its compilation work limit; simplify its repeats"
-        raise RegexRefused(f"regular expression {shown} {why}") from None
-    if _nested(parsed, False):
-        why = "has a repeat inside a repeat, which can backtrack for hours on a long string"
-        fix = "make the inner repeat possessive (x++) or atomic ((?>x+)), or write it without nesting"
-        raise RegexRefused(f"regular expression {shown} {why}: {fix}")
-    return _Bounded(compiled, _native(parsed))
-
-
-def regex_work(nodes: _parser.SubPattern, limit: int) -> int:
-    """The work of compiling a parsed pattern: each operation once, a finite repeat's body as often as it may
-    repeat; ``RegexLimitError`` once it passes ``limit``. Python is pinned to 3.13: counting the parsed
-    operations reads escapes, classes, comments and inline flags as the compiler does, where braces in the
-    source would be misread as repeats."""
-    work = 0
-    for op, value in nodes:
-        cost = 1
-        if op in (_sre.MAX_REPEAT, _sre.MIN_REPEAT, _sre.POSSESSIVE_REPEAT):
-            low, high, child = value
-            cost += regex_work(child, limit) * (max(1, low) if high == _sre.MAXREPEAT else max(1, high))
-        elif op == _sre.SUBPATTERN:
-            cost += regex_work(value[-1], limit)
-        elif op == _sre.BRANCH:
-            cost += sum(regex_work(branch, limit) for branch in value[1])
-        elif op in (_sre.ASSERT, _sre.ASSERT_NOT):
-            cost += regex_work(value[1], limit)
-        elif op == _sre.ATOMIC_GROUP:
-            cost += regex_work(value, limit)
-        elif op == _sre.GROUPREF_EXISTS:
-            cost += regex_work(value[1], limit) + (regex_work(value[2], limit) if value[2] else 0)
-        work += cost
-        if work > limit:
-            raise RegexLimitError
-    return work
-
-
-def _nested(nodes: Sequence[Any], repeated: bool) -> bool:
-    """Whether a repeat that may run more than once (``repeated``: one encloses ``nodes``) holds an unbounded
-    repeat that gives back what it took. A possessive repeat's body and an atomic group give nothing back
-    once matched: only what nests inside them counts."""
-    for op, value in nodes:
-        if op in (_sre.MAX_REPEAT, _sre.MIN_REPEAT):
-            _, high, child = value
-            if (repeated and high == _sre.MAXREPEAT) or _nested(child, repeated or high > 1):
-                return True
-        elif op == _sre.POSSESSIVE_REPEAT:
-            if _nested(value[2], False):
-                return True
-        elif op == _sre.ATOMIC_GROUP:
-            if _nested(value, False):
-                return True
-        elif op == _sre.SUBPATTERN:
-            if _nested(value[-1], repeated):
-                return True
-        elif op == _sre.BRANCH:
-            if any(_nested(branch, repeated) for branch in value[1]):
-                return True
-        elif op in (_sre.ASSERT, _sre.ASSERT_NOT):
-            if _nested(value[1], repeated):
-                return True
-        elif op == _sre.GROUPREF_EXISTS:
-            if _nested(value[1], repeated) or (value[2] is not None and _nested(value[2], repeated)):
-                return True
-    return False
+        return _Bounded(compiled, _native(parsed))
+    except _Unwritable as exc:
+        rewrite = "rewrite it without \\B, back-references, conditionals or scoped flags"
+        why = f"uses {exc}, which runs without a time bound: {rewrite}"
+        raise RegexRefused(f"regular expression {shown(pattern)} {why}") from None
 
 
 class _Bounded:
     """A map's compiled regular expression, as JSONata calls one (``jsonata.regex_engine.CompiledPattern``):
-    ``re``'s, and the same pattern on the ``regex`` engine when it could be written there."""
+    the pattern on the ``regex`` engine, and ``re``'s, which reads a replacement template."""
 
     __slots__ = ("_native", "_re")
 
-    def __init__(self, compiled: re.Pattern[str], native: regex.Pattern[str] | None) -> None:
+    def __init__(self, compiled: re.Pattern[str], native: regex.Pattern[str]) -> None:
         self._re, self._native = compiled, native
 
     def search(self, string: str) -> Any:
@@ -344,8 +276,6 @@ class _Bounded:
         if len(string) > MAX_REGEX_INPUT:
             limit = f"{MAX_REGEX_INPUT:,} characters"
             raise MappingError(f"map regular expression read a string longer than {limit}")
-        if self._native is None:
-            return call(self._re)
         deadline = _DEADLINE.get()
         left = MAP_TIMEOUT_MS / 1000 if deadline is None else deadline - time.monotonic()
         try:
@@ -362,16 +292,17 @@ def _expand(template: list[Any], match: Any) -> str:
     return "".join(part if isinstance(part, str) else (match.group(part) or "") for part in template)
 
 
-def _native(parsed: _parser.SubPattern) -> regex.Pattern[str] | None:
-    """The pattern on the ``regex`` engine, matching exactly what ``re`` matches; None where it cannot be."""
+def _native(parsed: _parser.SubPattern) -> regex.Pattern[str]:
+    """The pattern on the ``regex`` engine, matching exactly what ``re`` matches; ``_Unwritable`` where it
+    cannot be."""
     flags = parsed.state.flags
     names = {number: name for name, number in parsed.state.groupdict.items()}
+    source = _written(parsed, flags & (re.IGNORECASE | re.ASCII), names)
+    native = regex.VERSION0 | (regex.MULTILINE if flags & re.MULTILINE else 0)
     try:
-        source = _written(parsed, flags & (re.IGNORECASE | re.ASCII), names)
-        native = regex.VERSION0 | (regex.MULTILINE if flags & re.MULTILINE else 0)
         return regex.compile(source, native | (regex.DOTALL if flags & re.DOTALL else 0), cache_pattern=False)
-    except (_Unwritable, regex.error):
-        return None
+    except regex.error:
+        raise _Unwritable("a construct the bounded engine does not read") from None
 
 
 _ANCHORS = {
@@ -384,6 +315,9 @@ _LOOK = {
 _SUFFIX = {_sre.MAX_REPEAT: "", _sre.MIN_REPEAT: "?", _sre.POSSESSIVE_REPEAT: "+"}
 _SCOPED = ((re.MULTILINE, "m"), (re.DOTALL, "s"))
 _SINGLE = (_sre.LITERAL, _sre.NOT_LITERAL, _sre.IN)  # the operations that match one character
+# What the parser gives that the regex engine cannot be given with re's meaning: \B (re never matches it in
+# an empty string), a back-reference and a conditional.
+_UNWRITABLE = {_sre.AT: "\\B", _sre.GROUPREF: "a back-reference", _sre.GROUPREF_EXISTS: "a conditional"}
 
 
 def _written(nodes: Sequence[Any], flags: int, names: dict[int, str]) -> str:
@@ -416,7 +350,7 @@ def _written(nodes: Sequence[Any], flags: int, names: dict[int, str]) -> str:
         elif op == _sre.SUBPATTERN:
             number, added, removed, child = value
             if added & (re.ASCII | re.UNICODE):  # re reads a scoped (?a:\w) as neither class
-                raise _Unwritable
+                raise _Unwritable("a scoped (?a:...) or (?u:...) flag")
             inner = _written(child, (flags | (added & re.IGNORECASE)) & ~removed, names)
             on = "".join(letter for flag, letter in _SCOPED if added & flag)
             off = "".join(letter for flag, letter in _SCOPED if removed & flag)
@@ -432,8 +366,8 @@ def _written(nodes: Sequence[Any], flags: int, names: dict[int, str]) -> str:
             out.append(_LOOK[op, value[0]] + _written(value[1], flags, names) + ")")
         elif op == _sre.ATOMIC_GROUP:
             out.append(f"(?>{_written(value, flags, names)})")
-        else:  # \B (re never matches it in an empty string), a back-reference, a condition
-            raise _Unwritable
+        else:
+            raise _Unwritable(_UNWRITABLE.get(op, "a construct the bounded engine does not read"))
     return "".join(out)
 
 
@@ -455,7 +389,7 @@ def _class(items: Sequence[Any], ascii: bool) -> str:
         elif op == _sre.CATEGORY and value in _ESCAPES:
             ranges += _code_points(*_ESCAPES[value], ascii)
         else:
-            raise _Unwritable
+            raise _Unwritable("a class item the bounded engine does not read")
     return _set(ranges, negated)
 
 

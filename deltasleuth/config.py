@@ -740,6 +740,9 @@ class Settings:
     evidence_dir: Path
     workspace_dir: Path  # without encryption: tokeniser.key and kek (``ds init``)
     targets_file: Path
+    # The schema owner's DSN, which only ``ds migrate`` reads; then ``ds serve`` and ``ds worker`` apply no
+    # migration. Absent: database_dsn_ref's role owns the schema and migrates.
+    migrate_dsn_ref: SecretRef | None = None
     llm_profiles_file: Path | None = None  # absent: AI off
     llm_profile: str | None = None  # the default chat profile
     llm_environment: Environment = "prod"

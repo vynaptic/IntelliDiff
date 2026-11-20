@@ -347,6 +347,8 @@ class FileSampleSource:
 class FileConnector:
     """``Connector`` over captured samples. ``run_id``/``call_seq`` are accepted and unused."""
 
+    credentials: tuple[str, ...] = ()  # nothing is sent
+
     def __init__(self, source: FileSampleSource) -> None:
         self._source = source
 

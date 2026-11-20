@@ -22,8 +22,6 @@ otherwise.
 from __future__ import annotations
 
 import asyncio
-import base64
-import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime
@@ -50,7 +48,8 @@ from deltasleuth.core.types import Side, Target
 from deltasleuth.runner import drift, graph
 from deltasleuth.runner.recheck import RecheckPolicy
 from deltasleuth.runner.stop import STOP_PREFIX, StopConditions
-from deltasleuth.security.crypto import MaskedAlike, Sealer
+from deltasleuth.security.crypto import MaskedAlike, Sealer, seal_after
+from deltasleuth.security.crypto import opened_after as _opened_after
 from deltasleuth.security.tokenise import mask_key
 from deltasleuth.store import repo
 
@@ -77,18 +76,6 @@ def new_scan() -> dict[str, Any]:
         "snapshots_b",
     )  # fmt: skip
     return {"done": False, "after": None, "first_at": None, "last_at": None} | dict.fromkeys(counters, 0)
-
-
-def seal_after(sealer: Sealer, cycle: int, parts: list[str]) -> dict[str, str]:
-    """The point a scan resumes after, as ``state["after"]`` stores it: the key's parts, sealed."""
-    sealed = sealer.seal("scan_after", cycle, "", json.dumps(parts).encode())
-    return {"enc": base64.b64encode(sealed).decode("ascii")}
-
-
-def _opened_after(sealer: Sealer, cycle: int, after: dict[str, str] | None) -> list[str] | None:
-    if after is None:
-        return None
-    return json.loads(sealer.open("scan_after", cycle, "", base64.b64decode(after["enc"])))
 
 
 class _Stream:

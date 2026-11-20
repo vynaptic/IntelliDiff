@@ -23,6 +23,7 @@ from deltasleuth import approvals, schedules
 from deltasleuth.auth.principal import WORKER, expand
 from deltasleuth.config import FilesSettings
 from deltasleuth.connectors import tables
+from deltasleuth.connectors.postgres.errors import wrapped
 from deltasleuth.connectors.tables import duck, manifest
 from deltasleuth.context import Context
 from deltasleuth.core import cron, notify
@@ -1682,7 +1683,7 @@ async def test_unreadable_key_table_is_not_started(
         engine("snapshot", tables.TargetAuthRefused("ORA-01017"))
         assert await fire(h, row) == Retry(RETRY_SLOW_S, 1, due)
         engine("snapshot")
-        engine("census", psycopg.OperationalError("the server at keys.bank.example closed the connection"))
+        engine("census", wrapped(psycopg.OperationalError("the server at keys.bank.example closed it")))
         assert await fire(h, row, due + 5 * MINUTE, tried=1) == Retry(RETRY_SLOW_S, 2, due)
         assert await missed(h, row) == [] and await started(h, row) == []
         assert await fire(h, row, due + 10 * MINUTE, tried=2) is None  # the third try settles it

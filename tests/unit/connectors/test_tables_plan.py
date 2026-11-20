@@ -20,6 +20,7 @@ import yaml
 from deltasleuth import approvals
 from deltasleuth.connectors.base import KeyRejectedError, UnsafeTargetError
 from deltasleuth.connectors.http import TargetGate
+from deltasleuth.connectors.postgres import errors as pg_errors
 from deltasleuth.connectors.postgres.engine import PostgreSQL
 from deltasleuth.connectors.tables import (
     ENGINES,
@@ -156,7 +157,7 @@ async def test_the_plan_reads_the_catalogue_through_its_target_s_engine(
             "side a: table or view users cannot be described: ORA-03113",
         ),
         (
-            {"describe": [psycopg.errors.QueryCanceled("canceling statement of key 4111")]},
+            {"describe": [pg_errors.wrapped(psycopg.errors.QueryCanceled("canceling statement of 4111"))]},
             "side a: table or view users cannot be described: QueryCanceled",
         ),
         (

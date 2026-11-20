@@ -127,3 +127,32 @@ async def test_a_listing_holds_more_values_than_one_answer_up_to_its_own_bound(
                     await resolve_keys(h.ctx, spec)
     finally:
         await server.close()
+
+
+async def test_a_listing_whose_paths_run_past_their_bound_is_refused(
+    open_harness: OpenHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A key listing's itemsPath and keyPath run their filters' patterns off the event loop, and a pattern
+    past its bound refuses the listing in words of ours, never a fault that names nothing."""
+    from deltasleuth.core.canonical.errors import MappingError
+    from deltasleuth.runner import keys
+
+    async def listing(_: web.Request) -> web.Response:
+        return web.json_response({"items": [{"id": "K001"}], "next": None})
+
+    def bounded(path: str, doc: Any) -> Any:
+        raise MappingError("a filter ran past the path's time bound (1000 ms)")
+
+    app = web.Application()
+    app.router.add_get("/list", listing)
+    server = TestServer(app, host="127.0.0.1")
+    await server.start_server()
+    try:
+        async with open_harness(TARGETS.format(base=f"http://127.0.0.1:{server.port}", rate=500)) as h:
+            text = spec_text().replace("  source: {kind: list, keys: [K001, K002, K003]}\n", LISTED)
+            spec = compile_spec(parse_yaml_text(text), targets=h.ctx.targets)
+            monkeypatch.setattr(keys, "find", bounded)
+            with pytest.raises(ValueError, match="key listing's paths ran past their bound"):
+                await resolve_keys(h.ctx, spec)
+    finally:
+        await server.close()

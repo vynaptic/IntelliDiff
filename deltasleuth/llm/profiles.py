@@ -11,7 +11,10 @@ chat's ``Rate`` per caller, which count over every question.
 
 from __future__ import annotations
 
+import ast
 import asyncio
+import importlib.util
+import pkgutil
 import time
 from collections import OrderedDict, deque
 from collections.abc import Callable, Hashable, Mapping
@@ -35,17 +38,40 @@ from pydantic import (
 
 from deltasleuth.core.spec.documents import read_document
 from deltasleuth.core.spec.errors import SpecError
+from deltasleuth.llm import adapters
 from deltasleuth.llm.model import DataClass
 from deltasleuth.llm.usage import PriceVersion
 
-Dialect = Literal["openai_chat", "anthropic_messages"]  # one adapter module per dialect
+
+def _adapters() -> dict[str, dict[str, Any]]:
+    """Each dialect, by the name of its module of ``deltasleuth.llm.adapters`` (``base`` aside), with what
+    the module declares (``AUTH``, ``LISTED``), in the order it is listed. The literals are read from the
+    module's source, never by importing it: an adapter imports its SDK, which takes a good part of a
+    second, and the settings name a profile's dialect at every start."""
+    found = {}
+    for module in pkgutil.iter_modules(adapters.__path__):
+        if module.name == "base":
+            continue
+        spec = importlib.util.find_spec(f"{adapters.__name__}.{module.name}")
+        assert spec is not None and spec.loader is not None
+        source = spec.loader.get_source(spec.name)  # type: ignore[attr-defined]
+        found[module.name] = {
+            target.id: ast.literal_eval(node.value)
+            for node in ast.parse(source or "").body
+            if isinstance(node, ast.Assign)
+            for target in node.targets
+            if isinstance(target, ast.Name) and target.id in ("DIALECT", "AUTH", "LISTED")
+        }
+    return dict(sorted(found.items(), key=lambda item: item[1]["LISTED"]))
+
+
+_ADAPTERS = _adapters()
+DIALECTS: tuple[str, ...] = tuple(_ADAPTERS)  # one adapter module per dialect
+Dialect = Literal[DIALECTS]  # type: ignore[valid-type]
 Environment = Literal["dev", "test", "eval", "staging", "prod"]
 ENVIRONMENTS: tuple[str, ...] = get_args(Environment)
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
-_DEFAULT_AUTH: dict[str, tuple[str, str | None]] = {
-    "openai_chat": ("Authorization", "Bearer"),
-    "anthropic_messages": ("x-api-key", None),
-}
+_DEFAULT_AUTH: dict[str, tuple[str, str | None]] = {name: tuple(d["AUTH"]) for name, d in _ADAPTERS.items()}
 
 PosInt = Annotated[int, Field(strict=True, gt=0)]
 PosFloat = Annotated[float, Field(strict=True, gt=0, allow_inf_nan=False)]

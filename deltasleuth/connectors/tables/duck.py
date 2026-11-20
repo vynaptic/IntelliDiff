@@ -48,7 +48,7 @@ import weakref
 from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from concurrent.futures import Future
-from contextlib import asynccontextmanager, suppress
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -80,7 +80,7 @@ from deltasleuth.connectors.tables.engine import (
     code,
 )
 from deltasleuth.connectors.tables.keys import Plan, decode_key, key_maps
-from deltasleuth.core import jsonio
+from deltasleuth.core import engines, jsonio
 from deltasleuth.core.canonical.convert import convert
 from deltasleuth.core.precheck import FILE_SIDE
 from deltasleuth.core.spec import where
@@ -2099,6 +2099,7 @@ class Files:
     side's plan holds its pins as ``pinned`` once its run opened them."""
 
     name = "files"
+    traits = engines.ENGINES[name]
     arms = 200
     unfit = ()  # no key is unfit here: the join compares texts
     fold = staticmethod(str)  # a column is named as spelled
@@ -2107,6 +2108,20 @@ class Files:
     sum_digits = None
     empty_null = False
     retry_alone = False  # each key alone would be a pass over the files
+    native = False
+    percent_placeholder = False
+    fixed = True
+    spill_budget = True  # a sort past files.spill: the spec's retries read it again
+    utf8_keys = True  # the reader holds UTF-8 only
+    prechecked = False  # a pre-check reads a database's figures: compare the files themselves instead
+    unkeyable = "cannot be a key in a file: export it as text, a whole number, a decimal or a date"
+    hash_charsets = False
+    observed = None
+    full_charset = None
+
+    def planning(self) -> AbstractAsyncContextManager[None]:
+        """One ``files.plan_s`` for a run's file sides, and few creations planning files at once."""
+        return creating()
 
     def built(self, column: str, cls: str, declared: str, key: bool) -> str | None:
         return (PRIMITIVES.key_text if key else PRIMITIVES.render)(column, cls, declared)

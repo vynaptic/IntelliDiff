@@ -32,13 +32,20 @@ def side_values(key: str, side: Plan) -> list[list[str]] | None:
     map it back, so no row of this side can hold it. Raises ``KeyRejectedError`` for a malformed
     composite key."""
     parts = decode_key(key, len(side["keys"]))
-    if side.get("engine") == "files" and not key.isascii():
-        try:  # a lone surrogate: rejected without a pass over the files
+    if not key.isascii() and _engine(side).utf8_keys:
+        try:  # a lone surrogate: rejected without a read, which would be a pass over files
             key.encode()
         except UnicodeEncodeError:
             raise KeyRejectedError("the key has no UTF-8 form") from None
     values = [to_side(part, key_map) for part, key_map in zip(parts, key_maps(side), strict=True)]
     return None if any(v is None for v in values) else values  # type: ignore[return-value]
+
+
+def _engine(side: Plan) -> Any:
+    """The engine the side was planned for: the seam's module imports this one, so it is looked up here."""
+    from deltasleuth.connectors.tables.engine import named
+
+    return named(side)
 
 
 def to_side(part: str, key_map: Mapping[str, Any] | None) -> list[str] | None:

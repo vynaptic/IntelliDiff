@@ -1,8 +1,8 @@
 """What a file side reads, without DuckDB: where a files target's root
-may lie, the spec path's grammar, the path expanded into files in path order, their arrival, their pins
-(size, times, inode and SHA-256) taken when a run is created and compared at each later read, a Parquet
-file's footer walked before DuckDB is handed the file, the spill directory a process holds and the sweep of
-those whose process ended, and the threads all of it runs on.
+may lie, the path (of the grammar in ``core.spec.filepaths``) expanded into files in path order, their
+arrival, their pins (size, times, inode and SHA-256) taken when a run is created and compared at each later
+read, a Parquet file's footer walked before DuckDB is handed the file, the spill directory a process holds
+and the sweep of those whose process ended, and the threads all of it runs on.
 
 Every file-system call runs on ``POOL``, daemon threads of the engine's own: never on the event loop,
 which ``ds serve`` shares between the API and the worker, nor on asyncio's default executor, which
@@ -47,6 +47,13 @@ import zstandard
 from deltasleuth.config import FilesSettings, Settings
 from deltasleuth.connectors.tables.engine import FilesChanged, NotReady, TargetDenied, TargetUnreachable
 from deltasleuth.core.spec.durations import parse_duration
+from deltasleuth.core.spec.filepaths import ALPHABET
+from deltasleuth.core.spec.filepaths import NAME as _NAME
+from deltasleuth.core.spec.filepaths import PATH_REFUSED as PATH_REFUSED  # the loader checks the path too
+from deltasleuth.core.spec.filepaths import fixed as _fixed
+from deltasleuth.core.spec.filepaths import globbed as _globbed
+from deltasleuth.core.spec.filepaths import path_error as path_error
+from deltasleuth.core.spec.filepaths import stamp_error as stamp_error
 from deltasleuth.core.spec.targets import TargetRegistry
 from deltasleuth.core.types import Target
 from deltasleuth.errors import Invalid
@@ -58,7 +65,6 @@ CHUNK = 2**20  # a hash's read
 STAMP_MAX = 4096  # bytes of a stamp file
 DEPTH = 8  # directories below a directory read
 WALK_ENTRIES = 200_000  # all entries, including skipped ones; enough for 20,000 files eight levels deep
-PATH_MAX = 512
 CACHE_MAX = 100_000  # hashes a process keeps
 FOOTER_MAX = 16 * 2**20  # bytes of a Parquet footer
 FOOTER_ELEMENTS = 10_000  # elements of its schema: its columns, and the groups that nest them
@@ -82,15 +88,8 @@ _PLAIN: dict[int, Any] = {}  # a schema element, a key and its value, a sorting 
 _COLUMN = {2: 5, 8: _PLAIN, 13: _PLAIN, 16: ({2: 6, 3: 6},), 17: ({2: 5},)}  # ColumnMetaData, but its path
 _GROUP = {4: _PLAIN}  # RowGroup: its sorting columns
 _FOOTER = {5: _PLAIN, 7: _PLAIN}  # FileMetaData: its key values and column orders
-_NAME = re.compile(r"[A-Za-z0-9 ._=+@,()-]+")  # the alphabet of a name: no glob, quote or URL scheme
-_SEGMENT = re.compile(r"[A-Za-z0-9 _=+@,()*-][A-Za-z0-9 ._=+@,()*-]*")  # a path's: none starts with a dot
 _SPILL = re.compile(r"[0-9a-f]{26}")  # a process's spill directory
 _SIZE = {"MB": 2**20, "GB": 2**30, "TB": 2**40}
-ALPHABET = "letters, digits, space and . _ - = + @ , ( )"
-PATH_REFUSED = (
-    f"file.path is a relative path under the target's root: {ALPHABET} in each segment, none starting with"
-    " a dot; * matches inside one segment; a trailing / reads the whole directory"
-)
 # What is never claimed of a file side, as patterns no text built of one matches: the
 # messages of this module and of ``duck``, a fixed side's census wording and the certificate's line.
 NOT = (
@@ -342,58 +341,6 @@ async def opened(settings: Settings, registry: TargetRegistry, config: Path | No
         return forbidden(settings, registry, resolve=False, config=config)
 
 
-# -- the path -------------------------------------------------------------------------------------
-
-
-def path_error(path: str) -> str | None:
-    """The refusal's text when ``path`` is not a relative path of the closed grammar: segments of the
-    alphabet, none starting with a dot; ``*`` inside one segment, or a trailing ``/``; else None."""
-    segments = path.split("/")
-    if path.endswith("/"):
-        segments.pop()
-    globbed = [segment for segment in segments if "*" in segment]
-    if (
-        not 0 < len(path) <= PATH_MAX
-        or not segments
-        or not all(_SEGMENT.fullmatch(segment) for segment in segments)
-        or len(globbed) > 1
-        or (globbed and path.endswith("/"))
-    ):
-        return PATH_REFUSED
-    return None
-
-
-def _globbed(pattern: str, name: str) -> bool:
-    """Whether ``name`` is matched by ``pattern``, whose ``*`` matches any characters of one name."""
-    first, *rest = pattern.split("*")
-    if not rest:
-        return name == first
-    last = rest.pop()
-    if not name.startswith(first) or not name.endswith(last):
-        return False
-    at, end = len(first), len(name) - len(last)
-    # Each literal is placed at its earliest position. Searching never revisits a consumed prefix;
-    # consecutive stars add empty literals, not regex branches or backtracking.
-    for literal in rest:
-        if literal:
-            found = name.find(literal, at, end)
-            if found < 0:
-                return False
-            at = found + len(literal)
-    return at <= end
-
-
-def stamp_error(path: str, name: str) -> bool:
-    """Whether ``name`` is no stamp file of ``path``: a name of the alphabet, in the path's fixed
-    directory, that the path does not match."""
-    if not _NAME.fullmatch(name) or name.startswith("."):
-        return True
-    rest = _fixed(path)[1]
-    if not rest:  # a directory read: every name but those starting with . or _
-        return not name.startswith("_")
-    return len(rest) == 1 and _globbed(rest[0], name)
-
-
 # -- expansion -----------------------------------------------------------------
 
 
@@ -493,16 +440,6 @@ def _kind(directory: str, name: str, found: os.stat_result) -> str:
     return (
         "file" if os.access(os.path.join(directory, name), os.R_OK, follow_symlinks=False) else "unreadable"
     )
-
-
-def _fixed(path: str) -> tuple[list[str], list[str]]:
-    """The path's fixed directories, and the segments after them: a file's name, a glob and what follows
-    it, or none for a directory read."""
-    segments = path.removesuffix("/").split("/")
-    if path.endswith("/"):
-        return segments, []
-    at = next((i for i, segment in enumerate(segments) if "*" in segment), len(segments) - 1)
-    return segments[:at], segments[at:]
 
 
 async def _walk(root: str, path: str, end: float | None, max_files: int) -> list[Found]:

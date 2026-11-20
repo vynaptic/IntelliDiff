@@ -23,7 +23,7 @@ from yarl import URL
 from deltasleuth.connectors.base import ConnectorConfigError
 from deltasleuth.core import jsonio
 from deltasleuth.core.canonical.encoding import canonical_json, sha256_hex
-from deltasleuth.core.canonical.errors import PathError
+from deltasleuth.core.canonical.errors import CanonicalError, PathError
 from deltasleuth.core.canonical.paths import compile_path
 from deltasleuth.core.types import Pagination
 
@@ -145,7 +145,21 @@ class PageWalk:
         self.page: list[Any] = []  # the items of the page just taken, none when it was refused
 
     def start(self, body: bytes, headers: Mapping[str, str], url: URL) -> None:
-        """Take page 1; a page that cannot be walked stays a single document."""
+        """Take page 1; a page that cannot be walked stays a single document. A path whose filter runs past
+        its bound (a pattern the answer supplies) stops the walk, as any other problem does."""
+        try:
+            self._start(body, headers, url)
+        except CanonicalError as exc:
+            self.stop(f"page 1: {exc}; paging stopped")
+
+    def add(self, body: bytes, headers: Mapping[str, str], url: URL) -> None:
+        """Take a later page; a problem stops the walk and is explained in ``detail``."""
+        try:
+            self._add(body, headers, url)
+        except CanonicalError as exc:
+            self.stop(f"page {self._pages + 1}: {exc}; paging stopped")
+
+    def _start(self, body: bytes, headers: Mapping[str, str], url: URL) -> None:
         self._first = body
         try:
             doc, duplicate = jsonio.parse_json(body, max_values=self._max_values)
@@ -166,8 +180,7 @@ class PageWalk:
         if duplicate and (self.next or not self._merge):  # merging would drop the duplicate names
             self.stop("duplicate member names on page 1; later pages not fetched")
 
-    def add(self, body: bytes, headers: Mapping[str, str], url: URL) -> None:
-        """Take a later page; a problem stops the walk and is explained in ``detail``."""
+    def _add(self, body: bytes, headers: Mapping[str, str], url: URL) -> None:
         page_no, self.page = self._pages + 1, []
         try:
             doc, duplicate = jsonio.parse_json(body, max_values=self._max_values)

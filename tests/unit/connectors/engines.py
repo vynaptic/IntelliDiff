@@ -8,11 +8,12 @@ from typing import Any
 
 from psycopg import sql
 
-from deltasleuth.connectors.tables import KeyUnfit, Plan, Relation
+from deltasleuth.connectors.tables import ENGINES, KeyUnfit, Plan, Relation
 from deltasleuth.connectors.tables.engine import Asked, Column
 from deltasleuth.core.types import Target
 
 FACTS = {"kind": "table", "server": "8.4", "consistency": "snapshot", "tls": True, "charset": "utf8mb4"}
+REAL = dict(ENGINES)  # the registry's engines, before a test puts a stand-in in one's place
 
 
 class FakeEngine:
@@ -20,7 +21,8 @@ class FakeEngine:
     each a name (readable text) or a ``Column``; ``facts`` maps one to what its server says otherwise than
     ``FACTS``; ``served`` is what a session says of its server; ``failing`` maps a method's name to the
     errors its next calls raise, in order (None: that call succeeds). A key holding ``unfit`` is one its
-    column cannot hold; every other key has one selected row."""
+    column cannot hold; every other key has one selected row. What it does not define it does as the
+    registry's engine of its name does, PostgreSQL's for ``fake``."""
 
     name, arms, unfit, retry_alone = "fake", 200, (KeyUnfit,), True
     fold, hides, grant = staticmethod(str.lower), False, "SELECT"
@@ -34,6 +36,9 @@ class FakeEngine:
         self.opened = self.closed = 0  # sessions
         self.asked: list[list[str]] = []  # the keys of each per-key statement
         self.probed: list[Plan] = []
+
+    def __getattr__(self, member: str) -> Any:
+        return getattr(REAL.get(self.name, REAL["postgresql"]), member)
 
     def _fail(self, method: str) -> None:
         if self.failing.get(method) and (error := self.failing[method].pop(0)) is not None:

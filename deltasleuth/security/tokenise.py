@@ -1,121 +1,61 @@
 """Keyed tokens and masked renditions of keys, findings, pointers and documents.
 
 Tokens are deterministic, one-way HMACs separated by value class; the key sits in a local
-``file:`` (0600). A class-only value (``date_of_birth``) shows as its class, never a linkable
-token; member names that are data are tokens in pointers and views and ``[*]`` in patterns.
+``file:`` (0600), which this module reads. The tokeniser and the maskers are pure and live in
+``core.masking``, which the engine's classification uses; this module names them for the callers outside
+the engine. A class-only value (``date_of_birth``) shows as its class, never a linkable token; member
+names that are data are tokens in pointers and views and ``[*]`` in patterns.
 """
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
 import os
-import re
 import secrets
-from collections.abc import Callable
-from decimal import Decimal
-from functools import lru_cache
 from pathlib import Path
-from typing import Any
 
-from deltasleuth.core.canonical.encoding import scalar_text
-from deltasleuth.core.canonical.paths import ROOT_PATTERN, child_pattern, member_pattern, render_pointer
-from deltasleuth.core.classify.patterns import DESC, WILD, PatternError, Segment, Segments, name, segments
-from deltasleuth.core.jsonio import dumps, number_text
+from deltasleuth.core.masking import (
+    LABEL_CHARS,
+    MIN_KEY_BYTES,
+    TOKEN_CHARS,
+    Tokeniser,
+    TokeniserError,
+    inline_stand_ins,
+    is_stand_in,
+    is_token,
+    mask_document,
+    mask_finding,
+    mask_key,
+    mask_member_key,
+    mask_path_pattern,
+    mask_pointer,
+    mask_raw,
+)
 from deltasleuth.core.secrets import SecretError, read_secret
-from deltasleuth.core.types import (
-    JSON,
-    ChangeType,
-    CompiledSpec,
-    Counted,
-    Finding,
-    KeyedMap,
-    SecurityPolicy,
-)
-from deltasleuth.security.policy import (
-    BUSINESS_CODE,
-    CLASS_ONLY,
-    canonical_policy,
-    member_class,
-    reads_as_data,
-)
 
-TOKEN_CHARS = 26
-LABEL_CHARS = 10  # tells one key's few class-only members apart; not an identifier
-MIN_KEY_BYTES = 32
-_CLASS = re.compile(r"[a-z][a-z0-9_]*")  # the class and version must not break the token format
-_VERSION = re.compile(r"[A-Za-z0-9]+")
-_TOKEN = re.compile(rf"tok:{_CLASS.pattern}:{_VERSION.pattern}:[A-Z2-7]{{{TOKEN_CHARS}}}")
-_INLINE = re.compile(r"masked key [1-9][0-9]* of [1-9][0-9]*")  # an inline key's place in its list
-
-
-class TokeniserError(ValueError):
-    """Invalid key material, key version or token class."""
+__all__ = [
+    "LABEL_CHARS",
+    "MIN_KEY_BYTES",
+    "TOKEN_CHARS",
+    "KeyFileError",
+    "Tokeniser",
+    "TokeniserError",
+    "inline_stand_ins",
+    "is_stand_in",
+    "is_token",
+    "load_or_create_key",
+    "mask_document",
+    "mask_finding",
+    "mask_key",
+    "mask_member_key",
+    "mask_path_pattern",
+    "mask_pointer",
+    "mask_raw",
+    "read_key",
+]
 
 
 class KeyFileError(TokeniserError):
     """The key file is missing, unreadable, malformed or accessible by group or others."""
-
-
-class Tokeniser:
-    """HMAC tokeniser for one key version. The key is held privately and never rendered."""
-
-    __slots__ = ("_key", "version")
-
-    def __init__(self, key: bytes, version: str = "v1") -> None:
-        if len(key) < MIN_KEY_BYTES or not _VERSION.fullmatch(version):
-            raise TokeniserError(
-                f"a tokeniser needs a key of {MIN_KEY_BYTES}+ bytes and an alphanumeric version"
-            )
-        self._key = key
-        self.version = version
-
-    def __repr__(self) -> str:
-        return f"Tokeniser(version={self.version!r})"
-
-    def token(self, value_class: str, value: JSON) -> str:
-        """``tok:<class>:<version>:<26 base32>`` over the canonical scalar text of ``value``."""
-        _check_class(value_class)
-        mac = self._mac(f"{value_class}\x1f{scalar_text(value)}")
-        return f"tok:{value_class}:{self.version}:{mac}"
-
-    def scoped_label(self, value_class: str, scope: str, value: JSON) -> str:
-        """``class:<class>#<10 base32>``: equal values agree under one ``scope`` (the key) only."""
-        _check_class(value_class)
-        # The NUL prefix keeps labels and tokens apart; the length prefix stops the scope from
-        # absorbing part of the value.
-        message = f"\x00scoped\x1f{value_class}\x1f{len(scope)}:{scope}\x1f{scalar_text(value)}"
-        return f"class:{value_class}#{self._mac(message)[:LABEL_CHARS]}"
-
-    def _mac(self, message: str) -> str:
-        digest = hmac.new(self._key, message.encode(), hashlib.sha256).digest()
-        return base64.b32encode(digest).decode("ascii")[:TOKEN_CHARS]
-
-
-def _check_class(value_class: str) -> None:
-    if not _CLASS.fullmatch(value_class):
-        raise TokeniserError(f"token class {value_class!r} must match ^[a-z][a-z0-9_]*$")
-
-
-def is_token(text: str) -> bool:
-    """Whether ``text`` has a token's form (``Tokeniser.token``), whichever key made it: a stand-in, never
-    a value to send or to store as one."""
-    return _TOKEN.fullmatch(text) is not None
-
-
-def inline_stand_ins(count: int) -> list[str]:
-    """What stands for the ``count`` inline keys of a stored spec whose key class is not a business code:
-    each key's place in the list and nothing of its text. Never a token: a token of a key someone typed
-    into a spec would say whether that text is a key of a run, or a value of the class, anywhere in the
-    installation."""
-    return [f"masked key {place} of {count}" for place in range(1, count + 1)]
-
-
-def is_stand_in(text: str) -> bool:
-    """Whether ``text`` stands for a key and is not one: a token's form (``is_token``) or an inline key's
-    place in its list (``inline_stand_ins``)."""
-    return is_token(text) or _INLINE.fullmatch(text) is not None
 
 
 def load_or_create_key(ref: str | os.PathLike[str]) -> bytes:
@@ -155,201 +95,3 @@ def _create_key(path: Path) -> None:
         handle.write((secrets.token_bytes(MIN_KEY_BYTES).hex() + "\n").encode("ascii"))
         handle.flush()
         os.fsync(handle.fileno())  # a lost key orphans every token made with it
-
-
-def mask_key(key: str, spec: CompiledSpec, tok: Tokeniser) -> str:
-    """The request key as reports show it: clear for a business code, else a token of its class.
-
-    A class-only key is tokenised all the same: every key must stay distinguishable.
-    """
-    cls = spec.key.value_class
-    return key if cls == BUSINESS_CODE else tok.token(cls, key)
-
-
-def _label(text: str, cls: str | None, tok: Tokeniser | None, key: str | None) -> str:
-    """A member key or member name of class ``cls`` as pointers, reports and views show it."""
-    if cls is None:
-        return text
-    if tok is None:  # no key configured: a marker that is neither the value nor a valid token
-        return f"tok:{cls}:unkeyed"
-    if cls in CLASS_ONLY:  # a label scoped to the key tells members apart without linking records
-        return tok.scoped_label(cls, key, text) if key is not None else f"class:{cls}"
-    return tok.token(cls, text)
-
-
-def mask_member_key(
-    member_key: str, array_path: str, spec: CompiledSpec, tok: Tokeniser, *, key: str | None = None
-) -> str:
-    """A keyed/set member key as reports show it; ``key`` scopes a class-only member key."""
-    return _label(member_key, member_class(segments(array_path), spec), tok, key)
-
-
-def mask_path_pattern(pattern: str, spec: CompiledSpec) -> str:
-    """``pattern`` as every output publishes it: member names that are data written ``[*]``.
-
-    Collapsed rather than tokenised, so a pattern still groups one field across keys and can be
-    hashed into a signature.
-    """
-    return _published(pattern, spec.security)
-
-
-@lru_cache(maxsize=4096)
-def _published(pattern: str, security: SecurityPolicy) -> str:
-    policy = canonical_policy(security)
-    walked: list[Segment] = []
-    out = ROOT_PATTERN
-    for seg in segments(pattern):
-        if seg == DESC:
-            raise PatternError(f"a descendant segment has no path-pattern form: {pattern!r}")
-        data = seg == WILD or policy.names(tuple(walked))(seg[1]) is not None
-        out = member_pattern(out) if data else child_pattern(out, seg[1])
-        walked.append(seg)
-    return out
-
-
-def mask_pointer(
-    parts: tuple[tuple[str, str], ...], spec: CompiledSpec, tok: Tokeniser | None, *, key: str | None = None
-) -> str:
-    """``pointer_parts`` as a finding's pointer with protected member keys and data names masked.
-
-    Each segment's class comes from the pattern walked so far (its array for a member key, its
-    object for a name); with every class clear this is the differ's json_pointer. ``tok`` None
-    renders protected segments as a non-token marker; ``key`` scopes class-only segments.
-    """
-    policy = canonical_policy(spec.security)
-    walked: list[Segment] = []
-    masked: list[tuple[str, str]] = []
-    for kind, text in parts:
-        here, shown = tuple(walked), text
-        if kind == "field":
-            shown = _label(text, policy.names(here)(text), tok, key)
-            walked.append(name(text))
-        elif kind == "member":
-            shown = _label(text, member_class(here, spec), tok, key)
-            walked.append(WILD)
-        elif kind == "index":  # an ordered-array position
-            walked.append(WILD)
-        masked.append((kind, shown))
-    return render_pointer(masked)
-
-
-def _masker(
-    spec: CompiledSpec, tok: Tokeniser, key: str | None, *, cells: bool = False
-) -> Callable[[Any, Segments], Any]:
-    """A function masking a canonical tree found at a position, position by position. ``cells``
-    renders set and multiset nodes as the arrays they were, as report cells show values."""
-    policy = canonical_policy(spec.security)
-
-    def walk(value: Any, segs: Segments) -> Any:
-        if value is None or isinstance(value, bool):
-            return value
-        if isinstance(value, Counted):
-            return {"value": walk(value.value, segs), "count": value.n}
-        if isinstance(value, KeyedMap):
-            cls = member_class(segs, spec)
-            masked = {
-                _label(k, cls, tok, key): [walk(m, (*segs, WILD)) for m in ms] for k, ms in value.items()
-            }
-            masked = dict(sorted(masked.items()))  # masked-key order: both sides line up, raw order hidden
-            return _as_array(masked, value.mode) if cells and value.mode != "keyed" else masked
-        if isinstance(value, dict):
-            class_of = policy.names(segs)
-            classes = {k: class_of(k) for k in value}
-            masked = {_label(k, classes[k], tok, key): walk(v, (*segs, name(k))) for k, v in value.items()}
-            # masked-name order where a name is data: both sides line up, raw order hidden
-            return dict(sorted(masked.items())) if any(classes.values()) else masked
-        if isinstance(value, list | tuple):
-            return [walk(v, (*segs, WILD)) for v in value]
-        # resolve_deep: a scalar where the spec protects descendants is that protected data.
-        cls = policy.resolve_deep(segs).for_value(value)
-        if cls is None:
-            return value
-        return f"class:{cls}" if cls in CLASS_ONLY else tok.token(cls, value)
-
-    return walk
-
-
-def _as_array(masked: dict[str, list[Any]], mode: str) -> list[Any]:
-    """A masked set or multiset node as an array, each multiset member as often as it occurs."""
-    members = [m for ms in masked.values() for m in ms]
-    return [c["value"] for c in members for _ in range(c["count"])] if mode == "multiset" else members
-
-
-def _cell(tree: Any) -> Any:
-    """Report-cell form: scalars as they are (numbers as exact text), containers as JSON text."""
-    if tree is None or isinstance(tree, bool | str):
-        return tree
-    if isinstance(tree, Decimal | int):
-        return number_text(Decimal(tree))
-    return dumps(tree, sort_keys=True)
-
-
-def mask_finding(f: Finding, spec: CompiledSpec, tok: Tokeniser) -> dict[str, Any]:
-    """The report row of a finding: key, pointer, patterns, values and member key masked.
-
-    A NORMALIZATION_ONLY finding (``raw_only``) shows its raw values, its normalised ones being
-    equal. A document-level finding's value is the whole document, which the side-by-side view
-    shows, so its value cells stay empty and its member key is the masked key.
-    """
-    one_sided = f.change_type in (ChangeType.MISSING_IN_B, ChangeType.EXTRA_IN_B)
-    document = one_sided and f.path_pattern == ROOT_PATTERN  # the differ never emits a root member
-    walk = _masker(spec, tok, f.key, cells=True)
-    segs = segments(f.path_pattern)
-    a, b = (f.a_raw, f.b_raw) if f.raw_only else (f.a_value, f.b_value)
-    if document:
-        member: str | None = mask_key(f.key, spec, tok)
-    elif f.member_key is not None and f.array_path is not None:
-        member = mask_member_key(f.member_key, f.array_path, spec, tok, key=f.key)
-    else:
-        member = None
-    return {
-        "key": mask_key(f.key, spec, tok),
-        "path_pattern": mask_path_pattern(f.path_pattern, spec),
-        "json_pointer": mask_pointer(f.pointer_parts, spec, tok, key=f.key),
-        "change_type": f.change_type.value,
-        "direction": f.direction.value,
-        "value_a_tok": None if document else _cell(walk(a, segs)),
-        "value_b_tok": None if document else _cell(walk(b, segs)),
-        "value_class": f.value_class,
-        "member_key_tok": member,
-        "array_path": None if f.array_path is None else mask_path_pattern(f.array_path, spec),
-        "taxonomy_code": f.taxonomy_code,
-        "severity": None if f.severity is None else f.severity.value,
-        "signature_hash": f.signature_hash,
-        "rule_id": f.rule_id,
-        "rule_classification": None if f.rule_classification is None else f.rule_classification.value,
-        "mask_id": f.mask_id,
-        "suppressed": f.suppressed,
-        "raw_only": f.raw_only,
-    }
-
-
-def mask_document(doc: JSON, spec: CompiledSpec, tok: Tokeniser, *, key: str | None = None) -> JSON:
-    """A masked copy of a canonical document for side-by-side views (exact numbers stay Decimal):
-    keyed/set arrays render as {masked member key: [members]}, objects whose names are data as
-    {masked name: value}. ``key`` is the request key the document answers; it scopes class-only
-    member keys and names.
-    """
-    return _masker(spec, tok, key)(doc, ())
-
-
-def mask_raw(doc: JSON, tok: Tokeniser) -> JSON:
-    """A parsed answer that no spec classifies yet (an endpoint tried from the builder), with its structure
-    and nothing else: every string a ``free_text`` token and every number a ``free_number`` token; booleans
-    and nulls stay. A member name stays when it reads as a field's and not as data
-    (``policy.reads_as_data``); else it is a ``free_text`` token, as a name of an object no rule lists is
-    in a masked document. Equal values give equal tokens, in every answer."""
-
-    def named(name: str) -> str:
-        return tok.token("free_text", name) if reads_as_data(name) else name
-
-    def walk(value: JSON) -> JSON:
-        if value is None or isinstance(value, bool):
-            return value
-        if isinstance(value, dict):
-            return {named(name): walk(member) for name, member in value.items()}
-        if isinstance(value, list):
-            return [walk(member) for member in value]
-        return tok.token("free_text" if isinstance(value, str) else "free_number", value)
-
-    return walk(doc)

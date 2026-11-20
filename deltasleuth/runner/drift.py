@@ -39,11 +39,9 @@ from deltasleuth.store import repo
 FORMAT = 1  # of ds.runs.guard
 SCHEMA_PAUSE = "run_paused_schema_drift"  # a table changed under the run: a person resumes or cancels it
 TIMEOUT_S = 30.0  # each statement of a look on a session of its own, as a run's creation plans
-# What a read of a dropped or revoked column or table raises.
-DENIED = (
-    psycopg.errors.UndefinedColumn, psycopg.errors.UndefinedTable, psycopg.errors.InsufficientPrivilege,
-    tables.TargetDenied,
-)  # fmt: skip
+# What a read of a dropped or revoked column or table raises, whichever engine it runs: never an error of the
+# store's, whose driver may name the same failure.
+DENIED = (tables.TargetDenied,)
 _READ = "(table sides only; a view's own tables, constraints and defaults are not read)"
 _UNCHANGED = f"no change observed against the run's plan at its creation and each cycle's start {_READ}"
 _REPLAN = "Cancel the run and start a new one, which plans the table as it is now"

@@ -1,8 +1,9 @@
 """The engine seam of a table side: what the plan, the per-key connector and the
 runner ask of a database, whichever engine it runs, and the errors they tell apart.
 
-An engine's own exceptions never reach the runner with a driver's text: PostgreSQL's stay psycopg's, which
-the callers show by type only, and any other engine's become a ``TableError`` holding only a code.
+No engine's own exception reaches the runner: each becomes a ``TableError`` holding only a code, so a
+compared database's failure is never told apart, or mistaken for the store's, by its driver's type.
+PostgreSQL's keep its driver's class name as their class's name and their code.
 """
 
 from __future__ import annotations
@@ -15,10 +16,9 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-import psycopg
-
 from deltasleuth.connectors.base import UnsafeTargetError
 from deltasleuth.connectors.tables.keys import Plan
+from deltasleuth.core.engines import EngineTraits
 from deltasleuth.core.secrets import SecretError, read_secret_bytes
 from deltasleuth.core.types import DatabaseTarget, Target
 from deltasleuth.errors import Invalid
@@ -83,9 +83,11 @@ class Relation:
 
 
 class Engine(Protocol):
-    """One database engine's sessions and statements. ``side`` is a table side of a run's plan."""
+    """One database engine's sessions and statements. ``side`` is a table side of a run's plan. Every
+    engine of the registry declares every member: nothing branches on an engine's name."""
 
     name: str  # postgresql, for one; request_url is <name>://<target_id>/<relation>
+    traits: EngineTraits  # what a targets file and a spec may declare of it: its row of ``core.engines``
     arms: int  # keys per per-key statement
     unfit: tuple[type[BaseException], ...]  # a key the column cannot hold
     fold: Callable[[str], str] | None  # how its catalogue folds an unquoted name; None: any case matches
@@ -94,6 +96,25 @@ class Engine(Protocol):
     sum_digits: int | None  # the digits its sum of numbers holds; None: every digit
     empty_null: bool  # it stores an empty string as NULL
     retry_alone: bool  # a batch past its timeout is read again key by key: not a file side's
+    # Its server renders a row's document and hashes it: a pair of its sides alone is planned with no
+    # classes and no column the worker converts, and its census records name no engine or consistency.
+    native: bool
+    percent_placeholder: bool  # its driver reads a % in a statement's text as a placeholder
+    # It reads fixed files, pinned when a run is created: a census record and an evidence pack hold their
+    # facts, and ``ds target check`` looks at its mount and its file reader.
+    fixed: bool
+    spill_budget: bool  # a read past its temporary space met its sort's budget: read again, not failed
+    utf8_keys: bool  # a key without a UTF-8 form is refused before a read, which would be a pass over files
+    prechecked: bool  # a table pre-check reads its figures
+    unkeyable: str  # why a column whose key text no engine renders alike is no key of its side
+    # Its server hashes a text in its database's character sets: two sides of it hash a column alike only
+    # where both sets agree.
+    hash_charsets: bool
+    observed: str | None  # the release (major.minor) it was observed on; ``ds target check`` notes another
+    full_charset: str | None  # the character set a run takes its text keys whole in; check notes another
+
+    def planning(self) -> AbstractAsyncContextManager[None]:
+        """What the creation of a run holds while its sides on this engine are planned."""
 
     def built(self, column: str, cls: str, declared: str, key: bool) -> str | None:
         """What its statements read a planned column of this class and declared type as: a key column's key
@@ -158,7 +179,14 @@ class Engine(Protocol):
 class TableError(Exception):
     """A table side's failure, holding only a code (``ORA-01555``, ``MySQL 1142``, ``DPY-4024``, or an
     exception's class name): a driver's text may quote a key or a value, so none is kept. ``gloss`` is
-    what the code means, where a refused connect says it."""
+    what the code means, where a refused connect says it. ``said`` is the first line of a driver's text
+    where it names no key or value and a plan's refusal shows it: a refused connect's, which names the host
+    and the user, or a refused filter's, which names the spec's pattern or literal. ``detail`` is what the
+    observation of a failed per-key read records in place of the code, for an engine whose outages all
+    carry one name; None: the code."""
+
+    said: str | None = None
+    detail: str | None = None
 
     def __init__(self, code: str, gloss: str | None = None) -> None:
         super().__init__(code)
@@ -175,6 +203,10 @@ class TargetUnreachable(TableError):
 
 class StatementTimeout(TargetUnreachable):
     """The statement ran past its timeout."""
+
+
+class LimitPassed(TargetUnreachable):
+    """A row or a value passed a limit of the server: each read of it meets the limit again."""
 
 
 class SnapshotLost(TableError):
@@ -240,15 +272,25 @@ class Refusal(Invalid):
     """What an engine does not plan, worded without its side: the plan names it."""
 
 
-UNREACHABLE = (psycopg.OperationalError, TargetUnreachable)
-TIMEOUT = (psycopg.errors.QueryCanceled, StatementTimeout)
-ERRORS = (psycopg.Error, TableError)  # whatever a database answers a statement with
-REFUSED = (psycopg.OperationalError, TableError, UnsafeTargetError)  # a connect, or the guard before it
+CAST_KEY = "cannot be a key: compare a view that casts it"  # an engine's ``unkeyable`` but a file's
+
+
+UNREACHABLE = (TargetUnreachable,)
+TIMEOUT = (StatementTimeout,)
+ERRORS = (TableError,)  # whatever a database answers a statement with
+REFUSED = (TableError, UnsafeTargetError)  # a connect, or the guard before it
 
 
 def code(exc: BaseException) -> str:
     """What an error may show: a table error's code, any other's type."""
     return str(exc) if isinstance(exc, TableError) else type(exc).__name__
+
+
+def shown(exc: BaseException) -> str:
+    """What a failure shows of an error: a table error's class and code, its class alone when its code is
+    that class's name (a driver's class name kept); any other's class."""
+    name = type(exc).__name__
+    return f"{name}: {exc}" if isinstance(exc, TableError) and str(exc) != name else name
 
 
 def unreachable(exc: BaseException) -> TargetUnreachable:
@@ -296,8 +338,6 @@ def tls_context(database: DatabaseTarget) -> ssl.SSLContext | None:
     return context
 
 
-# The server each engine was observed on: ``ds target check`` notes any other.
-OBSERVED = {"mysql": "8.4", "oracle": "23.26"}
 
 
 def of(target: Target) -> Engine:
@@ -305,15 +345,21 @@ def of(target: Target) -> Engine:
     return ENGINES[target.engine or ""]
 
 
+def engine_name(side: Plan) -> str:
+    """The name of the engine a table side was planned for: a plan without ``engine`` (a pair of PostgreSQL
+    tables) is the native engine's."""
+    return side.get("engine") or next(name for name, engine in ENGINES.items() if engine.native)
+
+
 def named(side: Plan) -> Engine:
-    """The engine a table side was planned for; a plan without ``engine`` is PostgreSQL."""
-    return ENGINES[side.get("engine", "postgresql")]
+    """The engine a table side was planned for (``engine_name``)."""
+    return ENGINES[engine_name(side)]
 
 
 def planned(side: str, plan: Plan, target: Target) -> Engine:
     """``named(plan)``, for a run's side ``side`` on ``target``; refused when the target's engine is no
     longer the one the run was planned for."""
-    wanted = plan.get("engine", "postgresql")
+    wanted = engine_name(plan)
     if target.engine != wanted:
         now = f"target {target.target_id} is {target.engine} now"
         raise EngineChanged(f"side {side}: {now}; this run was planned for {wanted}")
@@ -332,3 +378,5 @@ ENGINES: dict[str, Engine] = {
     "oracle": _oracle.Oracle(),
     "files": _files.Files(),
 }
+# The server each engine was observed on: ``ds target check`` notes any other.
+OBSERVED = {name: engine.observed for name, engine in ENGINES.items() if engine.observed}

@@ -150,7 +150,7 @@ def test_help_lists_the_commands() -> None:
     commands = (
         "init migrate serve worker spec compare run runs report profile measure adjudicate score llm-probe"
         " token session users audit auth purge keys approvals packs licence samples labellings notify"
-        " readiness schedules precheck target mcp"
+        " readiness schedules precheck target mcp db"
     )
     assert code == 0 and all(name in out for name in commands.split())
 
@@ -163,8 +163,9 @@ def test_help_says_what_ds_does() -> None:
         "Database and files targets: the pre-flight check.",
         "Token name, audited as its actor_name: 3 to 64 of a-z, 0-9, '.', '_' and '-', starting with a"
         " letter or a digit.",
-        "Apply the pending database migrations, each logged as it runs (ds serve and ds worker apply them as"
-        " they start; every other command refuses while one is pending).",
+        "Apply the pending database migrations, each logged as it runs, as the schema's owner: the role of"
+        " migrate_dsn_ref, else of database_dsn_ref. Without migrate_dsn_ref ds serve and ds worker apply"
+        " them as they start; every other command refuses while one is pending.",
     )
     assert written["ds precheck draft"].endswith(
         " Never stored: when it is ready, upload it on the Specs screen or with POST /v1/specs, or, outside"
@@ -555,7 +556,9 @@ CUSTOMERS: list[str | Column] = [
 
 
 def check(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, engine: FakeEngine, *args: str) -> tuple[int, str]:
-    """``ds target check ARGS`` with ``engine`` in Oracle's place; no store's DSN file exists."""
+    """``ds target check ARGS`` with ``engine`` in Oracle's place, doing as Oracle's does where it defines
+    nothing; no store's DSN file exists."""
+    engine.name = "oracle"  # type: ignore[misc]
     monkeypatch.setitem(seam.ENGINES, "oracle", engine)
     (tmp_path / "ds.yaml").write_text(SETTINGS)
     (tmp_path / "t.yaml").write_text(DATABASE_TARGETS)

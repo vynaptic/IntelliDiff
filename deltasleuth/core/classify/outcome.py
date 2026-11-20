@@ -13,6 +13,7 @@ from typing import Any
 
 from deltasleuth.core.classify.enrich import enrich
 from deltasleuth.core.diff.differ import diff
+from deltasleuth.core.masking import Tokeniser
 from deltasleuth.core.types import (
     INCONCLUSIVE_PRECEDENCE,
     JSON,
@@ -29,7 +30,6 @@ from deltasleuth.core.types import (
     SideState,
     SideStateKind,
 )
-from deltasleuth.security.tokenise import Tokeniser
 
 Differ = Callable[..., list[Finding]]  # diff(a: Canonical, b: Canonical, spec, *, key) -> findings
 

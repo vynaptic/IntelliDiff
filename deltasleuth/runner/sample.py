@@ -59,6 +59,7 @@ from deltasleuth.connectors.tables import (
 from deltasleuth.context import Context
 from deltasleuth.core import jsonio, sampling
 from deltasleuth.core.canonical.encoding import sha256_hex
+from deltasleuth.core.canonical.errors import CanonicalError
 from deltasleuth.core.canonical.paths import find
 from deltasleuth.core.sampling import DrawError, Selection, passes, percent, share
 from deltasleuth.core.spec import compile_spec, key_matches, listing_side, normalise_key
@@ -73,7 +74,7 @@ from deltasleuth.core.types import (
     Sample,
     Target,
 )
-from deltasleuth.errors import NotFound, Refused
+from deltasleuth.errors import Invalid, NotFound, Refused
 from deltasleuth.runner import census, counters
 from deltasleuth.runner.compare import connect
 from deltasleuth.runner.recheck import RecheckPolicy
@@ -331,6 +332,8 @@ class _Frame:
         twice, or was not read completely."""
         side = listing_side(member.source)
         connector = connect(self._ctx, self._target(side.target).target_id, self._spec.execution)
+        # A type check that is the honest test: a key listing walks a service's pages, which only the REST
+        # connector does, and the loader takes only a service target for a listing.
         assert isinstance(connector, RestConnector)
         moment, items, incomplete = datetime.now(UTC), 0, None
         self._started(moment)
@@ -413,16 +416,8 @@ class _Frame:
                 digests[h] = (key, row)
         shared: set[uuid.UUID] = set()
         if i:
-            cursor = await self._session.execute(
-                "UPDATE frame_keys SET member = 2 WHERE h = ANY(%s::uuid[]) AND member = 0 RETURNING h",
-                (list(digests),),
-            )
-            shared = {row[0] for row in await cursor.fetchall()}
-        cursor = await self._session.execute(
-            "INSERT INTO frame_keys SELECT unnest(%s::uuid[]), %s ON CONFLICT DO NOTHING RETURNING h",
-            ([h for h in digests if h not in shared], i),
-        )
-        inserted = {row[0] for row in await cursor.fetchall()}
+            shared = await repo.share_frame_keys(self._session, list(digests))
+        inserted = await repo.insert_frame_keys(self._session, [h for h in digests if h not in shared], i)
         both = len(shared)
         self._both += both
         self._repeats[i] += len(digests) - len(inserted) - both
@@ -434,10 +429,7 @@ async def _session(ctx: Context) -> psycopg.AsyncConnection:
     """The draw's own autocommit session on the store, with its temporary table of frame keys."""
     conn = await psycopg.AsyncConnection.connect(ctx.pool.conninfo, autocommit=True)
     try:
-        await conn.execute(
-            "SELECT set_config('temp_buffers', %s, false)", (ctx.settings.sampling.temp_buffers,)
-        )
-        await conn.execute("CREATE TEMP TABLE frame_keys (h uuid PRIMARY KEY, member smallint NOT NULL)")
+        await repo.create_frame_keys(conn, ctx.settings.sampling.temp_buffers)
     except BaseException:
         await conn.close()
         raise
@@ -463,7 +455,15 @@ def _distinct(
 
 def _listed(page: list[Any], member: FrameMember) -> list[Candidate]:
     """A listing page's items as candidates: the ``keyPath`` value ("" where an item has none) and the
-    first match of each strata field (None where it has none)."""
+    first match of each strata field (None where it has none). A path whose filter runs past its bound
+    refuses the frame in words of ours."""
+    try:
+        return _candidates(page, member)
+    except CanonicalError as exc:
+        raise Invalid(f"the frame's listing paths ran past their bound: {exc}") from None
+
+
+def _candidates(page: list[Any], member: FrameMember) -> list[Candidate]:
     key_path = member.source["keyPath"]
     return [
         (

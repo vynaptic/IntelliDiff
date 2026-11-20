@@ -82,6 +82,7 @@ from deltasleuth.auth.principal import WORKER
 from deltasleuth.connectors.tables import (
     UNREACHABLE,
     KeyUnfit,
+    LimitPassed,
     RowsMoved,
     SnapshotLost,
     TargetAuthRefused,
@@ -110,9 +111,9 @@ from deltasleuth.runner.runs import AUTH_PAUSE, EVIDENCE_PAUSE, KEY_PAUSE, pause
 from deltasleuth.runner.scan import scan
 from deltasleuth.runner.stop import StopConditions, StopMonitor
 from deltasleuth.security.crypto import KeyringError, Sealer
-from deltasleuth.store import repo
+from deltasleuth.store import chain, repo
 
-LOCK_ID = 0x44535752  # pg advisory lock "DSWR": the one worker of a database, or ds keys migrate
+LOCK_ID = repo.WORKER_LOCK  # the one worker of a database, or ds keys migrate
 READ_BATCH = 200  # keys a slot reads at once from a run that reads in groups (``LiveReader.batches``)
 FILE_BATCH = 2000  # beside fixed files whose rows are not large: one pass over them, judged READ_BATCH a time
 LOB_BATCH = 4  # of a run whose rows may hold large values: 16 MiB of them a row
@@ -244,6 +245,7 @@ class _Worker:
             undrawn = await repo.draws_due(conn)
             unguarded = await self._unguarded(conn, active)
             await repo.mark_sweep(conn, self.name)  # what health shows of the worker: it read what is due
+        await chain.anchored(self.ctx)  # the audit chain's head, outside the database
         for run_id, fallen in unguarded.items():
             if fallen and run_id not in self.guards:
                 self.guards[run_id] = asyncio.create_task(self._guard(run_id))
@@ -479,13 +481,13 @@ class _Worker:
             log.warning("scan of run %s paused: %s", run_id, code(exc))
             await pause_run(self.ctx, run_id, reason=AUTH_PAUSE, who=WORKER)
         except Exception as exc:
-            # A database unreachable: a later sweep resumes it, as it does after a server's code a resume
-            # may not meet again, until three passes in a row saved no checkpoint; such a pass waits a
-            # lease period too, so the three span minutes. Data past a server limit would fail every
-            # resume, so it fails the run, as a bug, an unreadable DSN, a privilege or a scan error do:
-            # unless the schema guard finds that a column or a table the plan reads is gone.
-            limit = isinstance(exc, psycopg.errors.ProgramLimitExceeded)
-            if isinstance(exc, UNREACHABLE) and not limit:
+            # A database unreachable, a side's or the store: a later sweep resumes it, as it does after a
+            # server's code a resume may not meet again, until three passes in a row saved no checkpoint;
+            # such a pass waits a lease period too, so the three span minutes. Data past a server limit
+            # would fail every resume, so it fails the run, as a bug, an unreadable DSN, a privilege or a
+            # scan error do: unless the schema guard finds that a column or a table the plan reads is gone.
+            limit = isinstance(exc, LimitPassed | psycopg.errors.ProgramLimitExceeded)
+            if isinstance(exc, (*UNREACHABLE, psycopg.OperationalError)) and not limit:
                 log.warning("scan of run %s paused: %s", run_id, code(exc))
                 await asyncio.sleep(self.settings.lease_seconds)
             elif isinstance(exc, STALLS) and not await self._stalled(
@@ -518,7 +520,7 @@ class _Worker:
             await sample.draw(self.ctx, run_id)
         except KEY_MISSING as exc:
             await self._key_missing(run_id, exc)
-        except UNREACHABLE as exc:  # a database unreachable: the next sweep draws again
+        except (*UNREACHABLE, psycopg.OperationalError) as exc:  # a side or the store: the next sweep draws
             log.warning("draw of run %s postponed: %s", run_id, code(exc))
             await asyncio.sleep(self.settings.lease_seconds)
         except Exception as exc:
@@ -592,7 +594,7 @@ class _Worker:
         self.busy[run_id] += 1
         try:
             run = await self._run(rows[0])
-            if isinstance(run.reader, LiveReader) and run.reader.batches:  # a group
+            if run.reader.batches:  # a group
                 async with self.ctx.pool.connection() as conn:
                     # Few keys where a row may be large; beside fixed files FILE_BATCH (READ_BATCH where a
                     # row may be large), whose every read of them is a pass: ``_process`` reads the other
@@ -610,8 +612,7 @@ class _Worker:
                     run.halted = False
                     m = run.monitor  # judged afresh, but the CRITICAL findings still exist
                     run.monitor = StopMonitor(m.conditions, m.started_at, m.critical)
-                    if isinstance(run.reader, LiveReader):
-                        run.reader.reconnect()  # the credential file was fixed: read it again
+                    run.reader.reconnect()  # the credential file was fixed: read it again
                 finished = await self._process(run, rows, owner)
                 if run.lanes is not None:
                     execution = run.spec.execution
@@ -670,7 +671,7 @@ class _Worker:
             sealer = await self.ctx.sealer(conn, rows[0]["run_id"])
         rows = [sealer.open_row(row) for row in rows]
         reader = run.reader
-        if not (isinstance(reader, LiveReader) and reader.batches and reader.fixed):
+        if not (reader.batches and reader.fixed):
             return await self._passed(run, rows, owner, sealer)
         ahead = [row["key"] for row in rows if row["pass_no"] == 1]
         await reader.ahead(ahead)
@@ -698,7 +699,7 @@ class _Worker:
                 derived = await rederive_all(ctx, conn, spec, run_id, [stored[k] for k in masked], run.caps)
             firsts = dict(zip(masked, derived, strict=True))
         held = {}
-        if isinstance(run.reader, LiveReader) and run.reader.batches:  # a recheck reads B first, as evaluate
+        if run.reader.batches:  # a recheck reads B first, as evaluate
             # but a side of fixed files, whose first observation stands
             held = await run.reader.standing({row["key"]: firsts[row["key_masked"]] for row in rechecks})
             first = [row["key"] for row in rows if row["pass_no"] == 1]
@@ -719,7 +720,7 @@ class _Worker:
             masked = row["key_masked"]
             # A read refused unsent (an open breaker, a target's pause) took no time and observed nothing:
             # the key goes back, due once its target may be read, up to REFUSALS times.
-            if isinstance(run.reader, LiveReader) and row["refused"] < REFUSALS:
+            if row["refused"] < REFUSALS:  # captured samples are never refused
                 if (wait := run.reader.refused(reads)) is not None:
                     refused[masked] = max(wait, REFUSED_WAIT_S)
                     continue
@@ -841,7 +842,7 @@ async def _sole(lock: psycopg.AsyncConnection, stop: asyncio.Event, poll_s: floa
     """Take the database's worker lock, waiting while another worker holds it; False: stopped first."""
 
     async def taken() -> bool:
-        return (await (await lock.execute("SELECT pg_try_advisory_lock(%s)", (LOCK_ID,))).fetchone())[0]
+        return await repo.try_worker_lock(lock)
 
     if not await taken():
         log.warning(
@@ -926,7 +927,7 @@ async def _work(ctx: Context, lock: psycopg.AsyncConnection, stop: asyncio.Event
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), check_s)
             try:
-                await asyncio.wait_for(lock.execute("SELECT 1"), check_s)
+                await asyncio.wait_for(repo.ping(lock), check_s)
             except TimeoutError:
                 raise LockSilent(f"the lock's connection did not answer within {check_s:g} s") from None
             for task in tasks:

@@ -10,7 +10,8 @@
     ds llm-probe [--profile ID]
     ds token create|revoke|list                 API tokens
     ds session revoke | users [disable|enable]  break-glass: sessions and people
-    ds audit [filters] | verify | auth check    the audit log; its hash chain; the IdP settings
+    ds audit [filters] | verify | auth check    the audit log; its hash chain and anchor; the IdP settings
+    ds db grants [--role NAME]                  the app's own database role: its grants, as SQL to run
     ds purge [--dry-run] | hold | release       retention: delete expired evidence, or keep a run's
     ds keys status | fingerprint | migrate      the keyring; seal what releases before 006 stored in clear
     ds approvals [--needed] | revoke            four-eyes approvals; break-glass: revoke one
@@ -153,6 +154,7 @@ target_app = typer.Typer(
     help="Database and files targets: the pre-flight check.",
 )
 mcp_app = typer.Typer(invoke_without_command=True)
+db_app = typer.Typer(no_args_is_help=True, help="The store's database roles.")
 app.add_typer(spec_app, name="spec")
 app.add_typer(token_app, name="token")
 app.add_typer(session_app, name="session")
@@ -171,6 +173,7 @@ app.add_typer(schedules_app, name="schedules")
 app.add_typer(precheck_app, name="precheck")
 app.add_typer(target_app, name="target")
 app.add_typer(mcp_app, name="mcp")
+app.add_typer(db_app, name="db")
 
 
 def _o(text: str, *flags: str) -> Any:
@@ -444,23 +447,33 @@ def init(config: ConfigOpt = None) -> None:
 
 @app.command()
 def migrate(config: ConfigOpt = None) -> None:
-    """Apply the pending database migrations, each logged as it runs (ds serve and ds worker apply them as
-    they start; every other command refuses while one is pending)."""
+    """Apply the pending database migrations, each logged as it runs, as the schema's owner: the role of
+    migrate_dsn_ref, else of database_dsn_ref. Without migrate_dsn_ref ds serve and ds worker apply them as
+    they start; every other command refuses while one is pending."""
     from psycopg_pool import AsyncConnectionPool
 
     from deltasleuth.core.secrets import read_secret
-    from deltasleuth.store.db import WAIT, admitted, opening
+    from deltasleuth.store.db import WAIT, DatabaseRefused, admitted, opening
     from deltasleuth.store.db import migrate as apply
 
     _migration_logs()
     _siem()
 
     async def main() -> list[int]:
-        dsn = read_secret(load_settings(config).database_dsn_ref)
-        await admitted(dsn)
+        settings = load_settings(config)
+        named = "migrate_dsn_ref" if settings.migrate_dsn_ref else "database_dsn_ref"
+        dsn = read_secret(settings.migrate_dsn_ref or settings.database_dsn_ref)
+        try:
+            await admitted(dsn)
+        except DatabaseRefused as exc:  # its words name database_dsn_ref
+            raise DatabaseRefused(str(exc).replace("database_dsn_ref", named)) from None
         async with AsyncConnectionPool(dsn, open=False, min_size=1, max_size=1) as pool:
             with opening():  # entering the pool does not wait: its lines would come during the migration
-                await pool.open(wait=True, timeout=WAIT)
+                try:
+                    await pool.open(wait=True, timeout=WAIT)
+                except psycopg.OperationalError as exc:
+                    unreachable = f"the database is unreachable ({type(exc).__name__}); check {named}"
+                    raise ContextError(unreachable) from None
             return await apply(pool)
 
     applied = _run(main())
@@ -600,8 +613,9 @@ def worker(config: ConfigOpt = None) -> None:
     async def work(ctx: Context) -> None:
         await _warned(ctx)
         _notify_warned(ctx.settings)
-        with _stopping() as stop:
-            await run_worker(ctx, stop=stop)
+        async with chain.kept(ctx):  # the roles line, and the audit chain anchored at start and stop
+            with _stopping() as stop:
+                await run_worker(ctx, stop=stop)
 
     _service_logs()
     _siem("stdout")
@@ -672,7 +686,7 @@ def target_check(
     full version. A files target's: its mount and the file reader, and with --table
     PATH --format csv|parquet the files the path names, a CSV's sniffed draft or a Parquet side's columns;
     --count and --manifest read the files. It alone prints file names."""
-    from deltasleuth.connectors.tables import OBSERVED, preflight
+    from deltasleuth.connectors.tables import ENGINES, OBSERVED, preflight
 
     async def work() -> tuple[str, dict[str, Any], Any]:
         settings = load_settings(config)
@@ -680,16 +694,16 @@ def target_check(
         target = registry.get(target_id)
         if target.engine is None:
             raise Invalid(f"target {target_id} is not a database target (dsn_ref or engine)")
-        if target.engine == "files":
+        if ENGINES[target.engine].fixed:  # its mount and its file reader
             if form not in (None, "csv", "parquet"):
                 raise Invalid("--format is csv or parquet")
             asked = {"form": form, "delimiter": delimiter, "header": header, "count": count}
             found = await _files_check(settings, registry, target, config, table, **asked, listed=manifest)
-            return "files", found, None
+            return target.engine, found, None
         return target.engine, *(await preflight(target, table))
 
     engine, server, relation = _run(work())
-    if engine == "files":
+    if ENGINES[engine].fixed:
         built = " and ".join(server["built"])
         version = f"duckdb {server['version']}, {built} built in"
         process = f"read in a process of its own ({server['held']})"
@@ -703,7 +717,7 @@ def target_check(
     if engine in OBSERVED and ".".join(version.split(".")[:2]) != OBSERVED[engine]:
         observed = f"Oracle {OBSERVED['oracle']} and MySQL {OBSERVED['mysql']}"
         typer.echo(f"note: this release is observed on {observed} only")
-    if engine == "oracle" and charset != "AL32UTF8":
+    if (full := ENGINES[engine].full_charset) is not None and charset != full:
         typer.echo("note: a run takes text keys of up to 500 bytes in this character set")
     if relation is None:
         return
@@ -1373,26 +1387,66 @@ def audit_verify(
         Path | None,
         _o("A SIEM export of the deltasleuth.audit lines (JSON lines): compare the log with it both ways."),
     ] = None,
+    anchor: Annotated[
+        Path | None,
+        _o("A copy of the audit anchor kept elsewhere (its file, or its log line): checked beside the one"
+           " in the workspace."),
+    ] = None,
     config: ConfigOpt = None,
 ) -> None:
     """Check the audit log's hash chain: contiguous rows, both links, each hash,
-    each row's text against its columns, every row chained; with --siem, the rows its lines span. Prints
-    the head, for the daily ticket; a break exits 2 naming the first row that fails."""
+    each row's text against its columns, every row chained; with --siem, the rows its lines span; against
+    the anchor the app keeps in its workspace, and with --anchor a copy of one, that the chain still holds
+    the anchored row as it was. Says when nothing outside the database was checked, and whether the app's
+    database role can switch the audit log's triggers off. Prints the head, for the daily ticket; a break
+    exits 2 naming the first row that fails."""
     with _errors():
         lines = None if siem is None else chain.read_siem(siem)
 
-    async def work(ctx: Context) -> dict[str, Any]:
+    async def work(ctx: Context) -> tuple[dict[str, Any], Path, list[tuple[Path, chain.Anchor]], str]:
+        kept = chain.anchor_path(ctx.settings)
+        paths = [path for path in (kept, anchor) if path is not None and (path != kept or kept.exists())]
+        anchors = [(path, chain.read_anchor(path, ctx.anchor_key)) for path in dict.fromkeys(paths)]
         async with ctx.pool.connection() as conn:
-            return await chain.verify(conn, lines)
+            done = await chain.verify(conn, lines, [held for _, held in anchors])
+        async with ctx.pool.connection() as conn:
+            _, roles = await chain.roles(conn, ctx.settings)
+        return done, kept, anchors, roles
 
-    done = _in_context(config, work)
+    done, kept, anchors, roles = _in_context(config, work)
     upgraded = f", 1 to {done['upgrade_seq']} chained by 009" if done["upgrade_seq"] else ""
     typer.echo(f"chain: {done['rows']:,} row(s) verified{upgraded}")
     if (matched := done["siem"]) is not None:
         span = f": rows {matched['first']} to {matched['last']}" if matched["lines"] else ""
         typer.echo(f"siem: {matched['lines']:,} line(s) match{span}")
+    for path, held in anchors:
+        typer.echo(f"anchor: row {held.seq} {held.hash}, written {held.at} ({path}): the chain holds it")
+    if not anchors:
+        typer.echo(f"anchor: none ({kept} is absent)")
+        if matched is None:
+            typer.echo(chain.NOTHING_OUTSIDE)
+    typer.echo(roles)
     head = done["head"]
     typer.echo(f"head: row {head['seq']} {head['hash']}" if head else "head: none (the audit log is empty)")
+
+
+@db_app.command("grants")
+def db_grants(
+    role: Annotated[str, _o("The application's role: made, without a password, if it does not exist.")] = (
+        "deltasleuth_app"
+    ),
+) -> None:
+    """Print the SQL that gives the application's own database role rights on the data of schema ds and
+    nothing more: it owns nothing, may add no trigger and may not set session_replication_role, so whoever
+    holds it cannot switch the audit log's triggers off. No settings are read.
+
+    To use it: run 'ds migrate' as the schema's owner; run this SQL as that owner in one transaction (psql
+    -v ON_ERROR_STOP=1 -1); set the role's password with \\password in psql; write the role's address to
+    the file database_dsn_ref names, and the owner's to the file migrate_dsn_ref names, which only 'ds
+    migrate' reads, so keep it from the app (ds serve and ds worker then apply no migration); restart the
+    app. Its start log and 'ds audit verify' then say "roles: separate"."""
+    with _errors():
+        typer.echo(repo.grants(role), nl=False)
 
 
 # -- evidence packs ---------------------------------------------------

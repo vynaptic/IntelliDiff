@@ -16,7 +16,8 @@ from zoneinfo import ZoneInfo
 from deltasleuth.core.canonical.errors import PathError
 from deltasleuth.core.canonical.normalisers import NORMALIZER_VERSION
 from deltasleuth.core.canonical.paths import jsonpath_error, normalise_pattern
-from deltasleuth.core.spec import where
+from deltasleuth.core.engines import ENGINES, EngineTraits
+from deltasleuth.core.spec import filepaths, where
 from deltasleuth.core.spec.durations import parse_duration
 from deltasleuth.core.spec.errors import IGNORED, UNSUPPORTED, SpecIssue, pointer
 from deltasleuth.core.spec.expressions import (
@@ -30,6 +31,7 @@ from deltasleuth.core.spec.expressions import (
 from deltasleuth.core.spec.keys import KEY_NORMALISERS, fit_parts, key_matches, normalise_key, parts_match
 from deltasleuth.core.spec.schemas import SLUG, core_schema, pack_config_issues, pack_major, pack_schema
 from deltasleuth.core.spec.targets import TargetRegistry
+from deltasleuth.core.types import SIDE_MEMBERS, Target
 
 Parts = tuple[str | int, ...]
 # Patterns are slash-separated member names; "*" matches every member or array item.
@@ -469,7 +471,7 @@ def _type_text(at: Parts, spec: dict[str, Any]) -> Iterator[SpecIssue]:
 
 _COLUMN = re.compile(r"[A-Za-z_][A-Za-z0-9_$#]*")  # $defs/columnName
 _CSV_KEYS = ({"as": "integer"}, {"as": "date"})
-# The texts of a refused ``table.file`` by what each judges; the path's is manifest.PATH_REFUSED.
+# The texts of a refused ``table.file`` by what each judges; the path's is filepaths.PATH_REFUSED.
 _L10 = {
     "format": "format csv needs csv (columns, delimiter); format parquet takes none",
     "columns": "csv.columns names every field once, in file order",
@@ -487,12 +489,10 @@ def _file(owner: Parts, side: dict[str, Any], file: dict[str, Any]) -> Iterator[
     """A file side, or a key table's files (``owner``: where its table is declared):
     the form of ``table.file``, and what a file side does not run (``table.schema``, ILIKE and a
     regex key map)."""
-    from deltasleuth.connectors.tables import manifest  # it imports this package: avoid the cycle
-
     base, csv, path = (*owner, "table", "file"), file.get("csv"), file.get("path")
     found = []
-    if isinstance(path, str) and manifest.path_error(path):
-        found.append(("path", manifest.PATH_REFUSED))
+    if isinstance(path, str) and filepaths.path_error(path):
+        found.append(("path", filepaths.PATH_REFUSED))
     csv_ok = isinstance(csv, dict) and csv.get("columns") and "delimiter" in csv
     if (file.get("format") == "csv" and not csv_ok) or (file.get("format") == "parquet" and csv is not None):
         found.append(("csv" if csv is not None else "format", _L10["format"]))
@@ -516,7 +516,7 @@ def _file(owner: Parts, side: dict[str, Any], file: dict[str, Any]) -> Iterator[
             found.append(("csv", _L10["keys"]))
             break
     if isinstance(stamp := file.get("asOfFile"), str) and isinstance(path, str):
-        if manifest.stamp_error(path, stamp):
+        if filepaths.stamp_error(path, stamp):
             found.append(("asOfFile", _L10["asOfFile"]))
     if isinstance(age := file.get("maxAge"), str):
         try:
@@ -580,11 +580,11 @@ def _targets(doc: dict[str, Any], registry: TargetRegistry) -> Iterator[SpecIssu
         if isinstance(target_id, str) and target_id not in registry:
             yield _error((*base, "target"), "unknown_target", f"target {target_id!r} is not in the registry")
         elif isinstance(target_id, str) and source.get("kind") == "table":
-            yield from _key_table_target(base, source, registry.get(target_id).engine)
-        elif isinstance(target_id, str) and registry.get(target_id).engine:
+            yield from _key_table_target(base, source, registry.get(target_id))
+        elif isinstance(target_id, str) and SIDE_MEMBERS.get(registry.get(target_id).kind) == "table":
             message = "a key listing needs a service target, not a database"
             yield _error((*base, "target"), "target_kind", message)
-    declared = False  # a side's database declares its engine
+    declared = False  # a side's database is of an engine that graph parity does not read
     for name, side in _sides(doc):
         target_id, at = side.get("target"), ("sides", name)
         if not isinstance(target_id, str):
@@ -592,22 +592,22 @@ def _targets(doc: dict[str, Any], registry: TargetRegistry) -> Iterator[SpecIssu
         if target_id not in registry:
             yield _error((*at, "target"), "unknown_target", f"target {target_id!r} is not in the registry")
             continue
-        engine = registry.get(target_id).engine
-        if ("table" in side) != bool(engine):
+        target = registry.get(target_id)
+        if ("table" in side) != (SIDE_MEMBERS.get(target.kind) == "table"):  # as its target's kind declares
             tabled = "a database target (dsn_ref or engine)"
             needs = tabled if "table" in side else "a service target, not a database"
             yield _error((*at, "target"), "target_kind", f"this side needs {needs}")
             continue
-        if "request" not in side:  # a table side
-            filed = _get(side, "table/file") is not None
-            if filed != (engine == "files"):  # table.file goes exactly with a files target
+        if "request" not in side:  # a table side, or one that declares neither (a form not filled in)
+            filed, traits = _get(side, "table/file") is not None, _traits(target)
+            if filed != (traits is not None and traits.file):  # table.file goes exactly with a files target
                 message = "a files target needs table.file (path, format)"
                 message = "table.file is for a files target (engine: files)" if filed else message
                 yield _error((*at, "target"), "target_kind", message)
                 continue
-            if engine not in ("postgresql", "files"):  # a file side's limits are read with its table.file
-                declared = True
-                yield from _engine_limits(at, side)
+            if traits is None or not traits.file:  # a file side's limits are read with its table.file
+                declared = declared or traits is None or not traits.graph_parity
+                yield from _engine_limits(at, side, traits) if traits is not None else ()
             continue
         capabilities = registry.get(target_id).capabilities
         absence = capabilities.authoritative_absence
@@ -627,27 +627,34 @@ def _targets(doc: dict[str, Any], registry: TargetRegistry) -> Iterator[SpecIssu
         yield _error("graph", UNSUPPORTED, f"not supported: {why}")
 
 
-def _key_table_target(base: Parts, source: dict[str, Any], engine: str | None) -> Iterator[SpecIssue]:
+def _key_table_target(base: Parts, source: dict[str, Any], target: Target) -> Iterator[SpecIssue]:
     """A key table's target is a database or a files target, its ``table.file`` going exactly with a files
     one, and on MySQL or Oracle its table runs what a side's does."""
-    filed = _get(source, "table/file") is not None
-    if not engine:
+    filed, traits = _get(source, "table/file") is not None, _traits(target)
+    if SIDE_MEMBERS.get(target.kind) != "table" or traits is None:
         message = "a key table needs a database target (dsn_ref or engine)"
-    elif filed != (engine == "files"):
+    elif filed != traits.file:
         message = "a files target needs table.file (path, format)"
         message = "table.file is for a files target (engine: files)" if filed else message
     else:
-        if engine not in ("postgresql", "files"):
-            yield from _engine_limits(base, source)
+        if not traits.file:  # a file side's limits are read with its table.file
+            yield from _engine_limits(base, source, traits)
         return
     yield _error((*base, "target"), "target_kind", message)
 
 
-def _engine_limits(owner: Parts, side: dict[str, Any]) -> Iterator[SpecIssue]:
+def _traits(target: Target) -> EngineTraits | None:
+    """What a spec may declare on a database or files target's engine; None for a target of none."""
+    return ENGINES.get(target.engine or "")
+
+
+def _engine_limits(owner: Parts, side: dict[str, Any], traits: EngineTraits) -> Iterator[SpecIssue]:
     """What a table side on MySQL or Oracle does not run, nor a key table there (``owner``: where the table
-    is declared): a regex key map and ILIKE."""
+    is declared): a regex key map and ILIKE, as its engine's ``traits`` say."""
+    if traits.regex_key_map and traits.ilike:
+        return  # it runs both
     for at, column in _find(side, "table/keyColumns/*", owner):
-        if _get(column, "keyMap/kind") == "regex":
+        if _get(column, "keyMap/kind") == "regex" and not traits.regex_key_map:
             why = "a regex key map on a MySQL or Oracle side; compare a view that derives the key"
             yield _error((*at, "keyMap"), UNSUPPORTED, f"not supported: {why}")
     for at, predicate in _strings(side, "table/where", base=owner):
@@ -655,7 +662,7 @@ def _engine_limits(owner: Parts, side: dict[str, Any]) -> Iterator[SpecIssue]:
             tests = _like_tests(where.parse(predicate))
         except where.WhereError:
             continue  # reported by the table rules
-        if "ILIKE" in tests:
+        if "ILIKE" in tests and not traits.ilike:
             yield _error(at, UNSUPPORTED, "not supported: ILIKE on a MySQL or Oracle side; use LIKE")
 
 

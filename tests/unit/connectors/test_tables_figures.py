@@ -20,6 +20,7 @@ import pytest
 from hypothesis import assume, given
 from hypothesis import strategies as st
 
+from deltasleuth.connectors.postgres import errors as pg_errors
 from deltasleuth.connectors.postgres import queries
 from deltasleuth.connectors.postgres.engine import PostgreSQL
 from deltasleuth.connectors.tables import (
@@ -269,7 +270,8 @@ async def test_a_failed_read_ends_the_side_s_and_what_was_read_stays() -> None:
     engine = Engine(n3=TargetTempSpace("ORA-01652"))
     read = await _read(engine, side, wanted)
     assert read["failed"] == {"duplicates": ("temp_space", "ORA-01652")} and len(read["figures"]) == 160
-    engine = Engine(n5=psycopg.errors.ConfigurationLimitExceeded())  # the second batch of distinct counts
+    full = _figure(psycopg.errors.ConfigurationLimitExceeded())
+    engine = Engine(n5=full)  # the second batch of distinct counts
     read = await _read(engine, side, wanted)
     assert read["failed"] == {"distinct": ("temp_space", "53400")} and read["duplicate_keys"] == 2
     assert read["figures"]["c3"]["distinct"] == "1" and "distinct" not in read["figures"]["c4"]
@@ -289,20 +291,26 @@ async def test_a_failed_read_ends_the_side_s_and_what_was_read_stays() -> None:
     )  # fmt: skip
 
 
+def _figure(exc: psycopg.Error) -> BaseException:
+    """A psycopg error as PostgreSQL's adapter raises it from a figure's statement."""
+    return pg_errors.wrapped(exc, figure=True)
+
+
 @pytest.mark.parametrize(
     ("exc", "failed"),
     [
-        (psycopg.errors.QueryCanceled(), ("timeout", "900")),  # 57014
+        (_figure(psycopg.errors.QueryCanceled()), ("timeout", "900")),  # 57014
         (StatementTimeout("DPY-4024"), ("timeout", "900")),
         (TargetAuthRefused("ORA-01017"), ("auth_refused", "ORA-01017")),
-        (psycopg.errors.ConfigurationLimitExceeded(), ("temp_space", "53400")),
+        (_figure(psycopg.errors.ConfigurationLimitExceeded()), ("temp_space", "53400")),
         (TargetTempSpace("MySQL 3"), ("temp_space", "MySQL 3")),
-        (psycopg.OperationalError("the password of crm-db is hunter2"), ("unreachable", "OperationalError")),
+        (_figure(psycopg.OperationalError("the password of crm-db is hunter2")),
+         ("unreachable", "OperationalError")),
         (TargetUnreachable("ORA-12541"), ("unreachable", "ORA-12541")),
         (SnapshotLost("ORA-01555"), ("snapshot_lost", "ORA-01555")),
         (TargetDenied("ORA-00942"), ("denied", "ORA-00942")),
         (TargetRefused("MySQL 1064"), ("error", "TargetRefused: MySQL 1064")),
-        (psycopg.errors.InsufficientPrivilege("table pay"), ("error", "InsufficientPrivilege")),
+        (_figure(psycopg.errors.InsufficientPrivilege("table pay")), ("error", "InsufficientPrivilege")),
         (TypeError("int() argument must be a string, not 'Secret'"), ("error", "TypeError")),
     ],
 )  # fmt: skip

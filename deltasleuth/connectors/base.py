@@ -1,16 +1,19 @@
 """The connector contract: turn ``(key, side)`` into one ``Observation``, never judging it.
 
-Black-box: a connector knows an endpoint and its declared behaviour, never how it is built.
+Black-box: a connector knows an endpoint and its declared behaviour, never how it is built. A connector
+that reads a group of keys at once is also a ``BatchConnector``; a reader asks for that capability, never
+for a connector's type.
 """
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from datetime import UTC, datetime
 from typing import Protocol, runtime_checkable
 
 from deltasleuth.connectors.breaker import CircuitBreaker, Ticket
 from deltasleuth.core.types import Observation, SideConfig
+from deltasleuth.core.types import utc_iso as utc_iso  # observed_at's form
 
 # Failures that describe the target's health; only these feed the circuit breaker.
 TRANSPORT_ERRORS = frozenset({"connect_error", "timeout", "http_429", "http_5xx"})
@@ -44,6 +47,12 @@ class NotCapturedError(ConnectorError, LookupError):
 
 @runtime_checkable
 class Connector(Protocol):
+    """One side's reads of one target. ``credentials``: what it read to send with a request (a bearer's
+    without its scheme), which a caller showing an answer keeps out of it; () for one that sends none."""
+
+    @property
+    def credentials(self) -> tuple[str, ...]: ...
+
     async def fetch(
         self, key: str, side_cfg: SideConfig, *, run_id: str = "p0", call_seq: int = 0
     ) -> Observation:
@@ -51,6 +60,27 @@ class Connector(Protocol):
         ...
 
     async def aclose(self) -> None: ...
+
+
+@runtime_checkable
+class BatchConnector(Connector, Protocol):
+    """A connector that reads a group of keys in one statement: ``prefetch`` reads them, ``fetch`` then
+    takes each without one, and ``forget`` drops what a group handed back left unread. ``large``: a read
+    may hold large values, so its keys are read few at a time. ``fixed``: it reads fixed files, each read a
+    pass over them, so what a read observed stands; ``unchanged`` checks them once for a group that reads
+    none of them again (False: they did not answer, and nothing of them stands)."""
+
+    @property
+    def large(self) -> bool: ...
+
+    @property
+    def fixed(self) -> bool: ...
+
+    async def prefetch(self, keys: Sequence[str], side_cfg: SideConfig) -> None: ...
+
+    def forget(self, keys: Iterable[str]) -> None: ...
+
+    async def unchanged(self, side_cfg: SideConfig) -> bool: ...
 
 
 async def guarded[T](
@@ -82,11 +112,6 @@ def circuit_open(observation: Callable[..., Observation]) -> Observation:
     return observation(
         http_status=None, body=None, error_class="circuit_open", error_detail=detail, attempts=0, pages=0
     )
-
-
-def utc_iso(moment: datetime) -> str:
-    # One fixed text form for live and file observations: observed_at is part of obs_id.
-    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 def utc_now_iso() -> str:

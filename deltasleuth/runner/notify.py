@@ -179,8 +179,7 @@ class Notifier:
         actions = notifications.routed(notify)
         skipped: dict[str, list[int]] = {}
         async with self._audited() as (conn, audit):
-            await conn.execute("SET LOCAL statement_timeout = '30s'")
-            await conn.execute("SET LOCAL lock_timeout = '5s'")
+            await repo.bound_notify_feed(conn)
             cursor = await repo.notify_cursor(conn)
             seq, now = cursor["seq"], cursor["now"]
             head = await repo.chain_head(conn)

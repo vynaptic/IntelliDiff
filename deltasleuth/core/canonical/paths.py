@@ -4,19 +4,36 @@
 Locations are concrete tuples (``("a", 0, "b")``); patterns replace every index or member key
 with ``[*]`` (``$.a[*].b``) so rule paths and finding patterns compare by string equality;
 pointers are RFC 6901 plus member keys, ``@i`` duplicate segments and a doubled leading ``@``.
+
+A filter's ``match()`` (a full match) and ``search()`` (a partial one) read a pattern as python-jsonpath
+reads an I-Regexp (its dot never a line break) and run it inside the shared server process, so they run it
+within the bounds ``regexes`` sets: on the ``regex`` engine, the regular expressions of one evaluation sharing
+``PATH_REGEX_TIMEOUT_MS``, and on at most ``MAX_REGEX_INPUT`` characters of one string. A pattern is checked
+as the path compiles when the path writes it, and as it runs when the data supplies it: one too long, too
+much compilation work, with a repeat inside a repeat, or in syntax Python's ``re`` cannot parse to check
+that is refused. A pattern that is not valid is refused when the path writes it and matches nothing when the
+data supplies it (RFC 9535). A bound reached as the path runs fails the evaluation with a ``MappingError``,
+never a match, and its message never quotes the data.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+import time
+from collections.abc import Callable, Iterable, Iterator
+from contextvars import ContextVar
 from functools import lru_cache
+from typing import Any
 
-from jsonpath import JSONPath, JSONPathEnvironment, JSONPathError
+from jsonpath import JSONPath, JSONPathEnvironment, JSONPathError, JSONPathMatch, JSONPathTypeError
+from jsonpath import function_extensions as functions
+from jsonpath.filter import StringLiteral
 from jsonpath.segments import JSONPathChildSegment
 from jsonpath.selectors import IndexSelector, NameSelector, WildcardSelector
+from jsonpath.token import Token
 
-from deltasleuth.core.canonical.errors import PathError
+from deltasleuth.core.canonical import regexes
+from deltasleuth.core.canonical.errors import MappingError, PathError
 from deltasleuth.core.types import JSON
 
 Location = tuple[str | int, ...]
@@ -25,9 +42,120 @@ Parts = tuple[PointerPart, ...]
 
 ROOT_PATTERN = "$"
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-_ENV = JSONPathEnvironment(strict=True)
 # RFC 9535 §2.7 normalised-path escapes for a single-quoted name.
 _NAME_ESCAPES = {"'": "\\'", "\\": "\\\\", "\b": "\\b", "\f": "\\f", "\n": "\\n", "\r": "\\r", "\t": "\\t"}
+# The regular expression time the filters of one evaluation share; a real filter takes microseconds.
+PATH_REGEX_TIMEOUT_MS = 1000
+_REGEX_LEFT: ContextVar[list[float] | None] = ContextVar("path_regex_left", default=None)  # seconds
+# An escape of a pattern, an I-Regexp category escape (\p{Lu}, \P{L}) among them.
+_ESCAPE = re.compile(r"\\(?:[pP](?:\{[^}]*\}|.)|.)", re.DOTALL)
+_IREGEXP = "write it as an RFC 9485 I-Regexp"
+
+
+class _Bounded:
+    """python-jsonpath's ``match()`` or ``search()`` within the bounds of ``regexes``: the same compiled
+    pattern, run on the ``regex`` engine with a timeout. Mixed in before the class it bounds."""
+
+    full: bool  # match(): the whole string
+    check_cache: Callable[[str], Any]  # the bounded class's: the pattern compiled, None when not valid
+
+    def checked(self, pattern: str) -> tuple[Any, str | None]:
+        """``pattern`` compiled (None when it is not valid) and why it may not run (None when it may)."""
+        if why := regexes.too_long(pattern):
+            return None, why
+        compiled = self.check_cache(pattern)
+        return compiled, None if compiled is None else _unbounded(pattern)
+
+    def __call__(self, value: object, pattern: object) -> bool:
+        if not isinstance(value, str) or not isinstance(pattern, str):
+            return False
+        compiled, why = self.checked(pattern)
+        if why is not None:
+            raise MappingError(f"a JSONPath filter's regular expression {why}")
+        if compiled is None:  # RFC 9535: a pattern that is not valid matches nothing
+            return False
+        if len(value) > regexes.MAX_REGEX_INPUT:
+            limit = f"{regexes.MAX_REGEX_INPUT:,} characters"
+            raise MappingError(f"a JSONPath filter's regular expression read a string longer than {limit}")
+        return _timed(compiled.fullmatch if self.full else compiled.search, value) is not None
+
+
+class _Match(_Bounded, functions.Match):
+    full = True
+
+
+class _Search(_Bounded, functions.Search):
+    full = False
+
+
+@lru_cache(maxsize=1024)
+def _unbounded(pattern: str) -> str | None:
+    """Why a valid filter ``pattern`` may not run, or None. Python's ``re`` parses it, a category escape read
+    as one character; one it cannot parse cannot be checked."""
+    try:
+        parsed = regexes.parse(_ESCAPE.sub(_one_character, pattern), 0)
+    except (re.error, OverflowError, RecursionError):
+        return f"uses syntax that cannot be checked for a repeat inside a repeat; {_IREGEXP}"
+    return regexes.unbounded(parsed)
+
+
+def _one_character(escape: re.Match[str]) -> str:
+    return r"\w" if escape.group()[1] in "pP" else escape.group()
+
+
+def _timed(run: Callable[..., Any], value: str) -> Any:
+    """``run(value)`` within what is left of the evaluation's regular expression time."""
+    left = _REGEX_LEFT.get()
+    budget = PATH_REGEX_TIMEOUT_MS / 1000 if left is None else left[0]
+    started = time.monotonic()
+    try:
+        if budget <= 0:
+            raise TimeoutError
+        return run(value, concurrent=True, timeout=budget)
+    except TimeoutError:
+        bound = f"the path's time bound ({PATH_REGEX_TIMEOUT_MS} ms)"
+        raise MappingError(f"a JSONPath filter's regular expressions ran past {bound}") from None
+    finally:
+        if left is not None:
+            left[0] -= time.monotonic() - started
+
+
+class _Environment(JSONPathEnvironment):
+    """Strict RFC 9535 with bounded ``match()`` and ``search()``; a pattern the path writes is checked as the
+    path compiles."""
+
+    def setup_function_extensions(self) -> None:
+        super().setup_function_extensions()
+        self.function_extensions["match"] = _Match(thread_safe=True)
+        self.function_extensions["search"] = _Search(thread_safe=True)
+
+    def validate_function_extension_signature(self, token: Token, args: list[Any]) -> list[Any]:
+        args = super().validate_function_extension_signature(token, args)
+        function = self.function_extensions[token.value]
+        if isinstance(function, _Bounded) and isinstance(args[1], StringLiteral):
+            compiled, why = function.checked(args[1].value)
+            if why is None and compiled is None:
+                why = "is not valid"
+            if why is not None:
+                raise JSONPathTypeError(str(regexes.refused(args[1].value, why)), token=token)
+        return args
+
+
+class _Path(JSONPath):
+    """A compiled path whose filters' regular expressions share ``PATH_REGEX_TIMEOUT_MS`` in one evaluation,
+    which is therefore read whole before it is returned."""
+
+    __slots__ = ()
+
+    def finditer(self, data: Any, *, filter_context: Any = None) -> Iterator[JSONPathMatch]:
+        token = _REGEX_LEFT.set([PATH_REGEX_TIMEOUT_MS / 1000])
+        try:
+            return iter(list(super().finditer(data, filter_context=filter_context)))
+        finally:
+            _REGEX_LEFT.reset(token)
+
+
+_ENV = _Environment(strict=True)
 
 
 @lru_cache(maxsize=1024)
@@ -40,7 +168,7 @@ def compile_path(path: str) -> JSONPath:
         raise PathError("the path nests too deeply") from None
     if not isinstance(compiled, JSONPath):
         raise PathError("compound paths are not allowed here")
-    return compiled
+    return _Path(env=_ENV, segments=compiled.segments, pseudo_root=compiled.pseudo_root)
 
 
 def jsonpath_error(path: str) -> str | None:

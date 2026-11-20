@@ -26,6 +26,7 @@ from cryptography import x509
 from deltasleuth.connectors import netguard
 from deltasleuth.connectors.tables import compose, render
 from deltasleuth.connectors.tables.engine import (
+    CAST_KEY,
     Asked,
     Column,
     Figure,
@@ -47,7 +48,7 @@ from deltasleuth.connectors.tables.engine import (
     unreachable,
 )
 from deltasleuth.connectors.tables.keys import Plan
-from deltasleuth.core import jsonio
+from deltasleuth.core import engines, jsonio
 from deltasleuth.core.secrets import read_secret
 from deltasleuth.core.types import Target
 
@@ -495,6 +496,7 @@ class Oracle:
     """``connectors.tables.Engine`` over python-oracledb, thin mode."""
 
     name = "oracle"
+    traits = engines.ENGINES[name]
     arms = 50
     unfit = (KeyUnfit, UnicodeEncodeError)  # the server's codes, and a lone surrogate, which no bind takes
     fold = staticmethod(str.upper)
@@ -503,6 +505,19 @@ class Oracle:
     sum_digits = 38  # a NUMBER's: a longer sum is rounded silently
     empty_null = True
     retry_alone = True
+    native = False
+    percent_placeholder = False  # values are bound by position, never by a % in the text
+    fixed = False
+    spill_budget = False
+    utf8_keys = False
+    prechecked = True
+    unkeyable = CAST_KEY
+    hash_charsets = True  # STANDARD_HASH reads a text in the database's or its national character set
+    observed = "23.26"
+    full_charset = "AL32UTF8"  # another one holds a text key of up to 500 bytes
+
+    def planning(self) -> contextlib.AbstractAsyncContextManager[None]:
+        return contextlib.nullcontext()
 
     def built(self, column: str, cls: str, declared: str, key: bool) -> str | None:
         return (PRIMITIVES.key_text if key else PRIMITIVES.render)(column, cls, declared)

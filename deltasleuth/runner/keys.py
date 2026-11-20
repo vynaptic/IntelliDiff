@@ -27,6 +27,7 @@ from deltasleuth.connectors.tables.engine import ERRORS
 from deltasleuth.context import Context
 from deltasleuth.core import jsonio, sampling
 from deltasleuth.core.canonical.encoding import scalar_text
+from deltasleuth.core.canonical.errors import CanonicalError
 from deltasleuth.core.canonical.paths import find
 from deltasleuth.core.spec import key_table, listing_side
 from deltasleuth.core.spec.errors import UnknownTargetError
@@ -186,20 +187,32 @@ async def _listed(
         raise Invalid("the key listing is not a JSON document") from None
     if duplicate:  # RFC 8259 leaves a repeated name undefined: which keys were listed is unknown
         raise Invalid("the key listing repeats a member name, so its keys are ambiguous")
-    found = [value for value, _ in find(side.pagination.items_path or "$", listing)]
+    try:  # off the event loop: a filter's pattern may run up to its bound for each item
+        items, keys = await asyncio.to_thread(_keys_of, listing, side.pagination.items_path, source, spec)
+    except CanonicalError as exc:  # its message is ours and quotes no data
+        raise Invalid(f"the key listing's paths ran past their bound: {exc}") from None
+    walk = {"basis": "listing", "target": side.target, "items": items}
+    walk |= {"first_at": first_at, "last_at": last_at}
+    return keys, walk
+
+
+def _keys_of(
+    listing: Any, items_path: str | None, source: Mapping[str, Any], spec: CompiledSpec
+) -> tuple[int, list[str]]:
+    """The count of a listing's items and their keys: each item's ``keyPath`` value ("" where it has
+    none); a multi-part key's parts, each a string or a number ("" for an item giving anything else)."""
+    found = [value for value, _ in find(items_path or "$", listing)]
     if len(found) != 1 or not isinstance(found[0], list):
         raise Invalid("the key listing's itemsPath does not select one array")
-    walk = {"basis": "listing", "target": side.target, "items": len(found[0])}
-    walk |= {"first_at": first_at, "last_at": last_at}
     path, n = source["keyPath"], len(spec.key_parts)
     if not n:
-        return [next((key for key, _ in find(path, item)), "") for item in found[0]], walk
+        return len(found[0]), [next((key for key, _ in find(path, item)), "") for item in found[0]]
     keys = []
     for item in found[0]:
         parts = [jsonio.number_text(v) if isinstance(v, Decimal) else v for v, _ in find(path, item)]
         fit = len(parts) == n and all(isinstance(part, str) for part in parts)
         keys.append(join_parts(parts) if fit else "")
-    return keys, walk
+    return len(found[0]), keys
 
 
 async def _tabled(

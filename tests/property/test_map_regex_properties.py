@@ -67,9 +67,10 @@ def test_a_word_boundary_is_where_re_puts_it(prefix: str) -> None:
     assert found == [m.span() for m in re.finditer(prefix + r"\b", text)]
 
 
-def test_what_cannot_be_written_runs_on_re() -> None:
-    for pattern in [r"\Ba", r"(a)\1", "(a)?(?(1)b|c)", r"(?a:\w)"]:
-        assert mapping._bounded(pattern, 0)._native is None, pattern
+@pytest.mark.parametrize("pattern", [r"\Ba", r"(a)\1", "(a)?(?(1)b|c)", r"(?a:\w)", r"(?u:\w)"])
+def test_what_cannot_be_written_is_refused(pattern: str) -> None:
+    with pytest.raises(ExpressionError, match="runs without a time bound"):
+        mapping._bounded(pattern, 0)
 
 
 @pytest.mark.parametrize("flags", [re.IGNORECASE, re.IGNORECASE | re.ASCII], ids=["unicode", "ascii"])

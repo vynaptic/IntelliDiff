@@ -15,9 +15,12 @@ are ``dict[str, JSON]``, arrays ``list[JSON]``. Canonical documents may addition
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Literal
+
+from deltasleuth.core import engines
 
 JSON = Any
 """A parsed JSON value: dict | list | str | bool | None | Decimal (numbers are always Decimal)."""
@@ -227,7 +230,7 @@ class TargetAuth:
 class DatabaseTarget:
     """A database whose endpoint the target declares, so the SSRF guard sees it."""
 
-    engine: Literal["mysql", "oracle"]
+    engine: str  # an engine whose target declares an endpoint (``core.engines``)
     host: str  # a DNS name or an IP literal
     port: int
     name: str  # mysql: its database; oracle: its service
@@ -237,6 +240,11 @@ class DatabaseTarget:
     tls_server_dn: str | None = None  # oracle: the server certificate's subject
     tls_verify_name: bool = True  # False: the chain only, against tls_ca_ref
     allow_unencrypted: bool = False  # no TLS
+
+
+# What a side on a target of each kind declares: a service's side its request, a database's or a files
+# target's its table. The connector a kind is read through is the runner's choice (``compare.CONNECTORS``).
+SIDE_MEMBERS = {"service": "request", "database": "table", "files": "table"}
 
 
 @dataclass(frozen=True)
@@ -257,15 +265,23 @@ class Target:
     allow_insecure_http: bool = False  # a credential over plain http, as declared
     declared_in: Literal["file", "product"] = "file"  # the targets file, or the product's list (targets.py)
     max_body_bytes: int | None = None  # a service's answer, its pages together, at most; None: the default
+    # What the targets file declares it as: ``service`` (a base_url), ``database`` (dsn_ref, or an endpoint
+    # engine) or ``files`` (a root); derived from those members when it is not given.
+    kind: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.kind:
+            tabled = "database" if self.dsn_ref or self.database else "service"
+            object.__setattr__(self, "kind", "files" if self.root is not None else tabled)
 
     @property
     def engine(self) -> str | None:
-        """The engine of a database target, ``files`` for a files target; None for a service."""
+        """The engine of a database target, or of a files target (``core.engines``); None for a service."""
         if self.database is not None:
             return self.database.engine
         if self.root is not None:
-            return "files"
-        return "postgresql" if self.dsn_ref else None
+            return engines.declared_by("files")[0]
+        return engines.declared_by("dsn_ref")[0] if self.dsn_ref else None
 
 
 # ---------------------------------------------------------------------------------------------
@@ -541,6 +557,12 @@ class Observation:
     pagination_unstable: bool = False  # offset/page paging without stable ordering, or repeats
     content_hash: str | None = None  # "sha256:<hex>" of body
     obs_id: str | None = None  # assigned by the evidence store
+
+
+def utc_iso(moment: datetime) -> str:
+    """An ``Observation.observed_at``: one fixed text form for live, file and stored observations, since
+    observed_at is part of obs_id."""
+    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 @dataclass(frozen=True)

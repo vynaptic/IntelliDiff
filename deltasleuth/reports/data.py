@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from deltasleuth import approvals, licence
-from deltasleuth.connectors.tables import relation
+from deltasleuth.connectors.tables import named, relation
 from deltasleuth.context import Context
 from deltasleuth.core import jsonio
 from deltasleuth.core.types import CompiledSpec, Observation, Outcome, Severity
@@ -98,7 +98,7 @@ def filters(spec: CompiledSpec) -> dict[str, str]:
 def _engine(side: str, plan: Mapping[str, Any], scan: Mapping[str, Any] | None) -> str:
     """The engine a side's plan names; a file side's with its format, its files, its lines that were not
     rows and, once scanned, its keys held by several rows."""
-    if plan.get("engine") != "files":
+    if not named(plan).fixed:
         return f" ({plan['engine']})" if "engine" in plan else ""
     counts = f"{plan['file_count']:,} file(s), {plan['rejected']:,} line(s) not rows"
     repeated = (scan or {}).get(f"repeated_{side}")

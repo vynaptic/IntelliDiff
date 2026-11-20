@@ -32,7 +32,7 @@ from typing import Any
 from deltasleuth import approvals, licence
 from deltasleuth.auth.principal import WORKER, Principal
 from deltasleuth.connectors.base import UnsafeTargetError
-from deltasleuth.connectors.tables import TableError
+from deltasleuth.connectors.tables import TableError, shown
 from deltasleuth.connectors.tables.reader import passed
 from deltasleuth.context import Capabilities, Context
 from deltasleuth.core.classify import rootcause
@@ -268,9 +268,11 @@ async def _attached(ctx: Context, conn: repo.Conn, spec: CompiledSpec, run: repo
 
 def failure(exc: BaseException) -> str:
     """What a failed run shows: an unreadable secret names its file (never its content), a table side's
-    error its class and code, the SSRF guard's its text, an address, and keys that mask alike their
-    count; anything else only its type (a message may hold keys or values)."""
-    if isinstance(exc, TableError | UnsafeTargetError | MaskedAlike):
+    error its class and code (``tables.shown``), the SSRF guard's its text, an address, and keys that mask
+    alike their count; anything else only its type (a message may hold keys or values)."""
+    if isinstance(exc, TableError):
+        return shown(exc)
+    if isinstance(exc, UnsafeTargetError | MaskedAlike):
         return f"{type(exc).__name__}: {exc}"
     return str(exc) if isinstance(exc, SecretError) else type(exc).__name__
 

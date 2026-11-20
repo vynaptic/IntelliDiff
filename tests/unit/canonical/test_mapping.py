@@ -193,6 +193,26 @@ class TestRegexBounds:
         with pytest.raises(ExpressionError, match="repeat inside a repeat"):
             apply_map(expression, {"a": "x"})
 
+    @pytest.mark.parametrize(
+        ("expression", "construct"),
+        [
+            ("$contains(a, /\\Ba*a*a*b/)", "\\B"),  # polynomial: hours on 10,000 characters on re
+            ("$replace(a, /(a)\\1/, '')", "a back-reference"),
+            ("$contains(a, /(?P<x>a)(?P=x)/)", "a back-reference"),
+            ("$contains(a, /(a)?(?(1)b|c)/)", "a conditional"),
+            ("$contains(a, /(?a:\\w)+/)", "a scoped (?a:...) or (?u:...) flag"),
+        ],
+    )
+    def test_a_construct_that_runs_without_a_time_bound_is_refused_when_the_map_compiles(
+        self, expression: str, construct: str
+    ) -> None:
+        started = time.monotonic()
+        with pytest.raises(ExpressionError, match="runs without a time bound") as refused:
+            apply_map(expression, {"a": "a" * 60})
+        assert time.monotonic() - started < 0.5
+        assert f"uses {construct}," in str(refused.value)
+        assert "rewrite it without \\B, back-references, conditionals or scoped flags" in str(refused.value)
+
     @pytest.mark.parametrize("expression", ["$contains(a, /^(x++)+$/)", "$contains(a, /^(?>x+)+$/)"])
     def test_a_possessive_or_atomic_inner_repeat_is_accepted(self, expression: str) -> None:
         assert apply_map(expression, {"a": "x" * 40 + "!"}) is False

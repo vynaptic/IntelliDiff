@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import re
 import secrets
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Container, Mapping, Sequence
@@ -28,7 +29,6 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
 from deltasleuth.auth.principal import Principal
-from deltasleuth.connectors.base import utc_iso
 from deltasleuth.core import jsonio
 from deltasleuth.core.types import (
     CompiledSpec,
@@ -39,8 +39,9 @@ from deltasleuth.core.types import (
     Side,
     Verdict,
     derive_verdict,
+    utc_iso,
 )
-from deltasleuth.errors import NotFound
+from deltasleuth.errors import Invalid, NotFound
 from deltasleuth.security.crypto import Sealer, chat_context
 
 Conn = AsyncConnection[Any]
@@ -169,6 +170,40 @@ async def pages(fetch: Callable[..., Awaitable[Page]], *args: Any, **kwargs: Any
         more, cursor = await fetch(*args, limit=1000, cursor=cursor, **kwargs)
         rows += more
     return rows
+
+
+# -- sessions: locks held by a connection, probes and transaction settings ----------------------
+
+WORKER_LOCK = 0x44535752  # pg advisory lock "DSWR": the one worker of a database, or ds keys migrate
+PURGE_LOCK = 0x44535047  # pg advisory lock "DSPG": one purger per database
+
+
+async def try_worker_lock(conn: Conn) -> bool:
+    """Take the worker lock for the session of ``conn``, without waiting: False while another holds it.
+    It is held until it is unlocked or the session ends."""
+    return bool(await _value(conn, "SELECT pg_try_advisory_lock(%s)", (WORKER_LOCK,)))
+
+
+async def try_purge_lock(conn: Conn) -> bool:
+    """Take the purge lock for the session of ``conn``, without waiting: False while another holds it."""
+    return bool(await _value(conn, "SELECT pg_try_advisory_lock(%s)", (PURGE_LOCK,)))
+
+
+async def ping(conn: Conn) -> None:
+    """One round trip on ``conn``: whether its session still answers."""
+    await conn.execute("SELECT 1")
+
+
+async def read_one_snapshot(conn: Conn) -> None:
+    """Make the transaction of ``conn`` read only, every statement of it on one snapshot. It is the
+    transaction's first statement."""
+    await conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+
+
+async def bound_notify_feed(conn: Conn) -> None:
+    """Bound the notifier's feed transaction: a statement of it ends after 30 s, a lock wait after 5 s."""
+    await conn.execute("SET LOCAL statement_timeout = '30s'")
+    await conn.execute("SET LOCAL lock_timeout = '5s'")
 
 
 # -- specs ------------------------------------------------------------------------------------
@@ -2357,6 +2392,151 @@ async def rewrap_data_key(conn: Conn, scope: str, kek: str, wrapped: bytes) -> N
     )
 
 
+# -- legacy data: what releases before 006 stored in clear, sealed by ds keys migrate -------------
+# The selects read a batch after a keyset position (``after``: their first columns) and return tuples,
+# their columns in the order they name them; each update clears the plaintext as it stores the sealed value.
+
+
+async def schema_applied(conn: Conn, version: int) -> bool:
+    """Whether the migration numbered ``version`` was applied."""
+    cur = await conn.execute("SELECT 1 FROM ds.schema_version WHERE version = %s", (version,))
+    return await cur.fetchone() is not None
+
+
+async def legacy_blobs_only(conn: Conn) -> bool | None:
+    """Whether observations name legacy blobs (``sha256:``) and none names a sealed one (``hk1:``); None on
+    a database without observations. It reads any schema from 001 on."""
+    [table] = await (await conn.execute("SELECT to_regclass('ds.observations')")).fetchone()  # type: ignore[misc]
+    if table is None:
+        return None
+    cur = await conn.execute(
+        """SELECT EXISTS (SELECT 1 FROM ds.observations WHERE content_hash LIKE 'sha256:%')
+                  AND NOT EXISTS (SELECT 1 FROM ds.observations WHERE content_hash LIKE 'hk1:%')"""
+    )
+    [named] = await cur.fetchone()  # type: ignore[misc]
+    return bool(named)
+
+
+async def legacy_runs(conn: Conn, after: tuple[Any, ...], limit: int) -> list[tuple[Any, ...]]:
+    """(run_id) of the runs without a data key."""
+    cur = await conn.execute(
+        """SELECT run_id FROM ds.runs r
+           WHERE run_id > %s AND NOT EXISTS (SELECT 1 FROM ds.data_keys k WHERE k.scope = r.run_id)
+           ORDER BY run_id LIMIT %s""",
+        (*after, limit),
+    )
+    return await cur.fetchall()
+
+
+async def legacy_keys(conn: Conn, after: tuple[Any, ...], limit: int) -> list[tuple[Any, ...]]:
+    """(run_id, cycle, seq, key_masked, key) of the run keys stored in clear."""
+    cur = await conn.execute(
+        """SELECT run_id, cycle, seq, key_masked, key FROM ds.run_keys
+           WHERE (run_id, cycle, seq) > (%s, %s, %s) AND key_enc IS NULL
+           ORDER BY run_id, cycle, seq LIMIT %s""",
+        (*after, limit),
+    )
+    return await cur.fetchall()
+
+
+async def legacy_headers(conn: Conn, after: tuple[Any, ...], limit: int) -> list[tuple[Any, ...]]:
+    """(run_id, obs_id, cycle, headers) of the observations whose headers are stored in clear."""
+    cur = await conn.execute(
+        """SELECT run_id, obs_id, cycle, headers FROM ds.observations
+           WHERE (run_id, obs_id) > (%s, %s) AND headers_enc IS NULL
+           ORDER BY run_id, obs_id LIMIT %s""",
+        (*after, limit),
+    )
+    return await cur.fetchall()
+
+
+async def legacy_chat(conn: Conn, after: tuple[Any, ...], limit: int) -> list[tuple[Any, ...]]:
+    """(session_id, seq, role, cycle, content, tool_calls, run_id) of the chat messages stored in clear."""
+    cur = await conn.execute(
+        """SELECT m.session_id, m.seq, m.role, m.cycle, m.content, m.tool_calls, s.run_id
+           FROM ds.chat_messages m JOIN ds.chat_sessions s USING (session_id)
+           WHERE (m.session_id, m.seq) > (%s, %s) AND m.sealed IS NULL
+           ORDER BY m.session_id, m.seq LIMIT %s""",
+        (*after, limit),
+    )
+    return await cur.fetchall()
+
+
+async def legacy_scans(conn: Conn, after: tuple[Any, ...], limit: int) -> list[tuple[Any, ...]]:
+    """(run_id, cycle, after) of the scans whose resume point is stored in clear."""
+    cur = await conn.execute(
+        """SELECT run_id, cycle, state->'after' FROM ds.scans
+           WHERE (run_id, cycle) > (%s, %s) AND jsonb_typeof(state->'after') = 'array'
+           ORDER BY run_id, cycle LIMIT %s""",
+        (*after, limit),
+    )
+    return await cur.fetchall()
+
+
+async def seal_legacy_keys(
+    conn: Conn, run_ids: Sequence[str], cycles: Sequence[int], seqs: Sequence[int], sealed: Sequence[bytes]
+) -> None:
+    """Store each run key's sealed key, clearing its plaintext."""
+    await conn.execute(
+        """UPDATE ds.run_keys k SET key_enc = u.enc, key = NULL
+           FROM unnest(%s::text[], %s::int[], %s::int[], %s::bytea[]) AS u (run_id, cycle, seq, enc)
+           WHERE (k.run_id, k.cycle, k.seq) = (u.run_id, u.cycle, u.seq)""",
+        (run_ids, cycles, seqs, sealed),
+    )
+
+
+async def seal_legacy_headers(
+    conn: Conn, run_ids: Sequence[str], obs_ids: Sequence[str], sealed: Sequence[bytes]
+) -> None:
+    """Store each observation's sealed headers, clearing their plaintext."""
+    await conn.execute(
+        """UPDATE ds.observations o SET headers_enc = u.enc, headers = NULL
+           FROM unnest(%s::text[], %s::text[], %s::bytea[]) AS u (run_id, obs_id, enc)
+           WHERE (o.run_id, o.obs_id) = (u.run_id, u.obs_id)""",
+        (run_ids, obs_ids, sealed),
+    )
+
+
+async def seal_legacy_chat(
+    conn: Conn, session_ids: Sequence[str], seqs: Sequence[int], sealed: Sequence[bytes]
+) -> None:
+    """Store each chat message sealed, clearing its content and tool calls."""
+    await conn.execute(
+        """UPDATE ds.chat_messages m SET sealed = u.enc, content = NULL, tool_calls = NULL
+           FROM unnest(%s::text[], %s::int[], %s::bytea[]) AS u (session_id, seq, enc)
+           WHERE (m.session_id, m.seq) = (u.session_id, u.seq)""",
+        (session_ids, seqs, sealed),
+    )
+
+
+async def seal_legacy_scans(conn: Conn, sealed: Sequence[tuple[dict[str, Any], str, int]]) -> None:
+    """Store each scan's sealed resume point: (its sealed ``after``, run_id, cycle)."""
+    params = [(Jsonb({"after": after}), run_id, cycle) for after, run_id, cycle in sealed]
+    async with conn.cursor() as cur:
+        await cur.executemany(
+            "UPDATE ds.scans SET state = state || %s WHERE run_id = %s AND cycle = %s", params
+        )
+
+
+async def legacy_blob_names(conn: Conn, limit: int) -> list[str]:
+    """Up to ``limit`` legacy blob addresses (``sha256:``) observations still name."""
+    cur = await conn.execute(
+        """SELECT DISTINCT content_hash FROM ds.observations
+           WHERE content_hash LIKE 'sha256:%%' LIMIT %s""",
+        (limit,),
+    )
+    return [content_hash for (content_hash,) in await cur.fetchall()]
+
+
+async def repoint_observations(conn: Conn, moved: Sequence[tuple[str, str, str]]) -> None:
+    """Point the observations naming each of two addresses at a new one: (new, old, old's other name)."""
+    if moved:
+        async with conn.cursor() as cur:
+            await cur.executemany(
+                "UPDATE ds.observations SET content_hash = %s WHERE content_hash IN (%s, %s)", moved
+            )
+
+
 # -- approvals -------------------------------------------------------------
 
 # An approval with its spec's name, version and owner, its actors' names and how many people approve it:
@@ -2653,6 +2833,30 @@ async def set_run_approval(
 
 # -- sample draws -----------------------------------------------------
 _DRAW_LOCK = 0x4453534D  # pg advisory lock "DSSM", with each population id: a live bottom_k run's draws
+
+
+async def create_frame_keys(conn: Conn, temp_buffers: str) -> None:
+    """The session's temporary table of a draw's frame keys, by digest (``h``) with the source that gave
+    each (``member``: 0 or 1, 2 for both), in ``temp_buffers`` of the session's memory."""
+    await conn.execute("SELECT set_config('temp_buffers', %s, false)", (temp_buffers,))
+    await conn.execute("CREATE TEMP TABLE frame_keys (h uuid PRIMARY KEY, member smallint NOT NULL)")
+
+
+async def share_frame_keys(conn: Conn, digests: Sequence[Any]) -> set[Any]:
+    """Mark the keys of ``digests`` the first source gave alone as given by both; the digests marked."""
+    cur = await conn.execute(
+        "UPDATE frame_keys SET member = 2 WHERE h = ANY(%s::uuid[]) AND member = 0 RETURNING h", (digests,)
+    )
+    return {row[0] for row in await cur.fetchall()}
+
+
+async def insert_frame_keys(conn: Conn, digests: Sequence[Any], member: int) -> set[Any]:
+    """Insert the keys of ``digests`` as given by source ``member``; the digests that were new."""
+    cur = await conn.execute(
+        "INSERT INTO frame_keys SELECT unnest(%s::uuid[]), %s ON CONFLICT DO NOTHING RETURNING h",
+        (digests, member),
+    )
+    return {row[0] for row in await cur.fetchall()}
 
 
 def _bug(row: LiteralString = "k", cycle: LiteralString = "%(c)s") -> LiteralString:
@@ -5636,3 +5840,87 @@ async def unchained_audit_row(conn: Conn) -> Row | None:
         """SELECT id, action, object FROM ds.audit_log l
            WHERE NOT EXISTS (SELECT 1 FROM ds.audit_chain c WHERE c.id = l.id) ORDER BY id LIMIT 1""",
     )
+
+
+async def audit_anchor(conn: Conn, seq: int) -> Row:
+    """The chain's last row's ``seq`` and ``hash`` (None while the chain is empty) and the hash of row
+    ``seq`` as ``anchored`` (None without that row)."""
+    return await _row(  # type: ignore[return-value]
+        conn,
+        """SELECT h.seq, h.hash, (SELECT c.hash FROM ds.audit_chain c WHERE c.seq = %s) AS anchored
+           FROM (SELECT 1) AS one
+           LEFT JOIN LATERAL (SELECT seq, hash FROM ds.audit_chain ORDER BY seq DESC LIMIT 1) AS h ON true""",
+        (seq,),
+    )
+
+
+async def audit_guard(conn: Conn) -> Row:
+    """What lets the connected role switch the audit log's triggers off, each a boolean: ``superuser``;
+    ``owner``, of schema ds or of a table or function in it (or a member of its owner), which may disable
+    a trigger or replace its function; ``trigger``, the privilege to add a trigger to the audit log or the
+    chain; ``replica``, the right to set session_replication_role, under which triggers do not fire (a
+    superuser's alone before PostgreSQL 15, which made it a grant)."""
+    granted = await _value(conn, "SELECT current_setting('server_version_num')::int >= 150000", None)
+    replica: LiteralString = (
+        "has_parameter_privilege('session_replication_role', 'SET')" if granted else "r.rolsuper"
+    )
+    return await _row(  # type: ignore[return-value]
+        conn,
+        f"""SELECT r.rolsuper AS superuser,
+                  coalesce(pg_has_role(n.nspowner, 'MEMBER')
+                           OR EXISTS (SELECT 1 FROM pg_class c
+                                      WHERE c.relnamespace = n.oid AND pg_has_role(c.relowner, 'MEMBER'))
+                           OR EXISTS (SELECT 1 FROM pg_proc p
+                                      WHERE p.pronamespace = n.oid AND pg_has_role(p.proowner, 'MEMBER')),
+                           false) AS owner,
+                  has_table_privilege('ds.audit_log', 'TRIGGER')
+                      OR has_table_privilege('ds.audit_chain', 'TRIGGER') AS trigger,
+                  {replica} AS replica
+           FROM pg_roles r LEFT JOIN pg_namespace n ON n.nspname = 'ds'
+           WHERE r.rolname = current_user""",  # noqa: S608 - fixed SQL fragments only
+    )
+
+
+_ROLE = re.compile(r"[a-z_][a-z0-9_]{0,62}")
+# The application role's grants (``ds db grants``), for psql: ``{role}`` is a name ``_ROLE`` matches.
+_GRANTS = """\
+-- DeltaSleuth's application role {role}: rights on the data of schema ds and nothing more. It owns
+-- nothing, may add no trigger and may not set session_replication_role, so it cannot switch the audit
+-- log's triggers off. Run this as a superuser or the owner of schema ds, after 'ds migrate', in one
+-- transaction (psql -v ON_ERROR_STOP=1 -1); the default privileges cover the tables later migrations add.
+-- A new role is made without a password: set one apart, with \\password {role} in psql.
+DO $$
+DECLARE v_owner text := (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = 'ds');
+BEGIN
+    IF v_owner IS NULL THEN
+        RAISE EXCEPTION 'schema ds does not exist: run ds migrate first';
+    ELSIF v_owner = '{role}' THEN
+        RAISE EXCEPTION 'role {role} owns schema ds: name another role for the application';
+    ELSIF EXISTS (SELECT FROM pg_roles WHERE rolname = '{role}' AND rolsuper) THEN
+        RAISE EXCEPTION 'role {role} is a superuser: name another role for the application';
+    ELSIF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{role}') THEN
+        CREATE ROLE "{role}" LOGIN;
+    END IF;
+    IF NOT (has_database_privilege('{role}', current_database(), 'CONNECT')
+            AND has_database_privilege('{role}', current_database(), 'TEMPORARY')) THEN
+        EXECUTE format('GRANT CONNECT, TEMPORARY ON DATABASE %I TO "{role}"', current_database());
+    END IF;
+    EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA ds'
+                   ' GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "{role}"', v_owner);
+    EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA ds'
+                   ' GRANT USAGE, SELECT ON SEQUENCES TO "{role}"', v_owner);
+END $$;
+GRANT USAGE ON SCHEMA ds TO "{role}";
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ds TO "{role}";
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ds TO "{role}";
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON ds.schema_version FROM "{role}";
+REVOKE UPDATE, DELETE, TRUNCATE ON ds.audit_log, ds.audit_chain, ds.audit_chain_upgrade FROM "{role}";
+"""
+
+
+def grants(role: str) -> str:
+    """The SQL that gives the application's role ``role`` data rights on schema ds and nothing more, for
+    the schema's owner to run; Invalid for a name that is not a plain lower-case one."""
+    if not _ROLE.fullmatch(role):
+        raise Invalid("--role must be 1 to 63 of a-z, 0-9 and _, starting with a letter or _")
+    return _GRANTS.replace("{role}", role)

@@ -7,13 +7,13 @@ never become paths: its values are profiled pooled under ``[*]``.
 from __future__ import annotations
 
 import math
-import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 
 from deltasleuth.core.canonical.encoding import type_class
+from deltasleuth.core.masking import ID_LIKE  # names that are data, never a field's
 from deltasleuth.core.types import JSON, Side
 from deltasleuth.profiler.model import ROOT, EvidenceRow, Path, Score, render
 from deltasleuth.profiler.values import decimal_places, light_token, value_shape
@@ -35,13 +35,6 @@ MANY_KEYS = 50
 SPARSE_APPEARANCE = 0.1
 TIE_APPEARANCE = 0.5
 TIE_ENTROPY = 0.9
-# All digits, UUIDs, long hex, a short alphabetic prefix before 3+ digits (ACC00012345, E-0001234),
-# e-mail addresses and phone numbers: data, never a field name, however stable across samples.
-ID_LIKE = re.compile(
-    r"\d+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{16,}"
-    r"|[A-Za-z]{0,6}[-_:]?\d{3,}[A-Za-z]{0,2}|[^@\s]+@[^@\s]+\.[^@\s]+|\+?\d[\d ().-]{5,}\d",
-    re.IGNORECASE,
-)
 
 
 class MapDecision(NamedTuple):

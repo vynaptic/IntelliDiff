@@ -58,7 +58,7 @@ from deltasleuth.reports.pack import PackForbidden, PackRefused, PackUnavailable
 from deltasleuth.runner.compare import EvidenceMissing
 from deltasleuth.runner.cycle import located
 from deltasleuth.security.crypto import KeyringError
-from deltasleuth.store import repo
+from deltasleuth.store import chain, repo
 
 WEB_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
 MAX_BODY = 10 * 2**20  # bytes: room for large key lists and sample pairs, not for exhausting memory
@@ -117,7 +117,8 @@ def create_app(settings: Settings, *, worker: bool = False, web_dir: Path = WEB_
                 started["audit_head"] = await repo.audit_head(conn)  # an anchor
                 await audit(SERVER, "system.start", "server", started)
             served = _mcp(app, ctx) if settings.mcp is not None and settings.mcp.http else nullcontext()
-            async with served, _worker(ctx) if worker else nullcontext():
+            # The roles line and the audit chain anchored outside the database, at start and at stop (last).
+            async with chain.kept(ctx), served, _worker(ctx) if worker else nullcontext():
                 yield
 
     app = FastAPI(

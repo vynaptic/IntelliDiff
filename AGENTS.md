@@ -61,9 +61,14 @@ the two documents, and `core/classify` gives each finding a code and the key an 
 a group's observations, results and findings in one transaction.
 
 - `deltasleuth/core` is pure logic: no network and no database. Its shared types are in `core/types.py`
-  and nothing redefines them. A JSON number is a `Decimal`, never a float.
-- `deltasleuth/connectors` fetch and never judge. A service-like source implements `Connector`
-  (`connectors/base.py`); a database implements `Engine` (`connectors/tables/engine.py`).
+  and nothing redefines them. A JSON number is a `Decimal`, never a float. It imports nothing of the
+  package but `errors` and the domain packs, and only the modules `tests/unit/test_integration_contracts.py`
+  names read files or start a process.
+- `deltasleuth/connectors` fetch and never judge. A source implements `Connector` (`connectors/base.py`),
+  and `BatchConnector` to read groups of keys; `CONNECTORS` in `runner/compare.py` picks one by
+  `Target.kind`. A database implements every member of `Engine` (`connectors/tables/engine.py`), turns its
+  driver's errors into `TableError` classes and has its row in `core/engines.py`: nothing branches on an
+  engine's name.
 - `deltasleuth/runner` runs the work: runs, key sets, the worker (one active worker per database, by an
   advisory lock, with leased keys), rechecks, cycle ends and schedules.
 - `deltasleuth/store/repo.py` holds every SQL query, one async function per use case, each taking an open

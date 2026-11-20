@@ -165,6 +165,8 @@ def test_the_example_optional_blocks_load_when_uncommented(config: Path) -> None
     assert settings.readiness is not None and settings.readiness.programmes[0].name == "cutover-q4"
     assert (settings.precheck.distinct_max_rows, settings.files.memory) == (20_000_000, "2GB")
     assert settings.mcp == McpSettings(("aggregates", "production_tokenised"), http=True)
+    assert commented.migrate_dsn_ref is None  # one role migrates and runs the app, as before
+    assert settings.migrate_dsn_ref == "file:/run/secrets/db_owner_dsn"  # a secret the site file mounts
     targets = config / "targets.yaml"
     assert [load_targets(targets).get(name).engine for name in ("billing-mysql", "ledger-oracle")] == [
         "mysql", "oracle",
