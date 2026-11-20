@@ -339,7 +339,7 @@ async def cancel_run(ctx: Context, run_id: str, *, who: Principal) -> str:
 
 
 async def outcome_changes(ctx: Context, run_id: str) -> list[dict[str, Any]]:
-    """Keys whose outcome differs from the previous soak cycle's, by masked key."""
+    """Keys of the run's current cycle whose outcome differs from the cycle before's, by masked key."""
     async with ctx.pool.connection() as conn:
         rows = await repo.outcome_changes(conn, run_id)
     return [{name: r[name] for name in ("cycle", "key_masked", "from_outcome", "to_outcome")} for r in rows]

@@ -23,7 +23,7 @@ from deltasleuth.core.types import (
     Side,
     SideState,
 )
-from deltasleuth.runner.recheck import INTERMITTENT_B, RecheckPolicy, confirm, freeze
+from deltasleuth.runner.recheck import INTERMITTENT_B, RecheckPolicy, confirm, freeze, key_fraction
 
 from .conftest import SPEC as SPEC_TEXT
 
@@ -152,6 +152,14 @@ def test_the_policy_rechecks_provisional_results_of_its_outcomes() -> None:
     assert default.due(truncated) and not default.due(
         dataclasses.replace(truncated, side_a=SideState.incomplete("skipped"))
     )
+
+
+def test_a_confirming_read_waits_the_delay_and_the_key_s_share_of_the_jitter() -> None:
+    policy = RecheckPolicy.from_spec(SPEC.raw | {"recheck": {"delay": "2s", "jitter": "4s", "times": 1}})
+    waits = {key: policy.wait_s(key) for key in ("tok_1", "tok_2")}
+    assert waits == {key: 2 + 4 * key_fraction(key) for key in waits}  # stable: from the masked key alone
+    assert all(2 <= wait < 6 for wait in waits.values()) and waits["tok_1"] != waits["tok_2"]
+    assert RecheckPolicy.from_spec(SPEC.raw | {"recheck": {"delay": "2s", "times": 1}}).wait_s("tok_1") == 2
 
 
 def test_fixed_files_are_read_once() -> None:

@@ -5,13 +5,16 @@ allowed data classes and environments, declared capabilities, budgets, limits, p
 never declared: it comes from the endpoint host in ``hosts``, and an unlisted host is external.
 ``wire`` (``openai_chat`` only) lists the optional Chat Completions fields a strict
 OpenAI-compatible gateway rejects, so the adapter omits them instead of every call failing. The
-registry also holds each profile's ``Gate``, so its limits bind every client of the profile.
+registry also holds each profile's ``Gate``, so its limits bind every client of the profile, and the
+chat's ``Rate`` per caller, which count over every question.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+import time
+from collections import OrderedDict, deque
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
@@ -102,13 +105,21 @@ class Capabilities:
 @with_config(_CLOSED)
 @dataclass(frozen=True)
 class Budgets:
-    """Hard limits checked before each call; the per-turn ones through a ``TurnMeter``."""
+    """Hard limits checked before each call; the per-turn ones through a ``TurnMeter``. The last two
+    (``STANDING``) hold over questions: None is no bound."""
 
     max_tool_calls: PosInt = 8
     max_input_tokens_per_call: PosInt = 20_000
     max_input_tokens_per_turn: PosInt | None = None  # default (max_tool_calls + 1) * per call
     max_wall_s: PosFloat = 60.0
-    per_run_tokens: PosInt | None = None  # input + output over one client's lifetime
+    per_run_tokens: PosInt | None = None  # input + output over every chat about one run (a probe: its own)
+    # Input + output over the chats one caller started, in any 24 hours: about ten turns that spend every
+    # default budget, or a hundred of an ordinary size.
+    per_actor_tokens_per_day: PosInt | None = 2_000_000
+
+
+# The budgets that outlive one client: the chat checks each against the sum its stored calls were charged.
+STANDING = ("per_run_tokens", "per_actor_tokens_per_day")
 
 
 @with_config(_CLOSED)
@@ -174,11 +185,40 @@ class Gate:
         self.limiter = AsyncLimiter(max(rps, 1.0), max(rps, 1.0) / rps) if rps else None
 
 
+class Rate:
+    """At most ``limit`` hits per key in a sliding ``window`` of seconds, in memory. ``hit`` says whether
+    one more is within it and counts it if so: a call counts whatever it is answered, but one this refuses.
+    The keys that hit longest ago go past ``size``."""
+
+    def __init__(
+        self,
+        limit: int,
+        window: float = 60.0,
+        size: int = 10_000,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.limit, self.window, self.size, self.clock = limit, window, size, clock
+        self._keys: OrderedDict[Hashable, deque[float]] = OrderedDict()
+
+    def hit(self, key: Hashable) -> bool:
+        now, times = self.clock(), self._keys.pop(key, None) or deque()
+        while times and now - times[0] >= self.window:
+            times.popleft()
+        within = len(times) < self.limit
+        if within:
+            times.append(now)
+        self._keys[key] = times
+        while len(self._keys) > self.size:
+            self._keys.popitem(last=False)
+        return within
+
+
 @dataclass(frozen=True)
 class ProfileRegistry:
     hosts: Mapping[str, Trust]
     profiles: Mapping[str, LLMProfile]
     gates: dict[str, Gate] = field(default_factory=dict, repr=False, compare=False)  # made on first use
+    rates: dict[str, Rate] = field(default_factory=dict, repr=False, compare=False)  # made on first use
 
     def get(self, profile_id: str) -> LLMProfile:
         try:
@@ -191,6 +231,13 @@ class ProfileRegistry:
         if profile_id not in self.gates:
             self.gates[profile_id] = Gate(self.get(profile_id).limits)
         return self.gates[profile_id]
+
+    def rate(self, name: str, limit: int) -> Rate:
+        """The one rate of this name for as long as this registry is loaded: ``limit`` a minute per key,
+        over every chat question of the process and forgotten at its restart."""
+        if name not in self.rates:
+            self.rates[name] = Rate(limit)
+        return self.rates[name]
 
 
 @with_config(_CLOSED)

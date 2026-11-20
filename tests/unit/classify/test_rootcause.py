@@ -10,7 +10,7 @@ import pytest
 
 from deltasleuth.core.classify.enrich import classify
 from deltasleuth.core.classify.outcome import compare_pair
-from deltasleuth.core.classify.rootcause import groups, root_causes
+from deltasleuth.core.classify.rootcause import group_members, groups, members, root_causes
 from deltasleuth.core.types import (
     ChangeType,
     Direction,
@@ -234,3 +234,33 @@ def test_unsuppressed_cause_ids_do_not_depend_on_bug_rules(causes, changed) -> N
 def test_a_bug_rule_on_an_info_finding_is_not_a_cause(causes, make_finding, spec) -> None:
     norm = make_finding("$.email", CHANGED, "A@x", "a@x", taxonomy_code="NORMALIZATION_ONLY")
     assert causes([result("C1", bug(classify(norm, spec, None)))]) == ([], {}, {})
+
+
+def test_members_read_page_by_page_group_as_the_results_at_once(phone_missing, changed, spec, tok) -> None:
+    """A cycle's end derives its keys again a page at a time and keeps only each finding's member: the
+    causes, their ranks and each finding's cause are those of grouping every result at once, fan-out
+    across pages included."""
+    results = [
+        result("C00000001", phone_missing("C00000001"), changed("C00000001")),
+        result("C00000002", changed("C00000002", "$.tier")),
+        result("C00000003", phone_missing("C00000003")),
+        result("C00000004", phone_missing("C00000004", "+447700900999"), bug(changed("C00000004"))),
+    ]
+    masked = {"spec": spec, "tokeniser": tok}
+    at_once = groups(results, **masked)
+    paged = []
+    for page in (results[:1], results[1:3], results[3:]):
+        paged += [m for r in page for m in members(r, **masked, ref=lambda f: f.json_pointer + f.key)]
+    by_pages = group_members(paged)
+    assert [rc for rc, _ in by_pages] == [rc for rc, _ in at_once]
+    assert [[m.ref for m in ms] for _, ms in by_pages] == [
+        [f.json_pointer + f.key for f in fs] for _, fs in at_once
+    ]
+
+
+def test_a_member_keeps_no_value_and_no_document(phone_missing, spec, tok) -> None:
+    f = phone_missing("C00000001")
+    [m] = members(result("C00000001", f), spec=spec, tokeniser=tok, ref=lambda found: found.json_pointer)
+    held = {name: getattr(m, name) for name in m.__slots__ if name != "ref"}  # the caller's own
+    assert PHONE not in repr(held)  # the member key is masked; the value a side held is not kept
+    assert m.ref == f.json_pointer and m.key == "C00000001"

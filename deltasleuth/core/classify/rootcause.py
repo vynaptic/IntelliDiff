@@ -3,14 +3,19 @@
 The same member of a keyed/set array missing (or extra) under two or more keys is one cause;
 every other finding groups by signature. Causes are published masked, and their ids
 (``RC-<12 hex>``) hash masked parts only, so re-runs agree and no id hashes a raw value.
+
+Grouping reads each discrepant finding as a ``Member``: the few facts it groups by, without values or
+documents, so a cycle's end can derive its keys again a page at a time and keep only these.
 """
 
 from __future__ import annotations
 
 import hashlib
+import sys
 from collections import defaultdict
-from collections.abc import Iterable
-from typing import Literal
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from deltasleuth.core.classify.signatures import signature_hash
 from deltasleuth.core.types import (
@@ -21,6 +26,7 @@ from deltasleuth.core.types import (
     KeyResult,
     RootCause,
     RuleClassification,
+    Severity,
 )
 from deltasleuth.security.tokenise import Tokeniser, mask_key, mask_member_key, mask_path_pattern
 
@@ -28,6 +34,26 @@ SAMPLE_KEYS = 5
 MIN_FANOUT_KEYS = 2
 
 Group = tuple[RootCause, list[Finding]]
+
+
+@dataclass(frozen=True, slots=True)
+class Member:
+    """One discrepant finding as grouping reads it. ``key`` (the request key) only tells keys apart;
+    everything published is masked. ``fanout``: the masked array pattern, path pattern, member key and
+    change type of a member one side lacks. ``ref``: what the caller knows the finding by."""
+
+    key: str
+    key_masked: str
+    fanout: tuple[str, str, str, str] | None
+    signature: str
+    bug_rule: str | None
+    path_pattern: str
+    change_type: ChangeType
+    direction: Direction
+    severity: Severity
+    value_class: str | None
+    taxonomy_code: str | None
+    ref: Any = None
 
 
 def root_causes(results: Iterable[KeyResult], *, spec: CompiledSpec, tokeniser: Tokeniser) -> list[RootCause]:
@@ -41,64 +67,101 @@ def _bug_rule(f: Finding) -> str | None:
 
 def groups(results: Iterable[KeyResult], *, spec: CompiledSpec, tokeniser: Tokeniser) -> list[Group]:
     """``root_causes``, each with its findings."""
-    # A bug rule's finding is still discrepant: grouped apart, under its rule.
-    discrepant = [
-        f
-        for r in results
-        for f in r.findings
-        if f.severity.rank > 0 and (not f.suppressed or _bug_rule(f) is not None)
-    ]
-    fanout: dict[tuple[tuple[str, ...], str | None], list[Finding]] = defaultdict(list)
-    for f in discrepant:
+    found = [m for r in results for m in members(r, spec=spec, tokeniser=tokeniser)]
+    return [(rc, [m.ref for m in ms]) for rc, ms in group_members(found)]
+
+
+def members(
+    result: KeyResult,
+    *,
+    spec: CompiledSpec,
+    tokeniser: Tokeniser,
+    ref: Callable[[Finding], Any] = lambda f: f,
+) -> list[Member]:
+    """The result's discrepant findings as members, in finding order; each member's ``ref`` is ``ref`` of
+    its finding (by default the finding). A bug rule's finding is still discrepant: grouped apart, under
+    its rule. Shared texts (patterns, signatures) are interned: a cycle repeats them across keys."""
+    masked: dict[str, str] = {}
+    found = []
+    for f in result.findings:
+        bug = _bug_rule(f)
+        if f.severity.rank <= 0 or (f.suppressed and bug is None):
+            continue
+        if f.key not in masked:
+            masked[f.key] = mask_key(f.key, spec, tokeniser)
+        pattern = sys.intern(mask_path_pattern(f.path_pattern, spec))
+        fanout = None
         one_sided = f.change_type in (ChangeType.MISSING_IN_B, ChangeType.EXTRA_IN_B)
         # array_path excludes the document-level finding, whose member key is the request key
         if one_sided and f.array_path is not None and f.member_key is not None:
             member = mask_member_key(f.member_key, f.array_path, spec, tokeniser, key=f.key)
-            pattern = mask_path_pattern(f.path_pattern, spec)
-            ident = (mask_path_pattern(f.array_path, spec), pattern, member, f.change_type.value)
-            fanout[(ident, _bug_rule(f))].append(f)
+            array = sys.intern(mask_path_pattern(f.array_path, spec))
+            fanout = (array, pattern, sys.intern(member), f.change_type.value)
+        found.append(
+            Member(
+                key=f.key,
+                key_masked=masked[f.key],
+                fanout=fanout,
+                signature=sys.intern(signature_hash(f, spec)),
+                bug_rule=bug,
+                path_pattern=pattern,
+                change_type=f.change_type,
+                direction=f.direction,
+                severity=f.severity,
+                value_class=f.value_class,
+                taxonomy_code=f.taxonomy_code,
+                ref=ref(f),
+            )
+        )
+    return found
+
+
+def group_members(found: Sequence[Member]) -> list[tuple[RootCause, list[Member]]]:
+    """The causes of discrepant findings read as members, each with its members, in rank order."""
+    fanout: dict[tuple[tuple[str, ...], str | None], list[Member]] = defaultdict(list)
+    for m in found:
+        if m.fanout is not None:
+            fanout[(m.fanout, m.bug_rule)].append(m)
+    claimed = {group for group, ms in fanout.items() if len({m.key for m in ms}) >= MIN_FANOUT_KEYS}
     causes = [
-        _cause("member_key", ident, fs, spec, tokeniser, member=ident[2])
-        for (ident, _), fs in fanout.items()
-        if len({f.key for f in fs}) >= MIN_FANOUT_KEYS
+        _cause("member_key", group[0], ms, member=group[0][2])
+        for group, ms in fanout.items()
+        if group in claimed
     ]
-    claimed = {id(f) for _, fs in causes for f in fs}
-    by_signature: dict[tuple[str, str | None], list[Finding]] = defaultdict(list)
-    for f in discrepant:
-        if id(f) not in claimed:
-            by_signature[(signature_hash(f, spec), _bug_rule(f))].append(f)
-    causes += [_cause("signature", (sig,), fs, spec, tokeniser) for (sig, _), fs in by_signature.items()]
+    by_signature: dict[tuple[str, str | None], list[Member]] = defaultdict(list)
+    for m in found:
+        if m.fanout is None or (m.fanout, m.bug_rule) not in claimed:
+            by_signature[(m.signature, m.bug_rule)].append(m)
+    causes += [_cause("signature", (sig,), ms) for (sig, _), ms in by_signature.items()]
     return sorted(causes, key=_rank)
 
 
 def _cause(
     kind: Literal["member_key", "signature"],
     ident: tuple[str, ...],
-    fs: list[Finding],
-    spec: CompiledSpec,
-    tok: Tokeniser,
+    ms: list[Member],
     member: str | None = None,
-) -> Group:
-    bug = _bug_rule(fs[0])
+) -> tuple[RootCause, list[Member]]:
+    first = ms[0]
     # The rule is part of the identity of bug-suppressed groups only, so an unsuppressed group
     # keeps its id when a bug rule suppresses the same difference elsewhere.
-    parts = (kind, *ident, *(("bug_rule", bug) if bug is not None else ()))
+    parts = (kind, *ident, *(("bug_rule", first.bug_rule) if first.bug_rule is not None else ()))
     rc = RootCause(
         root_cause_id="RC-" + hashlib.sha256("\x1f".join(parts).encode()).hexdigest()[:12],
         kind=kind,
-        path_pattern=mask_path_pattern(fs[0].path_pattern, spec),
-        change_type=fs[0].change_type,
-        direction=_uniform(f.direction for f in fs) or Direction.BOTH,
-        affected_keys=len({f.key for f in fs}),
-        finding_count=len(fs),
-        max_severity=max((f.severity for f in fs), key=lambda s: s.rank),
+        path_pattern=first.path_pattern,
+        change_type=first.change_type,
+        direction=_uniform(m.direction for m in ms) or Direction.BOTH,
+        affected_keys=len({m.key for m in ms}),
+        finding_count=len(ms),
+        max_severity=max((m.severity for m in ms), key=lambda s: s.rank),
         member_key_tok=member,
-        signature_hash=_uniform(signature_hash(f, spec) for f in fs),
-        value_class=_uniform(f.value_class for f in fs),
-        taxonomy_code=_uniform(f.taxonomy_code for f in fs),
-        sample_keys=tuple(sorted({mask_key(f.key, spec, tok) for f in fs})[:SAMPLE_KEYS]),
+        signature_hash=_uniform(m.signature for m in ms),
+        value_class=_uniform(m.value_class for m in ms),
+        taxonomy_code=_uniform(m.taxonomy_code for m in ms),
+        sample_keys=tuple(sorted({m.key_masked for m in ms})[:SAMPLE_KEYS]),
     )
-    return rc, fs
+    return rc, ms
 
 
 def _uniform[T](values: Iterable[T]) -> T | None:
@@ -107,7 +170,7 @@ def _uniform[T](values: Iterable[T]) -> T | None:
     return distinct.pop() if len(distinct) == 1 else None
 
 
-def _rank(group: Group) -> tuple[bool, int, int, int, str]:
+def _rank(group: tuple[RootCause, list[Any]]) -> tuple[bool, int, int, int, str]:
     rc = group[0]
     return (
         rc.kind != "member_key",

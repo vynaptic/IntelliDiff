@@ -36,7 +36,7 @@ import { FACTS, NOT_EVIDENCE, NO_DRAFT, answerOf, citedKeys, draftTitle, firstOn
 import { label, tone } from './labels';
 import { LICENCE_PAUSE, pausedLine, refusal, reportFile } from './licensing';
 import { href, message, useLicence, useLoad, usePaged, usePoll, useWho } from './lib';
-import { DIFFERING, barOf, notMatching, segments, tabOf, tabsOf, type Tab } from './outcomes';
+import { DIFFERING, barOf, changesTitle, noChanges, notMatching, segments, tabOf, tabsOf, type Tab } from './outcomes';
 import { censusLine, censusNote, censusWarnings, fileSide, packsSsoOnly, scoreLine, signedOff, unfrozen } from './packs';
 import { runLine } from './ready';
 import { controlLabel, guardBanner, guardLines } from './prechecking';
@@ -95,7 +95,7 @@ export function RunScreen({ runId, query }: { runId: string; query: URLSearchPar
   );
 }
 
-const DATA_TABS: Tab[] = ['differences', 'causes', 'findings', 'keys']; // what a purge removes
+const DATA_TABS: Tab[] = ['differences', 'causes', 'findings', 'keys', 'changes']; // what a purge removes
 
 type PartsProps = { run: RunDetail; f: Filters; version: string; viewed: number; keyLink: KeyLink; ai?: boolean; reload: () => void };
 
@@ -128,8 +128,9 @@ function Parts({ run, f, version, viewed, keyLink, ai, reload }: PartsProps) {
         <Findings {...table} />
       ) : tab === 'keys' ? (
         <Results {...table} />
+      ) : tab === 'changes' ? (
+        <Changes {...table} viewed={viewed} />
       ) : null}
-      {tab === 'changes' && <Changes runId={runId} version={version} />}
       {tab === 'evidence' && (
         <>
           {!run.sample && !run.cycles.length && !run.retention.cycles.length && !run.retention.purged.length && (
@@ -572,8 +573,9 @@ function Findings({ runId, f, version, keyLink, cycles }: TableProps) {
   );
 }
 
-function Changes({ runId, version }: { runId: string; version: string }) {
-  const changes = useLoad(() => api.changes(runId), [runId, version]);
+/** The keys of the cycle shown whose outcome differs from the cycle before's, a page at a time. */
+function Changes({ runId, f, version, cycles, viewed }: TableProps & { viewed: number }) {
+  const changes = usePaged((cursor) => api.changes(runId, { cycle: f.cycle, cursor }), [runId, f.cycle, version]);
   const cols: Col<Change>[] = [
     ['Cycle', (c) => c.cycle],
     ['Key', (c) => <a href={href(['runs', runId, 'keys', c.key_masked], { cycle: c.cycle })}>{c.key_masked}</a>],
@@ -582,9 +584,11 @@ function Changes({ runId, version }: { runId: string; version: string }) {
   ];
   return (
     <section>
-      <h2>Outcome changes across cycles</h2>
+      <FilterBar runId={runId} f={f} tab="changes" cycles={cycles} selects={[]} />
+      <h2>{changesTitle(viewed)}</h2>
       <Err error={changes.error} />
-      <Table rows={changes.data?.items ?? []} cols={cols} loading={changes.loading} empty="No key changed its outcome between two cycles." />
+      <Table rows={changes.items} cols={cols} loading={changes.loading} empty={noChanges(viewed)} />
+      <MoreRows shown={changes.items.length} more={changes.more} />
     </section>
   );
 }

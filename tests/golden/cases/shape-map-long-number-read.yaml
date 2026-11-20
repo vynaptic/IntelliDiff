@@ -1,0 +1,14 @@
+description: >
+  A map that reads a number of more than 15 significant digits is not judged: JSONata writes a
+  number as text with 15 digits, so two different 16-digit numbers would become one text and the
+  key would read as a match. Moving such a number is exact (shape-map-exact-numbers).
+sides:
+  a: {map: "{ 'account': $string(account) }"}
+  b: {map: "{ 'account': $string(account) }"}
+a:
+  body: '{"account": 1234567890123456}'
+b:
+  body: '{"account": 1234567890123457}'
+expect:
+  a: INCOMPLETE unparseable
+  b: INCOMPLETE unparseable

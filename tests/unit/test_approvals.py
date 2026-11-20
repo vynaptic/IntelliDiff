@@ -78,6 +78,12 @@ def table(**options: Any) -> dict[str, Any]:
     return {"sides": {Side.A: side}}
 
 
+def service(**options: Any) -> dict[str, Any]:
+    """Two service sides, side B shaped by ``options`` (select, map)."""
+    a, b = SideConfig(Side.A, "legacy", "svc-a"), SideConfig(Side.B, "new", "svc-b", **options)
+    return {"sides": {Side.A: a, Side.B: b}}
+
+
 @pytest.mark.parametrize(
     ("members", "scopes"),
     [
@@ -98,10 +104,21 @@ def table(**options: Any) -> dict[str, Any]:
         (table(file={"path": "a.csv", "format": "csv", "csv": {"skip": 0, "header": False}}), []),
         (table(file={"path": "a.parquet", "format": "parquet"}), []),
         ({"sample": Sample("bottom_k", "cutover-q4", (), ("table:db-a/accounts",))}, ["sampling"]),
+        # a side's map or select decides what the canonical document holds and under which names
+        (service(map='{"id": id}'), ["transforms"]),
+        (service(select="$.data"), ["transforms"]),
+        (service(select="$.data", map='{"id": id}'), ["transforms"]),
+        (service(select="$"), []),  # the whole answer, as no select at all
+        (service(), []),
         (
             {"security": SecurityPolicy(clear=("$.x",), unlisted="clear"), "known_diffs": (BUG,)}
             | table(where="true"),
             ["clear", "unlisted_clear", "known_diffs", "population_filters"],
+        ),
+        (
+            {"security": SecurityPolicy(clear=("$.x",)), "compare": CompareConfig(exclude=("$.a",))}
+            | service(map="$"),
+            ["clear", "population_filters", "transforms"],
         ),
     ],
 )
@@ -270,6 +287,25 @@ async def test_the_gate_refuses_a_version_that_needs_an_approval_it_lacks(pool: 
     assert await _refused(pool, spec_id) == (
         f"spec {spec_id} (customer-profile 1.4.0) needs a four-eyes approval of clear, known_diffs before it"
         " runs"
+    )
+
+
+@pytest.mark.db
+async def test_a_mapped_version_runs_only_under_an_approval_of_its_transforms(
+    pool: AsyncConnectionPool, world: World
+) -> None:
+    mapped = spec("1.6.0", **service(select="$.data", map='{"id": id}'))
+    async with pool.connection() as conn:
+        spec_id = await upload(conn, mapped, world.bob)
+    assert await _refused(pool, spec_id, mapped) == (
+        f"spec {spec_id} (customer-profile 1.6.0) needs a four-eyes approval of transforms before it runs"
+    )
+    async with pool.connection() as conn:
+        approval_id = await approved(conn, spec_id, world.bob, world.carol, scopes=["transforms"])
+    assert await _gate(pool, spec_id, mapped) == (approval_id, {"needs": ["transforms"], "mode": "oidc"})
+    assert await _gate(pool, spec_id, mapped, mode("tokens")) == (
+        None,
+        {"needs": ["transforms"], "mode": "tokens"},
     )
 
 

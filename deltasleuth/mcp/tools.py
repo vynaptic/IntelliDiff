@@ -16,7 +16,7 @@ import asyncio
 import logging
 import re
 import time
-from collections import Counter, OrderedDict, deque
+from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable, Hashable, Iterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
@@ -39,15 +39,18 @@ from deltasleuth.core.readiness import STATES
 from deltasleuth.core.spec import SpecError
 from deltasleuth.core.spec.errors import UnknownTargetError
 from deltasleuth.evidence.store import EvidenceKeyError
+from deltasleuth.llm.model import DataClass
+from deltasleuth.llm.profiles import Rate
 from deltasleuth.runner.compare import EvidenceMissing
 from deltasleuth.runner.purge import CyclePurged, refuse_purged
 from deltasleuth.security.crypto import KeyringError
-from deltasleuth.security.policy import BUSINESS_CODE
 from deltasleuth.store import repo
 
 MCP_ROLES = frozenset({"viewer", "operator"})  # the only roles a principal acts under inside MCP
 HTTP, STDIO = "mcp:http", "mcp:stdio"  # a caller's ``via``
-AGGREGATES, TOKENISED, CLEAR = "aggregates", "production_tokenised", "production_clear_declared"
+# The data classes ``mcp.data_classes`` lists, named as the egress policy names them.
+AGGREGATES, TOKENISED = DataClass.AGGREGATES.value, DataClass.PRODUCTION_TOKENISED.value
+CLEAR = DataClass.PRODUCTION_CLEAR_DECLARED.value
 CAP = 65_536  # bytes a framed result holds at most
 PAGE, ROWS = 10, 20  # a list's rows unless asked, and at most (list_runs: RUNS, whose counters are long)
 RUNS = 12
@@ -174,34 +177,6 @@ class ToolSpec:
     hints: Mapping[str, bool] = field(default_factory=lambda: READ)
 
 
-class Rate:
-    """At most ``limit`` hits per key in a sliding ``window`` of seconds, in memory. ``hit`` says whether
-    one more is within it and counts it if so: a call counts whatever it is answered, but one this refuses.
-    The keys that hit longest ago go past ``size``."""
-
-    def __init__(
-        self,
-        limit: int,
-        window: float = 60.0,
-        size: int = 10_000,
-        clock: Callable[[], float] = time.monotonic,
-    ) -> None:
-        self.limit, self.window, self.size, self.clock = limit, window, size, clock
-        self._keys: OrderedDict[Hashable, deque[float]] = OrderedDict()
-
-    def hit(self, key: Hashable) -> bool:
-        now, times = self.clock(), self._keys.pop(key, None) or deque()
-        while times and now - times[0] >= self.window:
-            times.popleft()
-        within = len(times) < self.limit
-        if within:
-            times.append(now)
-        self._keys[key] = times
-        while len(self._keys) > self.size:
-            self._keys.popitem(last=False)
-        return within
-
-
 class Limits:
     """The ``mcp`` block as one process applies it, with what it keeps of its callers, in memory and
     forgotten at restart: each caller's calls of the last minute and its ``LIMITED`` ones, the
@@ -298,8 +273,7 @@ async def _stored(ctx: Context, conn: repo.Conn, asked: _Asked, run_id: str) -> 
     asked.run = run
     await refuse_purged(conn, run_id, run["cycle"])
     spec = await ctx.spec(conn, run["spec_id"])
-    declared = {"clear", "unlisted_clear"} & set(approvals.needs(spec))
-    if (declared or spec.key.value_class == BUSINESS_CODE) and CLEAR not in asked.settings.data_classes:
+    if chat.clear_declared(spec) and CLEAR not in asked.settings.data_classes:
         raise ToolError(
             f"run {run_id} is not served by this installation: its spec declares clear values or a"
             f" business-code key (mcp.data_classes lacks {CLEAR})"

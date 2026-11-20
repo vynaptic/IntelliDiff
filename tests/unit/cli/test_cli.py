@@ -37,7 +37,7 @@ from rich.text import Text
 from typer.testing import CliRunner, Result
 
 from deltasleuth.api.app import AuthQueryFilter
-from deltasleuth.cli.main import _bindable, app
+from deltasleuth.cli.main import _bindable, _Stream, app
 from deltasleuth.connectors.tables import Refusal, TargetRefused, TargetUnreachable
 from deltasleuth.connectors.tables import engine as seam
 from deltasleuth.connectors.tables.engine import Column
@@ -84,6 +84,18 @@ def audit_logger() -> Iterator[logging.Logger]:
     logger = logging.getLogger("deltasleuth.audit")
     handlers, propagate, level = logger.handlers, logger.propagate, logger.level
     logger.handlers, logger.propagate = [], True
+    yield logger
+    logger.handlers, logger.propagate = handlers, propagate
+    logger.setLevel(level)
+
+
+@pytest.fixture(autouse=True)
+def package_logger() -> Iterator[logging.Logger]:
+    """``deltasleuth`` as this process had it, restored afterwards: ``ds serve`` and ``ds worker`` give it a
+    handler of their own and stop its propagating, which would keep its records from pytest's."""
+    logger = logging.getLogger("deltasleuth")
+    handlers, propagate, level = logger.handlers, logger.propagate, logger.level
+    logger.handlers = []
     yield logger
     logger.handlers, logger.propagate = handlers, propagate
     logger.setLevel(level)
@@ -4362,6 +4374,43 @@ def test_mcp_keeps_one_idle_store_connection(
     block = TOKENISED | ({} if concurrency is None else {"concurrency": concurrency})
     assert ds("mcp", "--config", mcp_settings(tmp_path, block)) == (0, "")
     assert opened == [pool]
+
+
+@pytest.mark.parametrize("entry", ["serve", "worker", "mcp"])
+def test_the_services_log_once_each_line_with_its_time_level_and_logger(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    package_logger: logging.Logger,
+    entry: str,
+) -> None:
+    """``ds serve`` and ``ds worker`` give the package's loggers one handler on stderr, from INFO up, each
+    line its time, level and logger, so a worker's and a schedule's lines are seen. The audit copy keeps
+    its own line on stdout, printed once. ``ds mcp`` adds none: its stdout is the protocol's, and its stderr
+    names a logger and a level alone."""
+    monkeypatch.setattr("uvicorn.run", lambda *_, **__: None)
+    monkeypatch.setattr("deltasleuth.cli.main._in_context", lambda *_, **__: None)
+    config = mcp_settings(tmp_path, TOKENISED)
+    for _ in range(2):  # a second start adds no second handler
+        assert run(entry, "--config", config).exit_code == 0
+    capsys.readouterr()
+    failed = "run R-1 failed: KeyError at runner/worker.py:9 in _passed; keys ['tok_3f9a']"
+    logging.getLogger("deltasleuth.runner.worker").warning(failed)
+    logging.getLogger("deltasleuth.schedules").info("schedule S-1 started run R-2")
+    logging.getLogger("deltasleuth.schedules").debug("below INFO: never shown")
+    logging.getLogger("deltasleuth.audit").info('{"seq": 1}')
+    out, err = capsys.readouterr()
+    if entry == "mcp":
+        assert out == "" and "deltasleuth.runner.worker WARNING" in err.splitlines() and "R-" not in err
+        assert not package_logger.handlers and package_logger.propagate
+        return
+    stamp = r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3}"
+    warned, started = err.splitlines()
+    assert out.splitlines() == ['{"seq": 1}']
+    assert re.fullmatch(f"{stamp} WARNING deltasleuth.runner.worker {re.escape(failed)}", warned)
+    assert re.fullmatch(f"{stamp} INFO deltasleuth.schedules schedule S-1 started run R-2", started)
+    assert [type(h) for h in package_logger.handlers] == [_Stream] and not package_logger.propagate
+    assert package_logger.level == logging.INFO
 
 
 @pytest.mark.parametrize("entry", ["mcp", "serve"])

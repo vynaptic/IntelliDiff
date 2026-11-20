@@ -3,12 +3,13 @@
 A matching tokenise rule of a PII floor class always tokenises, whatever ``security.clear`` says.
 Otherwise the most specific rule wins, a clear entry only when strictly more specific (a tie
 tokenises). Unlisted paths follow ``security.unlisted``. Booleans and nulls are always clear (the
-maskers apply that).
+maskers apply that). A member name is protected as the object holding it says (``Policy.names``).
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import re
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from decimal import Decimal
 from functools import lru_cache
@@ -33,6 +34,21 @@ UNLISTED_TEXT = "free_text"
 UNLISTED_NUMBER = "free_number"
 BUSINESS_CODE = "business_code"  # a key class shown in clear
 MIXED_MEMBER_CLASS = "identifier"  # a member key built from fields of different classes
+_FIELD_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_-]{0,63}")  # a member name that may be a field's
+_DIGIT_HEAVY = re.compile(r"\d{3}|(?:\d\D*){4}")  # three digits in a row, or four in all: an identifier's
+
+
+def reads_as_data(member: str) -> bool:
+    """Whether a member name reads as data and not as a field's name. A field's name is a letter or ``_``,
+    then at most 63 letters, digits, ``_`` or ``-``, and is not data by its digits (three in a row, or four
+    in all: an account or card number, however it is prefixed or dashed) or by the profiler's rule
+    (``profile.ID_LIKE``: digits, an id, an e-mail address, a phone number). A name that is data with fewer
+    digits (``Smith``, ``acct_abcdef``) reads as a field's."""
+    if not _FIELD_NAME.fullmatch(member) or _DIGIT_HEAVY.search(member):
+        return True
+    from deltasleuth.profiler.profile import ID_LIKE  # here: the profiler takes a second to import
+
+    return ID_LIKE.fullmatch(member) is not None
 
 
 @dataclass(frozen=True)
@@ -87,15 +103,24 @@ class Policy:
         below = [r for r in self._tokenize if reaches_below(r[0], segs)]
         return Resolved(_most_specific(below)) if below else own
 
-    def name_class(self, segs: Segments) -> str | None:
-        """Class of the member *names* of the object at ``segs``; None when they are field names.
+    def names(self, segs: Segments) -> Callable[[str], str | None]:
+        """The class of a member *name* of the object at ``segs``, by name; None when it shows as it is.
 
         An object an explicit tokenise rule covers holds data in its names as well (a map keyed
-        by email address). The unlisted default does not count: it would make every field name
-        of every unlisted object a token.
+        by email address): each is of the rule's class. Under the unlisted default alone the names
+        are field names, or every one of every unlisted object would be a token; one that reads as
+        data (``reads_as_data``) is ``free_text``, unless a clear entry covers that member.
         """
         resolved = self.resolve(segs)
-        return None if resolved.unlisted else resolved.value_class
+        if not resolved.unlisted:
+            return lambda member: resolved.value_class
+
+        def unlisted(member: str) -> str | None:
+            if not reads_as_data(member) or self.resolve((*segs, name(member))).value_class is None:
+                return None
+            return UNLISTED_TEXT
+
+        return unlisted
 
 
 def _most_specific(rules: list[tuple[Segments, str]]) -> str:

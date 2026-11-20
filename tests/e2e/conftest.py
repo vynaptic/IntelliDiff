@@ -190,9 +190,10 @@ def make_stack(tmp_path: Path, pg_dsn: str) -> Callable[..., Stack]:
         if mcp is not None:
             settings["mcp"] = mcp
         if llm_url:
-            profile = {
+            profile = {  # the mock pairs' specs declare clear paths, which their runs' chats carry
                 "dialect": "openai_chat", "base_url": llm_url, "model": "m", "environments": ["test"],
-                "data_classes": ["production_tokenised"], "capabilities": {"tool_calling": True},
+                "data_classes": ["production_tokenised", "production_clear_declared"],
+                "capabilities": {"tool_calling": True},
             }  # fmt: skip
             profiles = {"hosts": {"127.0.0.1": "internal"}, "profiles": {LLM_PROFILE: profile}}
             (tmp_path / "llm.yaml").write_text(yaml.safe_dump(profiles))

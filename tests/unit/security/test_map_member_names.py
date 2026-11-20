@@ -78,24 +78,32 @@ def test_member_names_below_the_covered_object_are_data_too(make_spec, make_find
 
 
 @pytest.mark.parametrize(
-    ("tokenize", "clear", "unlisted", "names_are_data"),
+    ("tokenize", "clear", "unlisted", "field_class", "data_class"),
     [
-        (MAP_RULES, (), "tokenize", True),
-        ((), (), "tokenize", False),  # the unlisted default never makes field names data
-        ((), (), "clear", False),
-        ((("$.contactVerified", "free_text"),), ("$.contactVerified",), "tokenize", True),  # a tie tokenises
-        ((("$.profile", "free_text"),), ("$.profile.contactVerified",), "tokenize", False),  # deeper clear
-        ((("$.profile", "email"),), ("$.profile.contactVerified",), "tokenize", True),  # the floor holds
+        (MAP_RULES, (), "tokenize", "email", "email"),
+        # the unlisted default makes no field name data, only a name that reads as data
+        ((), (), "tokenize", None, "free_text"),
+        ((), (), "clear", None, None),
+        # a tie tokenises
+        ((("$.contactVerified", "free_text"),), ("$.contactVerified",), "tokenize", "free_text", "free_text"),
+        # a deeper clear entry wins
+        ((("$.profile", "free_text"),), ("$.profile.contactVerified",), "tokenize", None, None),
+        # the floor holds
+        ((("$.profile", "email"),), ("$.profile.contactVerified",), "tokenize", "email", "email"),
     ],
 )
-def test_which_objects_hold_data_in_their_names(make_spec, tokenize, clear, unlisted, names_are_data) -> None:
+def test_which_objects_hold_data_in_their_names(
+    make_spec, tokenize, clear, unlisted, field_class, data_class
+) -> None:
+    """The class of a field's name (``since``) and of a name that reads as data, in one object."""
     spec = make_spec(tokenize=tokenize, clear=clear, unlisted=unlisted)
     where = "$.profile.contactVerified" if tokenize and tokenize[0][0] == "$.profile" else "$.contactVerified"
-    name_class = canonical_policy(spec.security).name_class(segments(where))
-    assert (name_class is not None) is names_are_data
+    class_of = canonical_policy(spec.security).names(segments(where))
+    assert (class_of("since"), class_of(JANE)) == (field_class, data_class)
+    assert mask_path_pattern(f"{where}.since", spec).endswith("[*]") is (field_class is not None)
     collapsed = mask_path_pattern(f"{where}['{JANE}']", spec)
-    assert collapsed.endswith("[*]") is names_are_data
-    assert (JANE in collapsed) is not names_are_data
+    assert collapsed.endswith("[*]") is (data_class is not None)
+    assert (JANE in collapsed) is (data_class is None)
 
 
 def test_ordinary_field_names_stay_readable(make_spec) -> None:
@@ -103,7 +111,7 @@ def test_ordinary_field_names_stay_readable(make_spec) -> None:
         tokenize=(("$.phones[*].number", "phone"), ("$.name", "name")),
         arrays=(ArrayRule("$.phones", "keyed", ("number",)),),
     )
-    for pattern in ("$.phones[*].kind", "$.phones[*]", "$.name", "$['odd name'].x", "$"):
+    for pattern in ("$.phones[*].kind", "$.phones[*]", "$.name", "$['odd-name'].x", "$"):
         assert mask_path_pattern(pattern, spec) == pattern
     with pytest.raises(PatternError, match="descendant"):
         mask_path_pattern("$..email", spec)

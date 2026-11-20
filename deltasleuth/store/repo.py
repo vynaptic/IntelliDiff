@@ -221,20 +221,24 @@ async def _insert_keys(
     available_at: datetime | None,
     first_seq: int = 0,
     labels: Sequence[tuple[str | None, str | None, bool]] | None = None,
+    delays: Sequence[float] | None = None,
 ) -> None:
-    """``labels``: a sample's (stratum, signoff_stratum, signoff_member) of each key, in order."""
+    """``labels``: a sample's (stratum, signoff_stratum, signoff_member) of each key, in order.
+    ``delays``: the seconds after ``available_at`` (None: the database's clock) each key falls due, in
+    order."""
     strata, signoffs, members = zip(*labels, strict=True) if labels else (None, None, None)
     await conn.execute(
         """INSERT INTO ds.run_keys (run_id, cycle, key_masked, key_enc, seq, available_at, stratum,
                signoff_stratum, signoff_member)
-           SELECT %s, %s, k.masked, k.enc, %s + k.n - 1, coalesce(%s::timestamptz, now()), k.stratum,
+           SELECT %s, %s, k.masked, k.enc, %s + k.n - 1,
+               coalesce(%s::timestamptz, now()) + coalesce(k.delay, 0) * interval '1 second', k.stratum,
                k.signoff, coalesce(k.member, false)
-           FROM unnest(%s::text[], %s::bytea[], %s::text[], %s::text[], %s::boolean[])
-               WITH ORDINALITY AS k (masked, enc, stratum, signoff, member, n)""",
+           FROM unnest(%s::text[], %s::bytea[], %s::text[], %s::text[], %s::boolean[], %s::float8[])
+               WITH ORDINALITY AS k (masked, enc, stratum, signoff, member, delay, n)""",
         (
             run_id, cycle, first_seq, available_at, list(keys), list(keys.values()),
             None if strata is None else list(strata), None if signoffs is None else list(signoffs),
-            None if members is None else list(members),
+            None if members is None else list(members), None if delays is None else list(delays),
         ),
     )  # fmt: skip
 
@@ -284,11 +288,13 @@ async def save_scan(
     scan: Mapping[str, Any],
     keys: Mapping[str, bytes],
     saved_checkpoint: int,
+    delays: Mapping[str, float] | None = None,
 ) -> bool:
     """A checkpoint of the cycle's scan on checkpoint ``saved_checkpoint``: its state (``after``
     sealed), written as the next checkpoint, whose ``candidates`` counts ``keys`` (masked ->
     key_enc), and those keys; False, saving nothing, when the run is no longer running or that
-    checkpoint is no longer the latest (another scanner saved)."""
+    checkpoint is no longer the latest (another scanner saved). ``delays``: the seconds after this save,
+    on the database's clock, that each masked key's per-key read falls due (None: at once)."""
     if not await _changed(
         conn,
         """UPDATE ds.scans sc SET state = %s FROM ds.runs r
@@ -297,7 +303,8 @@ async def save_scan(
         (_jsonb(dict(scan) | {"checkpoint": saved_checkpoint + 1}), run_id, cycle, saved_checkpoint),
     ):
         return False
-    await _insert_keys(conn, run_id, cycle, keys, None, first_seq=scan["candidates"] - len(keys))
+    waits = None if delays is None else [delays[masked] for masked in keys]
+    await _insert_keys(conn, run_id, cycle, keys, None, scan["candidates"] - len(keys), delays=waits)
     return True
 
 
@@ -1085,6 +1092,22 @@ async def get_results(conn: Conn, run_id: str, cycle: int, keys_masked: Sequence
     return {row["key_masked"]: row for row in rows}
 
 
+async def get_findings(
+    conn: Conn, run_id: str, cycle: int, keys_masked: Sequence[str]
+) -> dict[str, list[Row]]:
+    """The cycle's findings of ``keys_masked``, by masked key, each key's in finding order, in one query."""
+    rows = await _rows(
+        conn,
+        """SELECT * FROM ds.findings WHERE run_id = %s AND cycle = %s AND key_masked = ANY(%s)
+           ORDER BY key_masked, seq""",
+        (run_id, cycle, list(keys_masked)),
+    )
+    found: dict[str, list[Row]] = {}
+    for row in rows:
+        found.setdefault(row["key_masked"], []).append(row)
+    return found
+
+
 async def list_results(
     conn: Conn,
     run_id: str,
@@ -1342,19 +1365,58 @@ async def list_root_causes(conn: Conn, run_id: str, cycle: int | None = None) ->
     )
 
 
-async def outcome_changes(conn: Conn, run_id: str) -> list[Row]:
-    """Keys whose outcome differs from the previous cycle's: cycle, key_masked, from/to outcome."""
-    return await _rows(
+async def list_outcome_changes(
+    conn: Conn, run_id: str, cycle: int | None = None, *, limit: int = 100, cursor: str | None = None
+) -> Page:
+    """The cycle's keys whose outcome differs from the cycle before's, in manifest order: cycle,
+    key_masked, from_outcome and to_outcome. A page walks the cycle's keys by their order from where the
+    page before ended, reading each key's result of the cycle before and then of the cycle by key, and
+    stops at its last change; a run's first cycle has none before it."""
+    after = _after(cursor, 1)[0]
+    cycle = await _current(conn, run_id, cycle)
+    if cycle is None or cycle <= 1:
+        return [], None
+    rows = await _rows(
         conn,
-        """SELECT cur.cycle, cur.key_masked, prev.outcome AS from_outcome, cur.outcome AS to_outcome
-           FROM ds.results cur
-           JOIN ds.results prev
-             ON prev.run_id = cur.run_id AND prev.cycle = cur.cycle - 1 AND prev.key_masked = cur.key_masked
-           JOIN ds.run_keys k ON (k.run_id, k.cycle, k.key_masked) = (cur.run_id, cur.cycle, cur.key_masked)
-           WHERE cur.run_id = %s AND cur.outcome <> prev.outcome
-           ORDER BY cur.cycle, k.seq""",
-        (run_id,),
+        """SELECT k.seq, k.cycle, k.key_masked, prev.outcome AS from_outcome, cur.outcome AS to_outcome
+           FROM ds.run_keys k
+           CROSS JOIN LATERAL (
+               SELECT r.outcome FROM ds.results r
+               WHERE (r.run_id, r.cycle, r.key_masked) = (k.run_id, k.cycle - 1, k.key_masked)
+               OFFSET 0) prev
+           CROSS JOIN LATERAL (
+               SELECT r.outcome FROM ds.results r
+               WHERE (r.run_id, r.cycle, r.key_masked) = (k.run_id, k.cycle, k.key_masked) OFFSET 0) cur
+           WHERE k.run_id = %(run_id)s AND k.cycle = %(cycle)s AND k.seq > %(after)s
+             AND cur.outcome <> prev.outcome
+           ORDER BY k.seq LIMIT %(limit)s""",
+        {"run_id": run_id, "cycle": cycle, "after": after, "limit": limit + 1},
     )
+    changed, next_cursor = _page(rows, limit, "seq")
+    names = ("cycle", "key_masked", "from_outcome", "to_outcome")
+    return [{name: row[name] for name in names} for row in changed], next_cursor
+
+
+async def count_outcome_changes(conn: Conn, run_id: str, cycle: int) -> int:
+    """How many of the cycle's keys have an outcome that differs from the cycle before's: the cycle's
+    results are read once, and each key's result of the cycle before by key."""
+    if cycle <= 1:
+        return 0
+    return await _value(
+        conn,
+        """SELECT count(*)
+           FROM ds.results cur CROSS JOIN LATERAL (
+               SELECT r.outcome FROM ds.results r
+               WHERE (r.run_id, r.cycle, r.key_masked) = (cur.run_id, cur.cycle - 1, cur.key_masked)
+               OFFSET 0) prev
+           WHERE cur.run_id = %s AND cur.cycle = %s AND cur.outcome <> prev.outcome""",
+        (run_id, cycle),
+    )
+
+
+async def outcome_changes(conn: Conn, run_id: str, cycle: int | None = None) -> list[Row]:
+    """Every row of ``list_outcome_changes`` for one cycle, read a page at a time."""
+    return await pages(list_outcome_changes, conn, run_id, await _current(conn, run_id, cycle))
 
 
 # -- chat, LLM calls, audit -------------------------------------------------------------------
@@ -1465,6 +1527,29 @@ async def insert_llm_call(conn: Conn, session_id: str | None, call: Mapping[str,
         ),
     )
     return call_id
+
+
+async def chat_tokens(conn: Conn, run_id: str, actor: str) -> dict[str, int]:
+    """The tokens the stored model calls of chats were charged, by the budget that bounds them: those of
+    every chat about the run (``per_run_tokens``), and those of the chats ``actor`` started, in the last 24
+    hours (``per_actor_tokens_per_day``). A call is charged its ``usage.charged``, or where a row holds
+    none its reported input and output; a refused call holds neither."""
+    row = await _row(
+        conn,
+        """SELECT coalesce(sum(t.tokens) FILTER (WHERE s.run_id = %(run)s), 0) AS per_run_tokens,
+                  coalesce(sum(t.tokens) FILTER (
+                      WHERE s.created_by = %(actor)s AND c.created_at > now() - interval '24 hours'
+                  ), 0) AS per_actor_tokens_per_day
+           FROM ds.llm_calls c JOIN ds.chat_sessions s USING (session_id)
+           CROSS JOIN LATERAL (SELECT coalesce(
+               (c.usage->>'charged')::bigint,
+               coalesce((c.usage->>'input')::bigint, 0) + coalesce((c.usage->>'output')::bigint, 0)
+           ) AS tokens) t
+           WHERE s.run_id = %(run)s OR s.created_by = %(actor)s""",
+        {"run": run_id, "actor": actor},
+    )
+    assert row is not None  # an aggregate without GROUP BY returns one row
+    return {name: int(value) for name, value in row.items()}
 
 
 # -- users, sessions, API tokens ---------------------------------------------
@@ -2707,6 +2792,113 @@ async def cycle_adjudication(conn: Conn, run_id: str, cycle: int, adjudication_i
         conn,
         "SELECT * FROM ds.adjudications WHERE adjudication_id = %s AND run_id = %s AND cycle = %s",
         (adjudication_id, run_id, cycle),
+    )
+
+
+# A finding ``f``'s severity as ``reports.data.rank`` ranks it: CRITICAL 4 to INFO 0, none 0.
+_RANK: LiteralString = """CASE f.severity WHEN 'CRITICAL' THEN 4 WHEN 'HIGH' THEN 3 WHEN 'MEDIUM' THEN 2
+    WHEN 'LOW' THEN 1 ELSE 0 END"""
+# A key's findings ``f`` in the order whose first with a root cause names its primary one
+# (``adjudicate.primary_root_cause``): unsuppressed above INFO, then suppressed, then the rest; the most
+# severe first; then by pointer, compared by code point, and in finding order.
+_PRIMARY_ORDER: LiteralString = f"""CASE WHEN f.suppressed THEN 1 WHEN {_RANK} > 0 THEN 0 ELSE 2 END,
+    {_RANK} DESC, f.json_pointer COLLATE "C", f.seq"""
+# A key ``k`` hashed with ``%(salt)s`` as ``adjudicate._hash`` hashes it.
+_SHEET_DIGEST: LiteralString = "sha256(convert_to(%(salt)s || chr(31) || k.key_masked, 'UTF8'))"
+
+
+async def adjudication_causes(conn: Conn, run_id: str, cycle: int) -> list[Row]:
+    """Each root cause the cycle's findings name (``root_cause_id``; an empty one names none), the highest
+    rank of their severities (``severity``) and how many keys hold it (``spread``): one row per root
+    cause."""
+    return await _rows(
+        conn,
+        f"""SELECT f.root_cause_id, max({_RANK}) AS severity, count(DISTINCT f.key_masked) AS spread
+            FROM ds.findings f WHERE f.run_id = %s AND f.cycle = %s AND f.root_cause_id <> ''
+            GROUP BY f.root_cause_id""",  # noqa: S608 - fixed SQL fragments only
+        (run_id, cycle),
+    )
+
+
+async def adjudication_draw(
+    conn: Conn, run_id: str, cycle: int, *, salt: str, limit: int, match_quota: int, prefetch: int
+) -> list[Row]:
+    """The keys a reviewer sheet's draw chooses among, in one statement that reads the cycle's results and
+    its findings with a root cause once: each key with its ``outcome``, its primary root cause
+    (``primary_cause``) and its ``digest`` under ``salt``. Its joins are hash or merge joins whatever rows
+    the planner expects (``enable_nestloop`` off until the caller's transaction ends, which holds this
+    statement alone): a nested loop over the cycle's rows is quadratic. Rows by ``kind``, each in digest
+    order: ``first`` (of each root cause, the first key whose primary root cause it is), ``holding`` (of
+    each root cause that is no key's primary one, the first ``prefetch`` keys holding it), ``outcome`` (of
+    MATCH the first ``match_quota`` keys, of each other outcome the first) and ``stratum`` (the first
+    ``limit`` keys taken in turn from each stratum, outcome and primary root cause: the first key of each
+    stratum by name, then the second, and so on; with its ``stratum`` and ``place`` in it)."""
+    await conn.execute("SELECT set_config('enable_nestloop', 'off', true)")
+    return await _rows(
+        conn,
+        f"""WITH keyed AS MATERIALIZED (
+                SELECT k.key_masked, k.outcome::text AS outcome, p.primary_cause, {_SHEET_DIGEST} AS digest,
+                       k.outcome || '/' || coalesce(p.primary_cause, '-') AS stratum
+                FROM ds.results k LEFT JOIN (
+                    SELECT DISTINCT ON (f.key_masked) f.key_masked, f.root_cause_id AS primary_cause
+                    FROM ds.findings f
+                    WHERE f.run_id = %(r)s AND f.cycle = %(c)s AND f.root_cause_id <> ''
+                    ORDER BY f.key_masked, {_PRIMARY_ORDER}) AS p USING (key_masked)
+                WHERE k.run_id = %(r)s AND k.cycle = %(c)s),
+            held AS MATERIALIZED (
+                SELECT DISTINCT f.key_masked, f.root_cause_id FROM ds.findings f
+                WHERE f.run_id = %(r)s AND f.cycle = %(c)s AND f.root_cause_id <> ''
+                  AND f.root_cause_id NOT IN (
+                      SELECT primary_cause FROM keyed WHERE primary_cause IS NOT NULL))
+            (SELECT DISTINCT ON (primary_cause) 'first' AS kind, primary_cause AS root_cause_id, key_masked,
+                    outcome, primary_cause, digest, NULL::text AS stratum, NULL::bigint AS place
+             FROM keyed WHERE primary_cause IS NOT NULL
+             ORDER BY primary_cause, digest, key_masked COLLATE "C")
+            UNION ALL
+            (SELECT 'holding', root_cause_id, key_masked, outcome, primary_cause, digest, NULL, NULL
+             FROM (SELECT h.root_cause_id, k.*,
+                          row_number() OVER (PARTITION BY h.root_cause_id
+                                             ORDER BY k.digest, k.key_masked COLLATE "C") AS place
+                   FROM held h JOIN keyed k USING (key_masked)) AS h
+             WHERE place <= %(prefetch)s)
+            UNION ALL
+            (SELECT 'outcome', NULL, key_masked, outcome, primary_cause, digest, NULL, NULL
+             FROM (SELECT k.*, row_number() OVER (PARTITION BY outcome
+                                                  ORDER BY digest, key_masked COLLATE "C") AS place
+                   FROM keyed k) AS k
+             WHERE place <= CASE WHEN outcome = 'MATCH' THEN %(match_quota)s ELSE 1 END)
+            UNION ALL
+            (SELECT 'stratum', NULL, key_masked, outcome, primary_cause, digest, stratum, place
+             FROM (SELECT k.*, row_number() OVER (PARTITION BY stratum
+                                                  ORDER BY digest, key_masked COLLATE "C") AS place
+                   FROM keyed k) AS k
+             ORDER BY place, stratum COLLATE "C" LIMIT %(limit)s)""",  # noqa: S608 - fixed SQL fragments only
+        {"r": run_id, "c": cycle, "salt": salt, "limit": limit, "match_quota": match_quota,
+         "prefetch": prefetch},
+    )  # fmt: skip
+
+
+async def adjudication_holders(
+    conn: Conn, run_id: str, cycle: int, root_cause_id: str, *, salt: str, limit: int
+) -> list[Row]:
+    """The first ``limit`` keys in digest order of those holding ``root_cause_id``, as
+    ``adjudication_draw`` gives a key. The root cause's findings are read by its index, and each of its
+    keys' result and findings by key."""
+    return await _rows(
+        conn,
+        f"""SELECT k.key_masked, r.outcome, p.primary_cause, {_SHEET_DIGEST} AS digest
+            FROM (SELECT DISTINCT f.run_id, f.cycle, f.key_masked FROM ds.findings f
+                  WHERE f.run_id = %(r)s AND f.cycle = %(c)s AND f.root_cause_id = %(rc)s) AS k
+            CROSS JOIN LATERAL (
+                SELECT r.outcome::text AS outcome FROM ds.results r
+                WHERE (r.run_id, r.cycle, r.key_masked) = (k.run_id, k.cycle, k.key_masked) OFFSET 0) r
+            CROSS JOIN LATERAL (
+                SELECT f.root_cause_id AS primary_cause FROM ds.findings f
+                WHERE (f.run_id, f.cycle, f.key_masked) = (k.run_id, k.cycle, k.key_masked)
+                  AND f.root_cause_id <> ''
+                ORDER BY {_PRIMARY_ORDER} LIMIT 1) p
+            ORDER BY digest, k.key_masked COLLATE "C" LIMIT %(limit)s""",  # noqa: S608 - fixed SQL fragments only
+        {"r": run_id, "c": cycle, "rc": root_cause_id, "salt": salt, "limit": limit},
     )
 
 

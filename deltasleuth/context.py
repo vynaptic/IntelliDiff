@@ -143,11 +143,14 @@ class Context:
         self._sealers.pop(run_id, None)
 
     async def spec(self, conn: repo.Conn, spec_id: int, *, live: bool = False) -> CompiledSpec:
-        """A stored spec, compiled. ``live`` also checks it against today's targets, as calling them
-        needs; reading a finished run must not, so removing a target never hides its history."""
+        """A stored spec, compiled. ``live`` also checks it against today's targets (a change another
+        process made to the product's list taken in first), as calling them needs; reading a finished run
+        must not, so removing a target never hides its history."""
         row = await repo.get_spec(conn, spec_id)
         if row is None:
             raise LookupError(f"spec {spec_id} not found")
+        if live:
+            product.follow(self)
         return compile_spec(row["body"], targets=self.targets if live else None)
 
     def declared(self, spec: CompiledSpec) -> dict[str, Any]:

@@ -110,7 +110,7 @@ Later, in the same folder:
    - A database: `dsn_ref` for PostgreSQL; `engine: mysql` or `engine: oracle` with `host`, `port`, `user`, `password_ref` and `tls_ca_ref`.
    - The private-network opt-in: a loopback, private or link-local address is refused unless the target sets `allow_private_network: true`. A service on the host itself is `host.docker.internal`.
    - In the product: on the Targets screen, "Declare an endpoint" adds a service without a restart. Under OIDC, an `admin` who signed in within the last 15 minutes may do so; in a trial, a `spec_author` token may; with tokens at an `https` address nobody may. For an id declared in both places, the file wins.
-6. **Optional: name the model endpoint for AI chat.** Without it AI is off and everything else works. Copy `deploy/config/llm_profiles.example.yaml` to `deploy/config/llm_profiles.yaml`. Under `hosts`, list the endpoint's host as `internal`: only such a host serves the chat. In the profile `gateway`, set `base_url` and `model`; its `auth_ref` names the secret `llm_key` (step 3). In the settings, switch on `llm_profiles_file`, `llm_profile` and `llm_environment`. After the build of step 7, this command probes the profile.
+6. **Optional: name the model endpoint for AI chat.** Without it AI is off and everything else works. Copy `deploy/config/llm_profiles.example.yaml` to `deploy/config/llm_profiles.yaml`. Under `hosts`, list the endpoint's host as `internal`: only such a host serves the chat. In the profile `gateway`, set `base_url` and `model`; its `auth_ref` names the secret `llm_key` (step 3). In the settings, switch on `llm_profiles_file`, `llm_profile` and `llm_environment`. To chat about a run whose spec declares clear values or a business-code key, such as the practice runs, add `production_clear_declared` to the profile's `data_classes`. After the build of step 7, this command probes the profile.
    ```bash
    docker compose run --rm app ds llm-probe --profile gateway
    ```
@@ -138,7 +138,10 @@ Later, in the same folder:
     (umask 077; docker compose exec -T db pg_dump -U deltasleuth deltasleuth > ~/deltasleuth-backups/ds-$(date +%F).sql)
     (umask 077; docker compose run --rm --no-deps -T app tar -C /var/lib/deltasleuth/evidence --exclude=./spill -cf - . > ~/deltasleuth-backups/evidence-$(date +%F).tar)
     ```
-11. **Restore** into an empty database, with the app stopped. On a new host, first put back the copies of `deploy/config`, the site file and `.env`, create the secrets as in step 3 but with the backup's `kek` and `tokeniser` in place of new ones, and build the image. `<date>` is the day in the backup's file names. The six commands, in order: start the database alone; load the dump, whole or not at all; put the evidence back; check that every stored body opens, which prints no `error:` line; pause every schedule, so that no run starts by surprise; start the app. Targets declared in the product are not in the backup: declare them again.
+11. **Restore** into an empty database, with the app stopped. On a new host, first put back the copies of `deploy/config`, the site file and `.env`, create the secrets as in step 3 but with the backup's `kek` and `tokeniser` in place of new ones, and build the image. `<date>` is the day in the backup's file names. The six commands, in order: start the database alone; load the dump, whole or not at all; put the evidence back; check that every stored body opens: the `blobs:` line reads `0 missing, 0 corrupted, 0 unreadable` and no line starts with `error:`; pause every schedule, so that no run starts by surprise; start the app. Targets declared in the product are not in the backup: declare them again. On the host the backup came from, first stop the app and empty the database:
+    ```bash
+    docker compose stop app && docker compose exec -T db dropdb -U deltasleuth deltasleuth && docker compose exec -T db createdb -U deltasleuth deltasleuth
+    ```
     ```bash
     docker compose up -d db
     ```
@@ -157,14 +160,14 @@ Later, in the same folder:
     ```bash
     docker compose up -d
     ```
-12. **Update.** Take a backup first: it is the way back. Then fetch the newer source and rebuild. The app applies pending database migrations as it starts.
+12. **Update.** Take a backup first: it is the way back. Then fetch the newer source and rebuild. The app applies pending database migrations as it starts. To go back, check out the older source, rebuild its image, and restore the backup as in step 11. Under single sign-on, a stored spec whose side has a `map`, or a `select` of part of the answer, needs a new approval that covers `transforms` before its next run or resume.
     ```bash
     git pull
     ```
     ```bash
     docker compose up -d --build
     ```
-13. **Check health and read the logs.** The first command answers with the status, whether AI is on and the sign-in mode. The second shows the app's newest lines: a configuration problem stops the app with one line that starts `error:`. After a change to a settings file or to a secret's content, run `docker compose restart app`; after a change to the site file, run `docker compose up -d`.
+13. **Check health and read the logs.** The first command answers with the status, whether AI is on and the sign-in mode. The second shows the app's newest lines: a configuration problem stops the app with one line that starts `error:`. Each log line has its time, level and logger; audit rows are JSON lines on standard output. A failed run's error names its type and where in the code it was raised, never its message, and a 500's log line names the request id its response carried. After a change to a settings file or to a secret's content, run `docker compose restart app`; after a change to the site file, run `docker compose up -d`.
     ```bash
     curl -fsS http://127.0.0.1:8000/v1/health
     ```

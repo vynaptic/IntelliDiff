@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from deltasleuth.agent import prompt
 from deltasleuth.agent.tools import cause_facts, tools_for
+from deltasleuth.api.routes.chat import ASK_LIMIT, MAX_QUESTION
 from deltasleuth.store import repo
 
 from .conftest import append_chat, audited
@@ -62,6 +63,67 @@ def test_a_key_scoped_session_is_answered_by_the_agent(
         assert client.post("/v1/chat/sessions", json=unknown_key).status_code == 404
         assert client.get("/v1/chat/sessions/S-0000").status_code == 404
         assert audit(client) == ["chat.create", "chat.ask"]
+
+
+def test_a_question_over_the_cap_is_refused_before_anything_is_stored(
+    open_client: Any, stub: Any, seed: Any, audit: Any
+) -> None:
+    asked: list[int] = []
+
+    async def answer(ctx: Any, session_id: str, question: str, who: Any, about: Any) -> None:
+        asked.append(len(question))
+        await append_chat(ctx, session_id, "user", question)
+
+    stub("deltasleuth.agent.loop", answer=answer)
+    with open_client(ai=True) as client:
+        session = client.post("/v1/chat/sessions", json={"run_id": seed(client).run_id}).json()["session_id"]
+        path = f"/v1/chat/sessions/{session}"
+        refused = client.post(path + "/messages", json={"content": "x" * (MAX_QUESTION + 1)})
+        assert (refused.status_code, asked, client.get(path).json()["messages"]) == (422, [], [])
+        (issue,) = refused.json()["issues"]
+        assert (issue["pointer"], issue["code"]) == ("/body/content", "string_too_long")
+        assert "at most 4000 characters" in issue["message"] and "xxxx" not in refused.text  # no echo
+        assert audit(client) == ["chat.create"]  # nothing was asked
+        taken = client.post(path + "/messages", json={"content": "x" * MAX_QUESTION})
+        assert (taken.status_code, asked, MAX_QUESTION) == (200, [4000], 4000)
+
+
+def test_questions_are_rate_limited_per_asker(
+    open_client: Any, stub: Any, seed: Any, callers: Any, audit: Any
+) -> None:
+    """Both asking routes count against one rate of the caller: past it a 429 before anything is created,
+    stored or asked, while another caller is answered."""
+    asked: list[str] = []
+
+    async def answer(ctx: Any, session_id: str, question: str, who: Any, about: Any) -> None:
+        asked.append(who.actor)
+        await append_chat(ctx, session_id, "user", question)
+
+    async def sessions(ctx: Any) -> int:
+        async with ctx.pool.connection() as conn:
+            return (await (await conn.execute("SELECT count(*) FROM ds.chat_sessions")).fetchone())[0]
+
+    stub("deltasleuth.agent.loop", answer=answer)
+    with open_client(ai=True, auth={}) as client:
+        run_id, ctx = seed(client).run_id, client.app.state.ctx
+        ann, bob = (callers(client).token("viewer", name) for name in ("ann-bot", "bob-bot"))
+        mine = client.post("/v1/chat/sessions", json={"run_id": run_id}, headers=ann).json()["session_id"]
+        ask = lambda who: client.post(  # noqa: E731
+            f"/v1/chat/sessions/{mine}/messages", json={"content": "Why?"}, headers=who
+        )
+        explain = lambda who: client.post(  # noqa: E731
+            "/v1/chat/sessions/explain", json={"run_id": run_id}, headers=who
+        )
+        within = [ask(ann) if n % 2 else explain(ann) for n in range(ASK_LIMIT)]
+        assert sorted({r.status_code for r in within}) == [200, 201] and len(asked) == ASK_LIMIT
+        stored, asks = client.portal.call(sessions, ctx), audit(client).count("chat.ask")
+        over = [ask(ann), explain(ann)]
+        told = {"detail": f"rate limited: at most {ASK_LIMIT} chat questions a minute per caller"}
+        assert [(r.status_code, r.json()) for r in over] == [(429, told)] * 2
+        assert [r.headers["retry-after"] for r in over] == ["60", "60"]
+        assert (len(asked), client.portal.call(sessions, ctx)) == (ASK_LIMIT, stored)
+        assert audit(client).count("chat.ask") == asks == ASK_LIMIT
+        assert explain(bob).status_code == 201 and len(set(asked)) == 2  # another caller's own rate
 
 
 def test_a_question_the_model_never_received_is_not_audited(

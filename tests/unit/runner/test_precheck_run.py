@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 from pathlib import Path
@@ -37,6 +38,7 @@ from tests.conftest import TESTER
 
 from .conftest import Harness, OpenHarness, ScriptedService, doc, spec_text
 from .prechecking import FakeEngine, column, database_targets, ended, made, pairs, relation, table_spec
+from .test_failure import AT
 from .test_scan import databases  # noqa: F401 (a fixture)
 
 pytestmark = pytest.mark.db
@@ -399,8 +401,9 @@ async def test_fault_never_touches_a_run_or_the_sweep(
     assert run["status"] == "completed" and run["error"] is None
     assert "check" in calls and calls.count("due") > 1
     logged = [record.getMessage() for record in caplog.records]
-    assert f"table pre-check {made_['precheck_id']} pair 1 not settled: RuntimeError" in logged
-    assert "due table pre-checks not read: ValueError" in logged
+    unsettled = f"table pre-check {made_['precheck_id']} pair 1 not settled: RuntimeError"
+    assert [line for line in logged if re.fullmatch(re.escape(unsettled) + AT, line)]
+    assert [line for line in logged if re.fullmatch("due table pre-checks not read: ValueError" + AT, line)]
     assert "public.accounts" not in caplog.text  # a fault is logged by its class alone
     assert (await made(harness.ctx, str(made_["precheck_id"])))["finished_at"] is None
 

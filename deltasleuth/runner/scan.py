@@ -11,6 +11,11 @@ cursor opens (the schema guard's look): a table that is no longer what the run's
 there, and the pass ends without failing it (``drift.Tripped``). A pass with a file side takes the file
 reader's one sort before either snapshot opens, so no database's snapshot sits idle while the pass waits for
 another run's sort.
+
+A key the merge queues falls due ``recheck.delay`` and its jitter after the checkpoint that saves it, on the
+store's clock, so its per-key read is the read that confirms what the scan saw: a row that converged
+meanwhile reads MATCH. Where both sides read fixed files it is due at once: no later read of them answers
+otherwise.
 """
 
 from __future__ import annotations
@@ -39,6 +44,7 @@ from deltasleuth.connectors.tables import (
 from deltasleuth.context import Context
 from deltasleuth.core.types import Side, Target
 from deltasleuth.runner import drift, graph
+from deltasleuth.runner.recheck import RecheckPolicy
 from deltasleuth.runner.stop import STOP_PREFIX, StopConditions
 from deltasleuth.security.crypto import Sealer
 from deltasleuth.security.tokenise import mask_key
@@ -187,6 +193,10 @@ async def scan(ctx: Context, run_id: str) -> str | None:
         sealer = await ctx.sealer(conn, run_id)
     tables, state, cycle = unsealed(sealer, run["params"]), dict(run["scan"]), run["cycle"]
     conditions = StopConditions.from_spec(spec.raw)
+    # The seconds a key found waits for its per-key read; none where both sides read fixed files.
+    policy = RecheckPolicy.from_spec(spec.raw)
+    settles = any(tables[s.value].get("consistency") != "fixed" for s in Side)
+    wait = policy.wait_s if settles and (policy.delay_s or policy.jitter_s) else None
     async with ctx.pool.connection() as conn:  # read again even when identical: they did not match
         unmatched = await repo.unmatched_keys(conn, run_id, cycle - 1) if cycle > 1 else []
     before = {sealer.open_row(row)["key"] for row in unmatched}
@@ -228,7 +238,7 @@ async def scan(ctx: Context, run_id: str) -> str | None:
             reason = conditions.expired(run["started_at"], datetime.now(UTC))
             if merged != checkpointed and (reason or max(a.group_rows, b.group_rows) >= BATCH):
                 # A long group's counters and key are local to take(), never part of this checkpoint.
-                if not await _save(ctx, sealer, run_id, cycle, state, found, saved):
+                if not await _save(ctx, sealer, run_id, cycle, state, found, saved, wait):
                     raise _Stopped(None)
                 saved, checkpointed = saved + 1, merged
             if reason:
@@ -265,10 +275,12 @@ async def scan(ctx: Context, run_id: str) -> str | None:
                     and state["candidates"] + len(found) >= conditions.max_keys
                 ):
                     stop = STOP_PREFIX + "maxKeys"
-                    await _save(ctx, sealer, run_id, cycle, state, found, saved, done=True, stop_reason=stop)
+                    await _save(
+                        ctx, sealer, run_id, cycle, state, found, saved, wait, done=True, stop_reason=stop
+                    )
                     return None
                 if merged % BATCH == 0:
-                    if not await _save(ctx, sealer, run_id, cycle, state, found, saved):
+                    if not await _save(ctx, sealer, run_id, cycle, state, found, saved, wait):
                         return None
                     saved, checkpointed = saved + 1, merged
                     if reason := conditions.expired(run["started_at"], datetime.now(UTC)):
@@ -290,7 +302,7 @@ async def scan(ctx: Context, run_id: str) -> str | None:
         state["graph"], rows = await graph.analyse(ctx, spec, tables, state)
         async with ctx.pool.connection() as conn:
             await repo.replace_graph_diffs(conn, run_id, cycle, rows)
-    await _save(ctx, sealer, run_id, cycle, state, found, saved, done=True)
+    await _save(ctx, sealer, run_id, cycle, state, found, saved, wait, done=True)
     return None
 
 
@@ -302,19 +314,22 @@ async def _save(
     state: dict[str, Any],
     found: dict[str, str],
     saved: int,
+    wait: Callable[[str], float] | None = None,
     *,
     done: bool = False,
     stop_reason: str | None = None,
 ) -> bool:
     """Checkpoint the state with the keys found since checkpoint ``saved``, both sealed (a done scan
     resumes nowhere: its ``after`` is None), and a maxKeys ``stop_reason`` with the run's ``keys_cut``;
+    each key's per-key read falls due ``wait`` of its masked key seconds after the save (None: at once).
     False: the run stopped running, or another scanner saved since (a worker lock handover), so this one
     stops."""
     state["candidates"] += len(found)
     state["done"] = done
     stored = state | {"after": None if done else seal_after(sealer, cycle, state["after"])}
+    delays = None if wait is None else {masked: wait(masked) for masked in found.values()}
     async with ctx.pool.connection() as conn:
-        ok = await repo.save_scan(conn, run_id, cycle, stored, sealer.seal_keys(found), saved)
+        ok = await repo.save_scan(conn, run_id, cycle, stored, sealer.seal_keys(found), saved, delays)
         if ok and stop_reason:  # maxKeys: the run goes on, its keys found so far are still read
             await repo.set_run_status(conn, run_id, "running", when=("running",), stop_reason=stop_reason)
             await repo.set_keys_cut(conn, run_id, {"taken": state["candidates"]})

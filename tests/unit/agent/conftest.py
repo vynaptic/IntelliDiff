@@ -186,7 +186,8 @@ async def pool(pg_dsn: str) -> AsyncIterator[AsyncConnectionPool]:
 @pytest.fixture
 def make_ctx(pool: AsyncConnectionPool, tmp_path: Path) -> Callable[..., Context]:
     """``make_ctx(llm_server | None, trusted=True, **profile_fields)``: AI off without a server; an
-    untrusted host is external to the egress policy."""
+    untrusted host is external to the egress policy. The profile lists what a run of the agent spec
+    carries: tokenised values, and the values of the paths it declares clear."""
 
     def make(server: ScriptedLLM | None = None, *, trusted: bool = True, **fields: Any) -> Context:
         settings = Settings("file:/unused", tmp_path / "evidence", tmp_path, tmp_path / "targets.yaml",
@@ -195,8 +196,8 @@ def make_ctx(pool: AsyncConnectionPool, tmp_path: Path) -> Callable[..., Context
         if server is not None:
             profile = {
                 "dialect": server.dialect, "base_url": server.base_url, "model": "m",
-                "data_classes": ["production_tokenised"], "environments": ["test"],
-                "capabilities": {"tool_calling": True},
+                "data_classes": ["production_tokenised", "production_clear_declared"],
+                "environments": ["test"], "capabilities": {"tool_calling": True},
             } | fields  # fmt: skip
             hosts = {"127.0.0.1": "internal"} if trusted else {}
             llm = parse_profiles({"hosts": hosts, "profiles": {PROFILE: profile}})
@@ -216,11 +217,16 @@ class Seeded:
 
 
 async def seed(
-    ctx: Context, note_b: str = "same", wide: int = 0, scan: dict[str, Any] | None = None
+    ctx: Context,
+    note_b: str = "same",
+    wide: int = 0,
+    scan: dict[str, Any] | None = None,
+    doc: dict[str, Any] = SPEC_DOC,
 ) -> Seeded:
     """A batch run of two keys compared by the engine: C1001 differs in email, total and note, and
-    has ``wide`` more fields on side B only; with ``scan``, the run's table scan state."""
-    spec = compile_spec(SPEC_DOC, targets=ctx.targets)
+    has ``wide`` more fields on side B only; with ``scan``, the run's table scan state; under ``doc``,
+    which declares total and note clear unless given."""
+    spec = compile_spec(doc, targets=ctx.targets)
     extra = {f"x{i}": i for i in range(wide)}  # after note and total: their findings come first
     docs = {
         RAW_KEY: ({"id": RAW_KEY, "email": RAW_EMAIL, "total": 10, "note": "same"},

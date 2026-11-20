@@ -28,7 +28,7 @@ from deltasleuth.profiler import bootstrap
 from deltasleuth.profiler.draft import render_yaml
 from deltasleuth.runner.compare import connect
 from deltasleuth.runner.keys import normalise_keys
-from deltasleuth.security.tokenise import Tokeniser, is_token, mask_key, mask_raw
+from deltasleuth.security.tokenise import Tokeniser, is_stand_in, mask_key, mask_raw
 from deltasleuth.store import repo
 
 router = APIRouter()
@@ -103,7 +103,7 @@ def joined(form: Form) -> Any:
     key = doc.get("key") if isinstance(doc, dict) else None
     source = key.get("source") if isinstance(key, dict) else None
     keys = source.get("keys") if isinstance(source, dict) else None
-    if isinstance(keys, list) and any(isinstance(k, str) and is_token(k) for k in keys):
+    if isinstance(keys, list) and any(isinstance(k, str) and is_stand_in(k) for k in keys):
         raise HTTPException(422, STAND_INS)
     return doc
 
@@ -206,16 +206,16 @@ async def list_specs(ctx: Ctx, who: Viewer) -> Response:
 
 @router.get("/specs/{spec_id}")
 async def get_spec(ctx: Ctx, who: Viewer, spec_id: int, form: bool = False) -> Response:
-    """The stored spec, with who stored it by name; its inline keys are shown as runs show them, masked
-    by ``key.class``. ``yaml`` is that body as YAML under two comment lines: the stored document, not the
-    upload's text, which is not kept. ``form=1`` adds ``form``: that body as the builder's form
-    (``split``), where it has one."""
+    """The stored spec, with who stored it by name; its inline keys are shown as business codes or, of
+    any other ``key.class``, by their place in the list (``masked_body``). ``yaml`` is that body as YAML
+    under two comment lines: the stored document, not the upload's text, which is not kept. ``form=1`` adds
+    ``form``: that body as the builder's form (``split``), where it has one."""
     async with ctx.pool.connection() as conn:
         row = need(await repo.get_spec(conn, spec_id), f"spec {spec_id}")
         spec = await ctx.spec(conn, spec_id)
         by = row["created_by"]  # None before identities were recorded
         names = await repo.actor_names(conn, [by]) if by else {}
-    body = masked_body(row["body"], spec, ctx.tokeniser)
+    body = masked_body(row["body"], spec)
     header = (
         f"{row['name']} {row['version']} (spec {spec_id}), content hash {row['content_hash']}",
         "As stored, parsed: the upload's comments and key order are not kept; inline keys are "

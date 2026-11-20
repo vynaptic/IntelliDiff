@@ -189,12 +189,12 @@ async def test_backup_before_010_keeps_id(pg_server: str, pg_dsn: str) -> None:
     async with _copied(pg_server, pg_dsn) as backup:
         live = AsyncConnectionPool(pg_dsn, open=False)
         await live.open(wait=True)
-        assert await migrate(live) == [10, 11, 12, 13, 14, 15, 16, 17]
+        assert await migrate(live) == [10, 11, 12, 13, 14, 15, 16, 17, 18]
         installation_id = await _installation(live)
         data = licence_file(installation_id)
         assert (await licence.install(_ctx(live), data, who=TESTER))["installed"]
         await live.close()
-        assert await migrate(backup) == [10, 11, 12, 13, 14, 15, 16, 17]  # the restore's first command
+        assert await migrate(backup) == [10, 11, 12, 13, 14, 15, 16, 17, 18]  # the restore's first command
         assert await _installation(backup) == installation_id
         installed = await licence.install(_ctx(backup), data, who=TESTER)
     assert (installed["installed"], installed["applies"]) == (True, "now")
@@ -212,4 +212,4 @@ async def test_store_at_010_opens_with_001_to_009_files(
     assert await migrate(pool) == []
     async with pool.connection() as conn:
         assert await _all(conn, "SELECT count(*) FROM ds.audit_log") == before
-        assert await _all(conn, "SELECT max(version) FROM ds.schema_version") == [(17,)]
+        assert await _all(conn, "SELECT max(version) FROM ds.schema_version") == [(18,)]

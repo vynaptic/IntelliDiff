@@ -4,7 +4,7 @@ Every tool is bound to the session's run: the model cannot name another run or s
 about run X can only cite run X. Every output picks its fields by name, so only masked keys and
 values reach a model (raw keys stay sealed in repo rows); long text cells are cut, so a turn
 fits the profile's budgets. ``compare_key`` re-compares a key of the run under the run's spec,
-through the runner, at most ``COMPARE_LIMIT`` times per session per minute.
+through the runner, at most ``COMPARE_LIMIT`` times a minute per asker over all their chats.
 
 The agent acts for the asker: the model is offered only the tools the asker's roles allow
 (``tools_for``), and ``run_tool`` refuses any other.
@@ -18,12 +18,15 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
+from deltasleuth import approvals
 from deltasleuth.auth.principal import Principal
 from deltasleuth.context import Context
 from deltasleuth.core import jsonio
 from deltasleuth.core.types import CompiledSpec, SideState
 from deltasleuth.llm.model import ToolSpec
+from deltasleuth.llm.profiles import Rate
 from deltasleuth.reports import accuracy
+from deltasleuth.security.policy import BUSINESS_CODE
 from deltasleuth.security.tokenise import mask_document, mask_finding
 from deltasleuth.store import repo
 from deltasleuth.store.repo import Conn
@@ -33,7 +36,7 @@ DEFAULT_FINDINGS = 20  # keeps a turn's growing history inside the per-call inpu
 MAX_DOC_BYTES = 4096
 MAX_CELL_CHARS = 512  # one value cell
 TOP_CAUSES = 10
-COMPARE_LIMIT = 10  # compare_key calls per session per minute
+COMPARE_LIMIT = 10  # compare_key calls a minute per caller
 
 _RUN = (
     "run_id", "spec_id", "spec_name", "spec_version", "mode", "status", "cycle", "stop_reason", "counters",
@@ -68,7 +71,7 @@ class Scope:
 
     run_id: str
     who: Principal  # the asker, ``via`` the session
-    compares: int = 0  # compare_key calls made in the last minute
+    compares: Rate | None = None  # what compare_key counts against, by actor; None: the caller limits it
 
 
 def _tool(name: str, description: str, required: tuple[str, ...], **properties: Any) -> ToolSpec:
@@ -96,6 +99,13 @@ TOOLS = (
 )  # fmt: skip
 NEEDS = {"get_run_summary": "viewer", "get_findings": "viewer", "get_observations": "viewer",
          "compare_key": "operator"}  # fmt: skip
+
+
+def clear_declared(spec: CompiledSpec) -> bool:
+    """Whether the tool results of a run of ``spec`` carry raw values: those of a path the spec declares
+    clear or leaves unlisted under ``unlisted: clear``, or a business-code key, which is shown as it is."""
+    declared = {"clear", "unlisted_clear"} & set(approvals.needs(spec))
+    return bool(declared) or spec.key.value_class == BUSINESS_CODE
 
 
 def tools_for(who: Principal) -> tuple[ToolSpec, ...]:
@@ -194,13 +204,12 @@ async def _observations(ctx: Context, scope: Scope, key: str) -> Any:
 
 
 async def _compare_key(ctx: Context, scope: Scope, key: str) -> Any:
-    from deltasleuth.approvals import ApprovalRequired
     from deltasleuth.connectors.tables import Unconnected
     from deltasleuth.licence import LicenceRefused
     from deltasleuth.runner import compare_one  # the runner is needed by this tool only
 
-    if scope.compares >= COMPARE_LIMIT:
-        raise ToolError(f"rate limited: at most {COMPARE_LIMIT} compare_key calls per session per minute")
+    if scope.compares is not None and not scope.compares.hit(scope.who.actor):
+        raise ToolError(f"rate limited: at most {COMPARE_LIMIT} compare_key calls a minute per caller")
     async with ctx.pool.connection() as conn:
         detail = await repo.get_key_detail(conn, scope.run_id, key)
         if detail is None:
@@ -209,10 +218,9 @@ async def _compare_key(ctx: Context, scope: Scope, key: str) -> Any:
         spec_id = (await repo.get_run(conn, scope.run_id))["spec_id"]
         spec = await ctx.spec(conn, spec_id)
         raw = (await ctx.sealer(conn, scope.run_id)).open_row(detail)["key"]
-    scope.compares += 1
     try:
         result = await compare_one(ctx, spec_id, raw, who=scope.who)
-    except (ApprovalRequired, LicenceRefused) as exc:  # no four-eyes approval, or the licence: it is told
+    except (approvals.ApprovalRequired, LicenceRefused) as exc:  # no four-eyes approval, or the licence
         raise ToolError(str(exc)) from None
     except Unconnected as exc:  # its message names the target's host, port and account: the model gets none
         raise ToolError(exc.brief) from None

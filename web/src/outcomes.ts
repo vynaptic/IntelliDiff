@@ -1,5 +1,5 @@
-/** What the Runs list and a run's page make of a run's counts: the outcome bar's segments, the one-line result
- *  and the tab the page opens on. Every count is the API's; nothing is judged here.
+/** What the Runs list and a run's page make of a run's counts: the outcome bar's segments, the one-line result,
+ *  the tab the page opens on and what the changes tab says it lists. Every count is the API's; nothing is judged here.
  *  Pure, so that Node runs its tests: it loads no other module. */
 
 // What does not match, worst first; an outcome this build does not know follows them, and the matches come last.
@@ -79,3 +79,14 @@ export function tabOf(query: Record<string, string>, mode: string): Tab {
   if (FINDING_FILTERS.some((name) => query[name])) return 'findings';
   return query.outcome ? 'keys' : 'differences';
 }
+
+/** The heading of the changes tab: it lists the keys of the cycle shown whose outcome differs from the cycle
+ *  before's, and a run's first cycle has none before it. */
+export const changesTitle = (cycle: number): string =>
+  cycle > 1 ? `Outcome changes from cycle ${cycle - 1} to cycle ${cycle}` : 'Outcome changes across cycles';
+
+/** What the changes tab says when it lists no key. */
+export const noChanges = (cycle: number): string =>
+  cycle > 1
+    ? `No key changed its outcome from cycle ${cycle - 1} to cycle ${cycle}.`
+    : "The run's first cycle has none before it to compare with.";

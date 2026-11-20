@@ -9,9 +9,11 @@ import asyncio
 import itertools
 import json
 import logging
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -102,9 +104,11 @@ async def test_a_scan_over_more_than_three_batches_completes_in_one_snapshot(
     saves: list[tuple[int, Any, int]] = []
     real_save = repo.save_scan
 
-    async def save(conn: repo.Conn, run_id: str, cycle: int, state: Any, keys: Any, saved: int) -> bool:
+    async def save(
+        conn: repo.Conn, run_id: str, cycle: int, state: Any, keys: Any, saved: int, delays: Any
+    ) -> bool:
         saves.append((saved, state["after"], len(keys)))
-        return await real_save(conn, run_id, cycle, state, keys, saved)
+        return await real_save(conn, run_id, cycle, state, keys, saved, delays)
 
     monkeypatch.setattr(scanning, "_snapshot", snapshot)
     monkeypatch.setattr(repo, "save_scan", save)
@@ -183,7 +187,7 @@ async def test_a_scan_stopped_before_the_end_is_not_signed_off(
     save_scan = repo.save_scan
 
     async def cancelled_meanwhile(conn: repo.Conn, run_id: str, cycle: int, *args: Any) -> bool:
-        if args[-1] == 1:  # between the first checkpoint and the second
+        if args[2] == 1:  # between the first checkpoint and the second
             await cancel_run(h.ctx, run_id, who=TESTER)
         return await save_scan(conn, run_id, cycle, *args)
 
@@ -240,6 +244,50 @@ async def test_a_new_store_s_first_cycle_end_analyses_its_tables(
             after = (await (await conn.execute(counted, (list(tables),))).fetchone())[0]  # type: ignore[index]
     assert run["status"] == "completed" and run["counters"]["by_outcome"]["MISMATCH"] == 2
     assert (before, after) == (0, 4)  # no statistics, then every table's
+
+
+@pytest.mark.parametrize("converges", [True, False], ids=["b converges", "b stays"])
+async def test_a_scanned_key_is_read_its_recheck_delay_after_the_scan_saw_it_differ(
+    open_harness: OpenHarness, databases: Callable[[str], str], tmp_path: Path, converges: bool
+) -> None:
+    """The per-key read of a key the scan found is its confirming read: it follows the scan by
+    ``recheck.delay``, so rows that reach side b within the delay read MATCH, and rows that still differ
+    are each a MISMATCH that one read confirms."""
+    dsns = {side: databases(seed) for side, seed in (("a", SEED), ("b", SEED + CHANGES))}
+    targets = {}
+    for side, dsn in dsns.items():
+        (tmp_path / f"dsn_{side}").write_text(dsn)
+        targets[f"db-{side}"] = {"dsn_ref": f"file:{tmp_path / f'dsn_{side}'}", "rate_per_s": 1000}
+    spec = SPEC | {"recheck": {"delay": "1s", "times": 1}}
+    async with open_harness(json.dumps({"targets": targets})) as h:
+        run_id = await create_run(h.ctx, await h.spec(json.dumps(spec)), "batch", who=TESTER)
+        stop = asyncio.Event()
+        worker = asyncio.create_task(run_worker(h.ctx, stop=stop))
+        try:
+            async with asyncio.timeout(30):
+                while not (await h.run(run_id))["scan"]["done"]:
+                    await asyncio.sleep(0.02)
+            await asyncio.sleep(0.3)  # several polls of the worker, well inside the delay
+            if converges:  # what side a already holds reaches side b
+                with psycopg.connect(dsns["b"], autocommit=True) as conn:
+                    conn.execute("UPDATE users SET email = 'u' || userid WHERE userid IN (7, 23)")
+            run = await h.wait(run_id)
+        finally:
+            stop.set()
+            await worker
+        results = await h.results(run_id)
+        reads = [obs for key in ("7", "23") for obs in await h.observations(run_id, key)]
+    read = ("MATCH", "provisional", 1) if converges else ("MISMATCH", "rechecked", 1)
+    assert run["status"] == "completed"
+    assert {key: (r["outcome"], r["confirmation"], r["revision"]) for key, r in results.items()} == {
+        "7": read,
+        "23": read,
+    }
+    scanned = datetime.fromisoformat(run["scan"]["last_at"])
+    assert len(reads) == 4  # one read a side and key: the delay adds none
+    # The scan saved its keys after its snapshots opened (last_at), by the store's clock: a margin for
+    # the two clocks.
+    assert min(obs["observed_at"] for obs in reads) - scanned >= timedelta(seconds=0.9)
 
 
 # --- the engine seam: the key order guard and the passes an engine's error ends ----------------------
@@ -310,8 +358,41 @@ async def test_keys_out_of_order_fail_the_run(
     opened = _played(monkeypatch, swapped)
     async with open_harness(_targets(databases, tmp_path)) as h:
         run = await _scanned(h)
-    assert (run["status"], run["error"]) == ("failed", "KeysOutOfOrder")  # on the first pass
+    where = r"runner/scan\.py:\d+ in head, from runner/scan\.py:\d+ in take, from runner/scan\.py:\d+ in scan"
+    assert run["status"] == "failed" and re.fullmatch(f"KeysOutOfOrder at {where}", run["error"])  # 1st pass
     assert opened == [0, 0] and (run["scan"]["matched"], run["scan"]["candidates"]) == (0, 0)
+
+
+async def test_a_run_an_engine_s_error_fails_shows_where_and_its_log_line_names_the_keys(
+    open_harness: OpenHarness,
+    databases: Callable[[str], str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A per-key read that meets a bug fails its run with the error's type and the frames of this package
+    it passed, never its message. The worker's log line says the same and names the masked keys of the
+    group that was read; the audit row keeps the type alone, which a notification sends."""
+
+    async def rows(self: Any, session: Any, side: tables.Plan, asked: Any) -> Any:
+        raise KeyError("MBR-0045123")  # a message may hold a key or a value
+
+    monkeypatch.setattr(postgresql.PostgreSQL, "rows", rows)
+    with caplog.at_level(logging.WARNING, logger="deltasleuth.runner.worker"):
+        async with open_harness(_targets(databases, tmp_path)) as h:
+            run = await _scanned(h)
+            async with h.ctx.pool.connection() as conn:
+                ended, _ = await repo.list_audit(conn, action="run.finished", obj=run["run_id"])
+    where = (
+        r"connectors/tables/connector\.py:\d+ in _rows, from connectors/tables/connector\.py:\d+ in _query,"
+        r" from connectors/[a-z/_]+\.py:\d+ in \w+"
+    )
+    assert run["status"] == "failed" and re.fullmatch(f"KeyError at {where}", run["error"])
+    assert [row["detail"] for row in ended] == [{"status": "failed", "reason": "KeyError"}]
+    failed = f"run {run['run_id']} failed: {run['error']}; keys "
+    said = [r.getMessage().removeprefix(failed) for r in caplog.records if r.getMessage().startswith(failed)]
+    assert said and all(re.fullmatch(r"\['(7|23)'(, '(7|23)')?\]", keys) for keys in said)
+    assert "MBR-0045123" not in run["error"] + caplog.text
 
 
 @pytest.mark.parametrize("first", ["below the bound", "the bound itself"])

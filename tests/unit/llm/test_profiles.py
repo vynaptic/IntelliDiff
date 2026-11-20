@@ -11,6 +11,7 @@ import pytest
 from deltasleuth.llm.model import DataClass, EgressDenied
 from deltasleuth.llm.policy import EgressPolicy, check_egress
 from deltasleuth.llm.profiles import (
+    STANDING,
     Budgets,
     Capabilities,
     Limits,
@@ -208,6 +209,31 @@ def test_strict_yaml(tmp_path: Path, text: str, match: str) -> None:
         load_profiles(path)
     with pytest.raises(ProfileError, match="cannot read"):
         load_profiles(tmp_path / "absent.yaml")
+
+
+def test_the_daily_budget_is_finite_unless_a_profile_lifts_it() -> None:
+    assert (Budgets().per_actor_tokens_per_day, Budgets().per_run_tokens) == (2_000_000, None)
+    assert STANDING == ("per_run_tokens", "per_actor_tokens_per_day")
+    lifted = _profile(budgets={"per_actor_tokens_per_day": None, "per_run_tokens": 500_000}).budgets
+    assert (lifted.per_actor_tokens_per_day, lifted.per_run_tokens) == (None, 500_000)
+    refused = _pointer(_doc(budgets={"per_actor_tokens_per_day": 0}))
+    assert refused == "/profiles/prof/budgets/per_actor_tokens_per_day"
+    assert _pointer(_doc(budgets={"per_actor_tokens": 5})) == "/profiles/prof/budgets/per_actor_tokens"
+
+
+def test_a_registry_holds_one_rate_per_name() -> None:
+    """As it holds one gate per profile: a rate counts over every question while the registry is loaded."""
+    registry = parse_profiles(_doc())
+    questions = registry.rate("questions", 2)
+    assert registry.rate("questions", 2) is questions and registry.rate("compare_key", 2) is not questions
+    assert [questions.hit("user:U-1") for _ in range(3)] == [True, True, False]
+    assert questions.hit("user:U-2") and parse_profiles(_doc()).rate("questions", 2).hit("user:U-1")
+
+
+def test_a_profile_lists_clear_declared_values_like_any_class() -> None:
+    listed = _profile(data_classes=["production_tokenised", "production_clear_declared"])
+    assert listed.data_classes == {DataClass.PRODUCTION_TOKENISED, DataClass.PRODUCTION_CLEAR_DECLARED}
+    assert _pointer(_doc(data_classes=["production_clear"])) == "/profiles/prof/data_classes/0"
 
 
 def _example(repo_root: Path, tmp_path: Path) -> Any:

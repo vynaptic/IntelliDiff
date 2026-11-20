@@ -23,13 +23,14 @@ from typer.testing import CliRunner
 from deltasleuth import licence, schedules
 from deltasleuth.cli.main import app
 from deltasleuth.core import jsonio
-from deltasleuth.runner import create_run, notify, runs, schedule, worker
+from deltasleuth.runner import create_run, notify, recheck, runs, schedule, worker
 from deltasleuth.store import repo
 from tests.conftest import TESTER, licensed
 
 from .conftest import TARGETS, UNAVAILABLE, Harness, OpenHarness, ScriptedService, doc, spec_text, until
 from .notifying import ended, hook, notifying, queued, receiving, rule, stall_in_digest, write
 from .scheduling import HOUR, MINUTE, anchored, audited, minute, missed, scheduled, shown, started
+from .test_failure import AT
 
 pytestmark = pytest.mark.db
 
@@ -82,14 +83,15 @@ async def test_a_recheck_s_jitter_comes_from_the_masked_key(
         spread.append(key_masked)
         return 0.0
 
-    monkeypatch.setattr(worker, "key_fraction", fraction)
+    monkeypatch.setattr(worker, "key_fraction", fraction)  # the pause between a slot's groups
+    monkeypatch.setattr(recheck, "key_fraction", fraction)  # a recheck's wait
     spec = spec_text(["K001"]).replace("class: business_code", "class: identifier")  # masked: a token
     spec = spec.replace("recheck: {delay: 0s,", "recheck: {delay: 0s, jitter: 1s,")
     service.both("K001", doc("K001"), doc("K001", status="NEW"))  # differs: a recheck is due
     run_id = await create_run(harness.ctx, await harness.spec(spec), "batch", who=TESTER)
     assert (await harness.finish(run_id))["status"] == "completed"
     [masked] = await harness.results(run_id)
-    assert masked != "K001" and "K001" not in spread and spread.count(masked) >= 2  # the recheck's too
+    assert masked != "K001" and "K001" not in spread and spread.count(masked) >= 3  # the recheck's too
 
 
 @pytest.mark.usefixtures("vendor_keys")
@@ -551,14 +553,15 @@ async def test_firing_fault_never_fails_a_run_or_the_sweep(
     with caplog.at_level(logging.WARNING):
         run_id = await create_run(harness.ctx, spec_id, "batch", who=TESTER)
         assert (await harness.finish(run_id))["status"] == "completed"
-        assert f"schedule {row['schedule_id']} not fired: RuntimeError" in caplog.messages
+        unfired = re.escape(f"schedule {row['schedule_id']} not fired: RuntimeError") + AT
+        assert [m for m in caplog.messages if re.fullmatch(unfired, m)]
         faults += [psycopg.errors.DataError("a held range no time"), KeyError("next_due")]
         monkeypatch.setattr(repo, "list_schedules", broken)  # nor does a fault of rezoning
         run_id = await create_run(harness.ctx, spec_id, "batch", who=TESTER)
         assert (await harness.finish(run_id))["status"] == "completed"
     monkeypatch.setattr(repo, "list_schedules", listed)
     for said in ("due schedules not read: DataError", "due schedules not read: KeyError"):
-        assert said in caplog.messages
+        assert [m for m in caplog.messages if re.fullmatch(said + AT, m)]
     assert "schedules not rezoned: RuntimeError" in caplog.messages and faults == []
     assert not [m for m in caplog.messages if m.startswith(("sweep failed", "worker stopped"))]
     assert await started(harness, row) == []  # and the time is left due

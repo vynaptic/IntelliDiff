@@ -234,19 +234,31 @@ def test_errors_are_json_and_point_at_the_problem(client: TestClient) -> None:
 
 @pytest.mark.parametrize("error", [RuntimeError, KeyError])  # a KeyError is a bug, not a 404
 def test_an_unexpected_error_is_a_500_without_its_details(
-    open_client: OpenClient, stub: Any, spec_yaml: str, error: type[Exception]
+    open_client: OpenClient,
+    stub: Any,
+    spec_yaml: str,
+    error: type[Exception],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """The response says nothing of the error; the server's line names the request id the response
+    carries, the error's type and where in the package it was raised, never its message."""
+
     async def compare_one(*_: Any, **__: Any) -> None:
         raise error("password=hunter2")
 
     stub("deltasleuth.runner.runs", compare_one=compare_one)
-    with open_client(raise_server_exceptions=False) as client:
-        spec_id = client.post("/v1/specs", content=spec_yaml).json()["spec_id"]
-        failed = client.post("/v1/compare", json={"spec_id": spec_id, "key": "K12345678"})
+    with caplog.at_level(logging.ERROR, logger="deltasleuth.api.app"):
+        with open_client(raise_server_exceptions=False) as client:
+            spec_id = client.post("/v1/specs", content=spec_yaml).json()["spec_id"]
+            failed = client.post("/v1/compare", json={"spec_id": spec_id, "key": "K12345678"})
     assert (failed.status_code, failed.json()) == (500, {"detail": "internal error"})
     assert failed.headers["x-content-type-options"] == "nosniff"
     assert failed.headers["cache-control"] == "no-store"  # the guard's headers, though sent past it
     assert failed.headers["x-request-id"].startswith("Q-")
+    [line] = [r for r in caplog.records if r.name == "deltasleuth.api.app"]
+    said = f"internal error request_id={failed.headers['x-request-id']}: {error.__name__} at api/routes/"
+    assert line.getMessage().startswith(said) and line.exc_info is None
+    assert "hunter2" not in line.getMessage() and "K12345678" not in line.getMessage()
 
 
 @pytest.mark.parametrize(

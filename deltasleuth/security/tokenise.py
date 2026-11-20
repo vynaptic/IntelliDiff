@@ -38,6 +38,7 @@ from deltasleuth.security.policy import (
     CLASS_ONLY,
     canonical_policy,
     member_class,
+    reads_as_data,
 )
 
 TOKEN_CHARS = 26
@@ -46,8 +47,7 @@ MIN_KEY_BYTES = 32
 _CLASS = re.compile(r"[a-z][a-z0-9_]*")  # the class and version must not break the token format
 _VERSION = re.compile(r"[A-Za-z0-9]+")
 _TOKEN = re.compile(rf"tok:{_CLASS.pattern}:{_VERSION.pattern}:[A-Z2-7]{{{TOKEN_CHARS}}}")
-_FIELD_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_-]{0,63}")  # a member name that may be a field's
-_DIGIT_HEAVY = re.compile(r"\d{3}|(?:\d\D*){4}")  # three digits in a row, or four in all: an identifier's
+_INLINE = re.compile(r"masked key [1-9][0-9]* of [1-9][0-9]*")  # an inline key's place in its list
 
 
 class TokeniserError(ValueError):
@@ -102,6 +102,20 @@ def is_token(text: str) -> bool:
     """Whether ``text`` has a token's form (``Tokeniser.token``), whichever key made it: a stand-in, never
     a value to send or to store as one."""
     return _TOKEN.fullmatch(text) is not None
+
+
+def inline_stand_ins(count: int) -> list[str]:
+    """What stands for the ``count`` inline keys of a stored spec whose key class is not a business code:
+    each key's place in the list and nothing of its text. Never a token: a token of a key someone typed
+    into a spec would say whether that text is a key of a run, or a value of the class, anywhere in the
+    installation."""
+    return [f"masked key {place} of {count}" for place in range(1, count + 1)]
+
+
+def is_stand_in(text: str) -> bool:
+    """Whether ``text`` stands for a key and is not one: a token's form (``is_token``) or an inline key's
+    place in its list (``inline_stand_ins``)."""
+    return is_token(text) or _INLINE.fullmatch(text) is not None
 
 
 def load_or_create_key(ref: str | os.PathLike[str]) -> bytes:
@@ -163,10 +177,6 @@ def _label(text: str, cls: str | None, tok: Tokeniser | None, key: str | None) -
     return tok.token(cls, text)
 
 
-def _name_class(spec: CompiledSpec, obj: Segments) -> str | None:
-    return canonical_policy(spec.security).name_class(obj)
-
-
 def mask_member_key(
     member_key: str, array_path: str, spec: CompiledSpec, tok: Tokeniser, *, key: str | None = None
 ) -> str:
@@ -191,7 +201,7 @@ def _published(pattern: str, security: SecurityPolicy) -> str:
     for seg in segments(pattern):
         if seg == DESC:
             raise PatternError(f"a descendant segment has no path-pattern form: {pattern!r}")
-        data = seg == WILD or policy.name_class(tuple(walked)) is not None
+        data = seg == WILD or policy.names(tuple(walked))(seg[1]) is not None
         out = member_pattern(out) if data else child_pattern(out, seg[1])
         walked.append(seg)
     return out
@@ -206,12 +216,13 @@ def mask_pointer(
     object for a name); with every class clear this is the differ's json_pointer. ``tok`` None
     renders protected segments as a non-token marker; ``key`` scopes class-only segments.
     """
+    policy = canonical_policy(spec.security)
     walked: list[Segment] = []
     masked: list[tuple[str, str]] = []
     for kind, text in parts:
         here, shown = tuple(walked), text
         if kind == "field":
-            shown = _label(text, _name_class(spec, here), tok, key)
+            shown = _label(text, policy.names(here)(text), tok, key)
             walked.append(name(text))
         elif kind == "member":
             shown = _label(text, member_class(here, spec), tok, key)
@@ -242,9 +253,11 @@ def _masker(
             masked = dict(sorted(masked.items()))  # masked-key order: both sides line up, raw order hidden
             return _as_array(masked, value.mode) if cells and value.mode != "keyed" else masked
         if isinstance(value, dict):
-            cls = policy.name_class(segs)
-            masked = {_label(k, cls, tok, key): walk(v, (*segs, name(k))) for k, v in value.items()}
-            return masked if cls is None else dict(sorted(masked.items()))
+            class_of = policy.names(segs)
+            classes = {k: class_of(k) for k in value}
+            masked = {_label(k, classes[k], tok, key): walk(v, (*segs, name(k))) for k, v in value.items()}
+            # masked-name order where a name is data: both sides line up, raw order hidden
+            return dict(sorted(masked.items())) if any(classes.values()) else masked
         if isinstance(value, list | tuple):
             return [walk(v, (*segs, WILD)) for v in value]
         # resolve_deep: a scalar where the spec protects descendants is that protected data.
@@ -323,17 +336,12 @@ def mask_document(doc: JSON, spec: CompiledSpec, tok: Tokeniser, *, key: str | N
 def mask_raw(doc: JSON, tok: Tokeniser) -> JSON:
     """A parsed answer that no spec classifies yet (an endpoint tried from the builder), with its structure
     and nothing else: every string a ``free_text`` token and every number a ``free_number`` token; booleans
-    and nulls stay. A member name stays when it reads as a field's (a letter or ``_``, then at most 63
-    letters, digits, ``_`` or ``-``) and not as data: by the profiler's rule (``profile.ID_LIKE``: digits,
-    an id, an e-mail address, a phone number), or by its digits (three in a row, or four in all: an account
-    or card number, however it is prefixed or dashed); else it is a ``free_text`` token. A name that is data
-    with fewer digits (``Smith``, ``acct_abcdef``) reads as a field's and stays. Equal values give equal
-    tokens, in every answer."""
-    from deltasleuth.profiler.profile import ID_LIKE  # here: the profiler takes a second to import
+    and nulls stay. A member name stays when it reads as a field's and not as data
+    (``policy.reads_as_data``); else it is a ``free_text`` token, as a name of an object no rule lists is
+    in a masked document. Equal values give equal tokens, in every answer."""
 
     def named(name: str) -> str:
-        data = ID_LIKE.fullmatch(name) or _DIGIT_HEAVY.search(name)
-        return name if _FIELD_NAME.fullmatch(name) and not data else tok.token("free_text", name)
+        return tok.token("free_text", name) if reads_as_data(name) else name
 
     def walk(value: JSON) -> JSON:
         if value is None or isinstance(value, bool):

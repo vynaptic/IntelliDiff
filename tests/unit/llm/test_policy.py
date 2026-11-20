@@ -69,6 +69,21 @@ def test_extra_class_needs_profile_listing_and_environment_approval() -> None:
     assert _reason(narrow, AGG, external_extra_classes={"aggregates"}) == "class_not_allowed"  # approved only
 
 
+def test_clear_declared_values_are_a_class_of_their_own() -> None:
+    """What a chat about a run that shows values clear carries: every profile has to list the class, and
+    an external one needs it approved beside production_tokenised, outside staging and prod."""
+    clear = TOK | {DataClass.PRODUCTION_CLEAR_DECLARED}
+    tokenised = _profile("models.internal.example", classes=("production_tokenised",))
+    assert _reason(tokenised, clear, "prod") == "class_not_allowed"  # an internal host lists it too
+    assert _reason(INTERNAL, clear, "prod") is None
+    assert _reason(EXTERNAL, clear) == "external_class"
+    assert _reason(EXTERNAL, clear, external_extra_classes={"production_tokenised"}) == "external_class"
+    both = {"production_tokenised", "production_clear_declared"}
+    assert _reason(EXTERNAL, clear, external_extra_classes=both) is None
+    assert _reason(EXTERNAL, clear, "prod", external_extra_classes=both) == "external_environment"
+    assert DataClass.PRODUCTION_CLEAR_DECLARED not in EXTERNAL_BASELINE
+
+
 def test_profile_lists_bound_every_profile() -> None:
     assert (
         _reason(_profile("models.internal.example", envs=("dev",)), SYN, "prod") == "environment_not_allowed"

@@ -17,6 +17,8 @@ profiles:
     # auth_header: api-key                     # a gateway that takes the key in another header
     # auth_scheme: Bearer                      # the value's prefix; omit it for a bare key
     data_classes: [synthetic, golden, schema_summary, aggregates, production_tokenised]
+    # add production_clear_declared to chat about runs whose spec shows values clear or has a
+    # business-code key, such as the practice runs: those values reach the model as they are
     environments: [dev, test, eval, staging, prod]
     capabilities: {tool_calling: true}         # the chat needs tool calling; the probe checks it
     budgets: {max_tool_calls: 8, max_input_tokens_per_call: 20000, max_wall_s: 60}

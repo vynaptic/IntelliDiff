@@ -11,7 +11,8 @@ the keys wait and are read: A then B, or B then A on a recheck pass, which ``con
 stored first read; a recheck reads no side of fixed files again, whose first observation stands. The group's
 observations, results, masked findings and next states (done, or a recheck due after ``recheck.delay`` +
 jitter) are saved in one transaction; a lost lease rolls it back, so a kill -9 costs at most the keys in
-flight and never duplicates a result.
+flight and never duplicates a result. A key a table scan queued falls due that long after the scan saved it,
+so its first usable per-key read is its confirming read and no second one follows.
 
 Politeness: one gate per target for the process (``ctx.gates``: rate budget, in-flight cap, and a breaker
 for each ``execution.circuitBreaker`` its specs declare, so a run is governed by its own spec's), at most
@@ -60,7 +61,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import hashlib
 import logging
 import os
 import secrets
@@ -99,9 +99,9 @@ from deltasleuth.runner.compare import (
     rederive_all,
     save_passes,
 )
-from deltasleuth.runner.cycle import due, fail_run, failure, finish_cycle
+from deltasleuth.runner.cycle import due, fail_run, finish_cycle, located
 from deltasleuth.runner.keys import KeyAuthRefused
-from deltasleuth.runner.recheck import RecheckPolicy, confirm, freeze
+from deltasleuth.runner.recheck import RecheckPolicy, confirm, freeze, key_fraction
 from deltasleuth.runner.runs import AUTH_PAUSE, KEY_PAUSE, pause_run, run_status, stop_run
 from deltasleuth.runner.scan import scan
 from deltasleuth.runner.stop import StopConditions, StopMonitor
@@ -126,12 +126,6 @@ class _LeaseLost(Exception):
     """Another worker holds the key now: this pass is rolled back."""
 
 
-def key_fraction(key_masked: str) -> float:
-    """A stable number in [0, 1) from the masked key (keyed by the tokeniser, so a stored due time
-    reveals nothing of the raw key): jitter spreads keys without randomness."""
-    return int.from_bytes(hashlib.sha256(key_masked.encode()).digest()[:8], "big") / 2**64
-
-
 @dataclass
 class _Run:
     spec: CompiledSpec
@@ -141,7 +135,7 @@ class _Run:
     policy: RecheckPolicy
     monitor: StopMonitor
     lanes: asyncio.Semaphore | None  # live runs: execution.concurrency groups of keys in flight
-    scanned: bool = False  # its keys come from a table scan, which read each of them once already
+    scanned: bool = False  # its keys come from a table scan, which saw each differ recheck.delay before
     halted: bool = False  # this process paused or stopped the run
 
 
@@ -269,7 +263,7 @@ class _Worker:
                 log.warning("run %s paused at its roll: %s", run["run_id"], exc)
                 await pause_run(self.ctx, run["run_id"], reason=AUTH_PAUSE, who=WORKER)
             except Exception as exc:  # a bug, or data the store refuses: this run only
-                log.warning("run %s cannot end its cycle: %s", run["run_id"], failure(exc))
+                log.warning("run %s cannot end its cycle: %s", run["run_id"], located(exc))
                 await fail_run(self.ctx, run["run_id"], exc, who=WORKER)
         self._notify()
         if self.measuring is None:
@@ -291,7 +285,7 @@ class _Worker:
         except psycopg.OperationalError:
             raise  # the store is unreachable: the sweep tries again
         except Exception as exc:
-            log.warning("due schedules not read: %s", failure(exc))
+            log.warning("due schedules not read: %s", located(exc))
             return None
 
     async def _unguarded(self, conn: repo.Conn, active: list[repo.Row]) -> dict[str, bool]:
@@ -331,7 +325,7 @@ class _Worker:
         except psycopg.OperationalError:
             raise  # the store is unreachable: the sweep tries again
         except Exception as exc:
-            log.warning("due table pre-checks not read: %s", failure(exc))
+            log.warning("due table pre-checks not read: %s", located(exc))
             return None
 
     def _check_due(self, due: list[repo.Row] | None) -> None:
@@ -366,7 +360,7 @@ class _Worker:
                     await repo.requeue_prechecks(conn, [key])
             raise
         except Exception as exc:
-            log.warning("table pre-check %s pair %s not settled: %s", *key, failure(exc))
+            log.warning("table pre-check %s pair %s not settled: %s", *key, located(exc))
             await asyncio.sleep(self.settings.lease_seconds)
         finally:
             holding.cancel()
@@ -391,7 +385,7 @@ class _Worker:
         try:
             retry = await schedule.fire(self.ctx, schedule_id, queued=queued, tried=tried)
         except Exception as exc:
-            log.warning("schedule %s not fired: %s", schedule_id, failure(exc))
+            log.warning("schedule %s not fired: %s", schedule_id, located(exc))
             self.waiting[schedule_id] = time.monotonic() + schedule.RETRY_SLOW_S  # its count stands
             return
         finally:
@@ -407,7 +401,7 @@ class _Worker:
         """Start the notifier when none runs (with ``notify`` absent, once): no query, nothing awaited."""
         ended = self.notifying
         if ended is not None and ended.done() and not ended.cancelled() and (exc := ended.exception()):
-            log.warning("notifier stopped: %s", failure(exc))
+            log.warning("notifier stopped: %s", located(exc))
         if ended is None or (ended.done() and self.ctx.settings.notify is not None):
             self.notifying = asyncio.create_task(self.notifier.run())
 
@@ -421,7 +415,7 @@ class _Worker:
             log.warning("schema guard of run %s paused it: %s", run_id, code(exc))
             await pause_run(self.ctx, run_id, reason=AUTH_PAUSE, who=WORKER)
         except Exception as exc:
-            log.warning("schema guard of run %s postponed: %s", run_id, failure(exc))
+            log.warning("schema guard of run %s postponed: %s", run_id, located(exc))
             await asyncio.sleep(self.settings.lease_seconds)
         finally:
             self.guards.pop(run_id, None)
@@ -456,7 +450,7 @@ class _Worker:
                 if self.stalled[run_id]:
                     await asyncio.sleep(self.settings.lease_seconds)
             elif not (isinstance(exc, drift.DENIED) and await drift.failed(self.ctx, run_id)):
-                log.warning("scan of run %s failed: %s", run_id, failure(exc))
+                log.warning("scan of run %s failed: %s", run_id, located(exc))
                 await fail_run(self.ctx, run_id, exc, who=WORKER)
         finally:
             self.scans.pop(run_id, None)
@@ -484,7 +478,7 @@ class _Worker:
             await asyncio.sleep(self.settings.lease_seconds)
         except Exception as exc:
             if not (isinstance(exc, drift.DENIED) and await drift.failed(self.ctx, run_id)):
-                log.warning("draw of run %s failed: %s", run_id, failure(exc))
+                log.warning("draw of run %s failed: %s", run_id, located(exc))
                 await fail_run(self.ctx, run_id, exc, who=WORKER)
         finally:
             self.draws.pop(run_id, None)
@@ -496,10 +490,10 @@ class _Worker:
         try:
             await census.record(self.ctx, run_id)
         except RowsMoved as exc:
-            log.warning("census of run %s failed: %s", run_id, failure(exc))
+            log.warning("census of run %s failed: %s", run_id, located(exc))
             await fail_run(self.ctx, run_id, exc, who=WORKER)
         except Exception as exc:
-            log.warning("census of run %s not recorded: %s", run_id, failure(exc))
+            log.warning("census of run %s not recorded: %s", run_id, located(exc))
             await asyncio.sleep(self.settings.lease_seconds)
         finally:
             self.censuses.pop(run_id, None)
@@ -510,7 +504,7 @@ class _Worker:
         try:
             await manifest.call(manifest.sweep, self.ctx.settings.spill_dir)
         except Exception as exc:  # the next hour tries again
-            log.warning("spill not swept: %s", failure(exc))
+            log.warning("spill not swept: %s", located(exc))
         try:
             async with self.ctx.pool.connection() as conn:
                 if not await repo.grace_over(conn, GRACE_DAYS):
@@ -522,7 +516,7 @@ class _Worker:
         except purge.PurgeBusy:
             log.info("purge skipped this hour: %s", purge.BUSY)
         except Exception as exc:  # the next hour tries again; an interrupted cycle resumes first
-            log.warning("purge pass failed: %s", failure(exc))
+            log.warning("purge pass failed: %s", located(exc))
         finally:
             self.purging = None
 
@@ -580,7 +574,8 @@ class _Worker:
                 if run_id in self.runs:
                     self.runs[run_id].halted = True  # it reads on a fresh session once resumed
             else:
-                log.warning("run %s failed: %s", run_id, failure(exc))
+                keys = [row["key_masked"] for row in rows]  # as stored for display: never a raw key
+                log.warning("run %s failed: %s; keys %s", run_id, located(exc), keys)
                 await fail_run(self.ctx, run_id, exc, who=WORKER)
         finally:
             renewing.cancel()
@@ -662,8 +657,7 @@ class _Worker:
             masked = row["key_masked"]
             result = _confirmed(run, row["pass_no"], read, firsts.get(masked))
             if run.live and row["pass_no"] <= run.policy.times and run.policy.due(result, run.reader.fixed):
-                wait = run.policy.delay_s + run.policy.jitter_s * key_fraction(masked)
-                due[masked] = now + timedelta(seconds=wait)
+                due[masked] = now + timedelta(seconds=run.policy.wait_s(masked))
             elif (
                 resolve is not None
                 and row["signoff_member"]
@@ -740,9 +734,10 @@ def _pair(row: repo.Row) -> tuple[str, int]:
 
 
 def _confirmed(run: _Run, pass_no: int, read: KeyResult, first: KeyResult | None) -> KeyResult:
-    """A pass's result: a recheck is judged against the first read. A scanned key's usable first read
-    is confirmed already: the scan read it once before; a read of fixed files on both sides
-    is final, since reading them again is a no-op."""
+    """A pass's result: a recheck is judged against the first read. A scanned key's usable per-key read
+    is its confirming read: the scan saw the key differ and queued it ``recheck.delay`` before, so a row
+    that converged meanwhile reads MATCH and one that still differs is confirmed; a read of fixed files
+    on both sides is final, since reading them again is a no-op."""
     result = read if first is None else confirm(first, read, spec=run.spec, last=pass_no > run.policy.times)
     result = freeze(result, run.reader.fixed)
     if run.scanned and result.outcome is not Outcome.INCONCLUSIVE and run.policy.due(result):
@@ -786,7 +781,7 @@ async def run_worker(ctx: Context, *, stop: asyncio.Event | None = None, schedul
                     return
                 await _work(ctx, lock, stop, schedules)
         except Exception as exc:  # the lock lost, or a slot or the sweep ended on a bug
-            log.warning("worker stopped (%s): slots restart once the lock is retaken", failure(exc))
+            log.warning("worker stopped (%s): slots restart once the lock is retaken", located(exc))
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), poll_s)
 

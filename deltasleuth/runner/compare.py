@@ -21,6 +21,7 @@ from collections.abc import Container, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
+from deltasleuth import targets as product
 from deltasleuth.connectors.base import Connector, KeyRejectedError, NotCapturedError
 from deltasleuth.connectors.files import FileConnector, FileSampleSource, SampleError
 from deltasleuth.connectors.http import TargetGate
@@ -79,7 +80,8 @@ def connect(
     budget and slots every run on the target shares) and that gate's breaker for the ``circuitBreaker``
     that ``execution`` declares; a database target reads the table side ``table`` of a run's column plan.
     ``max_body_bytes`` caps a service's answer, its pages together (a trial of an endpoint reads less than
-    a run does)."""
+    a run does). A change another process made to the product's list of targets is taken in first."""
+    product.follow(ctx)
     target = ctx.targets.live(target_id)
     gate = ctx.gates.setdefault(target_id, TargetGate.for_target(target))
     if target.engine:

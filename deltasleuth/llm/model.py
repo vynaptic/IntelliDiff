@@ -34,6 +34,8 @@ class DataClass(StrEnum):
     SCHEMA_SUMMARY = "schema_summary"  # field names, types and shapes, never values
     AGGREGATES = "aggregates"  # counts and rates, no per-key values
     PRODUCTION_TOKENISED = "production_tokenised"
+    # Beside production_tokenised: raw values at the paths a spec declares clear, and business-code keys.
+    PRODUCTION_CLEAR_DECLARED = "production_clear_declared"
 
 
 @dataclass(frozen=True)

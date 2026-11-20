@@ -3,8 +3,9 @@
 Before any network I/O a call passes the egress policy, is checked against the profile's effective
 capabilities (declared ∩ what the dialect can express) and against the budgets. While in flight it
 reserves its worst case (input estimate + ``max_output_tokens``), so concurrent calls cannot
-overshoot, and a reply without usage is charged that worst case. Every attempt and every refusal
-appends a payload-free row to ``call_log``.
+overshoot, and a reply without usage is charged that worst case. The budgets that outlive a client
+(``STANDING``) start from ``prior``, what its caller says was charged before it. Every attempt and every
+refusal appends a payload-free row to ``call_log``; an answered attempt's holds what it was charged.
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ from deltasleuth.llm.model import (
     RateLimited,
 )
 from deltasleuth.llm.policy import EgressPolicy, check_egress
-from deltasleuth.llm.profiles import Budgets, Gate, LLMProfile
+from deltasleuth.llm.profiles import STANDING, Budgets, Gate, LLMProfile
 from deltasleuth.llm.usage import cost_micros
 
 MAX_RETRY_AFTER_S = 30.0  # a longer Retry-After surfaces as RateLimited instead of stalling a turn
@@ -99,6 +100,7 @@ class LLMClient:
         self.effective = profile.capabilities.intersect(adapter.expressible)
         self.counters = ClientCounters()
         self.call_log: list[dict[str, Any]] = []
+        self.prior: dict[str, int] = {}  # tokens charged before this client, by ``STANDING`` budget
         self.gate = gate or Gate(profile.limits)
         self._retry_attempts = retry_attempts
         self._reserved_tokens = 0  # worst cases of calls in flight
@@ -168,12 +170,14 @@ class LLMClient:
     def _check_budgets(self, request: LLMRequest, estimate: int, turn: TurnMeter | None) -> None:
         budgets, counters = self.profile.budgets, self.counters
         worst_case = estimate + request.max_output_tokens
-        checks = [("max_input_tokens_per_call", budgets.max_input_tokens_per_call, estimate)]
-        if budgets.per_run_tokens is not None:
-            used = counters.input_tokens + counters.output_tokens + counters.estimated_tokens
-            checks.append(
-                ("per_run_tokens", budgets.per_run_tokens, used + self._reserved_tokens + worst_case)
-            )
+        checks: list[tuple[str, float, float]] = [
+            ("max_input_tokens_per_call", budgets.max_input_tokens_per_call, estimate)
+        ]
+        used = counters.input_tokens + counters.output_tokens + counters.estimated_tokens
+        for name in STANDING:
+            if (limit := getattr(budgets, name)) is not None:
+                requested = self.prior.get(name, 0) + used + self._reserved_tokens + worst_case
+                checks.append((name, limit, requested))
         if turn is not None:
             turn_input = turn.input_tokens + turn.reserved_input_tokens + estimate
             checks += [
@@ -233,8 +237,13 @@ class LLMClient:
                 }
                 self.call_log.append(row | failure | {"latency_ms": _ms(started)})
                 raise
-        latency = _ms(started)
-        self.call_log.append(row | self._outcome(response) | {"latency_ms": latency})
+        latency, usage = _ms(started), response.usage
+        # What ``_account`` charges the call: its reported tokens, or its worst case.
+        worst_case = row["estimated_input_tokens"] + request.max_output_tokens
+        charged = usage.input + usage.output if usage.reported else worst_case
+        self.call_log.append(
+            row | self._outcome(response) | {"usage_charged": charged, "latency_ms": latency}
+        )
         return replace(response, latency_ms=float(latency))
 
     def _account(

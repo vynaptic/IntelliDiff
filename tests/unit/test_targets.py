@@ -643,3 +643,43 @@ async def test_a_change_keeps_one_budget(ctx: Context) -> None:
         await reader.aclose()
     await product.remove(ctx, "own", TESTER)
     assert "own" not in ctx.gates and "own" not in ctx.targets
+
+
+@pytest.mark.db
+async def test_another_process_follows_a_change_without_a_restart(ctx: Context) -> None:
+    """A process beside the server (``ds worker`` beside ``ds serve --no-worker``, a long-lived ``ds mcp``)
+    reads the product's list again once it changed: a spec compiled for a run and a connector opened
+    afterwards see the new target, a changed budget reaches the target's gate, and a removed target is
+    gone with its gate."""
+    async with Context.open(ctx.settings) as other:
+        assert "own" not in other.targets
+        await _put(ctx, rate_per_s=10, max_concurrency=2)
+        reader = connect(other, "own", ExecutionConfig())
+        try:
+            assert other.targets.get("own").base_url == "https://own.example/api"
+            gate = other.gates["own"]
+            await _put(ctx, base_url="https://moved.example/api", rate_per_s=50, max_concurrency=8)
+            await connect(other, "own", ExecutionConfig()).aclose()
+            assert other.targets.get("own").base_url == "https://moved.example/api"
+            assert other.gates["own"] is gate
+            assert (gate.max_concurrency, gate.limiter.time_period) == (8, 0.02)
+        finally:
+            await reader.aclose()
+        await product.remove(ctx, "own", TESTER)
+        with pytest.raises(LookupError):
+            connect(other, "own", ExecutionConfig())
+        assert "own" not in other.targets and "own" not in other.gates and "filed" in other.targets
+
+
+@pytest.mark.db
+async def test_an_unreadable_change_keeps_what_the_process_holds(
+    ctx: Context, caplog: pytest.LogCaptureFixture
+) -> None:
+    await _put(ctx)
+    async with Context.open(ctx.settings) as other:
+        product.path(ctx.settings).write_text("{not json")
+        with caplog.at_level(logging.WARNING, logger="deltasleuth.targets"):
+            await connect(other, "own", ExecutionConfig()).aclose()
+            await connect(other, "own", ExecutionConfig()).aclose()
+        assert other.targets.get("own").base_url == "https://own.example/api"
+        assert len([r for r in caplog.records if "read again" in r.getMessage()]) == 1  # once per change

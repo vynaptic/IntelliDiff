@@ -20,6 +20,7 @@ where their bytes alone would answer it, and a result both of whose sides read t
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -44,6 +45,12 @@ DEFAULT_OUTCOMES = frozenset(
 )
 INTERMITTENT_B = "intermittent_b"
 _UNUSABLE = (SideStateKind.INCOMPLETE, SideStateKind.ERROR)
+
+
+def key_fraction(key_masked: str) -> float:
+    """A stable number in [0, 1) from the masked key (keyed by the tokeniser, so a stored due time
+    reveals nothing of the raw key): jitter spreads keys without randomness."""
+    return int.from_bytes(hashlib.sha256(key_masked.encode()).digest()[:8], "big") / 2**64
 
 
 @dataclass(frozen=True)
@@ -82,6 +89,11 @@ class RecheckPolicy:
             and len(read) < 2
             and not any(state.kind is SideStateKind.INCOMPLETE for state in read)
         )
+
+    def wait_s(self, key_masked: str) -> float:
+        """The seconds a key's confirming read waits after the read, or the scan, that saw it differ:
+        ``delay`` and the key's share of ``jitter``."""
+        return self.delay_s + self.jitter_s * key_fraction(key_masked)
 
 
 def _read(result: KeyResult, fixed: Collection[Side]) -> list[SideState]:

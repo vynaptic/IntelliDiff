@@ -50,6 +50,7 @@ from tests.conftest import TESTER, MySQLServer
 from tests.support import faults
 
 from .conftest import Harness, OpenHarness, ScriptedService, doc, spec_text
+from .test_failure import AT
 
 pytestmark = pytest.mark.db
 
@@ -741,9 +742,8 @@ async def test_io_error_on_unchanged_bytes_fails_at_the_third_pass(
     assert (run["status"], run["error"]) == ("failed", "TargetRefused: IOException")
     assert len(met) == 3 and run["scan"]["checkpoint"] == 1  # saved by the first pass, which counts too
     said = [record.getMessage() for record in caplog.records if "scan of run" in record.getMessage()]
-    assert said == [f"scan of run {run_id} resumes: IOException"] * 2 + [
-        f"scan of run {run_id} failed: TargetRefused: IOException"
-    ]
+    assert said[:2] == [f"scan of run {run_id} resumes: IOException"] * 2 and len(said) == 3
+    assert re.fullmatch(f"scan of run {run_id} failed: TargetRefused: IOException{AT}", said[2])
 
 
 async def test_an_unmounted_directory_pauses_and_a_changed_file_fails_at_resume(
@@ -835,11 +835,9 @@ async def test_a_run_whose_reader_dies_three_times_fails_with_f12(
     assert alive and done["status"] == "completed"
     assert {key: r["outcome"] for key, r in found.items()} == SEEDED
     said = [record.getMessage() for record in caplog.records]
-    assert [line for line in said if line.startswith(f"scan of run {scan_id}")] == [
-        f"scan of run {scan_id} paused: Died",
-        f"scan of run {scan_id} paused: Died",
-        f"scan of run {scan_id} failed: {f12}",
-    ]
+    scan_lines = [line for line in said if line.startswith(f"scan of run {scan_id}")]
+    assert scan_lines[:2] == [f"scan of run {scan_id} paused: Died"] * 2 and len(scan_lines) == 3
+    assert re.fullmatch(re.escape(f"scan of run {scan_id} failed: {f12}") + AT, scan_lines[2])
     ended = (
         f"the file reader's process ended ({faults.QUIET.name}) while only one side's files were being read:"
         " {} of the 3"
@@ -847,7 +845,8 @@ async def test_a_run_whose_reader_dies_three_times_fails_with_f12(
     assert [line for line in said if line.startswith("the file reader's process")] == [
         f"{ended.format(n)} after which they are read no more" for n in (1, 2, 3, 1, 2, 3)
     ]
-    assert f"run {list_id} failed: {f12}" in said
+    failed = re.escape(f"run {list_id} failed: {f12}") + AT + r"; keys \['K00[12]'(, 'K00[12]')?\]"
+    assert [line for line in said if re.fullmatch(failed, line)]
     said = [line for line in said if not line.startswith("the file reader started: duckdb ")]  # its starts
     assert not re.search(r"\.csv|export|worse|duckdb", "\n".join(said) + f12, re.IGNORECASE)
     assert str(exports) not in caplog.text

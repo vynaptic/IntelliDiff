@@ -1,13 +1,13 @@
 """Four-eyes approvals and sign-off.
 
-Under SSO a spec version whose content exposes values, suppresses findings or filters what is compared
-(``needs``) runs only under an approval of its content hash by a person who did not write it
-(``gate``). An ended cycle is parity evidence only once someone who neither wrote its spec, started its
-run nor asked for the sign-off accepted a hash of its facts (``signoff_problems``, ``attests``). The
-trigger ds.tg_approvals checks every decision, and ``revoke`` withdraws an approval and what rests on
-it in one transaction. Tokens and developer modes have no persons: their runs go ahead, labelled
-unapproved (``run_state``), and are never signed off, whatever approval they resume or attach under
-later. ``unstorable`` and ``unstored`` refuse an upload whose stored body would not re-hash.
+Under SSO a spec version whose content exposes values, suppresses findings, filters what is compared or
+reshapes a side's answer (``needs``) runs only under an approval of its content hash by a person who did
+not write it (``gate``). An ended cycle is parity evidence only once someone who neither wrote its spec,
+started its run nor asked for the sign-off accepted a hash of its facts (``signoff_problems``,
+``attests``). The trigger ds.tg_approvals checks every decision, and ``revoke`` withdraws an approval and
+what rests on it in one transaction. Tokens and developer modes have no persons: their runs go ahead,
+labelled unapproved (``run_state``), and are never signed off, whatever approval they resume or attach
+under later. ``unstorable`` and ``unstored`` refuse an upload whose stored body would not re-hash.
 """
 
 from __future__ import annotations
@@ -24,13 +24,15 @@ from deltasleuth.connectors.base import utc_iso
 from deltasleuth.context import Context
 from deltasleuth.core import jsonio
 from deltasleuth.core.canonical.encoding import sha256_hex
+from deltasleuth.core.canonical.paths import ROOT_PATTERN
 from deltasleuth.core.spec.assemble import content_hash
 from deltasleuth.core.spec.errors import pointer
 from deltasleuth.core.types import CompiledSpec, RuleClassification
 from deltasleuth.store import repo
 from deltasleuth.store.db import APPROVALS
 
-SCOPES = ("clear", "unlisted_clear", "known_diffs", "population_filters", "sampling")  # raw_clear is reserved
+# raw_clear is reserved
+SCOPES = ("clear", "unlisted_clear", "known_diffs", "population_filters", "sampling", "transforms")
 APPROVAL_PAUSE = "run_paused_approval"  # a revoke paused the run: resuming it needs a new approval
 APPROVAL_REVOKED = "approval_revoked"  # a revoke stopped the queued one-shot run
 SIGNED_OFF = "signed off: "  # the hold a sign-off places on its run
@@ -64,12 +66,15 @@ def needs(spec: CompiledSpec) -> list[str]:
         or bool(compare.include or compare.exclude)
         or compare.value_filter is not None
     )
+    # a map, or a select of part of an answer, decides what a side's document holds and under which names
+    shaped = [side.map is not None or side.select not in (None, ROOT_PATTERN) for side in spec.sides.values()]
     found = {
         "clear": bool(spec.security.clear),
         "unlisted_clear": spec.security.unlisted == "clear",
         "known_diffs": bool(spec.known_diffs),
         "population_filters": filters,
         "sampling": spec.sample is not None,  # frame, strata, sizes, label and retries: pre-registered
+        "transforms": any(shaped),
     }
     return [scope for scope in SCOPES if found[scope]]
 

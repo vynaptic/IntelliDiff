@@ -11,7 +11,7 @@ import pytest
 
 from deltasleuth.auth.principal import Principal
 from deltasleuth.context import Context
-from deltasleuth.reports import accuracy
+from deltasleuth.reports import accuracy, pdf
 from deltasleuth.reports.csv import write_csv
 from deltasleuth.reports.data import TOP_GRAPH_ROWS, load_run
 from deltasleuth.reports.pdf import AI_LABEL, pdf_report, report_document
@@ -282,6 +282,41 @@ async def test_soak_report_lists_outcome_changes_and_counts_each_cycle(ctx: Cont
     earlier = await report_document(ctx, run_id, cycle=1)  # recounted: the run keeps cycle 2's counters
     assert (_counters(earlier)["match"], _counters(now)["different"]) == (1, 1)
     assert (await report_document(ctx, await seed_run(ctx, {}))).sections[4].lines == ["Not a soak run."]
+
+
+async def test_soak_report_counts_the_reported_cycle_s_changes_and_lists_the_first(
+    ctx: Context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec, keys = unit_spec(), ("K001", "K002")
+    same, differing = (lambda k: (doc(k), doc(k))), (lambda k: (doc(k, status="A"), doc(k, status="B")))
+    run_id = await seed_run(ctx, {k: same(k) for k in keys}, mode="soak", status="running")
+    async with ctx.pool.connection() as conn:
+        # Both keys differ in cycle 2; K001 matches again in cycle 3.
+        for pairs in ({k: differing(k) for k in keys}, {"K001": same("K001"), "K002": differing("K002")}):
+            cycle = await repo.start_next_cycle(conn, run_id, datetime.now(UTC))
+            results = [
+                await compare_key(ctx, conn, spec, run_id, key, pair, n=n, cycle=cycle)
+                for n, (key, pair) in enumerate(pairs.items())
+            ]
+            await store_root_causes(ctx, conn, spec, run_id, cycle, results)
+            await store_counters(conn, spec, run_id, cycle, live=False)
+    monkeypatch.setattr(pdf, "TOP_CHANGES", 1)
+    first, second, third = [(await report_document(ctx, run_id, cycle=n)).sections[4] for n in (1, 2, 3)]
+    assert first.lines == ["The run's first cycle has none before it to compare with."] and not first.rows
+    assert second.lines == ["2 change(s) from cycle 1 to cycle 2; the first 1 are listed."]
+    assert second.rows == [(2, "K001", "MATCH", "MISMATCH")]
+    assert third.lines == ["1 change(s) from cycle 2 to cycle 3; the first 1 are listed."]
+    assert third.rows == [(3, "K001", "MISMATCH", "MATCH")]
+    monkeypatch.setattr(pdf, "TOP_CHANGES", 100)
+
+    async def every_change(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("counted changes the page already holds, or read a run's every cycle")
+
+    monkeypatch.setattr(repo, "count_outcome_changes", every_change)
+    monkeypatch.setattr(repo, "outcome_changes", every_change)
+    assert (await report_document(ctx, run_id, cycle=2)).sections[4].lines == [
+        "2 change(s) from cycle 1 to cycle 2; the first 2 are listed."
+    ]
 
 
 async def test_a_graph_run_reports_its_counts_and_the_first_rows_of_each_code(

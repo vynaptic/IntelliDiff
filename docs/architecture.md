@@ -42,7 +42,7 @@ flowchart LR
     CON --> SB["Side b"]
 ```
 
-`ds serve` runs the API, the UI and the worker in one process. `ds worker` runs a worker alone. The CLI uses
+`ds serve` runs the API, the UI and the worker in one process. `ds worker` runs a worker alone; it takes in a change of the targets declared in the product before it compiles a run's spec or opens a connector. The CLI uses
 the same Python code as the API and opens the store directly. Docker Compose runs two containers,
 PostgreSQL 16 and the application ([deploy/docker-compose.yml](../deploy/docker-compose.yml)).
 
@@ -56,12 +56,12 @@ set once) or `soak` (the same comparison in repeated cycles).
 3. **Leases and the single active worker.** One worker per database holds a PostgreSQL advisory lock; any other waits. Its slots lease due keys and renew the leases. A group's observations, results and findings are saved in one transaction, and a lost lease rolls it back. A killed worker costs only the keys in flight and never duplicates a result.
 4. **Fetch both sides.** One connector per side reads under its target's gate: the rate budget (`rate_per_s`, default 20), the in-flight cap, retries with backoff and a circuit breaker. Each read, a failed one included, is stored as evidence first.
 5. **Observe.** Each read is judged against the declared contract and becomes `COMPLETE`, `ABSENT`, `INCOMPLETE` or `ERROR`. A side is `ABSENT` only when the spec and the target both declare that answer an authoritative not-found.
-6. **Select and map.** A service side applies `select` (JSONPath) and `map` (JSONata). A table side maps its declared columns to canonical fields. Both sides give one canonical shape.
+6. **Select and map.** A service side applies `select` (JSONPath) and `map` (JSONata). A table side maps its declared columns to canonical fields. Both sides give one canonical shape. JSONata calculates in doubles and writes 15 digits, so a number of more than 15 significant digits goes into a map as a stand-in: moving it is exact, and a map that calculates with it or writes it as text leaves the side `INCOMPLETE`.
 7. **Normalise.** Per-field normaliser chains run on a copy. Arrays are matched as `ordered`, `set`, `keyed` or `multiset`. The raw tree and the normalised tree are both kept and hashed.
 8. **Diff.** A structural diff compares the two documents, with `exact`, `tolerance` or `similarity` per field. A difference that a normaliser or a tolerance removed is still reported, at severity `INFO`.
 9. **Classify.** Each finding gets a taxonomy code, a severity, a value class and a signature. Known-difference rules mark matching findings as suppressed. The key's outcome is `MATCH`, `MISMATCH`, `KNOWN_DIFF`, `NOT_FOUND_A`, `NOT_FOUND_B`, `DRIFT` or `INCONCLUSIVE`.
-10. **Recheck.** A discrepant key is read again after `recheck.delay`, side b first. If side a changed, or side b now agrees, the outcome is `DRIFT`. If nothing changed, the first outcome is confirmed.
-11. **Root-cause grouping.** When a cycle ends, discrepant findings are grouped. The same array member missing or extra under several keys is one cause. The rest group by signature: where and how a value differs, never which key or value. The groups are ranked in `ds.root_causes`.
+10. **Recheck.** A discrepant key is read again after `recheck.delay`, side b first. If side a changed, or side b now agrees, the outcome is `DRIFT`. If nothing changed, the first outcome is confirmed. A key a table scan found different is queued `recheck.delay` after the scan, and its one read confirms it.
+11. **Root-cause grouping.** When a cycle ends, discrepant findings are grouped. The same array member missing or extra under several keys is one cause. The rest group by signature: where and how a value differs, never which key or value. The groups are ranked in `ds.root_causes`. The keys are derived again from their evidence a page at a time, and of each finding only what it groups by is kept.
 12. **Cycle end.** Counters are computed from the stored results, stop conditions are judged, and `ds.cycles` keeps one row per ended cycle. A soak then starts its next cycle after its interval.
 13. **Reports.** CSV exports and a PDF report are built from the store, masked.
 
@@ -174,18 +174,18 @@ The policy for reporting a vulnerability is in [SECURITY.md](../SECURITY.md).
 - **Roles.** Six ordered roles: `viewer`, `operator`, `spec_author`, `rule_approver`, `pii_reader`, `admin`. Every route and agent tool checks one. A token holds at most `spec_author`. Under OIDC, roles come from identity-provider groups at each sign-in.
 - **Target allow-list and network guard.** A spec names target ids only, so the target registry is the allow-list. A target is reached on public addresses only, unless it sets `allow_private_network`. Host names are checked at every connection.
 - **Credentials only by file reference.** Every secret is a `file:` reference. Credentials are never read from environment variables, and a spec cannot carry one.
-- **Tokenisation and masking.** Protected values become keyed HMAC tokens, separated by value class, before they are stored for display. Raw keys, headers and chat text are sealed under a data key per run.
+- **Tokenisation and masking.** Protected values become keyed HMAC tokens, separated by value class, before they are stored for display. Under the unlisted default, a member name that reads as data (an e-mail address, digits) is tokenised as `free_text`. Raw keys, headers and chat text are sealed under a data key per run.
 - **Encrypted evidence and retention.** Evidence blobs are compressed, encrypted with AES-256-GCM and named by a keyed hash. Data keys are wrapped by key-encryption keys held outside the database. Ended cycles are purged after 90 days (`standard`) or 365 days (`audit`) by default. A hold keeps a run.
 - **Hash-chained audit log.** `ds.audit_log` is append-only by trigger. Each row is chained in `ds.audit_chain`, and `ds audit verify` checks the chain.
-- **Four-eyes approvals and sign-off.** Under OIDC, a spec version that shows values clear, suppresses findings or filters the population runs only after a person who did not write it approves its content hash. An ended cycle is signed off by a person who neither wrote the spec, started the run nor requested the sign-off. A signed-off cycle can be issued as a signed evidence pack.
+- **Four-eyes approvals and sign-off.** Under OIDC, a spec version that shows values clear, suppresses findings, filters the population or reshapes a side's answer (`map`, or a `select` of part of it) runs only after a person who did not write it approves its content hash. An ended cycle is signed off by a person who neither wrote the spec, started the run nor requested the sign-off. A signed-off cycle can be issued as a signed evidence pack.
 
 ## 9. The AI layer
 
 The AI layer is optional. Without an LLM profiles file it is off, and everything else works the same.
 
-- **Model port** ([deltasleuth/llm](../deltasleuth/llm)). A profile names an endpoint, a dialect (`openai_chat` for OpenAI-compatible endpoints, or `anthropic_messages`), a `file:` credential, the allowed data classes, budgets and prices. An egress policy is checked before every call and fails closed. Each call is logged in `ds.llm_calls` without its payload.
+- **Model port** ([deltasleuth/llm](../deltasleuth/llm)). A profile names an endpoint, a dialect (`openai_chat` for OpenAI-compatible endpoints, or `anthropic_messages`), a `file:` credential, the allowed data classes, budgets and prices. An egress policy is checked before every call and fails closed. A chat about a run whose spec declares clear values or a business-code key also declares `production_clear_declared`, which the profile must list. Budgets hold per call, per turn, over every chat about a run and over a person's chats of 24 hours, the last two summed from `ds.llm_calls` before each question; a person asks at most 10 questions a minute. Each call is logged in `ds.llm_calls` without its payload.
 - **Cited agent** ([deltasleuth/agent](../deltasleuth/agent)). A chat is bound to one run. The model may call four tools: `get_run_summary`, `get_findings`, `get_observations` and `compare_key`. The tools return masked, capped data, and the model is offered only the tools the asker's role allows.
-- **Answer validator.** An answer must cite at least one id (`F-`, `O-`, `RC-` or a masked key) that a tool result of the session returned. It may state no number that no tool result holds. It gets one repair attempt; otherwise the agent abstains and says why.
+- **Answer validator.** An answer must cite at least one id (`F-`, `O-`, `RC-` or a masked key) that a tool result of the session returned. It may state no number that no tool result holds, in digits (grouped by commas, spaces or apostrophes, `.97`, or with a unit or `x` attached) or in words (`twelve thousand`). It gets one repair attempt; otherwise the agent abstains and says why.
 - **MCP server** ([deltasleuth/mcp](../deltasleuth/mcp)). An external agent reads runs through eleven tools: ten reads and `compare_key`. It is served over HTTP (`POST /v1/mcp`) and stdio (`ds mcp`), only when the settings have an `mcp` block, with the caller's role cut to `viewer` or `operator`. It offers no run control and does not check an external agent's answers.
 - Model text appears only in the chat and in a labelled annex of the PDF report.
 
@@ -194,10 +194,13 @@ The AI layer is optional. Without an LLM profiles file it is off, and everything
 | Suite | Where | What it checks |
 |---|---|---|
 | Unit | `tests/unit` | Each package on its own. Tests marked `db` use a PostgreSQL container. |
-| Golden | `tests/golden` | 74 YAML cases that fix the engine's findings for given inputs, and fixtures for each database engine. |
+| Golden | `tests/golden` | 75 YAML cases that fix the engine's findings for given inputs, and fixtures for each database engine. |
 | Property | `tests/property` | Hypothesis properties of the engine and the normalisers. |
 | End to end | `tests/e2e` | The API, the CLI and the worker against the mock pairs, tables, files, soak runs, kill and resume, and MCP. |
 | UI | `web/test` | The UI's logic modules. |
+
+`.github/workflows/checks.yml` runs ruff, every test with `DS_REQUIRE_DB=1`, and the UI's tests and build on each
+push to `main` and each pull request.
 
 The two mock pairs are in `mocks/`: `linker` (an entity and its linked entities, in an old and a new shape)
 and `customer` (a profile service, v1 and v2). Each has a dataset with planted differences and an

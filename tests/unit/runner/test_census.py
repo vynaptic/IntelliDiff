@@ -30,6 +30,7 @@ from tests.conftest import TESTER, MySQLServer, OracleServer
 from tests.unit.store.four_eyes import approved, person
 
 from .conftest import Harness, OpenHarness, ScriptedService, doc
+from .test_failure import AT
 from .test_runs import listed
 from .test_scan import SEED as USERS
 from .test_scan import SPEC as SCANNED
@@ -370,7 +371,7 @@ async def test_a_census_whose_target_was_removed_is_recorded_and_the_run_fails_a
         removed = Harness(replace(h.ctx, targets=TargetRegistry({})))  # db-a and db-b left targets.yaml
         run = await removed.finish(run_id)
         audited = await _audited(h, run_id)
-    assert (run["status"], run["error"]) == ("failed", "SpecError")
+    assert run["status"] == "failed" and re.fullmatch("SpecError" + AT, run["error"])
     if packs:  # recorded, so its keys were leased
         failed = {"actor": "system:worker", "cycle": 1, "basis": "table", "failed": "UnknownTargetError"}
         assert audited == [failed | {"side": "a"}, failed | {"side": "b"}]

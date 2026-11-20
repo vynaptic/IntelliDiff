@@ -701,8 +701,8 @@ class ReadinessSettings:
 @dataclass(frozen=True)
 class McpSettings:
     """The MCP server, applied at restart; absent: no MCP at all. ``data_classes`` is
-    what tool results may carry, written down by the installation: ``production_clear_declared`` (MCP's
-    own, no ``DataClass``) also serves the runs whose spec declares clear values or a business-code key."""
+    what tool results may carry, written down by the installation: ``production_clear_declared`` also
+    serves the runs whose spec declares clear values or a business-code key."""
 
     data_classes: Annotated[
         tuple[Literal["aggregates", "production_tokenised", "production_clear_declared"], ...],
@@ -734,7 +734,9 @@ class Settings:
     llm_profile: str | None = None  # the default chat profile
     llm_environment: Environment = "prod"
     # Data classes the operator approves for external (non-internal) LLM hosts, beyond synthetic
-    # data; they still apply only in dev/test/eval (e.g. testing the chat with a Claude key).
+    # data; they still apply only in dev/test/eval (e.g. testing the chat with a Claude key). A chat about
+    # a run whose spec declares clear values or a business-code key carries production_clear_declared
+    # beside production_tokenised, and needs both listed.
     llm_external_data_classes: frozenset[DataClass] = frozenset()
     auth: AuthSettings | None = None  # absent: developer mode (loopback only, never proxied)
     encryption: EncryptionSettings | None = None  # required with auth; absent: the workspace's keys

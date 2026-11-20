@@ -147,7 +147,7 @@ async def load_run(ctx: Context, run_id: str, cycle: int | None = None, *, resul
     counted again from its stored rows, a page at a time; the current cycle has none until its end stores
     them.
     """
-    from deltasleuth.reports import accuracy  # it reads sheets through adjudicate, which reads runs here
+    from deltasleuth.reports import accuracy  # it reads sheets through adjudicate, which imports this module
     from deltasleuth.runner.counters import Tally, verdict
     from deltasleuth.runner.purge import days, refuse_purged
     from deltasleuth.runner.recheck import RecheckPolicy

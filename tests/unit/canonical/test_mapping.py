@@ -118,6 +118,36 @@ class TestNumbers:
         with pytest.raises(MappingError):
             apply_map(expression, body)
 
+    @pytest.mark.parametrize(
+        ("expression", "one", "other"),
+        [
+            ("{'n': v * 1}", "1234567890123456789", "1234567890123456800"),  # beyond a double's integers
+            ("{'n': $sum([v, 0])}", "9007199254740993", "9007199254740992"),
+            ("{'s': $string(v)}", "1234567890123456", "1234567890123457"),  # 16 digits, written with 15
+            ("{'s': v & ''}", "1234567890123456", "1234567890123457"),
+            ("{'s': $string(v)}", "0.1234567890123456", "0.1234567890123457"),
+        ],
+    )
+    def test_two_long_numbers_never_compute_to_one_result(self, expression, one, other) -> None:
+        results = []
+        for text in (one, other):
+            try:
+                results.append(apply_map(expression, {"v": D(text)}))
+            except MappingError:
+                results.append(text)  # refused: the side is not judged
+        assert results[0] != results[1]
+
+    def test_a_long_number_is_moved_exactly_and_refused_when_read(self) -> None:
+        long = D("1234567890123456789")
+        assert apply_map("{'id': v}", {"v": long}) == {"id": long}
+        with pytest.raises(MappingError):
+            apply_map("{'s': $string(v)}", {"v": long})
+
+    def test_a_number_of_fifteen_digits_is_computed_and_written_exactly(self) -> None:
+        assert apply_map("{'s': $string(v)}", {"v": D("123456789012345")}) == {"s": "123456789012345"}
+        assert apply_map("{'n': v + 1}", {"v": D("123456789012345")}) == {"n": D("123456789012346")}
+        assert apply_map("{'s': $string(v)}", {"v": D("0.12345678901234")}) == {"s": "0.12345678901234"}
+
     def test_stand_ins_are_deterministic_and_cannot_be_forged(self) -> None:
         forged = "\x00ds-number:0000000000000000:0\x00"
         expression = "{'s': s, 'l': [y, x], 'same': x = y}"

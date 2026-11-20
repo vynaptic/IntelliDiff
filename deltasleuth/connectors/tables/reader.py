@@ -589,14 +589,23 @@ def _closed(held: _Held) -> None:
             held.lock.release()
 
 
+def passed(exc: BaseException, home: str) -> list[tuple[str, str, int]]:
+    """Where ``exc`` passed in ``home`` (a file, or a directory and what is under it), the innermost frame
+    first: each frame's file, function and line, and nothing a frame holds (no message, local or
+    argument). The parent names a failure of its own by it too."""
+    found, trace = [], exc.__traceback__
+    while trace is not None:
+        code = trace.tb_frame.f_code
+        if code.co_filename == home or code.co_filename.startswith(home + os.sep):
+            found.append((code.co_filename, code.co_name, trace.tb_lineno))
+        trace = trace.tb_next
+    return found[::-1]
+
+
 def _fault(send: Callable[[bytes], None], exc: BaseException) -> NoReturn:
     """End the process (exit 1) after a last frame naming ``exc``'s class and the line of this module it
     passed last."""
-    line, trace = 0, exc.__traceback__
-    while trace is not None:
-        if trace.tb_frame.f_code.co_filename == __file__:
-            line = trace.tb_lineno
-        trace = trace.tb_next
+    line = next((line for _, _, line in passed(exc, __file__)), 0)
     try:
         send(pack({"fault": type(exc).__name__, "line": line}, ANSWER_MAX))
     finally:

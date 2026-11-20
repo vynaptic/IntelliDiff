@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { DIFFERING, barOf, notMatching, resultLine, segments, tabOf, tabsOf } from '../src/outcomes.ts';
+import { DIFFERING, barOf, changesTitle, noChanges, notMatching, resultLine, segments, tabOf, tabsOf } from '../src/outcomes.ts';
 
 const LINKER = { MATCH: 52, MISMATCH: 4, KNOWN_DIFF: 0, NOISE_ONLY: 0, DRIFT: 1, NOT_FOUND_A: 0, NOT_FOUND_B: 1, INCONCLUSIVE: 3 };
 
@@ -100,4 +100,11 @@ test('only a soak run has the tab of changes across cycles', () => {
   assert.equal(tabsOf('batch').some(([tab]) => tab === 'changes'), false);
   assert.equal(tabsOf('soak').some(([tab]) => tab === 'changes'), true);
   assert.equal(tabOf({ tab: 'changes' }, 'batch'), 'differences');
+});
+
+test('the changes tab names the two cycles it compares, and a first cycle has none before it', () => {
+  assert.equal(changesTitle(5), 'Outcome changes from cycle 4 to cycle 5');
+  assert.equal(noChanges(5), 'No key changed its outcome from cycle 4 to cycle 5.');
+  assert.equal(changesTitle(1), 'Outcome changes across cycles');
+  assert.equal(noChanges(1), "The run's first cycle has none before it to compare with.");
 });

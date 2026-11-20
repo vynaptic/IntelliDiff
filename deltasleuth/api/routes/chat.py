@@ -3,7 +3,9 @@
 A session is its creator's: questions are stored as typed, so only the creator may read or continue
 it, and anyone else is told it does not exist. Answers are run-level evidence (the report's AI annex).
 Once the run's current cycle is purged no chat starts or asks (410): answers need its evidence.
-``explain`` starts a session and asks it one of the two fixed questions.
+``explain`` starts a session and asks it one of the two fixed questions. A typed question holds at most
+``MAX_QUESTION`` characters (422), and a caller asks at most ``ASK_LIMIT`` questions a minute over both
+asking routes (429), refused before anything is created, stored or asked.
 """
 
 from __future__ import annotations
@@ -31,6 +33,8 @@ def require_ai(ctx: Ctx, _: Viewer) -> None:
 
 
 router = APIRouter(prefix="/chat/sessions", dependencies=[Depends(require_ai)])
+MAX_QUESTION = 4000  # characters a typed question holds at most
+ASK_LIMIT = 10  # questions a minute per caller, over both asking routes
 
 
 class SessionIn(Payload):
@@ -39,12 +43,22 @@ class SessionIn(Payload):
 
 
 class MessageIn(Payload):
-    content: str = Field(min_length=1)
+    content: str = Field(min_length=1, max_length=MAX_QUESTION)
 
 
 class ExplainIn(Payload):
     run_id: str
     root_cause_id: str | None = Field(None, pattern=r"^RC-[0-9a-f]{12}$")  # none: summarise the run
+
+
+def _asking(ctx: Context, who: Principal) -> None:
+    """Count a question of ``who`` against the process's one rate of chat questions: 429 past it."""
+    if ctx.llm is not None and not ctx.llm.rate("chat.ask", ASK_LIMIT).hit(who.actor):
+        raise HTTPException(
+            429,
+            f"rate limited: at most {ASK_LIMIT} chat questions a minute per caller",
+            headers={"Retry-After": "60"},
+        )
 
 
 async def _own(conn: repo.Conn, session_id: str, who: Principal) -> repo.Row:
@@ -69,6 +83,7 @@ async def explain(ctx: Ctx, who: Viewer, body: ExplainIn) -> Response:
     """Start a run-scoped session and ask it a fixed question: explain one root cause of the run's
     current cycle, or summarise the run. The agent acts as a viewer, whoever asks. Returns the session
     with every message, the last one the answer or (``citations: []``) the refusal."""
+    _asking(ctx, who)
     cause, about, detail = body.root_cause_id, None, {"question": "summarise"}
     async with repo.audited(ctx.pool) as (conn, audit):
         await refuse_chat(conn, await run_of(conn, body.run_id))
@@ -89,6 +104,7 @@ async def explain(ctx: Ctx, who: Viewer, body: ExplainIn) -> Response:
 async def ask(ctx: Ctx, who: Viewer, session_id: str, body: MessageIn) -> Response:
     """Ask within the session's scope; the agent, acting for the asker, stores the question, its tool
     calls and the answer. Returns the session with every message."""
+    _asking(ctx, who)
     async with ctx.pool.connection() as conn:
         own = await _own(conn, session_id, who)
         await refuse_chat(conn, await run_of(conn, own["run_id"]))

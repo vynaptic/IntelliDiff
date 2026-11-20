@@ -34,6 +34,7 @@ from deltasleuth.api.deps import (
 from deltasleuth.approvals import ApprovalConflict
 from deltasleuth.auth.principal import Principal, printable
 from deltasleuth.context import Context
+from deltasleuth.core.canonical.paths import ROOT_PATTERN, normalise_query
 from deltasleuth.core.spec.errors import pointer
 from deltasleuth.reports import accuracy
 from deltasleuth.runner import sample
@@ -185,7 +186,7 @@ async def _requests(conn: repo.Conn, row: repo.Row) -> list[repo.Row]:
 
 async def _masked(ctx: Context, conn: repo.Conn, stored: repo.Row) -> dict[str, Any]:
     """A stored spec version's body as the routes show it (``deps.masked_body``)."""
-    return masked_body(stored["body"], await ctx.spec(conn, stored["spec_id"]), ctx.tokeniser)
+    return masked_body(stored["body"], await ctx.spec(conn, stored["spec_id"]))
 
 
 def _needed(body: Mapping[str, Any], scopes: Sequence[str]) -> list[dict[str, Any]]:
@@ -208,6 +209,12 @@ def _needed(body: Mapping[str, Any], scopes: Sequence[str]) -> list[dict[str, An
         if compare.get(name) not in (None, [])
     ]
     unlisted = [(("security", "unlisted"), "clear")] if security.get("unlisted") == "clear" else []
+    transforms = [  # each side's map, and its select unless that is the whole answer
+        (("sides", side, name), entry[name])
+        for side, entry in body.get("sides", {}).items()
+        for name in ("select", "map")
+        if entry.get(name) is not None and (name == "map" or normalise_query(entry[name]) != ROOT_PATTERN)
+    ]
     source = body.get("key", {}).get("source", {})
     found: dict[str, list[tuple[tuple[str | int, ...], Any]]] = {
         "clear": [(("security", "clear", i), path) for i, path in enumerate(security.get("clear", []))],
@@ -219,6 +226,7 @@ def _needed(body: Mapping[str, Any], scopes: Sequence[str]) -> list[dict[str, An
         ],
         "population_filters": filters,
         "sampling": [(("key", "source"), source)] if source.get("kind") == "hash_sample" else [],
+        "transforms": transforms,
     }
     return [
         {"scope": scope, "pointer": pointer(at), "value": value}

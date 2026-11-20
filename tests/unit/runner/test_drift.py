@@ -38,6 +38,7 @@ from tests.conftest import TESTER, MySQLServer, OracleServer
 from .conftest import Harness, OpenHarness
 from .prechecking import table_spec
 from .scheduling import DAY, MINUTE, fire, minute, missed, scheduled, started
+from .test_failure import AT
 from .test_scan import databases  # noqa: F401 (a fixture)
 
 pytestmark = pytest.mark.db
@@ -1072,7 +1073,8 @@ async def test_a_misclassified_error_at_v5_still_fails(pair: Pair, monkeypatch: 
 
     monkeypatch.setattr(postgresql.PostgreSQL, "rows", rows)
     run = await pair.h.finish(run_id)
-    assert (run["status"], run["error"], run["stop_reason"]) == ("failed", "UndefinedColumn", None)
+    assert (run["status"], run["stop_reason"]) == ("failed", None)
+    assert re.fullmatch("UndefinedColumn" + AT, run["error"])
     assert drifts(await pair.audited(run_id)) == [] and run["guard"]["checked"]["where"] == "read"
 
 

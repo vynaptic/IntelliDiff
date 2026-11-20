@@ -25,7 +25,8 @@ from deltasleuth.core.spec import SpecIssue
 from deltasleuth.core.spec.keys import fit_parts
 from deltasleuth.core.types import CompiledSpec
 from deltasleuth.runner.purge import refuse_purged
-from deltasleuth.security.tokenise import Tokeniser, mask_key
+from deltasleuth.security.policy import BUSINESS_CODE
+from deltasleuth.security.tokenise import inline_stand_ins
 from deltasleuth.store import repo
 
 UNSAFE = frozenset({"POST", "PUT", "PATCH", "DELETE"})
@@ -198,14 +199,16 @@ async def page(query: Awaitable[repo.Page]) -> Response:
     return ok({"items": [shown(row) for row in rows], "next_cursor": cursor})
 
 
-def masked_body(body: Mapping[str, Any], spec: CompiledSpec, tokeniser: Tokeniser) -> dict[str, Any]:
-    """A stored spec body as the routes show it: its inline keys (``key.source.keys``) masked by
-    ``key.class``, as runs show keys."""
+def masked_body(body: Mapping[str, Any], spec: CompiledSpec) -> dict[str, Any]:
+    """A stored spec body as the routes show it. Its inline keys (``key.source.keys``) are business codes
+    as runs take them, each part normalised; keys of any other ``key.class`` show their place in the list
+    alone (``tokenise.inline_stand_ins``), never a token of what someone typed."""
     shown_body, chain = deepcopy(dict(body)), [step.name for step in spec.key.normalize]
     source, n = shown_body["key"].get("source", {}), len(spec.key_parts) or 1
-    if "keys" in source:  # each fits: the loader refuses a spec with one that does not
-        keys = [fit_parts(k, chain, n) or "" for k in source["keys"]]
-        source["keys"] = [mask_key(key, spec, tokeniser) for key in keys]
+    if "keys" in source and spec.key.value_class != BUSINESS_CODE:
+        source["keys"] = inline_stand_ins(len(source["keys"]))
+    elif "keys" in source:  # each fits: the loader refuses a spec with one that does not
+        source["keys"] = [fit_parts(k, chain, n) or "" for k in source["keys"]]
     return shown_body
 
 

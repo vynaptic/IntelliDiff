@@ -820,10 +820,10 @@ def _pages(
 def test_the_server_s_log_says_how_its_reader_started(
     make_stack: Callable[..., Stack], exports: Path
 ) -> None:
-    """The reader's start line is in the log of ``ds serve``, which configures no logger of
-    its own, whatever held: the line is a warning, the level every ``ds`` process prints. On Linux it says
-    the data limit and, on a machine of ``reader.FILTERED``, that sockets are denied; on macOS that the
-    platform has neither."""
+    """The reader's start line is in the log of ``ds serve``, whose handler prints the package's lines
+    from INFO up with their time, level and logger, whatever held: an info line, or a warning when a
+    guard did not hold. On Linux it says the data limit and, on a machine of ``reader.FILTERED``, that
+    sockets are denied; on macOS that the platform has neither."""
     with _pages(make_stack, exports) as (stack, _, ran):
         clean = ran("clean.parquet", "1.0.0")
     assert (clean["status"], clean["scan"]["matched"]) == ("completed", 4)
@@ -835,7 +835,8 @@ def test_the_server_s_log_says_how_its_reader_started(
     )
     started = rf"the file reader started: duckdb {re.escape(version('duckdb'))} in process [0-9]+, {held}"
     said = (stack.settings.parent / "ds-serve.log").read_text()
-    assert len(re.findall(f"^{started}$", said, re.MULTILINE)) == 1
+    logged = rf"^\S+ \S+ (?:INFO|WARNING) deltasleuth\.files {started}$"
+    assert len(re.findall(logged, said, re.MULTILINE)) == 1
 
 
 @faults.real

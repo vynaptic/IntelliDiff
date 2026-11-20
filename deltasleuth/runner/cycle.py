@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -31,11 +32,12 @@ from deltasleuth import approvals, licence
 from deltasleuth.auth.principal import WORKER, Principal
 from deltasleuth.connectors.base import UnsafeTargetError
 from deltasleuth.connectors.tables import TableError
-from deltasleuth.context import Context
+from deltasleuth.connectors.tables.reader import passed
+from deltasleuth.context import Capabilities, Context
 from deltasleuth.core.classify import rootcause
 from deltasleuth.core.secrets import SecretError
 from deltasleuth.core.spec import parse_duration
-from deltasleuth.core.types import CompiledSpec, Verdict
+from deltasleuth.core.types import CompiledSpec, Finding, Verdict
 from deltasleuth.runner import census, sample
 from deltasleuth.runner.compare import rederive_all
 from deltasleuth.runner.counters import Tally
@@ -49,6 +51,8 @@ from deltasleuth.store import repo
 CANCELLED = "cancelled"  # the stop reason of a cancel asked for through the API
 ERASURE = "erasure"  # an erasure's: its cycle ends cancelled, unsummarised
 _ACTIVE = ("running", "cancelling")
+FRAMES = 3  # the innermost frames of this package a failure names
+_PACKAGE = os.path.dirname(os.path.dirname(__file__))  # as a frame of one of its modules names its file
 log = logging.getLogger(__name__)
 
 
@@ -57,29 +61,24 @@ def final_status(counters: dict[str, Any]) -> str:
 
 
 async def summarise(ctx: Context, conn: repo.Conn, spec: CompiledSpec, run: repo.Row) -> dict[str, Any]:
-    """Save the cycle's root causes and counters; return the counters. The results are read and counted a
-    page at a time; only the discrepant keys' results and findings are kept, for the root causes."""
+    """Save the cycle's root causes and counters; return the counters. The results are read, counted and
+    their discrepant keys derived again a page at a time; of those keys only each finding's grouping facts
+    (``rootcause.Member``) are kept, never their documents or values."""
     run_id, cycle, caps = run["run_id"], run["cycle"], ctx.capabilities(run)
     live, due = run["params"].get("samples_dir") is None, RecheckPolicy.from_spec(spec.raw).outcomes
     tally = Tally(live=live, recheck_outcomes=due)
-    discrepant: list[repo.Row] = []
-    findings: dict[str, list[repo.Row]] = {}
+    grouped: list[rootcause.Member] = []
     async for results, found in repo.result_pages(conn, run_id, cycle):
+        discrepant = []
         for r in results:
             fs = found.get(r["key_masked"], [])
             # Root causes group discrepant findings only, so only discrepant results are re-derived.
             if tally.add(r, fs) is Verdict.DIFFERENT:
-                discrepant.append(r)
-                findings[r["key_masked"]] = fs
-    tagged = {
-        r["key_masked"]
-        for r in discrepant
-        if any(f["value_class"] == INTERMITTENT_B for f in findings[r["key_masked"]])
-    }
-    derived = await rederive_all(ctx, conn, spec, run_id, discrepant, caps, tagged)
-    groups = rootcause.groups(derived, spec=spec, tokeniser=ctx.tokeniser)
-    causes = [rc for rc, _ in groups]
-    await repo.replace_root_causes(conn, run_id, cycle, causes, _links(ctx, spec, groups, findings))
+                discrepant.append((r, fs))
+        grouped += await _members(ctx, conn, spec, run_id, discrepant, caps)
+    groups = await asyncio.to_thread(rootcause.group_members, grouped)
+    links = {m.ref: rc.root_cause_id for rc, ms in groups for m in ms if m.ref is not None}
+    await repo.replace_root_causes(conn, run_id, cycle, [rc for rc, _ in groups], links)
     states = await repo.cycle_counts(conn, run_id, cycle)
     bulk = (run["scan"] or {}).get("matched", 0)  # a table scan's identical rows
     counters = tally.counters(total=sum(states["keys"].values()) + bulk, bulk_match=bulk)
@@ -87,23 +86,36 @@ async def summarise(ctx: Context, conn: repo.Conn, spec: CompiledSpec, run: repo
     return counters
 
 
-def _links(
-    ctx: Context, spec: CompiledSpec, groups: list[rootcause.Group], findings: dict[str, list[repo.Row]]
-) -> dict[str, str]:
-    """finding_id -> root_cause_id; a stored finding is known by its masked key and pointer."""
+async def _members(
+    ctx: Context,
+    conn: repo.Conn,
+    spec: CompiledSpec,
+    run_id: str,
+    discrepant: list[tuple[repo.Row, list[repo.Row]]],
+    caps: Capabilities,
+) -> list[rootcause.Member]:
+    """One page's discrepant (result, stored findings), derived again from their evidence, as members of
+    root causes. A member's ``ref`` is its stored finding's id (known by its masked key and pointer), or
+    None. Keys whose stored findings a recheck tagged intermittent are tagged again."""
+    if not discrepant:
+        return []
+    tagged = {r["key_masked"] for r, fs in discrepant if any(f["value_class"] == INTERMITTENT_B for f in fs)}
+    derived = await rederive_all(ctx, conn, spec, run_id, [r for r, _ in discrepant], caps, tagged)
     ids = {
         (f["key_masked"], f["json_pointer"], f["change_type"]): f["finding_id"]
-        for fs in findings.values()
+        for _, fs in discrepant
         for f in fs
     }
-    links = {}
-    for rc, fs in groups:
-        for f in fs:
-            key = mask_key(f.key, spec, ctx.tokeniser)
-            pointer = repo.storable(mask_pointer(f.pointer_parts, spec, ctx.tokeniser, key=f.key))
-            if finding_id := ids.get((key, pointer, f.change_type.value)):
-                links[finding_id] = rc.root_cause_id
-    return links
+    tok = ctx.tokeniser
+
+    def stored(f: Finding) -> str | None:
+        pointer = repo.storable(mask_pointer(f.pointer_parts, spec, tok, key=f.key))
+        return ids.get((mask_key(f.key, spec, tok), pointer, f.change_type.value))
+
+    def read() -> list[rootcause.Member]:
+        return [m for r in derived for m in rootcause.members(r, spec=spec, tokeniser=tok, ref=stored)]
+
+    return await asyncio.to_thread(read)
 
 
 async def finish_cycle(
@@ -255,15 +267,40 @@ def failure(exc: BaseException) -> str:
     return str(exc) if isinstance(exc, SecretError) else type(exc).__name__
 
 
+def where(exc: BaseException) -> str:
+    """Where ``exc`` was raised: the innermost ``FRAMES`` frames of this package its traceback passed, the
+    innermost first, each as its module's path in the package, its line and its function; empty when it
+    passed none. Nothing a frame holds is read: no message, local or argument."""
+    return ", from ".join(
+        f"{file[len(_PACKAGE) + 1 :].replace(os.sep, '/')}:{line} in {function}"
+        for file, function, line in passed(exc, _PACKAGE)[:FRAMES]
+    )
+
+
+def located(exc: BaseException) -> str:
+    """What a log line says of a failure: ``failure(exc)``, then where it was raised (``where``)."""
+    at = where(exc)
+    return f"{failure(exc)} at {at}" if at else failure(exc)
+
+
+def recorded(exc: BaseException) -> str:
+    """What a failed run stores as its error: ``failure(exc)``, with where it was raised when that is its
+    type alone, so that a bug is found by its file and line. A table side's code, the guard's text and a
+    secret's file say what to put right as they are."""
+    said = failure(exc)
+    return located(exc) if said == type(exc).__name__ else said
+
+
 async def fail_run(ctx: Context, run_id: str, exc: BaseException, *, who: Principal) -> None:
     """End a run that cannot go on (a bug, lost evidence, an unreadable secret).
 
     Every caller cancels the keys it can: slots failing together each hand back their own key. A drawn
-    cycle is judged first, on a connection of its own."""
+    cycle is judged first, on a connection of its own. The run's error is ``recorded(exc)``; its audit
+    row's reason stays ``failure(exc)``, whose type a notification sends."""
     judgement = await sample.judgement(ctx, run_id)
     async with repo.audited(ctx.pool) as (conn, audit):
         when = ("queued", "running", "paused", "cancelling")
-        moved = await repo.set_run_status(conn, run_id, "failed", when=when, error=failure(exc))
+        moved = await repo.set_run_status(conn, run_id, "failed", when=when, error=recorded(exc))
         await repo.cancel_keys(conn, run_id)
         if moved:
             await repo.end_cycle(conn, run_id, sample=judgement)

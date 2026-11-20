@@ -6,6 +6,7 @@ import asyncio
 import csv
 import io
 import json
+import re
 import threading
 import time
 from collections import Counter
@@ -47,6 +48,7 @@ from .sampled import (
     audited,
     tables_fixture,  # noqa: F401 (the on_tables fixture)
 )
+from .test_failure import AT
 from .test_keys_table import (
     ITEM_KEYS,
     ITEMS,
@@ -301,7 +303,7 @@ async def test_until_in_the_past_stops_the_run(harness: Harness, service: Script
     assert run["counters"]["cancelled"] == 7
 
 
-async def test_a_bug_fails_the_run_naming_only_the_error_type(
+async def test_a_bug_fails_the_run_naming_its_type_and_place_never_its_message(
     harness: Harness, service: ScriptedService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def broken(*_: Any, **__: Any) -> None:
@@ -309,7 +311,8 @@ async def test_a_bug_fails_the_run_naming_only_the_error_type(
 
     monkeypatch.setattr("deltasleuth.runner.worker.evaluate_many", broken)
     run_id, run = await _run(harness, spec_text(KEYS))
-    assert (run["status"], run["error"]) == ("failed", "RuntimeError")
+    assert run["status"] == "failed" and re.fullmatch("RuntimeError" + AT, run["error"])
+    assert " in _passed" in run["error"] and "K001" not in run["error"] and "Secretname" not in run["error"]
     async with harness.ctx.pool.connection() as conn:
         assert set((await repo.cycle_counts(conn, run_id))["keys"]) == {"cancelled"}
         ended, _ = await repo.list_audit(conn, action="run.finished", obj=run_id)
@@ -392,7 +395,7 @@ async def test_the_sweep_isolates_a_run_the_store_refuses(
     monkeypatch.setattr("deltasleuth.runner.worker.finish_cycle", together)
     assert (await harness.finish(other, timeout=20))["status"] == "completed"
     failed = await harness.run(refused)  # by then: that worker's sweep ended it first, and went on
-    assert (failed["status"], failed["error"]) == ("failed", "CheckViolation")
+    assert failed["status"] == "failed" and re.fullmatch("CheckViolation" + AT, failed["error"])
     assert ended == [refused, other] and failed["finished_at"] < (await harness.run(other))["finished_at"]
 
 

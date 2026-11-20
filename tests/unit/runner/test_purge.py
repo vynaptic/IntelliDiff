@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,7 @@ from tests.conftest import TESTER
 from tests.conftest import create_run as queued_run
 
 from .conftest import Harness, ScriptedService, doc, spec_text
+from .test_failure import AT
 
 pytestmark = pytest.mark.db
 KEYS = ["K001", "K002", "K003", "K004"]
@@ -410,7 +412,8 @@ async def test_erasing_the_last_cycle_of_a_failed_soak_leaves_the_earlier_ones_r
 
     monkeypatch.setattr(cycle, "summarise", asked_then_summarised)
     failed = await harness.finish(run_id)
-    assert (failed["status"], failed["cycle"], failed["error"]) == ("failed", 3, "RuntimeError")
+    assert (failed["status"], failed["cycle"]) == ("failed", 3)
+    assert re.fullmatch("RuntimeError" + AT, failed["error"])
     tombstones = await rows(
         harness, "SELECT cycle, counters FROM ds.cycles WHERE run_id = %s ORDER BY cycle", run_id
     )

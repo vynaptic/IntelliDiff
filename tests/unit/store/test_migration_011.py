@@ -361,4 +361,4 @@ async def test_store_at_011_opens_with_001_to_010_files(
     monkeypatch.setattr(db, "MIGRATIONS", tmp_path)
     assert await migrate(pool) == []
     async with pool.connection() as conn:
-        assert await _all(conn, "SELECT max(version) FROM ds.schema_version") == [(17,)]
+        assert await _all(conn, "SELECT max(version) FROM ds.schema_version") == [(18,)]

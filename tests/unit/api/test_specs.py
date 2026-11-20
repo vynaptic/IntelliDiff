@@ -72,8 +72,30 @@ def test_a_spec_is_stored_once_per_content_and_read_back(
 def test_spec_detail_masks_inline_identifier_keys(client: TestClient, spec_yaml: str) -> None:
     spec_id = client.post("/v1/specs", content=spec_yaml).json()["spec_id"]
     shown = client.get(f"/v1/specs/{spec_id}")
-    assert "K12345678" not in shown.text  # key.class identifier: tokenised, as in every run view
-    assert shown.json()["body"]["key"]["source"]["keys"][0].startswith("tok:")
+    assert "K12345678" not in shown.text  # key.class identifier: never shown
+    assert shown.json()["body"]["key"]["source"]["keys"] == ["masked key 1 of 1"]
+
+
+def test_inline_keys_of_a_protected_class_are_shown_by_place_and_never_as_tokens(
+    client: TestClient, spec_yaml: str
+) -> None:
+    """A stored spec answers no token of a key someone typed into it: such a token would say whether that
+    text is a key of a run, or a value of the class, anywhere in the installation. Each key shows its place
+    in the list, so two specs with other keys read the same."""
+    doc = yaml.safe_load(spec_yaml)
+    ctx, shown = client.app.state.ctx, []
+    for version, guesses in (("1.0.0", ["K12345678", "K87654321"]), ("1.1.0", ["K00000001", "K00000002"])):
+        doc["metadata"]["version"] = version
+        doc["key"]["source"] = {"kind": "list", "keys": guesses}
+        spec = compile_spec(doc, targets=ctx.targets)
+        answer = client.get(f"/v1/specs/{client.post('/v1/specs', json=doc).json()['spec_id']}?form=1")
+        shown.append(answer.json()["body"]["key"]["source"]["keys"])
+        tokens = [text for guess in guesses for text in run_keys([guess], spec, ctx.tokeniser).values()]
+        tokens += [ctx.tokeniser.token("identifier", guess) for guess in guesses]
+        assert not any(text in answer.text for text in (*guesses, *tokens)) and "tok:" not in answer.text
+        texts = answer.json()["yaml"], answer.json()["form"]["text"]
+        assert all("masked key 1 of 2" in text and "masked key 2 of 2" in text for text in texts)
+    assert shown == [["masked key 1 of 2", "masked key 2 of 2"]] * 2
 
 
 def test_spec_yaml(client: TestClient, spec_yaml: str) -> None:
@@ -90,7 +112,7 @@ def test_spec_yaml(client: TestClient, spec_yaml: str) -> None:
     )
     assert all(line.startswith("# ") for line in head.splitlines()) and "#" not in rest
     assert yaml.safe_load(shown["yaml"]) == shown["body"]  # the masked body and nothing else
-    assert "K12345678" not in shown["yaml"] and "keys: ['tok:identifier:" in rest  # masked, as the body's
+    assert "K12345678" not in shown["yaml"] and "keys: [masked key 1 of 1]" in rest  # masked, as the body's
     assert "&side" not in rest and "<<" not in rest  # parsed: neither an anchor nor a merge key is kept
     assert (shown["created_by"], shown["created_by_name"]) == ("dev:loopback", "dev:loopback")
     earlier = spec_yaml.replace('"1.0.0"', '"0.9.0"')  # another version, as one stored before 005
@@ -114,8 +136,8 @@ def test_spec_yaml(client: TestClient, spec_yaml: str) -> None:
 
 
 def test_masked_inline_composite_keys(client: TestClient, spec_yaml: str) -> None:
-    """A multi-part key's inline keys are shown as a run of the spec shows them: each part normalised, then
-    one token of ``key.class`` for the joined key."""
+    """A multi-part key's inline keys show their place in the list as any other's do: no part of one, and
+    no token a run of the spec shows for it, though two of them are one key to a run."""
     doc = yaml.safe_load(spec_yaml)
     listed = [" b12 | k12345678 ", "B12|K87654321", "b12|K12345678"]
     doc["key"] |= {
@@ -128,8 +150,8 @@ def test_masked_inline_composite_keys(client: TestClient, spec_yaml: str) -> Non
     spec = compile_spec(doc, targets=ctx.targets)
     taken = run_keys(normalise_keys(listed, spec), spec, ctx.tokeniser)
     assert list(taken) == ["B12|K12345678", "B12|K87654321"]  # the third repeats the first
-    assert keys == [taken["B12|K12345678"], taken["B12|K87654321"], taken["B12|K12345678"]]
-    assert all(key.startswith("tok:identifier:") and "|" not in key for key in keys)
+    assert keys == ["masked key 1 of 3", "masked key 2 of 3", "masked key 3 of 3"]
+    assert not any(token in shown.text for token in taken.values())
     assert not any(raw in shown.text.upper() for raw in ("B12", "K12345678", "K87654321"))
 
 
@@ -379,12 +401,13 @@ def test_a_table_spec_form_round_trips(open_client: OpenClient) -> None:
 
 
 def test_stand_in_inline_keys_are_refused(client: TestClient, spec_yaml: str, audit: Any) -> None:
-    """A stored spec's inline keys of a class other than business_code are shown as tokens. Such a form is
-    refused wherever it is sent: a token saved as a key would be asked of the endpoints."""
+    """A stored spec's inline keys of a class other than business_code are shown as stand-ins. Such a form
+    is refused wherever it is sent, and so is one holding a token: a stand-in saved as a key would be asked
+    of the endpoints."""
     spec_id = client.post("/v1/specs", content=spec_yaml).json()["spec_id"]
     form = client.get(f"/v1/specs/{spec_id}", params={"form": 1}).json()["form"]
     (shown,) = parse_yaml_text(form["text"])["key"]["source"]["keys"]
-    assert tokenise.is_token(shown) and RAW_KEY not in json.dumps(form)
+    assert shown == "masked key 1 of 1" and tokenise.is_stand_in(shown) and RAW_KEY not in json.dumps(form)
     stand_ins = (
         422,
         "the inline keys of this text are stand-ins: type the keys again, or declare another key source and"
@@ -396,6 +419,9 @@ def test_stand_in_inline_keys_are_refused(client: TestClient, spec_yaml: str, au
         client.post("/v1/specs/try", json={"form": form, "side": "a", "key": RAW_KEY}),
     ]
     assert [said(answer) for answer in refused] == [stand_ins] * 3
+    token = client.app.state.ctx.tokeniser.token("identifier", RAW_KEY)  # as a run's views show the key
+    pasted = form | {"text": form["text"].replace(shown, token)}
+    assert said(client.post("/v1/specs", json=pasted)) == stand_ins
     typed = form | {"text": form["text"].replace(shown, RAW_KEY)}
     assert client.post("/v1/specs", json=typed).json()["spec_id"] == spec_id  # typed again: the same version
     assert audit(client) == ["spec.create"] * 2 and audited(client, "target.try") == []

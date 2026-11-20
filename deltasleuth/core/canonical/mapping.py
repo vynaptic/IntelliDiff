@@ -4,10 +4,12 @@ Empty data is never a document: a select finding no node or only nulls, and a ma
 nothing from a non-empty input (an error envelope read through the success map), raise
 ``MappingError``, so two failed responses never compare as equal documents.
 
-JSONata only knows int/float. Integral Decimals go in as ints and Decimals a double holds as
-floats; any other number goes in as a stand-in string (derived from a digest of the input, so
-data cannot forge it) and is swapped back afterwards. A stand-in is exact only while moved, so
-a map that reads one is evaluated again with nearest doubles and both results must agree.
+JSONata only knows int/float: it computes in doubles and writes a number as text with 15
+significant digits. A number of at most 15 significant digits survives both, and goes in as an
+int or, where a double holds it, as a float. Any other number goes in as a stand-in string
+(derived from a digest of the input, so data cannot forge it) and is swapped back afterwards.
+A stand-in is exact only while moved, so a map that reads one is evaluated again with nearest
+doubles and both results must agree.
 """
 
 from __future__ import annotations
@@ -32,6 +34,8 @@ _MAP_EMPTY = "map produced an empty document"
 # real maps take milliseconds.
 MAP_TIMEOUT_MS = 2000
 MAP_MAX_DEPTH = 500
+# The significant digits JSONata keeps when it writes a number as text; a double holds them all.
+EXACT_DIGITS = 15
 
 
 def apply_select(select: str, doc: JSON) -> JSON:
@@ -92,8 +96,19 @@ def _has_value(node: JSON) -> bool:
     return node is not None
 
 
+def _significant(value: Decimal) -> int:
+    """The significant digits of ``value``: its coefficient's, without trailing zeros."""
+    digits = value.as_tuple().digits
+    count = len(digits)
+    while count > 1 and digits[count - 1] == 0:
+        count -= 1
+    return count
+
+
 def _to_jsonata(value: JSON, high_precision: Callable[[Decimal], Any]) -> Any:
     if isinstance(value, Decimal):
+        if _significant(value) > EXACT_DIGITS:
+            return high_precision(value)
         if value == value.to_integral_value():
             return int(value)
         as_float = float(value)

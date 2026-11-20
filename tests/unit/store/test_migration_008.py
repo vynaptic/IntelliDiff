@@ -105,8 +105,8 @@ async def test_an_empty_store_takes_008_with_the_others_and_rehashes_nothing(
     async with pool.connection() as conn:
         versions = await _all(conn, "SELECT version FROM ds.schema_version ORDER BY version")
         audited = await _all(conn, "SELECT action, detail FROM ds.audit_log ORDER BY id")
-    assert versions == [(v,) for v in range(1, 18)]
-    assert audited[1:] == [("system.migrate", {"versions": list(range(1, 18))})]
+    assert versions == [(v,) for v in range(1, 19)]
+    assert audited[1:] == [("system.migrate", {"versions": list(range(1, 19))})]
     assert audited[0][0] == "installation.created"
 
 

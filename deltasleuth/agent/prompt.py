@@ -1,5 +1,5 @@
 """What the model is told (system prompt, scoped question, the two fixed questions, tool-result frame,
-repair request) and what the user reads when no verified answer exists."""
+repair request) and what the user reads when no verified answer exists or a token budget is spent."""
 
 from __future__ import annotations
 
@@ -90,3 +90,9 @@ def abstain(problems: Sequence[str]) -> str:
 
 def unavailable(exc: LLMError) -> str:
     return f"No answer: the AI call was refused or failed ({exc})."
+
+
+def spent(budget: str) -> str:
+    """What the asker reads once a token budget that outlives a question is used up: its name, no figure
+    (a run's sum holds what other people asked)."""
+    return f"No answer: the token budget {budget} of the chat's LLM profile is spent."

@@ -282,6 +282,21 @@ class _Stream(logging.Handler):
             self.handleError(record)
 
 
+def _service_logs() -> None:
+    """Give the package's loggers (``deltasleuth``) one handler on stderr from INFO up, each line its time,
+    level and logger, for ``ds serve`` and ``ds worker``: a worker's and a schedule's lines are seen, not
+    left to Python's last-resort handler, which drops INFO. They stop at it, so no record is printed
+    twice; the audit copy (``_siem``) and the MCP server's lines have handlers of their own and stop there
+    too, so stdout keeps the audit lines alone."""
+    package = logging.getLogger("deltasleuth")
+    if not any(isinstance(h, _Stream) for h in package.handlers):
+        handler = _Stream("stderr")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+        package.addHandler(handler)
+    package.setLevel(logging.INFO)
+    package.propagate = False
+
+
 def _siem(stream: str = "stderr") -> None:
     """Copy each audit row this process commits to ``stream`` as a JSON line, for the SIEM: the
     services' stdout, and a command's stderr, so that its stdout stays its output (a token, JSON). The
@@ -472,6 +487,7 @@ def serve(
         if "production_clear_declared" in settings.mcp.data_classes:
             typer.echo(MCP_CLEAR, err=True)
         _mcp_logs(bare=False)
+    _service_logs()
     _siem("stdout")
     _in_context(config, _warned)
     logging.getLogger("uvicorn.access").addFilter(AuthQueryFilter())
@@ -536,6 +552,7 @@ def worker(config: ConfigOpt = None) -> None:
         with _stopping() as stop:
             await run_worker(ctx, stop=stop)
 
+    _service_logs()
     _siem("stdout")
     _in_context(config, work)
 

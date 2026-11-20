@@ -137,7 +137,7 @@ async def test_migrations_apply_once(pool: AsyncConnectionPool) -> None:
     assert await migrate(pool) == []
     async with pool.connection() as conn:
         cur = await conn.execute("SELECT version FROM ds.schema_version")
-        assert await cur.fetchall() == [(v,) for v in range(1, 18)]
+        assert await cur.fetchall() == [(v,) for v in range(1, 19)]
 
 
 async def test_a_spec_is_stored_once_per_content_hash(pool: AsyncConnectionPool) -> None:
@@ -218,6 +218,31 @@ async def test_a_scan_checkpoint_saves_nothing_once_another_scanner_saved(
         assert await repo.save_scan(conn, run_id, 1, mine, found, 0)
         assert not await repo.save_scan(conn, run_id, 1, mine, found, 0)  # built on the old one
         assert (await repo.cycle_counts(conn, run_id))["keys"] == {"pending": 1}
+
+
+async def test_a_scan_s_candidates_fall_due_their_delay_after_the_store_s_clock_saved_them(
+    pool: AsyncConnectionPool, make_run: MakeRun
+) -> None:
+    """Each key a scan checkpoint saves falls due its own delay after the save, on the database's clock:
+    none is leased before, a later checkpoint moves no earlier key's due time, and the cycle stays open
+    while they wait."""
+    waits = "SELECT key_masked, extract(epoch FROM available_at - now())::float8 FROM ds.run_keys"
+    due = "SELECT key_masked, available_at FROM ds.run_keys WHERE key_masked <> 'm-c'"
+    run_id = await make_run([], scan=new_scan())
+    first = new_scan() | {"after": {"enc": "b"}, "candidates": 2}
+    async with pool.connection() as conn:  # one transaction: its now() is the save's
+        found = TEST_SEALER.seal_keys({"a": "m-a", "b": "m-b"})
+        assert await repo.save_scan(conn, run_id, 1, first, found, 0, {"m-a": 30.0, "m-b": 45.5})
+        assert dict(await (await conn.execute(waits)).fetchall()) == {"m-a": 30.0, "m-b": 45.5}
+        assert await repo.lease_due(conn, "w1", 10, 60) == []  # neither is due yet
+        saved = dict(await (await conn.execute(due)).fetchall())
+    async with pool.connection() as conn:  # the scan's last checkpoint, as one resumed after a kill saves it
+        ended = first | {"after": None, "candidates": 3, "done": True}
+        assert await repo.save_scan(conn, run_id, 1, ended, TEST_SEALER.seal_keys({"c": "m-c"}), 1)
+        assert keys(await repo.lease_due(conn, "w1", 10, 60)) == ["c"]  # without a delay: due at once
+        assert await repo.complete_key(conn, run_id, 1, "m-c", "w1")
+        assert dict(await (await conn.execute(due)).fetchall()) == saved
+        assert not await repo.cycle_done(conn, run_id, 1)  # the scan is done, and two keys wait
 
 
 async def test_concurrent_leasers_never_get_the_same_key(
@@ -568,6 +593,41 @@ async def test_soak_cycles_list_outcome_changes(pool: AsyncConnectionPool, make_
     assert rolled == {"keys": {"pending": 1}, "outcomes": {}}
 
 
+async def test_outcome_changes_are_one_cycle_s_and_page_in_manifest_order(
+    pool: AsyncConnectionPool, make_run: MakeRun
+) -> None:
+    keys = [f"k{i}" for i in range(5)]
+    differing = {2: {"k1", "k3", "k4"}, 3: {"k0", "k3", "k4"}}  # the keys that differ in each later cycle
+    run_id = await make_run(keys, mode="soak")
+
+    def change(cycle: int, key: str, was: str, now: str) -> dict[str, Any]:
+        return {"cycle": cycle, "key_masked": f"m-{key}", "from_outcome": was, "to_outcome": now}
+
+    second = [change(2, key, "MATCH", "MISMATCH") for key in ("k1", "k3", "k4")]
+    third = [change(3, "k0", "MATCH", "MISMATCH"), change(3, "k1", "MISMATCH", "MATCH")]
+    async with pool.connection() as conn:
+        for key in keys:
+            await save(conn, run_id, result(key))
+        for cycle, differ in differing.items():
+            assert await repo.start_next_cycle(conn, run_id, datetime.now(UTC)) == cycle
+            for key in keys:
+                found = result(key, Outcome.MISMATCH, [Severity.HIGH]) if key in differ else result(key)
+                await save(conn, run_id, found, cycle=cycle)
+        # The current cycle against the one before it, never every cycle of the run.
+        assert await repo.outcome_changes(conn, run_id) == third
+        assert await repo.list_outcome_changes(conn, run_id) == (third, None)
+        assert await repo.list_outcome_changes(conn, run_id, 2) == (second, None)
+        first, cursor = await repo.list_outcome_changes(conn, run_id, 2, limit=2)
+        assert first == second[:2] and cursor is not None
+        assert await repo.list_outcome_changes(conn, run_id, 2, limit=2) == (first, cursor)  # stable
+        assert await repo.list_outcome_changes(conn, run_id, 2, limit=2, cursor=cursor) == (second[2:], None)
+        assert await repo.list_outcome_changes(conn, run_id, 1) == ([], None)  # none before the first
+        counted = [await repo.count_outcome_changes(conn, run_id, cycle) for cycle in (1, 2, 3, 4)]
+        assert counted == [0, 3, 2, 0]
+        with pytest.raises(ValueError):
+            await repo.list_outcome_changes(conn, run_id, 2, cursor="x")
+
+
 async def test_run_status_moves_only_from_the_expected_states(
     pool: AsyncConnectionPool, make_run: MakeRun
 ) -> None:
@@ -749,7 +809,7 @@ async def test_migration_4_moves_a_run_s_scan_to_its_current_cycle(pg_dsn: str) 
     pool = AsyncConnectionPool(pg_dsn, open=False)
     await pool.open(wait=True)
     try:
-        assert await migrate(pool) == [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+        assert await migrate(pool) == [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
         async with pool.connection() as conn:
             run = await repo.get_run(conn, "R-" + "0" * 26)
             assert await repo.get_scan(conn, run["run_id"], 1) is None
@@ -786,7 +846,7 @@ async def test_migration_5_keeps_legacy_rows_and_checks_new_ones(pg_dsn: str) ->
     pool = AsyncConnectionPool(pg_dsn, open=False)
     await pool.open(wait=True)
     try:
-        assert await migrate(pool) == [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+        assert await migrate(pool) == [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
         async with pool.connection() as conn:
             run = await repo.get_run(conn, "R-" + "0" * 26)
             cur = await conn.execute("SELECT actor, actor_name FROM ds.audit_log ORDER BY id")

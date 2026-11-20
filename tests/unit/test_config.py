@@ -855,6 +855,18 @@ def test_a_mistyped_files_setting_is_named(tmp_path: Path) -> None:
     assert _refusal(tmp_path, files={"memry": "2GB"}).startswith("files.memry: Unexpected keyword argument")
 
 
+def test_the_external_llm_classes_are_the_egress_policy_s(tmp_path: Path) -> None:
+    """None by default; the class of clear-declared values is listed like any other, an unknown one is
+    refused."""
+    assert _load(tmp_path).llm_external_data_classes == frozenset()
+    both = ["production_tokenised", "production_clear_declared"]
+    assert _load(tmp_path, llm_external_data_classes=both).llm_external_data_classes == set(both)
+    assert _refusal(tmp_path, llm_external_data_classes=["production_raw"]).startswith(
+        "llm_external_data_classes.0: Input should be 'synthetic', 'golden', 'schema_summary', 'aggregates',"
+        " 'production_tokenised' or 'production_clear_declared'"
+    )
+
+
 # -- the MCP server ---------------------------------------------------------
 
 

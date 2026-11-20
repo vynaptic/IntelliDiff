@@ -310,7 +310,7 @@ async def test_007_refuses_while_any_legacy_value_remains(
         with pytest.raises(MigrationError, match="legacy plaintext remains"):
             await migrate(legacy_pool)
         return
-    assert await migrate(legacy_pool) == [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+    assert await migrate(legacy_pool) == [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
     async with legacy_pool.connection() as conn:
         columns, check = await _columns(conn)
     assert columns == SEALED_COLUMNS and "hk1" in check and "sha256" not in check
@@ -324,7 +324,7 @@ async def test_an_empty_store_takes_006_and_007_at_once(pool: AsyncConnectionPoo
         versions = await _all(conn, "SELECT version FROM ds.schema_version ORDER BY version")
         [(detail,)] = await _all(conn, "SELECT detail FROM ds.audit_log WHERE action = 'system.migrate'")
         columns, check = await _columns(conn)
-    assert versions == [(v,) for v in range(1, 18)] and detail == {"versions": list(range(1, 18))}
+    assert versions == [(v,) for v in range(1, 19)] and detail == {"versions": list(range(1, 19))}
     assert columns == SEALED_COLUMNS and "hk1" in check and "sha256" not in check
 
 

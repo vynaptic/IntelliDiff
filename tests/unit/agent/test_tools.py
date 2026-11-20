@@ -23,6 +23,7 @@ from deltasleuth.agent.tools import (
     Scope,
     ToolError,
     _top,
+    clear_declared,
     run_tool,
     tools_for,
 )
@@ -30,10 +31,12 @@ from deltasleuth.approvals import ApprovalRequired
 from deltasleuth.auth.principal import expand
 from deltasleuth.connectors.tables import plan
 from deltasleuth.core import jsonio
-from deltasleuth.core.spec import TargetRegistry
+from deltasleuth.core.spec import TargetRegistry, compile_spec
 from deltasleuth.core.types import DatabaseTarget, Target
 from deltasleuth.llm.client import DEFAULT_BYTES_PER_TOKEN
+from deltasleuth.llm.model import DataClass
 from deltasleuth.llm.profiles import Budgets
+from deltasleuth.mcp import tools as mcp_tools
 from deltasleuth.reports import accuracy
 from deltasleuth.reports.csv import parse_csv, render_csv
 from deltasleuth.store import repo
@@ -41,7 +44,30 @@ from tests.conftest import TESTER
 from tests.unit.connectors.test_postgres import compiled
 from tests.unit.store.four_eyes import person
 
-from .conftest import RAW_EMAIL, RAW_KEY, TARGETS, seed
+from .conftest import RAW_EMAIL, RAW_KEY, SPEC_DOC, TARGETS, seed
+
+
+@pytest.mark.parametrize(
+    ("key_class", "security", "clear"),
+    [
+        ("identifier", {}, False),
+        ("identifier", {"unlisted": "tokenize"}, False),
+        ("identifier", {"clear": ["$.total"]}, True),
+        ("identifier", {"unlisted": "clear"}, True),
+        ("business_code", {}, True),
+    ],
+)
+def test_a_spec_whose_runs_show_values_clear_is_told(
+    key_class: str, security: dict[str, Any], clear: bool
+) -> None:
+    """The one test the chat's egress class and MCP's refusal share."""
+    tokenised = [{"path": "$.email", "class": "email"}, {"path": "$.id", "class": "identifier"}]
+    doc = SPEC_DOC | {
+        "key": SPEC_DOC["key"] | {"class": key_class},
+        "security": {"tokenize": tokenised} | security,
+    }
+    assert clear_declared(compile_spec(doc, targets=TARGETS)) is clear
+    assert mcp_tools.CLEAR == DataClass.PRODUCTION_CLEAR_DECLARED == "production_clear_declared"
 
 
 @pytest.mark.db

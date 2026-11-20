@@ -20,7 +20,7 @@ from deltasleuth.reports import FORMATS
 from deltasleuth.store import repo
 from tests.unit.runner.prechecking import table_spec
 
-from .conftest import OIDC, RAW_KEY, TARGETS, approved, audited, said
+from .conftest import OIDC, OTHER_KEY, RAW_KEY, TARGETS, approved, audited, said
 
 pytestmark = pytest.mark.db
 RUN_ID = "R-" + "0" * 26
@@ -306,6 +306,40 @@ def test_soak_changes_name_keys_by_their_masked_form(client: TestClient, seeded:
     ]
 
 
+def test_soak_changes_are_one_cycle_s_and_page_by_cursor(client: TestClient, seeded: Any) -> None:
+    _matched_in_cycle_2(client, seeded)
+
+    async def store(ctx: Any) -> None:
+        """The other key differs in cycle 2 only, and a third cycle in which both keys match."""
+        complete = SideState(SideStateKind.COMPLETE)
+        outcomes = {1: Outcome.MATCH, 2: Outcome.MISMATCH, 3: Outcome.MATCH}
+        async with ctx.pool.connection() as conn:
+            await repo.start_next_cycle(conn, seeded.run_id, datetime.now(UTC))
+            for cycle, outcome in outcomes.items():
+                other = KeyResult(OTHER_KEY, outcome, complete, complete)
+                await repo.save_key_result(conn, seeded.run_id, cycle, seeded.other_key, other, [])
+            matched = KeyResult(seeded.raw_key, Outcome.MATCH, complete, complete)
+            await repo.save_key_result(conn, seeded.run_id, 3, seeded.key, matched, [])
+
+    client.portal.call(store, client.app.state.ctx)
+    base = f"/v1/runs/{seeded.run_id}/changes"
+
+    def change(cycle: int, key: str, was: str, now: str) -> dict[str, Any]:
+        return {"cycle": cycle, "key_masked": key, "from_outcome": was, "to_outcome": now}
+
+    second = [change(2, seeded.key, "MISMATCH", "MATCH"), change(2, seeded.other_key, "MATCH", "MISMATCH")]
+    current = {"items": [change(3, seeded.other_key, "MISMATCH", "MATCH")], "next_cursor": None}
+    assert client.get(base).json() == current == client.get(base, params={"cycle": 3}).json()
+    first = client.get(base, params={"cycle": 2, "limit": 1}).json()
+    rest = client.get(base, params={"cycle": 2, "limit": 1, "cursor": first["next_cursor"]}).json()
+    assert (first["items"], rest) == (second[:1], {"items": second[1:], "next_cursor": None})
+    assert client.get(base, params={"cycle": 1}).json() == {"items": [], "next_cursor": None}
+    assert client.get(base, params={"limit": 501}).status_code == 422  # the lists' page-size cap
+    malformed = client.get(base, params={"cursor": "x"})
+    assert (malformed.status_code, malformed.json()) == (400, {"detail": "malformed cursor"})
+    assert client.get(f"/v1/runs/{RUN_ID}/changes").status_code == 404
+
+
 def test_cycle_selects_each_cycles_data(client: TestClient, seeded: Any) -> None:
     _matched_in_cycle_2(client, seeded)
     base = f"/v1/runs/{seeded.run_id}"
@@ -440,7 +474,7 @@ def test_a_purged_cycle_answers_410_on_its_routes(client: TestClient, seeded: An
         " its keys, results, findings and evidence are deleted"
     )
     for path in ("results", "findings", "root-causes", "graph", f"keys/{seeded.key}", "reports/report.pdf",
-                 "reports/discrepancies.csv", "results?cycle=1"):  # fmt: skip
+                 "reports/discrepancies.csv", "results?cycle=1", "changes", "changes?cycle=1"):  # fmt: skip
         reply = client.get(f"{base}/{path}")
         assert (reply.status_code, reply.json()) == (410, {"detail": gone}), path
     compared = client.post(
@@ -450,7 +484,6 @@ def test_a_purged_cycle_answers_410_on_its_routes(client: TestClient, seeded: An
     run = client.get(base).json()
     assert (run["status"], run["retention"]["purged"], run["retention"]["cycles"]) == ("cancelled", [1], [])
     assert run["retention"]["last_purged_at"] == ended["purged_at"].isoformat()
-    assert client.get(f"{base}/changes").json() == {"items": []}  # across cycles: what is left
     assert client.get(f"{base}/results?cycle=2").status_code == 200  # no such cycle: nothing purged
 
 

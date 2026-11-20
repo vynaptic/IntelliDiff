@@ -17,8 +17,10 @@ names, the list in one atomic replace (the switch), then every regular file of `
 longer names unlinked (``_swept``; at the server's start too, for what a killed change left). The
 process's registry and the target's one gate follow, so the change holds without a restart: for every
 connector opened afterwards, and an open one's budget at once. No change is made while a run is being
-written (``unmoved``), and a run is refused when a target it read was moved meanwhile. A refusal carries
-its HTTP status and binding message (``Refused``). No credential, reference or path of one is in an
+written (``unmoved``), and a run is refused when a target it read was moved meanwhile. Another process
+of the installation (a worker beside the server, a long-lived MCP server) follows a change before it
+compiles a run's spec or opens a connector (``follow``). A refusal carries its HTTP status and binding
+message (``Refused``). No credential, reference or path of one is in an
 answer, an issue, a log line or an audit detail.
 """
 
@@ -97,6 +99,12 @@ class _Turns:
 
 
 _TURNS: WeakKeyDictionary[asyncio.AbstractEventLoop, _Turns] = WeakKeyDictionary()
+# registry -> the product's list as it was when the registry last took it in (``_seen``)
+_SEEN: WeakKeyDictionary[TargetRegistry, tuple[int, int, int] | None] = WeakKeyDictionary()
+FOLLOW_FAILED = (
+    "warning: the product's list of targets changed but could not be read again (%s): this process keeps"
+    " the targets it holds"
+)
 
 
 class Refused(ValueError):
@@ -117,6 +125,7 @@ def load(settings: Settings) -> TargetRegistry:
     targets file wins, and a warning says so. ``TargetsError`` for either: an invalid list stops every
     entry point, and the product's is named in each of its issues."""
     registry, source = load_targets(settings.targets_file), path(settings)
+    seen = _seen(source)  # before the read: a change during it is taken in at the next follow
     try:
         for target_id, entry in _entries(source).items():
             if target_id in registry:
@@ -127,7 +136,51 @@ def load(settings: Settings) -> TargetRegistry:
     except TargetsError as exc:
         where = f" (the product's list, {source})"
         raise TargetsError(replace(issue, message=issue.message + where) for issue in exc.issues) from None
+    _SEEN[registry] = seen
     return registry
+
+
+def follow(ctx: Context) -> None:
+    """Take in a change of the product's list made since this process's registry last took it in: by
+    another process, as this process's own changes are (``put``, ``remove``). A target the list no longer
+    holds goes with its gate, a new one is added, a changed one replaced and its gate rebudgeted; a target
+    of the targets file stays as it is. A list that cannot be read changes nothing, and a warning says so
+    once per change."""
+    source = path(ctx.settings)
+    now = _seen(source)
+    if ctx.targets in _SEEN and _SEEN[ctx.targets] == now:
+        return
+    _SEEN[ctx.targets] = now
+    try:
+        entries = _entries(source)
+        listed = {tid: declared(tid, entry, source.parent) for tid, entry in entries.items()}
+    except (TargetsError, OSError) as exc:
+        # codes only: an issue's message may quote an entry, and no log line names a credential's file
+        codes = sorted({i.code for i in exc.issues}) if isinstance(exc, TargetsError) else []
+        reason = ", ".join(codes) if codes else getattr(exc, "strerror", None)
+        log.warning(FOLLOW_FAILED, reason or type(exc).__name__)
+        return
+    for target_id in list(ctx.targets):
+        if ctx.targets.get(target_id).declared_in == "product" and target_id not in listed:
+            ctx.targets.drop(target_id)
+            ctx.gates.pop(target_id, None)
+    for target_id, target in listed.items():
+        was = ctx.targets.get(target_id) if target_id in ctx.targets else None
+        if was is not None and was.declared_in != "product":
+            continue  # the targets file wins
+        ctx.targets.put(target)
+        budget = (target.rate_per_s, target.max_concurrency)
+        if was is not None and target_id in ctx.gates and (was.rate_per_s, was.max_concurrency) != budget:
+            ctx.gates[target_id].rebudget(*budget)
+
+
+def _seen(source: Path) -> tuple[int, int, int] | None:
+    """The list's file as a change shows: each write replaces it, so its inode, size and time change."""
+    try:
+        found = source.stat()
+    except FileNotFoundError:
+        return None
+    return found.st_ino, found.st_size, found.st_mtime_ns
 
 
 def item(target: Target, declares: bool) -> dict[str, Any]:
@@ -202,6 +255,7 @@ async def put(ctx: Context, target_id: str, body: Mapping[str, Any], who: Princi
                 raise Refused(409, IN_USE.format(target_id, reading))
             await audit(who, "target.set", target_id, detail)
         await _written(source, listed, {fresh[name]: value for name, value in given.items()})
+        follow(ctx)  # what another process changed before, and this change
         ctx.targets.put(target)
         budget = (target.rate_per_s, target.max_concurrency)
         if was is not None and target_id in ctx.gates and (was.rate_per_s, was.max_concurrency) != budget:
@@ -227,6 +281,7 @@ async def remove(ctx: Context, target_id: str, who: Principal) -> None:
             await audit(who, "target.delete", target_id)
         del entries[target_id]
         await _written(source, entries, {})
+        follow(ctx)  # what another process changed before, and this change
         if ours:
             ctx.targets.drop(target_id)
             ctx.gates.pop(target_id, None)

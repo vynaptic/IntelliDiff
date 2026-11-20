@@ -292,7 +292,7 @@ async def test_many_differing_keys_are_read_in_groups_and_scanned_keys_confirmed
     counters = run["counters"]
     assert (counters["by_outcome"]["MISMATCH"], counters["by_outcome"]["NOT_FOUND_B"]) == (ROWS // 2, 2)
     assert (counters["total"], counters["match"]) == (ROWS, ROWS // 2 - 2)
-    assert counters["by_confirmation"]["rechecked"] == ROWS // 2 + 2  # the scan was the first read
+    assert counters["by_confirmation"]["rechecked"] == ROWS // 2 + 2  # one read each, after the scan
     assert (len(scan_reads), {r["pass_no"] for r in scan_reads}) == (2 * (ROWS // 2 + 2), {1})
     assert {k: (r["outcome"], r["confirmation"]) for k, r in rechecked.items()} == {
         "2": ("MISMATCH", "rechecked"),

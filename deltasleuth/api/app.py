@@ -56,6 +56,7 @@ from deltasleuth.reports.adjudicate import AdjudicationConflict, AdjudicationErr
 from deltasleuth.reports.pack import PackForbidden, PackRefused, PackUnavailable
 from deltasleuth.runner import drift
 from deltasleuth.runner.compare import EvidenceMissing
+from deltasleuth.runner.cycle import located
 from deltasleuth.runner.purge import CyclePurged
 from deltasleuth.runner.sample import SampleRefused
 from deltasleuth.security.crypto import KeyringError
@@ -70,6 +71,7 @@ SECURITY_HEADERS = {
     "Referrer-Policy": "no-referrer",
 }
 HSTS = ("strict-transport-security", "max-age=31536000")
+log = logging.getLogger(__name__)
 PUBLIC = {  # the /v1 routes anyone may call
     ("GET", "/v1/health"),
     ("GET", "/v1/auth/login"),
@@ -427,7 +429,9 @@ async def _key_missing(_: Request, exc: Exception) -> Response:
 
 async def _internal(request: Request, exc: Exception) -> Response:
     # Sent by the outermost middleware, past _Guard, so it adds the guard's headers (the request id,
-    # no-store, HSTS) itself. The server log has the traceback; responses never do.
+    # no-store, HSTS) itself. The server log has the traceback; responses never do. This line ties the
+    # response's request id to the error's type and where it was raised, never its message.
+    log.error("internal error request_id=%s: %s", getattr(request.state, "request_id", "-"), located(exc))
     guard = getattr(request.state, "headers", None)
     headers = {k.decode(): v.decode() for k, v in guard} if guard else SECURITY_HEADERS
     return _error(500, "internal error", headers=headers)

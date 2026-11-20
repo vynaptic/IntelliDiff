@@ -1,0 +1,49 @@
+# The checks of tools/release.py (CHECKS) and the UI build, on every push to main and every pull
+# request. DS_REQUIRE_DB=1 makes a database test fail where it would skip without its container.
+name: checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      DS_REQUIRE_DB: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Pull the images the database tests start (the tests never pull)
+        run: |
+          docker pull postgres:16-alpine
+          docker pull mysql:8.4
+          docker pull gvenzl/oracle-free:23-slim-faststart
+      - name: Install the Python environment
+        run: uv sync --frozen
+      - name: Lint
+        run: uv run --frozen ruff check deltasleuth mocks tests examples tools
+      - name: Python tests
+        run: uv run --frozen pytest -q -p no:cacheprovider
+      - name: Install the UI's dependencies
+        run: npm --prefix web ci
+      - name: UI tests
+        run: npm --prefix web test
+      - name: UI build
+        run: npm --prefix web run build

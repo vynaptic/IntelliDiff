@@ -42,13 +42,14 @@ def _harness(monkeypatch: pytest.MonkeyPatch, source: Source, stop: dict[str, An
     run = {"scan": scanning.new_scan(), "spec_id": 1, "params": {}, "cycle": 1,
            "started_at": datetime.now(UTC)}
     plans = {side: {"keys": ["id"], "pinned": True} for side in "ab"}
-    spec = SimpleNamespace(raw={"execution": {"stop": stop}}, sides={
+    spec = SimpleNamespace(raw={"execution": {"stop": stop}, "recheck": {"delay": "0s", "times": 1}}, sides={
         side: SimpleNamespace(target=side.value) for side in Side
     })
     sealer = SimpleNamespace(seal=lambda *args: args[-1], open=lambda *args: args[-1],
                              seal_keys=lambda keys: dict(keys))
     saved: list[dict[str, Any]] = []
     keys: dict[str, str] = {}
+    waits: list[Any] = []  # each save's delays
     bounds: list[Any] = []
 
     @asynccontextmanager
@@ -64,10 +65,13 @@ def _harness(monkeypatch: pytest.MonkeyPatch, source: Source, stop: dict[str, An
     async def get_sealer(*args: Any) -> Any:
         return sealer
 
-    async def save(conn: Any, run_id: str, cycle: int, state: Any, found: Any, checkpoint: int) -> bool:
+    async def save(
+        conn: Any, run_id: str, cycle: int, state: Any, found: Any, checkpoint: int, delays: Any
+    ) -> bool:
         assert checkpoint == run["scan"]["checkpoint"]
         assert not (keys.keys() & found.keys()), "a resumed key was queued twice"
         keys.update(found)
+        waits.append(delays)
         run["scan"] = copy.deepcopy(state) | {"checkpoint": checkpoint + 1}
         saved.append(copy.deepcopy(run["scan"]))
         return True
@@ -104,7 +108,10 @@ def _harness(monkeypatch: pytest.MonkeyPatch, source: Source, stop: dict[str, An
     monkeypatch.setattr(scanning, "mask_key", lambda key, *args: key)
     ctx = SimpleNamespace(pool=SimpleNamespace(connection=connection), spec=get_spec, sealer=get_sealer,
                           targets=SimpleNamespace(live=lambda target: target), tokeniser=None)
-    return SimpleNamespace(ctx=ctx, run=run, saved=saved, keys=keys, bounds=bounds, spec=spec, sealer=sealer)
+    return SimpleNamespace(
+        ctx=ctx, run=run, saved=saved, keys=keys, bounds=bounds, spec=spec, sealer=sealer, plans=plans,
+        waits=waits,
+    )  # fmt: skip
 
 
 @pytest.mark.parametrize("side", ["a", "b", "ab"])
@@ -221,3 +228,22 @@ async def test_final_key_limit_skips_unusable_duplicates_and_keeps_singleton_mat
     assert state["skipped_a"] == state["skipped_b"] == 5
     assert (state["matched"], state["candidates"], state["repeated_a"], state["repeated_b"]) == (1, 1, 2, 2)
     assert harness.keys == {"b": "b"}
+
+
+@pytest.mark.parametrize(("fixed", "waits"), [("", {"key": 2.0}), ("a", {"key": 2.0}), ("ab", None)])
+async def test_a_key_found_waits_its_recheck_delay_unless_both_sides_read_fixed_files(
+    monkeypatch: pytest.MonkeyPatch, fixed: str, waits: dict[str, float] | None
+) -> None:
+    """A key the scan found is queued ``recheck.delay`` ahead, so its per-key read can meet a row that
+    converged meanwhile; where both sides read fixed files no later read answers otherwise, and it is due
+    at once."""
+
+    async def source(side: str, after: Any) -> AsyncIterator[Rows]:
+        yield [("key", DIGEST if side == "a" else b"e" * 32)]
+
+    harness = _harness(monkeypatch, source, {})
+    harness.spec.raw["recheck"] = {"delay": "2s", "times": 1}
+    for side in fixed:
+        harness.plans[side]["consistency"] = "fixed"
+    assert await scanning.scan(harness.ctx, "run") is None
+    assert harness.keys == {"key": "key"} and harness.waits == [waits]

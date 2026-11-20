@@ -2,9 +2,10 @@
 the cycle ran under, its sign-off, the licence the run was made under and, of a run whose tables the schema
 guard recorded a change of, what it recorded through the cycle), root causes first, then a compact grid of
 the cycle's counters, a sampled cycle's strata and bounds, an ended cycle's labelled accuracy, the trend
-against the previous run of the same spec, its pair's readiness gates as of the cycle, soak outcome
-changes, graph parity (for a run whose spec has ``graph``), the top findings (masked) and, last, the
-run's chat answers in an annex labelled as AI output. Model text never appears outside that annex.
+against the previous run of the same spec, its pair's readiness gates as of the cycle, a soak cycle's
+outcome changes from the cycle before, graph parity (for a run whose spec has ``graph``), the top
+findings (masked) and, last, the run's chat answers in an annex labelled as AI output. Model text never
+appears outside that annex.
 """
 
 from __future__ import annotations
@@ -48,7 +49,10 @@ async def report_document(ctx: Context, run_id: str, cycle: int | None = None) -
     data = await load_run(ctx, run_id, cycle, results=False)
     async with ctx.pool.connection() as conn:
         previous = await repo.previous_run(conn, run_id)
-        changes = await repo.outcome_changes(conn, run_id)
+        changes, changed = [], 0
+        if data.run["mode"] == "soak":  # the cycle's first changes; counted only when it has more
+            changes, more = await repo.list_outcome_changes(conn, run_id, data.cycle, limit=TOP_CHANGES)
+            changed = await repo.count_outcome_changes(conn, run_id, data.cycle) if more else len(changes)
         if answers := await repo.chat_answers(conn, run_id):
             sealer = await ctx.sealer(conn, run_id)
             answers = [sealer.open_row(a) for a in answers]
@@ -67,7 +71,7 @@ async def report_document(ctx: Context, run_id: str, cycle: int | None = None) -
             *filter(None, [strata_section(data), accuracy_section(data)]),
             _trend(data.counters, previous),
             ready,
-            _changes(data.run["mode"], changes),
+            _changes(data.run["mode"], data.cycle, changes, changed),
             *filter(None, [graph_section(data)]),
             _top_findings(found, discrepant),
             _annex(answers),
@@ -132,14 +136,19 @@ def _delta(before: Any, now: Any) -> str:
     return f"{now - before:+d}"
 
 
-def _changes(mode: str, changes: list[Row]) -> Section:
+def _changes(mode: str, cycle: int, changes: list[Row], changed: int) -> Section:
+    """The first outcome changes (``changes``) of the ``changed`` keys of a soak run's ``cycle`` whose
+    outcome differs from the cycle before's."""
     title = "Outcome changes across soak cycles"
     if mode != "soak":
         return Section(title, ["Not a soak run."])
+    if cycle == 1:
+        return Section(title, ["The run's first cycle has none before it to compare with."])
+    between = f"from cycle {cycle - 1} to cycle {cycle}"
     if not changes:
-        return Section(title, ["No key changed its outcome between cycles."])
-    rows = [(c["cycle"], c["key_masked"], c["from_outcome"], c["to_outcome"]) for c in changes[:TOP_CHANGES]]
-    lines = [f"{len(changes)} change(s); the first {len(rows)} are listed."]
+        return Section(title, [f"No key changed its outcome {between}."])
+    rows = [(c["cycle"], c["key_masked"], c["from_outcome"], c["to_outcome"]) for c in changes]
+    lines = [f"{changed} change(s) {between}; the first {len(rows)} are listed."]
     return Section(title, lines, ("Cycle", "Key", "From", "To"), rows)
 
 

@@ -95,6 +95,44 @@ async def test_per_run_tokens_count_the_worst_case_output(start_mock: Any, make_
     assert len(mock.requests) == 1
 
 
+@pytest.mark.parametrize("budget", ["per_run_tokens", "per_actor_tokens_per_day"])
+async def test_tokens_charged_before_a_client_count_against_a_budget_that_outlives_it(
+    budget: str, start_mock: Any, make_client: Any
+) -> None:
+    """A chat's client lives for one question: it is given what its run's chats and its asker's day were
+    charged before it, and refuses the call that would pass the budget with them."""
+    mock = await start_mock("openai")
+    request = req(max_output_tokens=16)
+    worst_case = make_client(mock).estimate_input_tokens(request) + 16
+    client = make_client(mock, budgets={budget: worst_case + 5000})
+    client.prior = {budget: 5001}
+    with pytest.raises(BudgetExceeded, match=budget) as info:
+        await client.complete(request)
+    assert (info.value.budget, mock.requests, client.call_log[-1]["denial_reason"]) == (
+        budget, [], f"budget:{budget}",
+    )  # fmt: skip
+    client.prior = {budget: 5000}
+    await client.complete(request)
+    with pytest.raises(BudgetExceeded, match=budget):
+        await client.complete(request)  # what this client was charged counts on top
+    assert len(mock.requests) == 1
+
+
+async def test_a_row_holds_the_tokens_its_call_was_charged(start_mock: Any, make_client: Any) -> None:
+    """Reported input and output, or the worst case of a reply without usage: what the budgets count,
+    and what the chat sums over its stored calls."""
+    request = req("x" * 3000, max_output_tokens=10)
+    reported = make_client(await start_mock("openai"))
+    response = await reported.complete(request)
+    assert reported.call_log[-1]["usage_charged"] == response.usage.input + response.usage.output > 0
+    silent = make_client(await start_mock("openai", usage=False))
+    await silent.complete(request)
+    assert silent.call_log[-1]["usage_charged"] == silent.counters.estimated_tokens > 3000 / 3
+    with pytest.raises(BudgetExceeded):
+        await silent.complete(req(max_output_tokens=10**9))
+    assert "usage_charged" not in silent.call_log[-1]  # a refused call is charged nothing
+
+
 async def test_concurrent_calls_cannot_overshoot_the_run(start_mock: Any, make_client: Any) -> None:
     mock = await start_mock("openai")
     mock.delay_s = 0.05  # every call is still in flight when the others check the budget

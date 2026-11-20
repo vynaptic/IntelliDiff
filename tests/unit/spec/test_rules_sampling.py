@@ -112,7 +112,7 @@ def test_the_example_compiles_into_a_sample(sampled: dict[str, Any]) -> None:
         ("Y", "high", 30107),
         ("N", "standard", None),
     ]
-    assert approvals.needs(spec) == ["sampling"]
+    assert approvals.needs(spec) == ["sampling", "transforms"]  # its sides select part of an answer and map
 
 
 def test_rates_are_u_thresholds_and_resolve_has_defaults(sampled: dict[str, Any]) -> None:

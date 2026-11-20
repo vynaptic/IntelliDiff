@@ -19,6 +19,8 @@ from deltasleuth.security.tokenise import (
     KeyFileError,
     Tokeniser,
     TokeniserError,
+    inline_stand_ins,
+    is_stand_in,
     is_token,
     load_or_create_key,
     mask_raw,
@@ -72,6 +74,18 @@ def test_is_token() -> None:
         Tokeniser(KEY).scoped_label("date_of_birth", "K1", "1990-01-01"),
     ):
         assert not is_token(text), text
+
+
+def test_inline_stand_ins() -> None:
+    """What stands for a stored spec's inline keys: each key's place in the list, which is no token and no
+    key, and is known again when it comes back; a token's form is a stand-in too."""
+    shown = inline_stand_ins(3)
+    assert shown == ["masked key 1 of 3", "masked key 2 of 3", "masked key 3 of 3"]
+    assert inline_stand_ins(0) == [] and len(set(inline_stand_ins(12))) == 12
+    token = Tokeniser(KEY).token("name", "Ada")
+    assert all(is_stand_in(text) and not is_token(text) for text in shown) and is_stand_in(token)
+    for text in ("K12345678", "", "masked key", "masked key 0 of 3", "masked key 1 of 3 ", "key 1 of 3"):
+        assert not is_stand_in(text), text
 
 
 def test_mask_raw() -> None:

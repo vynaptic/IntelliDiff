@@ -127,8 +127,9 @@ def test_mask_pointer(spec, tok) -> None:
     assert mask_pointer((), spec, tok) == ""
 
 
-def test_pointer_escaping_and_the_reserved_at(spec, tok) -> None:
-    assert mask_pointer((("field", "a/b~c"), ("field", "@type")), spec, tok) == "/a~1b~0c/@@type"
+def test_pointer_escaping_and_the_reserved_at(spec, make_spec, tok) -> None:
+    cleared = make_spec(security=SecurityPolicy(clear=("$['a/b~c']",)))  # unlisted, both names read as data
+    assert mask_pointer((("field", "a/b~c"), ("field", "@type")), cleared, tok) == "/a~1b~0c/@@type"
     assert mask_pointer((("field", "consents"), ("member", "@home/x")), spec, tok) == "/consents/@@home~1x"
 
 

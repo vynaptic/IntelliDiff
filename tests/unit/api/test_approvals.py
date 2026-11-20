@@ -195,7 +195,7 @@ def test_a_spec_version_is_requested_reviewed_and_approved(
         "unattributed": False,
     }
     assert (review["history"], review["previous"]) == ([], None)
-    assert review["body"]["key"]["source"]["keys"][0].startswith("tok:") and "K12345678" not in str(shown)
+    assert review["body"]["key"]["source"]["keys"] == ["masked key 1 of 1"] and "K12345678" not in str(shown)
     assert said(refused_run) == (
         409,
         f"spec {spec_id} (api-demo 1.0.0) needs a four-eyes approval of clear before it runs",
@@ -277,6 +277,37 @@ def test_a_review_lists_the_lines_a_file_side_skips() -> None:
     assert _needed({"sides": sides}, ["population_filters"]) == [
         {"scope": "population_filters", "pointer": "/sides/a/table/file/csv/skip", "value": 2}
     ]
+
+
+def test_a_review_shows_no_token_of_an_inline_key(sso: TestClient, idp: FakeIdp) -> None:
+    """A review's bodies, the version's and the one approved before it, show inline keys by place."""
+    client = sso
+    alice, bob = signed_in(client, idp, "alice", "G-author"), signed_in(client, idp, "bob", "G-approver")
+    first = requested(client, uploaded(client, alice), alice)
+    assert approve(client, first, bob).status_code == 200
+    later = _version("1.1.0").replace("keys: [K12345678]", "keys: [K00000001, K00000002]")
+    second = requested(client, uploaded(client, alice, later), alice)
+    review = client.get(f"/v1/approvals/{second}", headers=bob)
+    found = review.json()["review"]
+    assert found["body"]["key"]["source"]["keys"] == ["masked key 1 of 2", "masked key 2 of 2"]
+    assert found["previous"]["body"]["key"]["source"]["keys"] == ["masked key 1 of 1"]
+    assert "tok:" not in review.text and "K00000001" not in review.text
+
+
+def test_a_review_lists_each_side_s_transforms() -> None:
+    """A side's ``map``, and its ``select`` unless it is the whole answer, are shown to the approver."""
+    from deltasleuth.api.routes.approvals import _needed
+
+    sides = {
+        "a": {"target": "svc-a", "select": "$", "map": '{"id": id}'},
+        "b": {"target": "svc-b", "select": "$.data"},
+    }
+    assert _needed({"sides": sides}, ["transforms"]) == [
+        {"scope": "transforms", "pointer": "/sides/a/map", "value": '{"id": id}'},
+        {"scope": "transforms", "pointer": "/sides/b/select", "value": "$.data"},
+    ]
+    plain = {"a": {"target": "svc-a"}, "b": {"table": {"name": "t", "keyColumns": ["id"]}}}
+    assert _needed({"sides": plain}, ["transforms"]) == []
 
 
 def test_an_approval_step_needs_a_sign_in_under_15_minutes_old(sso: TestClient, idp: FakeIdp) -> None:

@@ -1322,7 +1322,7 @@ export const api = {
   results: (id: string, q: Query) => get<Page<Result>>(`${run(id)}/results${qs(q)}`),
   findings: (id: string, q: Query) => get<Page<Finding>>(`${run(id)}/findings${qs(q)}`),
   rootCauses: (id: string, cycle?: string) => get<Items<RootCause>>(`${run(id)}/root-causes${qs({ cycle })}`),
-  changes: (id: string) => get<Items<Change>>(`${run(id)}/changes`),
+  changes: (id: string, q: Query) => get<Page<Change>>(`${run(id)}/changes${qs(q)}`),
   key: (id: string, key: string, cycle?: string) =>
     request(`${run(id)}/keys/${encodeURIComponent(key)}${qs({ cycle })}`).then(
       async (r) => parseExact(await r.text()) as KeyDetail,

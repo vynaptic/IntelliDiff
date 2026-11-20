@@ -288,11 +288,19 @@ async def root_causes(ctx: Ctx, who: Viewer, run_id: str, cycle: int | None = No
 
 
 @router.get("/runs/{run_id}/changes")
-async def changes(ctx: Ctx, who: Viewer, run_id: str) -> Response:
-    """Keys whose outcome changed from one soak cycle to the next."""
+async def changes(
+    ctx: Ctx,
+    who: Viewer,
+    run_id: str,
+    cycle: int | None = None,
+    limit: Limit = 100,
+    cursor: str | None = None,
+) -> Response:
+    """Keys whose outcome changed from the soak cycle before to ``cycle`` (the run's current one by
+    default), a page at a time; none when the cycle before is purged."""
     async with ctx.pool.connection() as conn:
-        await run_of(conn, run_id)
-        return ok({"items": [shown(row) for row in await repo.outcome_changes(conn, run_id)]})
+        cycle = await live_cycle(conn, await run_of(conn, run_id), cycle)
+        return await page(repo.list_outcome_changes(conn, run_id, cycle, limit=limit, cursor=cursor))
 
 
 @router.get("/runs/{run_id}/graph")
