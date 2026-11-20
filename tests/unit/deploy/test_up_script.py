@@ -42,11 +42,20 @@ VERSION = yaml.safe_load((REPO / "deploy" / "docker-compose.yml").read_text())["
 SHELLS = [shell for shell in ("sh", "dash") if shutil.which(shell)]
 # The POSIX tools the script calls, with openssl: all a run finds on its PATH but the stand-ins.
 TOOLS = ("cat", "chmod", "cp", "cut", "grep", "id", "ls", "mkdir", "mv", "rm", "sed", "tail", "tr", "openssl")
-TEN = (  # what a run creates, in the order it says so
+FILES = (  # what a run creates, in the order it says so
     "deploy/config/deltasleuth.yaml", "deploy/config/targets.yaml", "deploy/config/llm_profiles.yaml",
     "deploy/docker-compose.site.yml", ".env", "deploy/secrets/db_password", "deploy/secrets/db_dsn",
-    "deploy/secrets/kek", "deploy/secrets/tokeniser", ".deltasleuth/tokens/first-run",
+    "deploy/secrets/kek", "deploy/secrets/tokeniser", "deploy/secrets/db_owner_dsn",
+    ".deltasleuth/tokens/first-run",
 )  # fmt: skip
+# The settings' line that names the schema's owner, which a run adds to settings written before it.
+OWNER = "migrate_dsn_ref: file:/run/secrets/db_owner_dsn"
+# The settings example as it was before the roles were apart: the app signed in as the superuser.
+ONE_ROLE = re.sub(r"(?m)^migrate_dsn_ref: .*\n", "", SETTINGS, count=1)
+# db_dsn as a run before the roles were apart wrote it, of db_password ``{password}``.
+SUPERUSER_DSN = "postgresql://deltasleuth:{password}@db:5432/deltasleuth"
+# What a run writes into db_dsn and db_owner_dsn: each role's address, with a password of its own.
+ADDRESS = r"postgresql://deltasleuth_{role}:([0-9a-f]{{48}})@db:5432/deltasleuth"
 STEPS = (
     "Settings, site file and .env", "Secrets", "Build the image {project}:source", "Workspace and database",
     "Start", "First token",
@@ -105,8 +114,8 @@ U16 = (
     " <a.b.c.0/24>"
 )
 U21 = (
-    "deploy/secrets holds some of db_password, db_dsn, kek and tokeniser but not all: put the missing ones"
-    " back; new ones cannot open what the old ones protected"
+    "deploy/secrets holds some of its secrets but not all of db_password, kek and tokeniser: put the missing"
+    " ones back; new ones cannot open what the old ones protected"
 )
 U6 = "deploy/docker-compose.yml is not in this folder: cd to the DeltaSleuth checkout, then sh deploy/up.sh"
 U7 = "unset COMPOSE_FILE and COMPOSE_PROJECT_NAME in this shell: they override .env"
@@ -133,10 +142,14 @@ U24 = (
     " (!override): update Compose, or keep port 8000 and subnet 172.30.0.0/24"
 )
 U25 = "deploy/secrets is open to other accounts: chmod 700 it yourself, then run this script again"
-U26 = (
-    "deploy/secrets/db_password holds characters an address cannot carry as written: write"
-    " deploy/secrets/db_dsn yourself (postgresql://deltasleuth:<the password, percent-encoded>@db:5432/"
-    "deltasleuth), then run this script again"
+U28 = (
+    f'deploy/config/deltasleuth.yaml has no line "{OWNER}", which this script adds only after the one line'
+    ' "database_dsn_ref: …" of a file that is not a link: add it yourself, then run this script again'
+)
+U29 = (
+    "deploy/secrets/db_dsn is a link and names the database's superuser, as whom the app no longer signs in:"
+    " write postgresql://deltasleuth_app:<a new password>@db:5432/deltasleuth into the file it links to, then"
+    " run this script again"
 )
 U27 = (
     "{file} is a link to a file that is not there: put that file back, or remove the link yourself; this"
@@ -162,6 +175,7 @@ V8 = (
     'deploy/config/deltasleuth.example.yaml does not hold the line "  public_url: http://localhost:8000 "'
     " once: this script writes the port nowhere else"
 )
+V9 = "{file} was not made (the lines above say why)"
 W1 = (
     "warning: the token in .deltasleuth/tokens/first-run (T-{id}) is not an active token of this database"
     " (revoked, expired, or another database's) and will be refused: remove the file and run this script"
@@ -257,8 +271,8 @@ if argv[0] == "compose":
     if words[0] == "logs":
         end(out=scenario["logs"])
     if words[0] == "run":
-        ds = words[words.index("ds") + 1 :]
-        command = " ".join(ds[:2]) if ds[0] == "token" else ds[0]
+        ds = words[words.index("ds") + 1 :] if "ds" in words else ["db", "setup"]  # migrate's entrypoint
+        command = " ".join(ds[:2]) if ds[0] in ("token", "db") else ds[0]
         if command == scenario["block"]:
             signal.signal(signal.SIGPIPE, signal.SIG_DFL)  # Python ignores it; what docker starts does not
             (state / "blocked").touch()
@@ -313,10 +327,13 @@ class Ran:
         return [call["argv"] for call in self.calls if call["tool"] == "docker"]
 
     def ds(self) -> list[str]:
-        """What a ``docker compose`` call ran or started: ``build``, ``up`` and each ``ds`` command."""
+        """What a ``docker compose`` call ran or started: ``build``, ``up`` and each ``ds`` command, the
+        migrate service's ``ds db setup`` among them."""
         calls = [argv for argv in self.docker() if argv[0] == "compose"]
         started = [word for argv in calls for word in argv[1:] if word in ("build", "up")]
-        return started + [" ".join(argv[argv.index("ds") :]) for argv in calls if "ds" in argv]
+        run = [argv[argv.index("ds") :] if "ds" in argv else ["ds", "db", "setup"] for argv in calls
+               if "ds" in argv or argv[-2:] == ["--rm", "migrate"]]  # fmt: skip
+        return started + [" ".join(argv) for argv in run]
 
 
 @dataclass
@@ -361,7 +378,7 @@ class Trial:
             "curl": 7, "curl6": 7, "uname": "Darwin", "config": None, "site": None, "build": 0, "up": 0,
             "stop": 0,
             "app": "c0ffee\n", "oneoff": "",
-            "ds": {"init": 0, "migrate": 0, "token create": 0, "token list": 0}, "said": "",
+            "ds": {"init": 0, "db setup": 0, "token create": 0, "token list": 0}, "said": "",
             "health": ["starting 0", "healthy 0"], "logs": "", "token": self.token + "\n", "tokens": "",
             "block": None,
         } | changes  # fmt: skip
@@ -511,13 +528,15 @@ def _ends() -> list[re.Pattern[str]]:
     return [re.compile(".+".join(map(re.escape, line))) for line in parts]
 
 
-def _said(project: str = "deltasleuth", kept: tuple[str, ...] = ()) -> str:
-    """A whole run's stdout before the closing block: each step, and each of the ten files under its own."""
+def _said(project: str = "deltasleuth", kept: tuple[str, ...] = (), changed: tuple[str, ...] = ()) -> str:
+    """A whole run's stdout before the closing block: each step, and each of the eleven files under its own,
+    created, kept, or changed where ``changed`` names it."""
     lines = []
     for number, title in enumerate(STEPS, 1):
         lines.append(f"== {number}/6 {title.format(project=project)}")
-        files = {1: TEN[:5], 2: TEN[5:9], 6: TEN[9:]}.get(number, ())
-        lines += [f"{'kept    ' if file in kept else 'created '} {file}" for file in files]
+        files = {1: FILES[:5], 2: FILES[5:10], 6: FILES[10:]}.get(number, ())
+        said = {file: "kept    " if file in kept else "created " for file in files}
+        lines += [f"{'changed ' if file in changed else said[file]} {file}" for file in files]
     return "".join(f"{line}\n" for line in lines)
 
 
@@ -554,15 +573,16 @@ def test_help_prints_the_header_and_calls_nothing(trial: Trial, repo_root: Path)
 
 
 def test_a_fresh_clone_gets_every_file_and_a_token_that_is_never_printed(watched: Trial) -> None:
-    """One run of a fresh clone: the ten files and nothing else, each secret straight into its file and
+    """One run of a fresh clone: the eleven files and nothing else, each secret straight into its file and
     into no output, argv or environment of any program the run starts, the calls in order, and the closing
-    block."""
+    block. The app's address and the schema owner's each carry a password of their own, never the
+    superuser's, and the migrate service, not the app, sets the database up."""
     trial = watched
     before = trial.tree()
     ran = trial.run(env={"WAYLAND_DISPLAY": "wayland-0"})  # no matter on a Mac, which uname says this is
     assert (ran.code, ran.err) == (0, "stub: build\nstub: up\ntoken T-… (first-run): shown once\n")
     assert ran.out == _said() + _closing()
-    assert trial.created(before) == sorted(TEN)
+    assert trial.created(before) == sorted(FILES)
     assert {name: mode for name, (mode, *_) in trial.tree().items() if name in before} == {
         name: mode for name, (mode, *_) in before.items()
     }  # nothing the checkout held changed its mode
@@ -574,19 +594,21 @@ def test_a_fresh_clone_gets_every_file_and_a_token_that_is_never_printed(watched
         (".env", "deploy/env.source.example"),
     ):
         assert (trial.folder / copy).read_bytes() == (REPO / example).read_bytes()
-    assert [trial.mode(name) for name in TEN[:3]] == [0o644] * 3  # the app reads them as another user
+    assert [trial.mode(name) for name in FILES[:3]] == [0o644] * 3  # the app reads them as another user
     held = {
         name: read_secret(f"file:{trial.folder / 'deploy' / 'secrets' / name}")
-        for name in ("db_password", "db_dsn", "kek", "tokeniser")
+        for name in ("db_password", "db_dsn", "kek", "tokeniser", "db_owner_dsn")
     }
-    assert [trial.mode(name) for name in TEN[5:9]] == [0o444] * 4 and trial.mode("deploy/secrets") == 0o700
+    assert [trial.mode(name) for name in FILES[5:10]] == [0o444] * 5 and trial.mode("deploy/secrets") == 0o700
     assert [len(held[name]) for name in ("db_password", "kek", "tokeniser")] == [48, 64, 64]
-    assert len(set(held.values())) == 4 and all(
-        re.fullmatch("[0-9a-f]+", held[name]) for name in ("db_password", "kek", "tokeniser")
-    )
-    assert held["db_dsn"] == f"postgresql://deltasleuth:{held['db_password']}@db:5432/deltasleuth"
-    assert (trial.folder / TEN[9]).read_text() == trial.token + "\n"
-    assert [trial.mode(name) for name in (TEN[9], ".deltasleuth/tokens", ".deltasleuth")] == [
+    assert all(re.fullmatch("[0-9a-f]+", held[name]) for name in ("db_password", "kek", "tokeniser"))
+    app, owner = (re.fullmatch(ADDRESS.format(role=role), held[name]) for role, name in (
+        ("app", "db_dsn"), ("owner", "db_owner_dsn")))  # fmt: skip
+    assert app and owner
+    held |= {"app": app[1], "owner": owner[1]}  # the two roles' passwords
+    assert len(set(held.values())) == 7  # every secret and password its own
+    assert (trial.folder / FILES[10]).read_text() == trial.token + "\n"
+    assert [trial.mode(name) for name in (FILES[10], ".deltasleuth/tokens", ".deltasleuth")] == [
         0o600,
         0o700,
         0o700,
@@ -595,6 +617,8 @@ def test_a_fresh_clone_gets_every_file_and_a_token_that_is_never_printed(watched
         held["db_password"],
         held["kek"],
         held["tokeniser"],
+        held["app"],
+        held["owner"],
         trial.token,
         trial.token.split("_")[2],
     ]
@@ -624,9 +648,9 @@ def test_a_fresh_clone_gets_every_file_and_a_token_that_is_never_printed(watched
         *(("docker", argv) for argv in networks),
         ("docker", ["compose", "--profile", "mocks", "config"]),
         ("docker", ["compose", "build"]),
-        ("docker", ["compose", "run", "--rm", "app", "ds", "init"]),
+        ("docker", ["compose", "run", "--rm", "--no-deps", "app", "ds", "init"]),
         ("docker", ["compose", "stop", "app"]),
-        ("docker", ["compose", "run", "--rm", "app", "ds", "migrate"]),
+        ("docker", ["compose", "run", "--rm", "migrate"]),
         ("docker", ["compose", "--profile", "mocks", "up", "-d"]),
         ("docker", ["ps", "-aq", "--filter", project, *OWN]),
         ("docker", health),
@@ -638,18 +662,18 @@ def test_a_fresh_clone_gets_every_file_and_a_token_that_is_never_printed(watched
 
 
 def test_running_again_overwrites_nothing(trial: Trial) -> None:
-    """A second run keeps all ten files to the timestamp: with no option, with the options the files already
-    hold, and with the base file's own port and subnet beside the plain copies, which the script judges as
-    Compose renders them. The folder may be spelt another way than Docker recorded it."""
+    """A second run keeps all eleven files to the timestamp: with no option, with the options the files
+    already hold, and with the base file's own port and subnet beside the plain copies, which the script
+    judges as Compose renders them. The folder may be spelt another way than Docker recorded it."""
     assert trial.run().code == 0
     first, held = trial.tree(), trial.installed()
     (trial.tmp / "link").symlink_to(trial.folder)
     held["containers"][1]["dir"] = str(trial.tmp / "link" / "deploy")
     for options in ((), ("--port", "8000", "--subnet", "172.30.0.0/24"), ("--project", "deltasleuth")):
         again = trial.run(*options, **held)
-        assert (again.code, again.out) == (0, _said(kept=TEN) + _closing())
+        assert (again.code, again.out) == (0, _said(kept=FILES) + _closing())
         assert again.err == "stub: build\nstub: up\n" and trial.tree() == first
-        assert again.ds() == ["build", "up", "ds init", "ds migrate", "ds token list"]
+        assert again.ds() == ["build", "up", "ds init", "ds db setup", "ds token list"]
         judged = [
             "compose",
             "-f",
@@ -664,13 +688,15 @@ def test_running_again_overwrites_nothing(trial: Trial) -> None:
 
 def test_an_update_stops_the_running_app_before_it_migrates(trial: Trial) -> None:
     """Run again after an update: the new image is built while the old app serves, then the app stops before
-    ``ds migrate``, so its worker never meets a schema its build does not know; step 5 starts it on the new
-    image."""
+    the migrate service runs ``ds db setup``, so its worker never meets a schema its build does not know;
+    step 5 starts it on the new image. ``ds init`` before the stop starts no dependency, so the migrate
+    service runs only after the stop."""
     assert trial.run().code == 0
     again = trial.run(**trial.installed())
     assert again.code == 0 and again.out.endswith(_closing())
     compose = [argv[1:] for argv in again.docker() if argv[0] == "compose"]
-    migrate, up = ["run", "--rm", "app", "ds", "migrate"], ["--profile", "mocks", "up", "-d"]
+    assert ["run", "--rm", "--no-deps", "app", "ds", "init"] in compose
+    migrate, up = ["run", "--rm", "migrate"], ["--profile", "mocks", "up", "-d"]
     steps = (["build"], ["stop", "app"], migrate, up)
     assert [compose.count(step) for step in steps] == [1, 1, 1, 1]
     assert [compose.index(step) for step in steps] == sorted(compose.index(step) for step in steps)
@@ -678,27 +704,89 @@ def test_an_update_stops_the_running_app_before_it_migrates(trial: Trial) -> Non
 
 def test_settings_and_secrets_that_exist_are_never_overwritten(watched: Trial) -> None:
     """Files the folder already holds, written by anyone, stay byte for byte, mode and time included, while
-    the missing ones are made beside them: db_dsn alone may be missing, and is made from db_password, which
-    no output, argv or environment carries on the way."""
+    the missing ones are made beside them: the two roles' addresses may be missing, and are made each with a
+    password of its own, never db_password's, which no output, argv or environment carries."""
     trial = watched
     ours = {
-        TEN[0]: SETTINGS + "## ours\n", TEN[1]: "targets: {}  # ours\n", TEN[2]: "profiles: {}  # ours\n",
-        TEN[3]: SITE + "# ours\n", TEN[4]: ENV + "# ours\n", TEN[5]: "our-password\n",
-        TEN[7]: "ab" * 32 + "\n", TEN[8]: "cd" * 32 + "\n", TEN[9]: trial.token + "\n",
+        FILES[0]: SETTINGS + "## ours\n", FILES[1]: "targets: {}  # ours\n",
+        FILES[2]: "profiles: {}  # ours\n", FILES[3]: SITE + "# ours\n", FILES[4]: ENV + "# ours\n",
+        FILES[5]: "our-password\n",
+        FILES[7]: "ab" * 32 + "\n", FILES[8]: "cd" * 32 + "\n", FILES[10]: trial.token + "\n",
     }  # fmt: skip
     trial.write(ours)
-    for name in (TEN[5], TEN[7], TEN[8]):
+    for name in (FILES[5], FILES[7], FILES[8]):
         (trial.folder / name).chmod(0o400)
     before = trial.tree()
     ran = trial.run(**trial.installed())
     assert (ran.code, ran.out) == (0, _said(kept=tuple(ours)) + _closing())
     after = trial.tree()  # a folder's time moves when a file is made in it
     assert [name for name, was in before.items() if was[2] is not None and after[name] != was] == []
-    assert trial.created(before) == [TEN[6]]
-    assert (trial.folder / TEN[6]).read_text() == "postgresql://deltasleuth:our-password@db:5432/deltasleuth"
+    assert trial.created(before) == sorted([FILES[6], FILES[9]])
+    for role, name in (("app", FILES[6]), ("owner", FILES[9])):
+        assert re.fullmatch(ADDRESS.format(role=role), (trial.folder / name).read_text())
     secret = ("our-password", "ab" * 32, "cd" * 32, trial.token.split("_")[2])
     assert [text for text in trial.shown(ran) if any(kept in text for kept in secret)] == []
     assert "cut -d_ -f2\n" in ran.words  # the token's id is read from the file's own second field
+
+
+def one_role(trial: Trial) -> None:
+    """``trial``'s folder, which a run made, as a run before the roles were apart left it: the settings
+    without their migrate_dsn_ref line, db_dsn the superuser's address, of db_password, and no
+    db_owner_dsn."""
+    secrets = trial.folder / "deploy" / "secrets"
+    password = read_secret(f"file:{secrets / 'db_password'}")
+    for name in (FILES[0], FILES[6], FILES[9]):
+        (trial.folder / name).unlink()
+    trial.write({FILES[0]: ONE_ROLE, FILES[6]: SUPERUSER_DSN.format(password=password)})
+    (trial.folder / FILES[0]).chmod(0o640)  # a mode of the owner's choosing, which a run keeps
+    (trial.folder / FILES[6]).chmod(0o444)
+
+
+def test_an_update_of_a_one_role_trial_moves_it_to_two_roles_once(watched: Trial) -> None:
+    """A trial set up before the roles were apart, whose app signs in as the database's superuser: a run
+    writes db_dsn anew for the app's own role, makes db_owner_dsn, each with a password of its own, and adds
+    the migrate_dsn_ref line after the settings' database_dsn_ref line, their mode kept; it stops the app
+    before the migrate service sets the database up, and nothing it printed or passed on carries a secret.
+    A second run changes nothing."""
+    trial = watched
+    assert trial.run().code == 0
+    one_role(trial)
+    held = trial.installed()
+    ran = trial.run(**held)
+    kept = (*FILES[1:6], *FILES[7:9], *FILES[10:])
+    assert (ran.code, ran.out) == (0, _said(kept=kept, changed=(FILES[0], FILES[6])) + _closing())
+    line = re.search(r"(?m)^database_dsn_ref: .*\n", ONE_ROLE)[0]  # type: ignore[index]
+    settings = trial.folder / FILES[0]
+    assert settings.read_text() == ONE_ROLE.replace(line, f"{line}{OWNER}\n")
+    assert trial.mode(FILES[0]) == 0o640
+    assert load_settings(settings).migrate_dsn_ref == "file:/run/secrets/db_owner_dsn"
+    secrets = {name: (trial.folder / name).read_text() for name in FILES[5:10]}
+    app, owner = (re.fullmatch(ADDRESS.format(role=role), secrets[name]) for role, name in (
+        ("app", FILES[6]), ("owner", FILES[9])))  # fmt: skip
+    assert app and owner and [trial.mode(name) for name in FILES[5:10]] == [0o444] * 5
+    password = secrets[FILES[5]].strip()
+    assert len({password, app[1], owner[1]}) == 3
+    compose = [argv[1:] for argv in ran.docker() if argv[0] == "compose"]
+    assert compose.index(["stop", "app"]) < compose.index(["run", "--rm", "migrate"])
+    assert ran.ds() == ["build", "up", "ds init", "ds db setup", "ds token list"]
+    hidden = (password, app[1], owner[1], secrets[FILES[7]].strip(), secrets[FILES[8]].strip())
+    assert [text for text in trial.shown(ran) if any(secret in text for secret in hidden)] == []
+    first = trial.tree()
+    again = trial.run(**held)
+    assert (again.code, again.out) == (0, _said(kept=FILES) + _closing()) and trial.tree() == first
+
+
+def test_an_address_is_never_made_without_its_password(trial: Trial) -> None:
+    """The pipe that writes an address hides a failed openssl: the address is checked whole, and one without
+    its password is refused, its file never made."""
+    trial.write({FILES[5]: "aa" * 24 + "\n"} | _KEPT)
+    (trial.bin / "openssl").unlink()
+    (trial.bin / "openssl").write_text("#!/bin/sh\nexit 1\n")
+    (trial.bin / "openssl").chmod(0o755)
+    before = trial.tree()
+    ran = trial.run()
+    assert (ran.code, ran.err) == (2, f"error: {V9.format(file=FILES[6])}\n")
+    assert trial.created(before) == sorted(FILES[:5]) and ran.ds() == []
 
 
 def test_secrets_and_the_token_are_private_whatever_the_callers_umask(trial: Trial) -> None:
@@ -706,8 +794,8 @@ def test_secrets_and_the_token_are_private_whatever_the_callers_umask(trial: Tri
     token's file too, under any umask of the caller; a secrets folder that is there and private is used as
     it is (one open to other accounts is among the refusals below)."""
     private = {
-        "deploy/secrets": 0o700, **dict.fromkeys(TEN[5:9], 0o444),
-        ".deltasleuth": 0o700, ".deltasleuth/tokens": 0o700, TEN[9]: 0o600,
+        "deploy/secrets": 0o700, **dict.fromkeys(FILES[5:10], 0o444),
+        ".deltasleuth": 0o700, ".deltasleuth/tokens": 0o700, FILES[10]: 0o600,
     }  # fmt: skip
     for umask in (0, 0o027, 0o077):
         folder = Trial(trial.tmp / f"{umask:o}", trial.shell)
@@ -722,24 +810,21 @@ def test_secrets_and_the_token_are_private_whatever_the_callers_umask(trial: Tri
         assert folder.run().code == 0, oct(folder.mode("deploy/secrets"))
 
 
-def test_a_kept_password_an_address_cannot_carry_is_refused_unprinted(watched: Trial) -> None:
-    """Where db_dsn alone is missing, it is not made of a kept password that is not safe in an address,
-    which would not parse (``%``) or would read the password's tail as a port or a host (``/``, ``@``), and
-    nothing the run printed or passed on carries it. One of the characters an address takes as written
-    goes into db_dsn."""
+def test_a_kept_superuser_password_goes_into_no_address_and_is_never_printed(watched: Trial) -> None:
+    """A kept db_password, whatever characters it holds, an address's own (``%``, ``/``, ``@``) among them,
+    is kept as it is and goes into no address: only the db and migrate services read it, from its own file.
+    The two roles' addresses get passwords of their own, and nothing the run printed or passed on carries
+    the kept one."""
     trial = watched
     for at, password in enumerate(("Tr1al%Pass-CANARY-9f3k", "Zm9v/YmFy-CANARY", "p@ssw0rd-CANARY")):
         folder = Trial(trial.tmp / str(at), trial.shell, watched=True)
-        folder.write({TEN[5]: password + "\n"} | _KEPT)
-        before = folder.tree()
+        folder.write({FILES[5]: password + "\n"} | _KEPT)
         ran = folder.run()
-        assert (ran.code, ran.out, ran.err) == (2, "", f"error: {U26}\n")
-        assert folder.tree() == before and ran.ds() == []
+        assert (ran.code, ran.out) == (0, _said(kept=(FILES[5], FILES[7], FILES[8])) + _closing())
+        assert (folder.folder / FILES[5]).read_text() == password + "\n"
+        for role, name in (("app", FILES[6]), ("owner", FILES[9])):
+            assert re.fullmatch(ADDRESS.format(role=role), (folder.folder / name).read_text())
         assert [text for text in folder.shown(ran) if "CANARY" in text] == []
-    plain = "AZaz09._~-"
-    trial.write({TEN[5]: plain + "\n"} | _KEPT)
-    assert trial.run().code == 0
-    assert (trial.folder / TEN[6]).read_text() == f"postgresql://deltasleuth:{plain}@db:5432/deltasleuth"
 
 
 def test_a_link_to_a_file_that_is_not_there_is_never_replaced(trial: Trial) -> None:
@@ -747,14 +832,16 @@ def test_a_link_to_a_file_that_is_not_there_is_never_replaced(trial: Trial) -> N
     mounted now are refused, where new files and new keys would take their place; with their files there
     they are kept, and stay links."""
     held = {
-        TEN[5]: "aa" * 24, TEN[6]: f"postgresql://deltasleuth:{'aa' * 24}@db:5432/deltasleuth",
-        TEN[7]: "ab" * 32, TEN[8]: "cd" * 32, TEN[0]: SETTINGS, TEN[4]: ENV,
+        FILES[5]: "aa" * 24, FILES[6]: f"postgresql://deltasleuth_app:{'bb' * 24}@db:5432/deltasleuth",
+        FILES[7]: "ab" * 32, FILES[8]: "cd" * 32,
+        FILES[9]: f"postgresql://deltasleuth_owner:{'ee' * 24}@db:5432/deltasleuth",
+        FILES[0]: SETTINGS, FILES[4]: ENV,
     }  # fmt: skip
     links = {name: f"vault/{Path(name).name}" for name in held}
     trial.link(links)
     before = trial.tree()
     ran = trial.run()
-    assert (ran.code, ran.out, ran.err) == (2, "", f"error: {U27.format(file=TEN[4])}\n")  # the first asked
+    assert (ran.code, ran.out, ran.err) == (2, "", f"error: {U27.format(file=FILES[4])}\n")  # the first asked
     assert trial.tree() == before and ran.ds() == [] and not (trial.tmp / "vault").exists()
     (trial.tmp / "vault").mkdir()
     for name, text in held.items():
@@ -773,17 +860,17 @@ def test_options_make_a_second_installation(trial: Trial) -> None:
     options = ("--project", "ds2", "--port", "18000", "--subnet", "172.31.10.0/24")
     ran = trial.run(*options)
     assert (ran.code, ran.out) == (0, _said("ds2") + _closing("ds2", "http://localhost:18000"))
-    assert trial.created(before) == sorted(TEN)
-    settings = (trial.folder / TEN[0]).read_text()
+    assert trial.created(before) == sorted(FILES)
+    settings = (trial.folder / FILES[0]).read_text()
     assert settings == SETTINGS.replace(
         "  public_url: http://localhost:8000 ", "  public_url: http://localhost:18000 "
     )
     assert (
         settings != SETTINGS
-        and load_settings(trial.folder / TEN[0]).auth.public_url == "http://localhost:18000"
+        and load_settings(trial.folder / FILES[0]).auth.public_url == "http://localhost:18000"
     )
-    assert (trial.folder / TEN[3]).read_text() == OWN_SITE
-    assert (trial.folder / TEN[4]).read_text() == ENV + "COMPOSE_PROJECT_NAME=ds2\n"
+    assert (trial.folder / FILES[3]).read_text() == OWN_SITE
+    assert (trial.folder / FILES[4]).read_text() == ENV + "COMPOSE_PROJECT_NAME=ds2\n"
     asked = [" ".join(call["argv"]) for call in ran.calls]
     assert [line for line in asked if "deltasleuth" in line.replace("-e DS_OPERATOR", "")] == [
         "image inspect " + VERSION
@@ -798,7 +885,7 @@ def test_options_make_a_second_installation(trial: Trial) -> None:
         kept = trial.run(*again, **held)
         assert (kept.code, kept.out) == (
             0,
-            _said("ds2", kept=TEN) + _closing("ds2", "http://localhost:18000"),
+            _said("ds2", kept=FILES) + _closing("ds2", "http://localhost:18000"),
         )
         assert trial.tree() == first
     port_only, subnet_only = (Trial(trial.tmp / name, trial.shell) for name in ("port", "subnet"))
@@ -806,12 +893,12 @@ def test_options_make_a_second_installation(trial: Trial) -> None:
         port_only.run("--port", "18001").code == 0 and subnet_only.run("--subnet", "10.99.0.0/24").code == 0
     )
     lines = OWN_SITE.splitlines(keepends=True)
-    assert (port_only.folder / TEN[3]).read_text() == "".join(lines[:-1]).replace("18000", "18001")
-    assert (subnet_only.folder / TEN[3]).read_text() == "".join(lines[:-2] + lines[-1:]).replace(
+    assert (port_only.folder / FILES[3]).read_text() == "".join(lines[:-1]).replace("18000", "18001")
+    assert (subnet_only.folder / FILES[3]).read_text() == "".join(lines[:-2] + lines[-1:]).replace(
         "172.31.10", "10.99.0"
     )
-    assert (subnet_only.folder / TEN[0]).read_text() == SETTINGS and (
-        port_only.folder / TEN[4]
+    assert (subnet_only.folder / FILES[0]).read_text() == SETTINGS and (
+        port_only.folder / FILES[4]
     ).read_text() == ENV
 
 
@@ -825,11 +912,11 @@ def test_options_never_change_an_existing_file(trial: Trial) -> None:
             "ds2",
         ): '.env makes this folder project "deltasleuth", not "ds2": this script changes no'
         " existing file (leave --project out, or edit .env yourself)",
-        ("--port", "18000"): f"{TEN[0]} exists and does not say port 18000 in public_url: {UNCHANGED}",
+        ("--port", "18000"): f"{FILES[0]} exists and does not say port 18000 in public_url: {UNCHANGED}",
         (
             "--subnet",
             "172.31.10.0/24",
-        ): f"{TEN[3]} exists and does not say subnet 172.31.10.0/24: {UNCHANGED}",
+        ): f"{FILES[3]} exists and does not say subnet 172.31.10.0/24: {UNCHANGED}",
     }
     for options, message in refused.items():
         ran = trial.run(*options, **held)
@@ -873,7 +960,7 @@ _OFFICE = _at("https://deltasleuth.bank.example")
 _DEV = (REPO / "deploy" / "config" / "deltasleuth.dev.example.yaml").read_text()
 _PUBLISHES_8001 = SITE.replace("    # ports: !override", "    ports: !override")
 _NOT_YAML = "yaml: deploy/docker-compose.site.yml is not a compose file\n"
-# With a db_password beside them, the one incomplete set that passes: step 2 makes db_dsn.
+# With a db_password beside them, the one incomplete set that passes: step 2 makes the two roles' addresses.
 _KEPT = {"deploy/secrets/kek": "ab" * 32 + "\n", "deploy/secrets/tokeniser": "cd" * 32 + "\n"}
 # A container that carries the project's label and not its folder's: Compose itself made no such one.
 _BARE = {"project": "deltasleuth", "dir": "", "running": False, "name": "deltasleuth-db-1"}
@@ -903,11 +990,11 @@ REFUSALS = [
     _no("U9", "docker compose (version 2) is not installed", compose=None),
     _no("U10", "Docker is not running, or this account may not use it", info=1),
     *(_no("U23", f"{file}.new is left by an interrupted run: {AGAIN}", files={f"{file}.new": "x\n"})
-      for file in TEN),
+      for file in FILES),
     *(_no("U23", f"{file}.new is left by an interrupted run: {AGAIN}", links={f"{file}.new": "elsewhere"})
-      for file in (TEN[4], TEN[9])),
-    *(_no("U27", U27.format(file=file), links={file: "vault/not-mounted"}) for file in TEN),
-    *(_no("U22", f"{file} is empty: {AGAIN}", files={file: ""}) for file in TEN[5:]),
+      for file in (FILES[4], FILES[10])),
+    *(_no("U27", U27.format(file=file), links={file: "vault/not-mounted"}) for file in FILES),
+    *(_no("U22", f"{file} is empty: {AGAIN}", files={file: ""}) for file in FILES[5:]),
     *(_no("U12", U12, files={".env": text})
       for text in (
           _TWO_FILES,
@@ -923,7 +1010,7 @@ REFUSALS = [
     _no("U11", U11.format(a="a", b="b"), "--project", "b", files={".env": ENV + "COMPOSE_PROJECT_NAME=a\n"}),
     _no("U13", U13, images=[VERSION]),
     _no("U13", U13, "--project", "ds2", "--port", "18000", images=[VERSION]),
-    *(_no("U14", _u14(why), files={TEN[0]: text})
+    *(_no("U14", _u14(why), files={FILES[0]: text})
       for why, text in (
           ("auth.oidc is on", re.sub(r"(?m)^# ", "", SETTINGS)),
           ("it has no auth block", _DEV),
@@ -935,23 +1022,31 @@ REFUSALS = [
           ("public_url is http://localhost", _at("http://localhost")),
           ("public_url is http://localhost:8000/", _at("http://localhost:8000/")),
       )),
-    _no("U15", U15.format(file=TEN[0], what="port 18000 in public_url"), "--port", "18000",
-        files={TEN[0]: SETTINGS}),
-    _no("U15", U15.format(file=TEN[3], what="port 8000"), files={TEN[3]: _PUBLISHES_8001}),
-    _no("U15", U15.format(file=TEN[3], what="port 18000"), "--port", "18000", files={TEN[3]: SITE}),
-    _no("U15", U15.format(file=TEN[3], what="subnet 172.31.10.0/24"), "--subnet", "172.31.10.0/24",
-        files={TEN[3]: SITE}),
-    _no("V1", V1, files={TEN[3]: "services: [\n"}, above=_NOT_YAML),
+    _no("U15", U15.format(file=FILES[0], what="port 18000 in public_url"), "--port", "18000",
+        files={FILES[0]: SETTINGS}),
+    _no("U15", U15.format(file=FILES[3], what="port 8000"), files={FILES[3]: _PUBLISHES_8001}),
+    _no("U15", U15.format(file=FILES[3], what="port 18000"), "--port", "18000", files={FILES[3]: SITE}),
+    _no("U15", U15.format(file=FILES[3], what="subnet 172.31.10.0/24"), "--subnet", "172.31.10.0/24",
+        files={FILES[3]: SITE}),
+    _no("V1", V1, files={FILES[3]: "services: [\n"}, above=_NOT_YAML),
     _no("U24", U24.format(version="2.20.0"), "--port", "18000", compose="2.20.0"),
     _no("U24", U24.format(version="v2.24.3"), "--subnet", "172.31.10.0/24", compose="v2.24.3"),
     _no("U24", U24.format(version="2.24"), "--port", "18000", compose="2.24"),
     _no("U24", U24.format(version="dev"), "--port", "18000", compose="dev"),
     *(_no("U25", U25, folders={"deploy/secrets": mode}) for mode in (0o755, 0o750, 0o711, 0o701)),
-    _no("U25", U25, folders={"deploy/secrets": 0o755}, files={TEN[5]: "aa" * 24 + "\n"} | _KEPT),
+    _no("U25", U25, folders={"deploy/secrets": 0o755}, files={FILES[5]: "aa" * 24 + "\n"} | _KEPT),
     *(_no("U21", U21, files={f"deploy/secrets/{name}": "x\n" for name in names})
-      for names in (("db_dsn",), ("db_password",), ("db_password", "db_dsn", "kek"), ("kek", "tokeniser"))),
-    *(_no("U26", U26, files={TEN[5]: password + "\n"} | _KEPT)
-      for password in ("Tr1al%Pass-9f3k", "Zm9v/YmFyQmF6", "p@ssw0rd-tail", "two words", "a:b", "pässword")),
+      for names in (("db_dsn",), ("db_password",), ("db_password", "db_dsn", "kek"), ("kek", "tokeniser"),
+                    ("db_owner_dsn",), ("db_dsn", "kek", "tokeniser", "db_owner_dsn"))),
+    *(_no("U28", U28, files={FILES[0]: text})
+      for text in (
+          ONE_ROLE.replace("\ndatabase_dsn_ref:", '\n"database_dsn_ref":'),  # no line of its own
+          ONE_ROLE + "database_dsn_ref: file:/run/secrets/db_dsn\n",  # two
+      )),
+    _no("U28", U28, files={"../vault/deltasleuth.yaml": ONE_ROLE},
+        links={FILES[0]: "vault/deltasleuth.yaml"}),
+    _no("U29", U29, files={"../vault/db_dsn": SUPERUSER_DSN.format(password="aa" * 24), FILES[5]: "aa" * 24}
+        | _KEPT, links={FILES[6]: "vault/db_dsn"}),
     _no("U16", U16.format(project="deltasleuth", dir="{tmp}/other/deploy"),
         files={"../other/deploy/docker-compose.yml": ""}, containers=[_THEIRS]),
     _no("U16", U16.format(project="ds2", dir="{tmp}/gone/deploy"), "--project", "ds2",
@@ -997,6 +1092,7 @@ def test_every_early_refusal_creates_nothing(trial: Trial, refused: Refused) -> 
 def test_every_text_the_script_ends_with_is_tried() -> None:
     """Each refusal in deploy/up.sh, and its warning, is the text of a case of this file."""
     tried = [case.message for case in REFUSALS] + [row[1] for row in STOPPED] + [V8, W1.format(id="0a")]
+    tried.append(V9.format(file=FILES[6]))
     ends = _ends()
     assert len(ends) > 40 and [end.pattern for end in ends if not any(map(end.fullmatch, tried))] == []
 
@@ -1033,10 +1129,10 @@ def test_port_alone_moves_a_first_installation_whose_port_is_taken(trial: Trial)
         assert trial.tree() == before
     ran = trial.run("--port", "18001", containers=taken)
     assert (ran.code, ran.out) == (0, _said() + _closing(address="http://localhost:18001"))
-    site = (trial.folder / TEN[3]).read_text()
+    site = (trial.folder / FILES[3]).read_text()
     assert '    ports: !override ["127.0.0.1:18001:8000"]\n' in site and "networks:" not in site
-    assert (trial.folder / TEN[4]).read_text() == ENV
-    assert load_settings(trial.folder / TEN[0]).auth.public_url == "http://localhost:18001"
+    assert (trial.folder / FILES[4]).read_text() == ENV
+    assert load_settings(trial.folder / FILES[0]).auth.public_url == "http://localhost:18001"
 
 
 def test_the_port_probe_asks_no_proxy(trial: Trial) -> None:
@@ -1111,9 +1207,9 @@ def test_it_refuses_an_office_or_a_release_installation(trial: Trial) -> None:
     and a loaded release image each stop it before anything is created, built, run or started. The .env
     that the last refusal advises goes ahead under its own project."""
     cases = (
-        ({TEN[0]: _OFFICE}, {}, _u14("public_url is https://deltasleuth.bank.example")),
-        ({TEN[0]: _at("http://ds.bank.example:8000")}, {}, _u14("public_url is http://ds.bank.example:8000")),
-        ({TEN[0]: re.sub(r"(?m)^# ", "", _OFFICE)}, {}, _u14("auth.oidc is on")),
+        ({FILES[0]: _OFFICE}, {}, _u14("public_url is https://deltasleuth.bank.example")),
+        ({FILES[0]: _at("http://ds.bank.example:8000")}, {}, _u14("public_url is http://ds.bank.example:8000")),
+        ({FILES[0]: re.sub(r"(?m)^# ", "", _OFFICE)}, {}, _u14("auth.oidc is on")),
         ({".env": _TWO_FILES}, {}, U12),
         ({}, {"images": [VERSION]}, U13),
     )  # fmt: skip
@@ -1174,7 +1270,7 @@ def test_it_takes_over_no_other_folders_compose_project(trial: Trial) -> None:
 
 
 @pytest.mark.parametrize("signum", ["SIGHUP", "SIGINT", "SIGQUIT", "SIGPIPE", "SIGTERM"])
-@pytest.mark.parametrize("step", ["token create", "migrate"])
+@pytest.mark.parametrize("step", ["token create", "db setup"])
 def test_an_interrupt_leaves_no_new_file(trial: Trial, step: str, signum: str) -> None:
     """HUP (a closed terminal, a dropped session), INT, QUIT, PIPE and TERM, sent as a terminal sends them, to
     the script and the command it waits for, end the run through the trap under every shell: the token's
@@ -1185,12 +1281,12 @@ def test_an_interrupt_leaves_no_new_file(trial: Trial, step: str, signum: str) -
     while not (trial.stub / "blocked").exists():
         assert proc.poll() is None and time.monotonic() - waited < 60
         time.sleep(0.01)
-    assert (trial.folder / f"{TEN[9]}.new").exists() == (step == "token create")
+    assert (trial.folder / f"{FILES[10]}.new").exists() == (step == "token create")
     os.killpg(proc.pid, signal.Signals[signum])
     ran = trial.ended(proc)
     assert ran.code == 128 + signal.Signals[signum] and not ran.out.endswith(_closing())
     assert [name for name in trial.tree() if name.endswith(".new")] == []
-    assert [name for name in TEN if (trial.folder / name).exists()] == list(TEN[:9])
+    assert [name for name in FILES if (trial.folder / name).exists()] == list(FILES[:10])
 
 
 def test_a_restart_loop_ends_at_once_with_the_apps_last_error_line(trial: Trial) -> None:
@@ -1209,7 +1305,7 @@ def test_a_restart_loop_ends_at_once_with_the_apps_last_error_line(trial: Trial)
     )
     assert len([argv for argv in ran.docker() if argv[0] == "inspect"]) == 3
     assert ran.docker()[-1] == ["compose", "logs", "--no-log-prefix", "--tail", "40", "app"]
-    assert not (trial.folder / TEN[9]).exists()
+    assert not (trial.folder / FILES[10]).exists()
     steady = Trial(trial.tmp / "steady", trial.shell)
     assert steady.run(health=["starting 3", "unhealthy 3", "starting 3", "healthy 3"]).code == 0
     never = Trial(trial.tmp / "never", trial.shell)
@@ -1230,34 +1326,34 @@ def test_the_health_wait_reads_the_services_own_container(trial: Trial) -> None:
     assert trial.run().code == 0
     held = trial.installed() | {"oneoff": "0ne0ff\n", "health": ["healthy 0"]}
     for app in ("c0ffee\n", "c0ffee\nbeef\n"):
-        (trial.folder / TEN[9]).unlink()  # as the warning advises, for a new token
+        (trial.folder / FILES[10]).unlink()  # as the warning advises, for a new token
         ran = trial.run(**held | {"app": app})
         assert ran.code == 0 and ran.out.endswith(_closing())
         project = "label=com.docker.compose.project=deltasleuth"
         assert [argv for argv in ran.docker() if "-aq" in argv] == [["ps", "-aq", "--filter", project, *OWN]]
         assert [argv[-1] for argv in ran.docker() if argv[0] == "inspect"] == ["c0ffee"]
         assert [call for call in ran.calls if call["tool"] == "sleep"] == []
-        assert (trial.folder / TEN[9]).read_text() == trial.token + "\n"
+        assert (trial.folder / FILES[10]).read_text() == trial.token + "\n"
 
 
 _ALSO = ENV.replace(".source.yml\n", ".source.yml:deploy/{file}.yml\n")  # a fourth file, which .env may name
 _CA = _ALSO.format(file="docker-compose.ca")  # the release's CA layer, last: its image is not this build's
 _MOVED = 'services: {app: {ports: !override ["127.0.0.1:8001:8000"]}}\n'
-_DS = {"init": 0, "migrate": 0, "token create": 0, "token list": 0}
+_DS = {"init": 0, "db setup": 0, "token create": 0, "token list": 0}
 _CREATE = "ds token create --name first-run --owner {user} --role spec_author"
-_UP = ["build", "up", "ds init", "ds migrate"]  # as ``Ran.ds`` lists a run that started the containers
+_UP = ["build", "up", "ds init", "ds db setup"]  # as ``Ran.ds`` lists a run that started the containers
 STOPPED = [  # (the refusal, its message, the folder's files, the scenario, the files made, what was run)
-    ("V1", V1, {}, {"config": {"code": 15, "err": "yaml: no\n"}}, TEN[:5], []),
-    ("V2", V2, {".env": "COMPOSE_FILE=deploy/docker-compose.source.yml\n"}, {}, TEN[:4], []),
-    ("V3", V3, {".env": _CA}, {}, TEN[:4], []),
-    ("V4", V4, {".env": _ALSO.format(file="moved"), "deploy/moved.yml": _MOVED}, {}, TEN[:4], []),
-    ("V5", V5.format(step="the build"), {}, {"build": 17}, TEN[:9], ["build"]),
-    ("V5", V5.format(step="ds init"), {}, {"ds": _DS | {"init": 2}}, TEN[:9], ["build", "ds init"]),
-    ("V5", V5.format(step="docker compose stop app"), {}, {"stop": 1}, TEN[:9], ["build", "ds init"]),
-    ("V5", V5.format(step="ds migrate"), {}, {"ds": _DS | {"migrate": 2}}, TEN[:9], _UP[:1] + _UP[2:]),
-    ("V5", V5.format(step="docker compose up"), {}, {"up": 1}, TEN[:9], _UP),
-    ("V6", V6, {}, {"app": ""}, TEN[:9], _UP),
-    ("V7", V7, {}, {"ds": _DS | {"token create": 2}}, TEN[:9], [*_UP, _CREATE]),
+    ("V1", V1, {}, {"config": {"code": 15, "err": "yaml: no\n"}}, FILES[:5], []),
+    ("V2", V2, {".env": "COMPOSE_FILE=deploy/docker-compose.source.yml\n"}, {}, FILES[:4], []),
+    ("V3", V3, {".env": _CA}, {}, FILES[:4], []),
+    ("V4", V4, {".env": _ALSO.format(file="moved"), "deploy/moved.yml": _MOVED}, {}, FILES[:4], []),
+    ("V5", V5.format(step="the build"), {}, {"build": 17}, FILES[:10], ["build"]),
+    ("V5", V5.format(step="ds init"), {}, {"ds": _DS | {"init": 2}}, FILES[:10], ["build", "ds init"]),
+    ("V5", V5.format(step="docker compose stop app"), {}, {"stop": 1}, FILES[:10], ["build", "ds init"]),
+    ("V5", V5.format(step="ds db setup"), {}, {"ds": _DS | {"db setup": 2}}, FILES[:10], _UP[:1] + _UP[2:]),
+    ("V5", V5.format(step="docker compose up"), {}, {"up": 1}, FILES[:10], _UP),
+    ("V6", V6, {}, {"app": ""}, FILES[:10], _UP),
+    ("V7", V7, {}, {"ds": _DS | {"token create": 2}}, FILES[:10], [*_UP, _CREATE]),
 ]  # fmt: skip
 
 
@@ -1288,9 +1384,9 @@ def test_later_refusals_keep_what_exists(
     if label in ("V2", "V3", "V4"):  # the cause is the folder's own .env, which the script leaves alone
         return
     again = trial.run(**trial.installed() | {"volumes": {}})
-    assert again.code == 0 and trial.created(before) == sorted(TEN)
-    assert {name: again_ for name, again_ in trial.tree().items() if name in stopped and name in TEN} == {
-        name: was for name, was in stopped.items() if name in TEN
+    assert again.code == 0 and trial.created(before) == sorted(FILES)
+    assert {name: again_ for name, again_ in trial.tree().items() if name in stopped and name in FILES} == {
+        name: was for name, was in stopped.items() if name in FILES
     }
 
 
@@ -1345,13 +1441,13 @@ def test_a_kept_token_the_database_does_not_know_is_warned_of(watched: Trial) ->
     }
     for tokens_, warning in listed.items():
         ran = trial.run(**held | {"tokens": tokens_})
-        assert (ran.code, ran.out) == (0, _said(kept=TEN) + _closing())
+        assert (ran.code, ran.out) == (0, _said(kept=FILES) + _closing())
         assert ran.err == "stub: build\nstub: up\n" + warning
         assert [text for text in trial.shown(ran) if trial.token.split("_")[2] in text] == []
     said = "error: /targets/orders-v1/rate_per_sec [schema.additionalProperties] unexpected member\n"
     first = trial.tree()
     unread = trial.run(**held | {"ds": _DS | {"token list": 2}, "said": said})
-    assert (unread.code, unread.out) == (2, _said(kept=TEN))  # every step, and no closing block
+    assert (unread.code, unread.out) == (2, _said(kept=FILES))  # every step, and no closing block
     stopped = V5.format(step="ds token list")
     assert unread.err == f"stub: build\nstub: up\n{said}error: {stopped}\n"
     assert unread.ds() == [*_UP, "ds token list"] and trial.tree() == first

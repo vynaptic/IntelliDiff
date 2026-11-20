@@ -81,8 +81,9 @@ def _serves_the_mock_specs(settings: Settings) -> None:
 
 
 def test_the_examples_start_a_trial_as_copied(repo_root: Path, config: Path) -> None:
-    """As copied: token sign-in at http://localhost:8000, no proxy trusted, AI off, and no secret beyond the
-    four the base compose file mounts."""
+    """As copied: token sign-in at http://localhost:8000, no proxy trusted, AI off, and no secret beyond
+    those the base compose file mounts: the app's three, and the schema owner's address, which only the
+    migrate service mounts."""
     settings = load_settings(config / "deltasleuth.yaml")
     assert settings.auth is not None and settings.auth_mode == "tokens"
     assert (settings.auth.public_url, settings.auth.trusted_proxies) == (TRIAL, ())
@@ -90,8 +91,10 @@ def test_the_examples_start_a_trial_as_copied(repo_root: Path, config: Path) -> 
     _serves_the_mock_specs(settings)
     text = (config / "deltasleuth.yaml").read_text()
     named = set(re.findall(r"^[^#\n]*file:/run/secrets/(\w+)", text, re.M))
-    mounted = yaml.safe_load((repo_root / "deploy" / BASE).read_text())["services"]["app"]["secrets"]
-    assert named == set(mounted) == {"db_dsn", "kek", "tokeniser"}
+    services = yaml.safe_load((repo_root / "deploy" / BASE).read_text())["services"]
+    app, migrate = set(services["app"]["secrets"]), set(services["migrate"]["secrets"])
+    assert named == app | {"db_owner_dsn"} == {"db_dsn", "kek", "tokeniser", "db_owner_dsn"}
+    assert settings.migrate_dsn_ref == "file:/run/secrets/db_owner_dsn" and "db_owner_dsn" in migrate - app
     assert text.count(f"  public_url: {TRIAL} ") == 1
 
 
@@ -165,8 +168,8 @@ def test_the_example_optional_blocks_load_when_uncommented(config: Path) -> None
     assert settings.readiness is not None and settings.readiness.programmes[0].name == "cutover-q4"
     assert (settings.precheck.distinct_max_rows, settings.files.memory) == (20_000_000, "2GB")
     assert settings.mcp == McpSettings(("aggregates", "production_tokenised"), http=True)
-    assert commented.migrate_dsn_ref is None  # one role migrates and runs the app, as before
-    assert settings.migrate_dsn_ref == "file:/run/secrets/db_owner_dsn"  # a secret the site file mounts
+    owner = "file:/run/secrets/db_owner_dsn"  # the schema's owner, in the head: the migrate service's
+    assert commented.migrate_dsn_ref == settings.migrate_dsn_ref == owner
     targets = config / "targets.yaml"
     assert [load_targets(targets).get(name).engine for name in ("billing-mysql", "ledger-oracle")] == [
         "mysql", "oracle",
@@ -302,11 +305,11 @@ def test_the_image_carries_the_licence_text(repo_root: Path) -> None:
 
 
 def test_compose_runs_the_release_hardened(repo_root: Path) -> None:
-    """app and mocks run the loaded release under the hardening, never building or pulling it; db is as it
-    was, and the optional secrets live in the site file."""
+    """app, migrate and mocks run the loaded release under the hardening, never building or pulling it; db
+    is as it was, and the optional secrets live in the site file."""
     text = (repo_root / "deploy" / BASE).read_text()
     compose = yaml.safe_load(text)
-    for name in ("app", "mocks"):
+    for name in ("app", "migrate", "mocks"):
         service = compose["services"][name]
         assert {key: service.get(key) for key in HARDENED} == HARDENED and "build" not in service
         assert service["image"] == f"deltasleuth:{_version(repo_root)}"
@@ -314,7 +317,49 @@ def test_compose_runs_the_release_hardened(repo_root: Path) -> None:
     assert db["image"] == "postgres:16-alpine" and not set(HARDENED) & set(db)
     assert not re.search(r"--build|\bbuild:|x-build", text)
     assert compose["services"]["app"]["secrets"] == ["db_dsn", "kek", "tokeniser"]
-    assert set(compose["secrets"]) == {"db_password", "db_dsn", "kek", "tokeniser"}
+    assert set(compose["secrets"]) == {"db_password", "db_owner_dsn", "db_dsn", "kek", "tokeniser"}
+
+
+def test_the_app_never_reads_the_superusers_or_the_owners_secret(repo_root: Path, tmp_path: Path) -> None:
+    """The database's roles apart: db mounts the superuser's password, which its image needs; the one-shot
+    migrate service alone mounts it with the schema owner's address, and runs ``ds db setup`` as that
+    superuser before the app may start; the app mounts its own role's address, never either of the two,
+    and so does every ``docker compose run app``. Compose itself renders it so, with the site example and
+    the source override, where Docker is installed."""
+    compose = yaml.safe_load((repo_root / "deploy" / BASE).read_text())
+    services = compose["services"]
+    db, migrate, app = services["db"], services["migrate"], services["app"]
+    assert db["environment"]["POSTGRES_USER"] == "deltasleuth" and db["secrets"] == ["db_password"]
+    assert migrate["secrets"] == ["db_password", "db_owner_dsn", "db_dsn"]
+    assert migrate["entrypoint"] == [
+        "ds", "db", "setup", "--superuser", "deltasleuth", "--superuser-password-ref",
+        "file:/run/secrets/db_password",
+    ]  # fmt: skip
+    assert "command" not in migrate and "restart" not in migrate and "ports" not in migrate
+    assert migrate["volumes"] == ["./config:/etc/deltasleuth:ro"]  # the settings, and no data volume
+    assert migrate["depends_on"] == {"db": {"condition": "service_healthy"}}
+    assert app["depends_on"]["migrate"] == {"condition": "service_completed_successfully"}
+    holders = {name: set(service.get("secrets", ())) for name, service in services.items()}
+    apart = {"db_password", "db_owner_dsn"}
+    assert {name for name, held in holders.items() if held & apart} == {"db", "migrate"}
+    if shutil.which("docker") is None:
+        (pytest.fail if os.environ.get("DS_REQUIRE_TOOLS") else pytest.skip)("missing docker")
+    deploy = tmp_path / "deploy"
+    deploy.mkdir()
+    for name in (BASE, SITE_EXAMPLE, "docker-compose.source.yml", "env.source.example"):
+        shutil.copy(repo_root / "deploy" / name, deploy / name)
+    shutil.copy(deploy / SITE_EXAMPLE, deploy / SITE)
+    shutil.copy(deploy / "env.source.example", tmp_path / ".env")
+    rendered, _ = _rendered(tmp_path)
+    sources = {
+        name: [secret["source"] for secret in service.get("secrets", ())]
+        for name, service in rendered["services"].items()
+    }
+    assert sources == {
+        "db": ["db_password"], "migrate": ["db_password", "db_owner_dsn", "db_dsn"],
+        "app": ["db_dsn", "kek", "tokeniser"], "mocks": [],
+    }  # fmt: skip
+    assert rendered["services"]["migrate"]["image"] == rendered["services"]["app"]["image"]
 
 
 def test_compose_bounds_the_logs_and_lets_the_app_hand_back_its_work(repo_root: Path) -> None:
@@ -336,7 +381,7 @@ def test_compose_bounds_the_logs_and_lets_the_app_hand_back_its_work(repo_root: 
 
 def test_site_example_adds_no_secret_until_its_lines_are_on(repo_root: Path) -> None:
     """As copied the site example changes nothing: token sign-in with AI off needs no secret beyond the base
-    file's four. After the edit its comments document (the two names in app.secrets, and the "# " of three
+    file's five. After the edit its comments document (the two names in app.secrets, and the "# " of three
     lines removed), base and site mount what the base file alone mounted before the split: Compose appends
     an override's lists to the base file's and merges its maps."""
     text = (repo_root / "deploy" / SITE_EXAMPLE).read_text()
@@ -351,7 +396,7 @@ def test_site_example_adds_no_secret_until_its_lines_are_on(repo_root: Path) -> 
     secrets = base["services"]["app"]["secrets"] + site["services"]["app"]["secrets"]
     assert secrets == ["db_dsn", "kek", "tokeniser", "oidc_client_secret", "llm_key"]
     files = {name: secret["file"] for name, secret in (base["secrets"] | site["secrets"]).items()}
-    assert files == {name: f"./secrets/{name}" for name in ("db_password", *secrets)}
+    assert files == {name: f"./secrets/{name}" for name in ("db_password", "db_owner_dsn", *secrets)}
 
 
 def test_the_source_override_builds_once_and_tags_by_project(repo_root: Path) -> None:
@@ -363,12 +408,13 @@ def test_the_source_override_builds_once_and_tags_by_project(repo_root: Path) ->
         for name in (BASE, "docker-compose.source.yml")
     )
     services = source["services"]
-    assert set(services) == {"app", "mocks"} and "build" not in services["mocks"]
+    assert set(services) == {"app", "mocks", "migrate"} and "build" not in services["mocks"]
     assert services["app"]["build"] == {"context": "..", "dockerfile": "deploy/Dockerfile"}
     tag = "${COMPOSE_PROJECT_NAME:-deltasleuth}:source"
-    assert [services[name]["image"] for name in ("app", "mocks")] == [tag, tag] and base[
+    assert [services[name]["image"] for name in ("app", "mocks", "migrate")] == [tag] * 3 and base[
         "name"
     ] == "deltasleuth"
+    assert services["migrate"] == {"image": tag}  # the app's build, and nothing else of the app's
 
 
 def test_the_source_override_shows_ds_the_checkouts_mocks_and_examples(repo_root: Path) -> None:
@@ -457,7 +503,7 @@ def test_the_examples_render_in_compose_as_copied(repo_root: Path, tmp_path: Pat
     assert first["name"] == "deltasleuth" and [name for name in services if "build" in services[name]] == [
         "app"
     ]
-    assert [services[name]["image"] for name in ("app", "mocks")] == ["deltasleuth:source"] * 2
+    assert [services[name]["image"] for name in ("app", "mocks", "migrate")] == ["deltasleuth:source"] * 3
     assert [secret["source"] for secret in services["app"]["secrets"]] == ["db_dsn", "kek", "tokeniser"]
     read = {"name: deltasleuth", "image: deltasleuth:source", 'published: "8000"', "- subnet: 172.30.0.0/24"}
     assert read <= lines

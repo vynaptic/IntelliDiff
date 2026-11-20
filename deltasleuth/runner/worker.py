@@ -32,6 +32,7 @@ from deltasleuth.runner.jobs import (
     STALLS,
     WATCH_EVERY_S,
 )
+from deltasleuth.runner.judges import Judges
 from deltasleuth.runner.slots import (
     EVIDENCE_WRITES,
     FILE_BATCH,
@@ -86,9 +87,9 @@ class _Worker:
     """The worker while it holds the lock: its slots, and the supervisor of its jobs, whose sweep runs every
     poll beside them."""
 
-    def __init__(self, ctx: Context, schedules: bool = True) -> None:
+    def __init__(self, ctx: Context, schedules: bool = True, judges: Judges | None = None) -> None:
         self.ctx = ctx
-        self.slots = Slots(ctx)
+        self.slots = Slots(ctx, judges)
         self.supervisor = jobs = Supervisor(ctx, self.slots, schedules)
         self.counting = self.slots.counting  # key censuses gate the leases
         # The per-run task tables, and what the schedules job keeps of each schedule, as the jobs hold them.
@@ -159,11 +160,15 @@ async def run_worker(ctx: Context, *, stop: asyncio.Event | None = None, schedul
     socket), another worker may take the lock, so this one stops its slots at once and waits to retake it;
     a slot that meets a bug, or a sweep whose own read of the runs does, restarts the same way, logged (a
     job's bug costs that job's turn alone). Without ``schedules`` it neither
-    rezones nor fires them (``ds run``'s worker, whose config and targets are one invocation's).
+    rezones nor fires them (``ds run``'s worker, whose config and targets are one invocation's). With
+    ``worker.judge_processes`` its slots' groups are judged by judge processes (``runner.judges``), which
+    start as groups need them, outlive a lost lock and end as the worker stops.
     """
     stop = stop or asyncio.Event()
     poll_s = ctx.settings.worker.poll_seconds
     probes = _probes(ctx.settings.worker.lease_seconds / 3)
+    processes = ctx.settings.worker.judge_processes
+    judges = Judges(processes) if processes else None
     _STARTED[id(ctx)] = time.monotonic()
     try:
         while not stop.is_set():
@@ -175,13 +180,15 @@ async def run_worker(ctx: Context, *, stop: asyncio.Event | None = None, schedul
                 async with await connecting as lock:
                     if not await _sole(lock, stop, poll_s):
                         return
-                    await _work(ctx, lock, stop, schedules)
+                    await _work(ctx, lock, stop, schedules, judges)
             except Exception as exc:  # the lock lost, or a slot or the sweep ended on a bug
                 log.warning("worker stopped (%s): slots restart once the lock is retaken", located(exc))
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(stop.wait(), poll_s)
     finally:
         _STARTED.pop(id(ctx), None)
+        if judges is not None:
+            judges.close()
 
 
 def stale_after(ctx: Context) -> float:
@@ -200,9 +207,15 @@ def stalled(ctx: Context, age_s: float | None) -> bool:
     return age_s is None or age_s > limit
 
 
-async def _work(ctx: Context, lock: psycopg.AsyncConnection, stop: asyncio.Event, schedules: bool) -> None:
+async def _work(
+    ctx: Context,
+    lock: psycopg.AsyncConnection,
+    stop: asyncio.Event,
+    schedules: bool,
+    judges: Judges | None = None,
+) -> None:
     """Run the slots and the sweep while holding the lock; raise when it is lost or one of them ends."""
-    worker = _Worker(ctx, schedules)
+    worker = _Worker(ctx, schedules, judges)
     tasks = [asyncio.create_task(worker.slot()) for _ in range(ctx.settings.worker.concurrency)]
     tasks.append(asyncio.create_task(worker.sweep()))
     check_s = ctx.settings.worker.lease_seconds / 3  # well before any lease this worker holds expires

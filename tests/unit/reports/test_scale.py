@@ -28,7 +28,7 @@ from deltasleuth.reports.data import is_discrepant, load_run
 from deltasleuth.runner.counters import count_cycle
 from deltasleuth.runner.cycle import summarise
 from deltasleuth.runner.recheck import RecheckPolicy
-from deltasleuth.security.tokenise import mask_key
+from deltasleuth.security.tokenise import VALUE_FORM, key_form, mask_key
 from deltasleuth.store import repo
 from tests.conftest import TESTER, create_run
 
@@ -79,8 +79,8 @@ async def _cycle(ctx: Context, spec: CompiledSpec, *, retried: bool = False) -> 
     async with ctx.pool.connection() as conn:
         spec_id = await repo.save_spec(conn, spec, created_by=TESTER.actor)
         named = (*SAMPLES, *CANCELLED, *([RETRIED] if retried else []))
-        keys = {key: mask_key(key, spec, ctx.tokeniser) for key in named}
-        params = {"capabilities": ctx.declared(spec)}
+        params = {"capabilities": ctx.declared(spec)}  # no key_tokens: its keys value tokens
+        keys = {key: mask_key(key, spec, ctx.tokeniser, form=key_form(params)) for key in named}
         run_id, _ = await create_run(ctx, conn, spec_id, "soak", keys, params, {"matched": MATCHED})
         for n, (key, (pair, changes)) in enumerate(SAMPLES.items()):
             await compare_key(ctx, conn, spec, run_id, key, pair, n=n, **changes)
@@ -141,7 +141,8 @@ async def test_a_cycle_s_end_stores_the_counters_of_the_whole_cycle_whatever_its
     assert whole["by_confirmation"]["bulk_exhaustive"] == MATCHED
     # The discrepant keys' findings, and only theirs, are linked to the cycle's root causes.
     linked = {key for key, fs in findings.items() if any(f["root_cause_id"] for f in fs)}
-    assert linked == {mask_key(key, spec, ctx.tokeniser) for key in ("K004", "K005", "K006", "K008", "K009")}
+    keyed = ("K004", "K005", "K006", "K008", "K009")
+    assert linked == {mask_key(key, spec, ctx.tokeniser, form=VALUE_FORM) for key in keyed}
     earlier = await load_run(ctx, run_id, 1, results=False)  # not stored any more: counted again, paged
     assert walks == [1, 2, 1] and earlier.counters == whole | {"cycle": 1} and earlier.results == []
 
@@ -201,7 +202,7 @@ async def test_reports_read_a_page_of_results_at_a_time_and_only_the_rows_they_p
         await summarise(ctx, conn, spec, await repo.get_run(conn, run_id))
         reads = await conn.execute(
             "SELECT pass_no, count(*) FROM ds.observations WHERE run_id = %s AND key_masked = %s GROUP BY 1",
-            (run_id, mask_key(RETRIED, spec, ctx.tokeniser)),
+            (run_id, mask_key(RETRIED, spec, ctx.tokeniser, form=VALUE_FORM)),
         )
         assert sorted(await reads.fetchall()) == [(1, 4), (2, 4)]  # both attempts' reads are kept
     data = await load_run(ctx, run_id)  # every result with its findings, as a P0 report reads them
@@ -229,7 +230,8 @@ async def test_reports_read_a_page_of_results_at_a_time_and_only_the_rows_they_p
         (tmp_path / kind).write_bytes(await write_csv(ctx, run_id, None, kind))
         assert (tmp_path / kind).read_bytes() == in_one_page[kind]
         csvs[kind] = read_csv(tmp_path / kind)[1]
-    masked = {key: mask_key(key, spec, ctx.tokeniser) for key in (*SAMPLES, *CANCELLED, RETRIED)}
+    named = (*SAMPLES, *CANCELLED, RETRIED)
+    masked = {key: mask_key(key, spec, ctx.tokeniser, form=VALUE_FORM) for key in named}
     assert [(r["key"], r["severity"], r["verdict"], r["rule_id"]) for r in csvs["discrepancies"]] == [
         (masked["K004"], "HIGH", "DIFFERENT", "KD-UNIT-2"),
         (masked["K005"], "HIGH", "DIFFERENT", ""),

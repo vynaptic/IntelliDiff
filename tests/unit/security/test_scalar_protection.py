@@ -6,7 +6,7 @@ import pytest
 
 from deltasleuth.core.jsonio import dumps
 from deltasleuth.core.types import ChangeType
-from deltasleuth.security.tokenise import mask_document, mask_finding
+from deltasleuth.security.tokenise import KEY_FORM, mask_document, mask_finding
 
 TYPED = ChangeType.TYPE_CHANGED
 ADDRESS = "Flat 10, 3 Mill Lane, York YO1 7JU"
@@ -29,7 +29,7 @@ def test_scalar_replacing_protected_subtree_is_tokenised(
     spec = make_spec(tokenize=tokenize, clear=clear, unlisted=unlisted)
     a = {"line1": "Flat 10, 3 Mill Lane", "postcode": "YO1 7JU", "country": "GB"}
     f = make_finding("$.address", TYPED, a, ADDRESS, (("field", "address"),))
-    row = mask_finding(f, spec, tok)
+    row = mask_finding(f, spec, tok, form=KEY_FORM)
     assert row["value_b_tok"] == tok.token("address", ADDRESS)
     assert "Mill Lane" not in dumps(row) and "YO1" not in dumps(row)
     assert '"country": "GB"' in row["value_a_tok"]  # what the spec clears stays clear
@@ -52,7 +52,7 @@ def test_scalar_replacing_a_protected_array_is_tokenised(
         PHONE,
         (("field", "contact"), ("field", "phones")),
     )
-    row = mask_finding(f, spec, tok)
+    row = mask_finding(f, spec, tok, form=KEY_FORM)
     assert row["value_b_tok"] == tok.token("phone", PHONE)
     assert PHONE not in dumps(row)  # neither side shows it, so no token-to-value mapping leaks
 
@@ -63,6 +63,7 @@ def test_class_only_descendant_shows_its_class(make_spec, make_finding, tok) -> 
         make_finding("$.person", TYPED, {"dob": "1990-05-17"}, "1990-05-17", (("field", "person"),)),
         spec,
         tok,
+        form=KEY_FORM,
     )
     assert (row["value_a_tok"], row["value_b_tok"]) == (
         '{"dob": "class:date_of_birth"}',
@@ -72,11 +73,13 @@ def test_class_only_descendant_shows_its_class(make_spec, make_finding, tok) -> 
 
 def test_clear_scalars_without_protected_descendants_stay_clear(make_spec, make_finding, tok) -> None:
     spec = make_spec(tokenize=ADDRESS_RULES, clear=("$.address", "$.status"))
-    row = mask_finding(make_finding("$.status", TYPED, "OPEN", "1", (("field", "status"),)), spec, tok)
+    status = make_finding("$.status", TYPED, "OPEN", "1", (("field", "status"),))
+    row = mask_finding(status, spec, tok, form=KEY_FORM)
     assert (row["value_a_tok"], row["value_b_tok"]) == ("OPEN", "1")
     row = mask_finding(
         make_finding("$.address.country", TYPED, "GB", "1", (("field", "address"), ("field", "country"))),
         spec,
         tok,
+        form=KEY_FORM,
     )
     assert (row["value_a_tok"], row["value_b_tok"]) == ("GB", "1")

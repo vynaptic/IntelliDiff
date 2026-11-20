@@ -80,7 +80,7 @@ from deltasleuth.runner.compare import connect
 from deltasleuth.runner.recheck import RecheckPolicy
 from deltasleuth.security import rawvalues
 from deltasleuth.security.crypto import Sealer
-from deltasleuth.security.tokenise import mask_key
+from deltasleuth.security.tokenise import KeyForm, key_form, mask_key
 from deltasleuth.store import repo
 
 DRAW_PAUSE = "run_paused_draw"  # its frame refused the draw; a resume draws again, a new nonce
@@ -186,7 +186,8 @@ async def draw(ctx: Context, run_id: str) -> None:
         return
     except _Moved:  # the run moved on meanwhile: nothing was drawn
         return
-    sealed, labels, selected = await asyncio.to_thread(_sealed, ctx, spec, sealer, selection)
+    form = key_form(run["params"])
+    sealed, labels, selected = await asyncio.to_thread(_sealed, ctx, spec, sealer, selection, form)
     row = {
         "draw_id": repo.new_draw_id(), "run_id": run_id, "spec_id": run["spec_id"], "cycle": cycle,
         "method": sample.method, "population": list(sample.population), "salt_label": sample.label,
@@ -211,10 +212,11 @@ async def draw(ctx: Context, run_id: str) -> None:
 
 
 def _sealed(
-    ctx: Context, spec: CompiledSpec, sealer: Sealer, selection: Selection
+    ctx: Context, spec: CompiledSpec, sealer: Sealer, selection: Selection, form: KeyForm
 ) -> tuple[dict[str, bytes], list[tuple[str | None, str | None, bool]], str]:
-    """The chosen keys masked and sealed in seq order, their labels and the selection's SHA-256."""
-    taken = {d.key: mask_key(d.key, spec, ctx.tokeniser) for d in selection.keys}
+    """The chosen keys masked in the run's ``form`` and sealed in seq order, their labels and the
+    selection's SHA-256, which hashes the keys as masked: R-d re-hashes them as stored."""
+    taken = {d.key: mask_key(d.key, spec, ctx.tokeniser, form=form) for d in selection.keys}
     lines = ((d.seq, taken[d.key], d.stratum, d.signoff, d.member) for d in selection.keys)
     labels = [(d.stratum, d.signoff, d.member) for d in selection.keys]
     return sealer.seal_keys(taken), labels, sampling.selection_sha256(lines)

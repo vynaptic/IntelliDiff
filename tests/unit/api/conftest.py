@@ -40,7 +40,7 @@ from deltasleuth.core.spec import compile_spec
 from deltasleuth.core.spec.documents import parse_yaml_text
 from deltasleuth.core.types import KeyResult, Observation, Side
 from deltasleuth.runner.compare import save_pass
-from deltasleuth.security.tokenise import mask_key
+from deltasleuth.security.tokenise import key_form, mask_key
 from deltasleuth.store import repo
 from tests.conftest import TESTER, create_run, encryption, licensed_once
 from tests.unit.auth.fake_idp import FakeIdp
@@ -270,19 +270,20 @@ def _compare(ctx: Context, key: str) -> tuple[list[Observation], KeyResult]:
 async def _seed_run(ctx: Context) -> Seeded:
     spec = _spec(ctx)
     observations, result = _compare(ctx, RAW_KEY)
-    masked = {key: mask_key(key, spec, ctx.tokeniser) for key in (RAW_KEY, OTHER_KEY)}
+    params = {"capabilities": ctx.declared(spec)}  # no key_tokens: as a run created before them
+    form = key_form(params)
+    masked = {key: mask_key(key, spec, ctx.tokeniser, form=form) for key in (RAW_KEY, OTHER_KEY)}
     async with ctx.pool.connection() as conn:
         spec_id = await repo.save_spec(conn, spec, created_by=TESTER.actor)
-        params = {"capabilities": ctx.declared(spec)}
         run_id, sealer = await create_run(ctx, conn, spec_id, "batch", masked, params)
         await repo.set_run_status(conn, run_id, "running")
         await save_pass(
-            ctx, conn, spec, run_id, 1, 1, result, {obs.side: obs for obs in observations}, sealer
+            ctx, conn, spec, run_id, 1, 1, result, {obs.side: obs for obs in observations}, sealer, form=form
         )
         await repo.lease_due(conn, "seed", 100, 60)  # every due key, of any run
         assert await repo.complete_key(conn, run_id, 1, masked[RAW_KEY], "seed")
         await repo.release_leases(conn, "seed")
-        causes = root_causes([result], spec=spec, tokeniser=ctx.tokeniser)
+        causes = root_causes([result], spec=spec, tokeniser=ctx.tokeniser, form=form)
         await repo.replace_root_causes(conn, run_id, 1, causes, {})
     return Seeded(run_id, spec_id, masked[RAW_KEY], masked[OTHER_KEY])
 

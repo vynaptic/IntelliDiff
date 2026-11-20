@@ -23,6 +23,7 @@ from deltasleuth.core.canonical.encoding import sha256_hex
 from deltasleuth.runner import drift, sample
 from deltasleuth.runner.cycle import CANCELLED, finish_cycle
 from deltasleuth.runner.runs import cancel_run, create_run, pause_run, resume_run, stop_run
+from deltasleuth.security.tokenise import key_form
 from deltasleuth.store import repo
 from tests.conftest import TESTER, MySQLServer, OracleServer
 
@@ -136,7 +137,7 @@ async def test_the_same_nonce_selects_the_same_sample_whatever_the_batches(
         frame_again = sample._Frame(h.ctx, spec, run, sampling.salt("unit-q4", stored["nonce"]))
         await frame_again.read()
         selection = frame_again.selection().result()
-        sealed, _, selected = sample._sealed(h.ctx, spec, sealer, selection)
+        sealed, _, selected = sample._sealed(h.ctx, spec, sealer, selection, key_form(run["params"]))
     assert (list(sealed), selected, selection.strata) == (taken, stored["selection_sha256"], stored["strata"])
     assert [s["basis"] for s in stored["strata"]] == ["sample", "sample", "sample"]
 

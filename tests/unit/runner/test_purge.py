@@ -26,6 +26,7 @@ from deltasleuth.runner.compare import LiveReader, evaluate, save_passes
 from deltasleuth.runner.purge import CyclePurged, PurgeBusy
 from deltasleuth.runner.runs import stop_run
 from deltasleuth.runner.worker import PURGE_EVERY_S, _Worker
+from deltasleuth.security.tokenise import key_form
 from deltasleuth.store import repo
 from tests.conftest import TESTER
 from tests.conftest import create_run as queued_run
@@ -660,8 +661,11 @@ async def _pass(h: Harness, run_id: str, key: str) -> tuple[Any, Any]:
 async def _save(h: Harness, run_id: str, spec: Any, passed: tuple[Any, Any], pass_no: int = 1) -> None:
     result, reads = passed
     async with h.ctx.pool.connection() as conn:
-        sealer = await h.ctx.sealer(conn, run_id)
-        await save_passes(h.ctx, conn, spec, run_id, 1, [(pass_no, result, reads)], sealer)
+        sealer, run = await h.ctx.sealer(conn, run_id), await repo.get_run(conn, run_id)
+        assert run is not None
+        await save_passes(
+            h.ctx, conn, spec, run_id, 1, [(pass_no, result, reads)], sealer, form=key_form(run["params"])
+        )
 
 
 async def test_a_late_writer_s_observation_is_deleted_and_its_blob_queued(

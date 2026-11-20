@@ -4,7 +4,8 @@ Tokens are deterministic, one-way HMACs separated by value class; the key sits i
 ``file:`` (0600), which this module reads. The tokeniser and the maskers are pure and live in
 ``core.masking``, which the engine's classification uses; this module names them for the callers outside
 the engine. A class-only value (``date_of_birth``) shows as its class, never a linkable token; member
-names that are data are tokens in pointers and views and ``[*]`` in patterns.
+names that are data are tokens in pointers and views and ``[*]`` in patterns. A run's keys are key tokens,
+in the form the run recorded at its creation (``key_form``).
 """
 
 from __future__ import annotations
@@ -14,14 +15,18 @@ import secrets
 from pathlib import Path
 
 from deltasleuth.core.masking import (
+    KEY_FORM,
     LABEL_CHARS,
     MIN_KEY_BYTES,
     TOKEN_CHARS,
+    VALUE_FORM,
+    KeyForm,
     Tokeniser,
     TokeniserError,
     inline_stand_ins,
     is_stand_in,
     is_token,
+    key_form,
     mask_document,
     mask_finding,
     mask_key,
@@ -33,15 +38,19 @@ from deltasleuth.core.masking import (
 from deltasleuth.core.secrets import SecretError, read_secret
 
 __all__ = [
+    "KEY_FORM",
     "LABEL_CHARS",
     "MIN_KEY_BYTES",
     "TOKEN_CHARS",
+    "VALUE_FORM",
     "KeyFileError",
+    "KeyForm",
     "Tokeniser",
     "TokeniserError",
     "inline_stand_ins",
     "is_stand_in",
     "is_token",
+    "key_form",
     "load_or_create_key",
     "mask_document",
     "mask_finding",

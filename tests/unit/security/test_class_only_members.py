@@ -11,6 +11,7 @@ from deltasleuth.core.classify.rootcause import root_causes
 from deltasleuth.core.jsonio import dumps
 from deltasleuth.core.types import ArrayRule, ChangeType, KeyedMap, KeyResult, Outcome, SideState
 from deltasleuth.security.tokenise import (
+    KEY_FORM,
     Tokeniser,
     TokeniserError,
     mask_document,
@@ -48,7 +49,8 @@ def _lost_dependant(make_finding, key: str):
 
 def test_dob_member_key_never_tokenised_in_findings(spec, make_finding, tok) -> None:
     rows = [
-        mask_finding(classify(_lost_dependant(make_finding, k), spec, None), spec, tok) for k in ("K1", "K2")
+        mask_finding(classify(_lost_dependant(make_finding, k), spec, None), spec, tok, form=KEY_FORM)
+        for k in ("K1", "K2")
     ]
     for row in rows:
         assert LABEL.fullmatch(row["member_key_tok"])
@@ -84,7 +86,7 @@ def test_dob_members_never_fan_out_across_keys(spec, make_finding, tok) -> None:
         )
         for k in ("K1", "K2")
     ]
-    [rc] = root_causes(results, spec=spec, tokeniser=tok)
+    [rc] = root_causes(results, spec=spec, tokeniser=tok, form=KEY_FORM)
     assert (rc.kind, rc.member_key_tok, rc.affected_keys) == ("signature", None, 2)
 
 

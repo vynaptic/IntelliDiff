@@ -24,7 +24,17 @@ from deltasleuth.core.types import (
     TokenizeRule,
 )
 from deltasleuth.security.policy import class_for, member_class
-from deltasleuth.security.tokenise import mask_document, mask_finding, mask_key, mask_member_key, mask_pointer
+from deltasleuth.security.tokenise import (
+    KEY_FORM,
+    VALUE_FORM,
+    TokeniserError,
+    key_form,
+    mask_document,
+    mask_finding,
+    mask_key,
+    mask_member_key,
+    mask_pointer,
+)
 
 CHANGED, MISSING = ChangeType.VALUE_CHANGED, ChangeType.MISSING_IN_B
 PHONE = "+447700900123"
@@ -138,10 +148,27 @@ def test_a_pointer_without_tokeniser_uses_a_non_token_marker(spec) -> None:
 
 
 def test_mask_key_and_member_key(spec, make_spec, tok) -> None:
-    assert mask_key("C00000001", spec, tok) == tok.token("identifier", "C00000001")
-    assert mask_key("C00000001", make_spec(key=KeyConfig(name="k")), tok) == "C00000001"  # a business code
+    """A run's key in the form the run records: a key token, or, for a run created before key tokens, the
+    value token of the key's class; a business code in clear either way. A member key is data: a value
+    token."""
+    assert mask_key("C00000001", spec, tok, form=KEY_FORM) == tok.key_token("identifier", "C00000001")
+    assert mask_key("C00000001", spec, tok, form=VALUE_FORM) == tok.token("identifier", "C00000001")
+    for form in (KEY_FORM, VALUE_FORM):  # a business code
+        assert mask_key("C00000001", make_spec(key=KeyConfig(name="k")), tok, form=form) == "C00000001"
     assert mask_member_key(PHONE, "$.phones", spec, tok) == tok.token("phone", PHONE)
     assert mask_member_key("HOME", "$.addresses", spec, tok) == "HOME"
+
+
+def test_key_form_is_what_the_run_recorded() -> None:
+    """A run records its keys' derivation at its creation; one created before key tokens records none, and
+    its keys stay value tokens. A derivation this build does not know is refused, never guessed."""
+    assert (key_form({"key_tokens": "k1"}), key_form({}), key_form({"keys_source": "explicit"})) == (
+        KEY_FORM,
+        VALUE_FORM,
+        VALUE_FORM,
+    )
+    with pytest.raises(TokeniserError, match="k9"):
+        key_form({"key_tokens": "k9"})
 
 
 # --- findings ------------------------------------------------------------------------------------
@@ -150,7 +177,7 @@ def test_mask_key_and_member_key(spec, make_spec, tok) -> None:
 @pytest.fixture
 def row(spec, tok):
     """The report row of a classified finding."""
-    return lambda f: mask_finding(classify(f, spec, None), spec, tok)
+    return lambda f: mask_finding(classify(f, spec, None), spec, tok, form=KEY_FORM)
 
 
 def cells(r: dict) -> tuple:
@@ -162,10 +189,10 @@ def test_mask_finding_row(spec, tok, make_finding) -> None:
     f = make_finding("$.phones[*]", MISSING, value, None, parts=(("field", "phones"), ("member", PHONE)))
     f.member_key, f.array_path = PHONE, "$.phones"
     f = classify(f, spec, None)
-    r = mask_finding(f, spec, tok)
+    r = mask_finding(f, spec, tok, form=KEY_FORM)
     ptok = tok.token("phone", PHONE)
     assert (r["key"], r["json_pointer"], r["member_key_tok"]) == (
-        tok.token("identifier", "C00000001"),
+        tok.key_token("identifier", "C00000001"),
         f"/phones/{ptok}",
         ptok,
     )
@@ -223,10 +250,11 @@ def test_normalisation_only_rows_show_raw_values(row, tok, make_finding) -> None
 
 
 def test_document_level_and_rule_fields(spec, tok, make_canonical, make_finding, today) -> None:
+    """A document-level finding's member key is the request key, in the run's form: what the key is stored
+    under, which a run created before key tokens has as a value token."""
     present = SideState.complete(make_canonical({"email": "a@x"}))
-    r = mask_finding(
-        compare_pair("C00000001", SideState.absent(), present, spec, today=today).findings[0], spec, tok
-    )
+    extra = compare_pair("C00000001", SideState.absent(), present, spec, today=today).findings[0]
+    r = mask_finding(extra, spec, tok, form=KEY_FORM)
     assert (r["json_pointer"], r["path_pattern"], r["taxonomy_code"], *cells(r)) == (
         "",
         "$",
@@ -234,9 +262,11 @@ def test_document_level_and_rule_fields(spec, tok, make_canonical, make_finding,
         None,
         None,
     )
-    assert r["member_key_tok"] == r["key"] == tok.token("identifier", "C00000001")
+    assert r["member_key_tok"] == r["key"] == tok.key_token("identifier", "C00000001")
+    before = mask_finding(extra, spec, tok, form=VALUE_FORM)
+    assert before["member_key_tok"] == before["key"] == tok.token("identifier", "C00000001")
     [f] = enrich([make_finding("$.segment", CHANGED, "PRIVATE", "WEALTH")], spec, today=today)
-    r = mask_finding(f, spec, tok)
+    r = mask_finding(f, spec, tok, form=KEY_FORM)
     assert (r["rule_id"], r["rule_classification"], r["suppressed"]) == (
         "KD-CP-0001",
         "expected_by_design",

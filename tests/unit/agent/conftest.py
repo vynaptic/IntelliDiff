@@ -26,7 +26,7 @@ from deltasleuth.core.spec import TargetRegistry, compile_spec
 from deltasleuth.core.types import Observation, Side, Target, TargetCapabilities, TruncationIndicators
 from deltasleuth.llm.profiles import parse_profiles
 from deltasleuth.runner.compare import save_pass
-from deltasleuth.security.tokenise import Tokeniser, mask_key
+from deltasleuth.security.tokenise import Tokeniser, key_form, mask_key
 from deltasleuth.store import repo
 from deltasleuth.store.db import migrate
 from tests.conftest import TEST_KEYRING, TESTER, create_run, evidence_store
@@ -237,8 +237,9 @@ async def seed(
     }  # fmt: skip
     async with ctx.pool.connection() as conn:
         spec_id = await repo.save_spec(conn, spec, created_by=TESTER.actor)
-        keys = {k: mask_key(k, spec, ctx.tokeniser) for k in docs}
-        params = {"capabilities": ctx.declared(spec)}
+        params = {"capabilities": ctx.declared(spec)}  # no key_tokens: as a run created before them
+        form = key_form(params)
+        keys = {k: mask_key(k, spec, ctx.tokeniser, form=form) for k in docs}
         run_id, sealer = await create_run(ctx, conn, spec_id, "batch", keys, params, scan)
         await repo.set_run_status(conn, run_id, "running")
         results = []
@@ -250,11 +251,13 @@ async def seed(
             ]
             result = compare_pair(raw, *states, spec, today=date.today(), tokeniser=ctx.tokeniser)
             result = replace(result, obs_a_id=obs[0].obs_id, obs_b_id=obs[1].obs_id)
-            await save_pass(ctx, conn, spec, run_id, 1, 1, result, {o.side: o for o in obs}, sealer)
+            reads = {o.side: o for o in obs}
+            await save_pass(ctx, conn, spec, run_id, 1, 1, result, reads, sealer, form=form)
             await repo.complete_key(conn, run_id, 1, keys[raw], "nobody")
             results.append(result)
         rows, _ = await repo.list_findings(conn, run_id)
-        causes = {rc.path_pattern: rc for rc in root_causes(results, spec=spec, tokeniser=ctx.tokeniser)}
+        grouped = root_causes(results, spec=spec, tokeniser=ctx.tokeniser, form=form)
+        causes = {rc.path_pattern: rc for rc in grouped}
         # A finding a known difference suppresses is in no root cause.
         linked = [r for r in rows if r["path_pattern"] in causes]
         links = {r["finding_id"]: causes[r["path_pattern"]].root_cause_id for r in linked}

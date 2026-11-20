@@ -144,9 +144,11 @@ finding on another build is re-checked on that one.
   opt-in); behind `notify.proxy` only the declared host is checked, and the proxy resolves the rest.
 - The audit anchor covers the rows written before the services' last sweep; whoever runs code in the
   app, or holds the tokeniser key and can write the workspace, can move it, so keep copies of its log
-  line off the host. Until a site gives the app a role of its own (`ds db grants`), whoever holds
-  `db_dsn` can switch the audit log's triggers off; the anchor then shows what they removed or
-  rewrote, not who.
+  line off the host. The Compose kit gives the app a role of its own with only the data rights `ds db
+  grants` prints, so whoever holds `db_dsn` cannot switch the audit log's triggers off. Whoever holds
+  `db_owner_dsn` or `db_password`, which only the one-shot `migrate` service and the database mount,
+  can, as can anyone who runs commands in the `db` container; the anchor then shows what they removed
+  or rewrote, not who.
 - The MCP server, which is off unless the settings have an `mcp` block: a
   tool result reaches the model host of the agent that asked for it, a host the installation does not
   run and DeltaSleuth's LLM egress policy does not govern; what a result may carry is the settings'
@@ -178,6 +180,13 @@ finding on another build is re-checked on that one.
   Values are compared as the account reads them: a database that masks or redacts both sides alike
   reads as a match, and the certificate says only whose view of the rows was compared. That the account
   cannot write is its grants' doing, not DeltaSleuth's.
+- Judge processes (`worker.judge_processes`, off by default): each is a fresh interpreter (fork then
+  exec at once), with no environment variable and no argument but its own file, and holds no keyring,
+  tokeniser key, evidence key or setting; a comparison that needs the tokeniser goes back to the app.
+  The app sends each key's read bodies and response headers unmasked on a pipe to its own child, as
+  the file reader's rows come back on its own, and masks the documents and findings it takes back
+  before anything is stored. A judge is not a sandbox: it runs as the service's user; it makes no core
+  file, and its answer is unpickled with the engine's own result types and `Decimal` allowed alone.
 - A files target: CSV and Parquet
   files are parsed by DuckDB, native code, locked to the declared directories and its own spill and
   running nothing but single `SELECT` statements DeltaSleuth composes. DuckDB runs in a child process

@@ -68,7 +68,6 @@ def compare(
     """Compare one key now (rechecked when discrepant): outcome and differing fields, masked."""
     from deltasleuth.runner import compare_one
     from deltasleuth.runner.counters import verdict
-    from deltasleuth.security.tokenise import mask_key
     from deltasleuth.store import repo
 
     who = _local(config)
@@ -77,7 +76,7 @@ def compare(
         await _warned(ctx)
         spec_id, compiled = await _save_spec(ctx, spec, who)
         result = await compare_one(ctx, spec_id, key, who=who)
-        run_id, masked = result.attrs["run_id"], mask_key(result.key, compiled, ctx.tokeniser)
+        run_id, masked = result.attrs["run_id"], result.attrs["key_masked"]
         _unapproved(ctx, spec_id, compiled, run_id)
         for line in result.attrs["warnings"]:  # the schema guard's
             typer.echo(f"warning: {line}", err=True)

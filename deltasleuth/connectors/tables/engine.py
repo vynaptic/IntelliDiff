@@ -50,6 +50,8 @@ class Column:
     lob: bool = False  # it may hold a large value: its engine never hashes it
     nullable: bool | None = None  # it may hold NULL; None: its catalogue does not say (a view's column)
     size: tuple[Any, ...] | None = None  # the (n) or (p,s) it declares, after their unit; None: none
+    # Its character set and collation, where its catalogue names them; None: none, or not read.
+    collation: tuple[str, str] | None = None
 
 
 # The unit of the (n) or (p,s) a type of the class declares.
@@ -326,7 +328,8 @@ KEEPALIVE = (60, 10, 6)  # idle seconds, probe interval, probes: a silently drop
 
 def keep_alive(sock: Any) -> None:
     """Keepalive probes on a session's socket, the idle time under the platform's name for it."""
-    idle = getattr(socket, "TCP_KEEPIDLE", None) or socket.TCP_KEEPALIVE
+    # Linux names the idle time TCP_KEEPIDLE, macOS TCP_KEEPALIVE: each module has only its own
+    idle: int = getattr(socket, "TCP_KEEPIDLE", None) or getattr(socket, "TCP_KEEPALIVE")  # noqa: B009
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
     for option, value in zip((idle, socket.TCP_KEEPINTVL, socket.TCP_KEEPCNT), KEEPALIVE, strict=True):
         sock.setsockopt(socket.IPPROTO_TCP, option, value)

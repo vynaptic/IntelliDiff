@@ -53,7 +53,7 @@ from deltasleuth.connectors.tables.engine import (
     tls_context,
     unreachable,
 )
-from deltasleuth.connectors.tables.keys import Plan
+from deltasleuth.connectors.tables.keys import Plan, key_maps
 from deltasleuth.core import engines, jsonio
 from deltasleuth.core.secrets import read_secret
 from deltasleuth.core.types import DatabaseTarget, Target
@@ -111,15 +111,27 @@ _FORMS = {
     "instant": re.compile(_MOMENT),
     "time": re.compile(r"-?[0-9]{1,3}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?"),
 }
+_BINARY = ("binary", "binary")  # the character set and collation of bytes
+# The declared types each collation orders as their key texts' code points, with no padding: a scan orders
+# and bounds such a key column by the column itself. utf8mb4_0900_bin compares a VARCHAR's UTF-8 bytes as
+# they are; bytes compare as they are, a BINARY's zero padding included, and their key text (\x and
+# lower-case hexadecimal digits) sorts as they do. Not a CHAR, whose stored padding a MEMORY table's index
+# compares; not an ENUM or a SET, which sort by their members' places; utf8mb4_bin pads with spaces.
+_NATIVE = {
+    ("utf8mb4", "utf8mb4_0900_bin"): re.compile(r"varchar\([0-9]+\)"),
+    _BINARY: re.compile(r"(?:var)?binary\([0-9]+\)"),
+}
+_HEXED = re.compile(rb"\\x((?:[0-9a-f]{2})*)")  # the key text of bytes, as a resume bound holds it
 # The relation as spelled, else the one name equal ignoring case; only columns the account holds a
 # privilege on are listed. Its primary key's columns, by their place in it, those the account may not
-# read among them.
+# read among them. Each column's character set and collation: NULL but for a text's.
 _RELATION = """
     SELECT t.TABLE_SCHEMA, t.TABLE_NAME, t.TABLE_TYPE, t.ENGINE, c.COLUMN_NAME, c.COLUMN_TYPE, c.DATA_TYPE,
            c.PRIVILEGES, c.IS_NULLABLE, @@character_set_server,
            (SELECT JSON_OBJECTAGG(s.SEQ_IN_INDEX, s.COLUMN_NAME) FROM information_schema.STATISTICS s
             WHERE s.TABLE_SCHEMA = t.TABLE_SCHEMA AND s.TABLE_NAME = t.TABLE_NAME
-              AND s.INDEX_NAME = 'PRIMARY')
+              AND s.INDEX_NAME = 'PRIMARY'),
+           c.CHARACTER_SET_NAME, c.COLLATION_NAME
     FROM information_schema.TABLES t JOIN information_schema.COLUMNS c
          ON c.TABLE_SCHEMA = t.TABLE_SCHEMA AND c.TABLE_NAME = t.TABLE_NAME
     WHERE (t.TABLE_SCHEMA = {schema} OR LOWER(t.TABLE_SCHEMA) = LOWER({schema}))
@@ -254,6 +266,65 @@ class _Primitives:
 
 
 PRIMITIVES = _Primitives()
+
+
+class _Native(_Primitives):
+    """``compose.scan``'s primitives for a side whose key columns all order as their key texts' code points
+    do (``_natively``): each column itself orders the scan and bounds its resume, so the index that holds
+    them streams the rows and resumes by range, with no sort."""
+
+    def __init__(self, side: Plan) -> None:
+        typed = [(column, side["classes"][column], side["declared"][column]) for column in side["keys"]]
+        self._columns = {self.key_text(*each): f"t.{self.ident(each[0])}" for each in typed}  # by key text
+        self._bytes = {f"t.{self.ident(column)}" for column, cls, _ in typed if cls == "bytes"}
+
+    def order(self, text: str) -> str:
+        return self._columns[text]
+
+    def after(self, orders: Sequence[str], bound: Sequence[bytes], binds: compose.Binds) -> str:
+        """(o1 > a) OR (o1 = a AND o2 > b): the optimiser reads that form as ranges of the index, a row
+        comparison as no range. A text is compared in its column's collation, bytes as the value their key
+        text writes."""
+        arms: list[str] = []
+        equal: list[str] = []
+        for order, part in zip(orders, bound, strict=True):
+            value = f"_utf8mb4 X'{part.hex()}'"
+            if order in self._bytes:
+                hexed = _HEXED.fullmatch(part)
+                assert hexed is not None  # any other bound is read by the key texts' bytes (``_natively``)
+                value = f"X'{hexed[1].decode()}'"
+            arms.append(f"({' AND '.join([*equal, f'{order} > {value}'])})")
+            equal.append(f"{order} = {value}")
+        return f"({' OR '.join(arms)})"
+
+
+def _natively(side: Plan, after: Sequence[bytes] | None) -> _Native | None:
+    """The primitives that order and bound the side's scan by its key columns themselves: where each is read
+    as itself (no key map), its collation as the run's plan recorded it is the one this pass's catalogue
+    names (``seen_collations``), and that collation orders its declared type as its key texts' code points
+    (``_NATIVE``); and where each part of the resume bound that a column of bytes reads is a key text of
+    bytes. None: by the key texts' bytes. A plan made before collations were recorded holds none."""
+    planned, seen = side.get("collations") or {}, side.get("seen_collations") or {}
+    bound: Sequence[bytes | None] = after or [None] * len(side["keys"])
+    for column, key_map, part in zip(side["keys"], key_maps(side), bound, strict=True):
+        collation = planned.get(column)
+        if collation is None or (key_map and key_map["kind"] != "identity"):
+            return None
+        declared = _NATIVE.get(tuple(collation))
+        if declared is None or list(seen.get(column) or ()) != list(collation):
+            return None
+        if not declared.fullmatch(side["declared"][column]):
+            return None
+        if part is not None and side["classes"][column] == "bytes" and not _HEXED.fullmatch(part):
+            return None
+    return _Native(side)
+
+
+def scan_sql(side: Plan, after: Sequence[bytes] | None) -> str:
+    """The scan's statement (``compose.scan``): ordered and bounded by the key columns themselves where
+    their own order is their key texts' (``_natively``), else by the key texts' bytes, which the server
+    sorts."""
+    return compose.scan(_natively(side, after) or PRIMITIVES, side, after)[0]
 
 
 def _error(exc: BaseException) -> TableError:
@@ -635,7 +706,7 @@ class MySQL:
         rows = found.get(asked) or next(iter(found.values()))
         relation, storage = rows[0][2], rows[0][3]  # a view's storage engine is NULL
         columns = []
-        for _, _, _, _, column, declared, kind, privileges, nullable, _, _ in rows:
+        for _, _, _, _, column, declared, kind, privileges, nullable, _, _, charset, collation in rows:
             cls = _CLASSES.get(kind)
             declared = kind if kind in ("enum", "set") else declared  # not their members
             fraction = cls == "timestamp" and declared != "datetime"
@@ -643,9 +714,11 @@ class MySQL:
             keyable = cls in render.KEYS and not (lob or fraction or zerofill)
             readable = "select" in privileges.split(",")
             says = None if relation == "VIEW" else nullable == "YES"  # a view's is the server's guess
+            # Bytes are of the binary character set and collation, which the catalogue leaves NULL.
+            named = (charset, collation) if collation else _BINARY if cls == "bytes" else None
             columns.append(
                 Column(column, declared, cls, readable, cls in ("text", "char"), keyable, lob, says,
-                       sized(cls, declared))
+                       sized(cls, declared), named)
             )  # fmt: skip
         consistency = "snapshot" if storage == "InnoDB" else "unverified" if relation == "VIEW" else "none"
         key = json.loads(rows[0][10]) if rows[0][10] else None
@@ -675,8 +748,9 @@ class MySQL:
 
     async def scan(self, session: _Session, side: Plan, after: Sequence[bytes] | None) -> AsyncIterator[Rows]:
         """Each fetched batch is canonicalised and hashed off the event loop, in the session's thread; the
-        columns the server hashed itself come as 32 bytes a row."""
-        return session.stream(compose.scan(PRIMITIVES, side, after)[0], compose.digested(PRIMITIVES, side))
+        columns the server hashed itself come as 32 bytes a row. A key of columns whose own order is their key
+        texts' streams from its index (``scan_sql``)."""
+        return session.stream(scan_sql(side, after), compose.digested(PRIMITIVES, side))
 
     def census(self, session: _Session, side: Plan) -> AsyncIterator[Rows]:
         return session.stream(compose.census(PRIMITIVES, side)[0])

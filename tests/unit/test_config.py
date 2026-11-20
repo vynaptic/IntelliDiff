@@ -930,3 +930,18 @@ def test_mcp_settings_are_refused_with_the_contract_s_messages(
     tmp_path: Path, mcp: dict[str, Any], refusal: str
 ) -> None:
     assert _refusal(tmp_path, mcp=mcp) == refusal
+
+
+def test_judge_processes_are_none_unless_asked_and_at_most_the_cpus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert _load(tmp_path).worker.judge_processes == 0  # judged in a thread, as before the setting
+    monkeypatch.setattr(config.os, "process_cpu_count", lambda: 4)
+    assert _load(tmp_path, worker={"judge_processes": 4}).worker.judge_processes == 4
+    assert _refusal(tmp_path, worker={"judge_processes": 5}) == (
+        "worker.judge_processes: at most this host's CPU count, 4"
+    )
+    for wrong in (-1, "2", 1.5):
+        refusal = _refusal(tmp_path, worker={"judge_processes": wrong})
+        assert refusal.startswith("worker.judge_processes: Input should")
+    assert _refusal(tmp_path, worker={"judge_process": 2}).startswith("worker.judge_process: ")  # unknown

@@ -50,7 +50,7 @@ from deltasleuth.runner.recheck import RecheckPolicy
 from deltasleuth.runner.stop import STOP_PREFIX, StopConditions
 from deltasleuth.security.crypto import MaskedAlike, Sealer, seal_after
 from deltasleuth.security.crypto import opened_after as _opened_after
-from deltasleuth.security.tokenise import mask_key
+from deltasleuth.security.tokenise import key_form, mask_key
 from deltasleuth.store import repo
 
 BATCH = 10_000  # merged keys per checkpoint
@@ -111,10 +111,15 @@ class _Stream:
     async def open(self) -> None:
         """Send the scan's statement, which pins the side, and begin fetching its first batch. The engine is
         told the server's character set as this pass's catalogue says it, by which a PostgreSQL side in
-        UTF-8 orders and resumes by its key texts as they are (``queries.scan_sql``); the run's plan is not
-        changed."""
+        UTF-8 orders and resumes by its key texts as they are (``queries.scan_sql``), and each column's
+        character set and collation where that catalogue names them (``seen_collations``), by which a MySQL
+        side whose key columns its plan recorded in a collation that orders them as their key texts orders
+        and resumes by them (``mysql.scan_sql``); the run's plan is not changed."""
         bound = None if self._floor is None else [part.encode() for part in self._floor]
-        said = {"charset": self.relation.facts.get("charset")} if self.relation is not None else {}
+        said: dict[str, Any] = {}
+        if self.relation is not None:
+            seen = {c.name: list(c.collation) for c in self.relation.columns if c.collation}
+            said = {"charset": self.relation.facts.get("charset"), "seen_collations": seen}
         self._batches = await self._engine.scan(self.session, self._plan | said, bound)
         self._ahead = asyncio.create_task(self._fetch())
         await asyncio.sleep(0)  # sent before the other side's statement
@@ -225,7 +230,8 @@ async def scan(ctx: Context, run_id: str) -> str | None:
     saved = state["checkpoint"]  # the checkpoint this scanner builds on
     state["after"] = _opened_after(sealer, cycle, state["after"])
     after = None if state["after"] is None else tuple(state["after"])
-    found: dict[str, str] = {}  # keys since the last checkpoint: raw -> masked
+    found: dict[str, str] = {}  # keys since the last checkpoint: raw -> masked (in the run's form)
+    form = key_form(run["params"])
     async with AsyncExitStack() as stack:
         if any("pinned" in tables[s.value] for s in Side):
             # The one sort of the file reader, before a database side's snapshot opens: none
@@ -292,7 +298,7 @@ async def scan(ctx: Context, run_id: str) -> str | None:
                 elif rows["a"][0] == rows["b"][0] == 1 and rows["a"] == rows["b"] and text not in before:
                     state["matched"] += 1
                 else:  # changed, one-sided, or repeated on a side
-                    found[text] = mask_key(text, spec, ctx.tokeniser)
+                    found[text] = mask_key(text, spec, ctx.tokeniser, form=form)
                 state["after"], merged = list(key), merged + 1
                 if (
                     conditions.max_keys is not None

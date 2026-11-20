@@ -91,7 +91,8 @@ def test_inline_keys_of_a_protected_class_are_shown_by_place_and_never_as_tokens
         spec = compile_spec(doc, targets=ctx.targets)
         answer = client.get(f"/v1/specs/{client.post('/v1/specs', json=doc).json()['spec_id']}?form=1")
         shown.append(answer.json()["body"]["key"]["source"]["keys"])
-        tokens = [text for guess in guesses for text in run_keys([guess], spec, ctx.tokeniser).values()]
+        taken = [run_keys([guess], spec, ctx.tokeniser, form=tokenise.KEY_FORM) for guess in guesses]
+        tokens = [text for keys in taken for text in keys.values()]
         tokens += [ctx.tokeniser.token("identifier", guess) for guess in guesses]
         assert not any(text in answer.text for text in (*guesses, *tokens)) and "tok:" not in answer.text
         texts = answer.json()["yaml"], answer.json()["form"]["text"]
@@ -149,7 +150,7 @@ def test_masked_inline_composite_keys(client: TestClient, spec_yaml: str) -> Non
     keys = shown.json()["body"]["key"]["source"]["keys"]
     ctx = client.app.state.ctx
     spec = compile_spec(doc, targets=ctx.targets)
-    taken = run_keys(normalise_keys(listed, spec), spec, ctx.tokeniser)
+    taken = run_keys(normalise_keys(listed, spec), spec, ctx.tokeniser, form=tokenise.KEY_FORM)
     assert list(taken) == ["B12|K12345678", "B12|K87654321"]  # the third repeats the first
     assert keys == ["masked key 1 of 3", "masked key 2 of 3", "masked key 3 of 3"]
     assert not any(token in shown.text for token in taken.values())
@@ -1027,6 +1028,12 @@ def test_try_stores_nothing_and_is_audited_before_the_call(
     ]
     template = json.dumps({"request": GET, "target": "own-a"}, sort_keys=True, separators=(",", ":"))
     first = tried[0][2]
+    # The key someone tried, as a key token: never the token its text has as a value, so no audit reader
+    # links it to a value a run shows.
+    assert first["key_masked"] != ctx.tokeniser.token("identifier", RAW_KEY)
+    assert re.fullmatch("[0-9a-f]{64}", first["content_hash"]) and first["key_masked"].startswith(
+        "tok:identifier:k1:"
+    )
     assert first == {
         "spec": "api-demo",
         "version": "1.0.0",
@@ -1034,12 +1041,9 @@ def test_try_stores_nothing_and_is_audited_before_the_call(
         "side": "a",
         "method": "GET",
         "request_sha256": hashlib.sha256(template.encode()).hexdigest(),
-        "key_masked": tokenise.mask_key(RAW_KEY, spec, ctx.tokeniser),
+        "key_masked": tokenise.mask_key(RAW_KEY, spec, ctx.tokeniser, form=tokenise.KEY_FORM),
         "raw": False,
     }
-    assert re.fullmatch("[0-9a-f]{64}", first["content_hash"]) and first["key_masked"].startswith(
-        "tok:identifier:"
-    )
     assert tried[1][2] == first | {"key_masked": tried[1][2]["key_masked"]} != first  # a template: no key
     assert tried[2][2]["request_sha256"] != first["request_sha256"] and tried[2][2]["side"] == "b"
     assert RAW_KEY not in json.dumps(tried) and url not in json.dumps(tried)

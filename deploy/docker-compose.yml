@@ -1,4 +1,5 @@
-# DeltaSleuth on one host: PostgreSQL plus the app (API, UI and worker in one process).
+# DeltaSleuth on one host: PostgreSQL plus the app (API, UI and worker in one process), and before each
+# start of the app the one-shot migrate service, which keeps the database's roles apart.
 # Never edit this file, which an upgrade replaces: this installation's changes go in
 # docker-compose.site.yml, which .env names after it. From the installation's folder (docs/deployment.md
 # walks through every step):
@@ -32,7 +33,7 @@ services:
       POSTGRES_USER: deltasleuth
       POSTGRES_DB: deltasleuth
       POSTGRES_PASSWORD_FILE: /run/secrets/db_password
-    secrets: [db_password]
+    secrets: [db_password]                     # the superuser's: the image needs one, the app never uses it
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
       test: [CMD, pg_isready, -U, deltasleuth, -d, deltasleuth]
@@ -41,11 +42,27 @@ services:
       retries: 30
     restart: unless-stopped
 
+  migrate:                                     # ds db setup, run to its end before the app starts
+    <<: *release
+    depends_on:
+      db: {condition: service_healthy}
+    # The superuser makes the schema owner's role and the app's own role, each with its address's password,
+    # and hands schema ds to the owner; the owner migrates and grants the app's role data rights alone, so
+    # whoever holds db_dsn cannot switch the audit log's triggers off. `docker compose run --rm migrate
+    # --roles-only` makes the roles alone, before a restore loads the schema.
+    entrypoint: [ds, db, setup, --superuser, deltasleuth,
+                 --superuser-password-ref, "file:/run/secrets/db_password"]
+    volumes: ["./config:/etc/deltasleuth:ro"]
+    secrets: [db_password, db_owner_dsn, db_dsn]   # db_dsn: the app role's password, which it sets
+    logging: {driver: json-file, options: {max-size: 10m, max-file: "3"}}
+    healthcheck: {disable: true}               # the image's check probes the API port
+
   app:
     <<: *release
     hostname: deltasleuth-app                  # stable, so CLI audit rows read local:<DS_OPERATOR>@deltasleuth-app
     depends_on:
       db: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
     ports: ["127.0.0.1:8000:8000"]             # loopback only: an office puts its TLS reverse proxy in front
     extra_hosts: ["host.docker.internal:host-gateway"]   # an app on this machine: Linux needs the line
     volumes:
@@ -87,6 +104,7 @@ volumes:
 
 secrets:
   db_password: {file: ./secrets/db_password}
+  db_owner_dsn: {file: ./secrets/db_owner_dsn}
   db_dsn: {file: ./secrets/db_dsn}
   kek: {file: ./secrets/kek}                   # the keyring and tokeniser key: never in a volume or backup
   tokeniser: {file: ./secrets/tokeniser}

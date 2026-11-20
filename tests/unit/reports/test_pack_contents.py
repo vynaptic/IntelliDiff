@@ -38,7 +38,7 @@ from deltasleuth.reports.render import Document
 from deltasleuth.runner import purge, runs
 from deltasleuth.runner.purge import CyclePurged
 from deltasleuth.security.signing import PackSigner
-from deltasleuth.security.tokenise import Tokeniser, mask_key
+from deltasleuth.security.tokenise import VALUE_FORM, Tokeniser, mask_key
 from deltasleuth.store import repo
 from deltasleuth.store.db import migrate
 from tests.conftest import BUILDS, TEST_KEYRING, TESTER, encryption, evidence_store, licensed_once
@@ -728,7 +728,7 @@ async def test_the_canary_nothing_raw_reaches_a_pack(pack_ctx: Context, key_file
         pack_ctx, spec=listed_spec(pii=True), pairs=pairs, adjudicate=True, notes="NOTE-CANARY-7734",
         headers={"x-trace": "HEADER-CANARY-9912"},
     )  # fmt: skip
-    viewed = mask_key(first, signed.spec, pack_ctx.tokeniser)
+    viewed = mask_key(first, signed.spec, pack_ctx.tokeniser, form=VALUE_FORM)  # the signed run's form
     async with pack_ctx.pool.connection() as conn:  # a key viewed, a chat about it: cycle 1, then cycle 2
         await repo.insert_audit(conn, signed.people["olga"], "key.view", signed.run_id,
                                 {"key_masked": viewed, "cycle": 1})  # fmt: skip
@@ -761,7 +761,7 @@ async def test_the_canary_nothing_raw_reaches_a_pack(pack_ctx: Context, key_file
         files[name].decode() for name in files if name.endswith((".json", ".csv", ".tsv"))
     )
     # Per key, masked keys only in the sheet, the key.view rows and the answers: the CSVs have none.
-    masked = [mask_key(k, signed.spec, pack_ctx.tokeniser).encode() for k in pairs]
+    masked = [mask_key(k, signed.spec, pack_ctx.tokeniser, form=VALUE_FORM).encode() for k in pairs]
     assert sorted(name for name, data in files.items() if any(m in data for m in masked)) == [
         "adjudication/sheet.csv", "annex/ai_answers.json", "audit/chain.tsv",
     ]  # fmt: skip

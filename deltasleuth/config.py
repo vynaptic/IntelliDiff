@@ -264,12 +264,23 @@ class PackSettings:
     signing_key_ref: SecretRef
 
 
+def _judges(value: int) -> int:
+    most = os.process_cpu_count() or 1
+    if value > most:
+        raise PydanticCustomError("judges", "at most this host's CPU count, {most}", {"most": most})
+    return value
+
+
 @with_config(_CLOSED)
 @dataclass(frozen=True)
 class WorkerSettings:
+    """The worker's slots; ``judge_processes`` judge the slots' groups in processes of their own, which hold
+    no key (0: in a thread of the worker's own process)."""
+
     concurrency: PosInt = 4
     lease_seconds: PosInt = 120
     poll_seconds: Annotated[float, Field(gt=0)] = 1.0
+    judge_processes: Annotated[int, Field(strict=True, ge=0), AfterValidator(_judges)] = 0
 
 
 @with_config(_CLOSED)

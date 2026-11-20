@@ -58,10 +58,12 @@ from deltasleuth.runner.compare import (
     save_passes,
 )
 from deltasleuth.runner.cycle import fail_run, located
+from deltasleuth.runner.judges import Judges
 from deltasleuth.runner.recheck import RecheckPolicy, confirm, freeze, key_fraction
 from deltasleuth.runner.runs import AUTH_PAUSE, EVIDENCE_PAUSE, KEY_PAUSE, pause_run, run_status, stop_run
 from deltasleuth.runner.stop import StopConditions, StopMonitor
 from deltasleuth.security.crypto import KeyringError, Sealer
+from deltasleuth.security.tokenise import KeyForm, key_form
 from deltasleuth.store import repo
 
 READ_BATCH = 200  # keys a slot reads at once from a run that reads in groups (``LiveReader.batches``)
@@ -91,6 +93,7 @@ class _Run:
     policy: RecheckPolicy
     monitor: StopMonitor
     lanes: asyncio.Semaphore | None  # live runs: execution.concurrency groups of keys in flight
+    form: KeyForm  # how its keys are masked, as it recorded at its creation
     scanned: bool = False  # its keys come from a table scan, which saw each differ recheck.delay before
     halted: bool = False  # this process paused or stopped the run
 
@@ -106,8 +109,9 @@ class Slots:
     """The slots of one worker and the runs they hold: each run is loaded by the first slot that meets it,
     and its reader closed once the run has ended (``forget``)."""
 
-    def __init__(self, ctx: Context) -> None:
+    def __init__(self, ctx: Context, judges: Judges | None = None) -> None:
         self.ctx, self.settings = ctx, ctx.settings.worker
+        self.judges = judges  # the worker's judge processes; None: each group is judged in a thread
         self.name = f"{socket.gethostname()}:{os.getpid()}"
         self.runs: dict[str, _Run] = {}
         self.loading: dict[str, asyncio.Lock] = {}  # by run: held while a slot loads it into ``runs``
@@ -267,7 +271,8 @@ class Slots:
             masked = [row["key_masked"] for row in rechecks]
             async with ctx.pool.connection() as conn:
                 stored = await repo.get_results(conn, run_id, cycle, masked)
-                derived = await rederive_all(ctx, conn, spec, run_id, [stored[k] for k in masked], run.caps)
+                found = [stored[k] for k in masked]
+                derived = await rederive_all(ctx, conn, spec, run_id, found, run.caps, judges=self.judges)
             firsts = dict(zip(masked, derived, strict=True))
         held = {}
         if run.reader.batches:  # a recheck reads B first, as evaluate
@@ -277,7 +282,9 @@ class Slots:
             again = [row["key"] for row in rechecks]
             await run.reader.prefetch([(first, (Side.A, Side.B)), (again, (Side.B, Side.A))], held, ahead)
         keys = [(row["key"], row["pass_no"]) for row in rows]
-        evaluated = await evaluate_many(ctx, spec, run.caps, run.reader, keys, run_id=run_id, held=held)
+        evaluated = await evaluate_many(
+            ctx, spec, run.caps, run.reader, keys, run_id=run_id, held=held, judges=self.judges
+        )
         if run.live and any(
             obs.error_class == "auth_error" for _, reads in evaluated for obs in reads.values()
         ):
@@ -316,6 +323,7 @@ class Slots:
                     cycle,
                     [(row["pass_no"], result, reads) for row, _, result, reads in passes],
                     sealer,
+                    form=run.form,
                 )
             later = due | retry
             done = [row["key_masked"] for row, *_ in passes if row["key_masked"] not in later]
@@ -368,7 +376,8 @@ class Slots:
         policy = RecheckPolicy.from_spec(spec.raw)
         caps = self.ctx.capabilities(stored)
         scanned = stored["scan"] is not None
-        return _Run(spec, caps, reader, not samples, policy, monitor, lanes, scanned)
+        form = key_form(stored["params"])
+        return _Run(spec, caps, reader, not samples, policy, monitor, lanes, form, scanned)
 
 
 def _unwritable(exc: BaseException) -> TypeGuard[OSError]:

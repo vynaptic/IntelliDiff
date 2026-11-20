@@ -430,8 +430,9 @@ def _answered(exc: BaseException) -> str:
 
 def _classed(name: str, side: Plan, engine: str, relation: Relation, refused: list[str]) -> None:
     """Add what a pair with a MySQL or Oracle side stores of each table side: its engine, what its session
-    said of the server, and the class and declared type of every column it reads. A type no plan reads
-    and a key column without a key text every engine renders alike are refused."""
+    said of the server, the class and declared type of every column it reads, and the character set and
+    collation of each key column whose catalogue names them (``collations``, absent where none does). A
+    type no plan reads and a key column without a key text every engine renders alike are refused."""
     by = {column.name: column for column in relation.columns}
     filtered = sorted(where.columns(where.parse(side["where"]))) if side["where"] else []
     read = [*side["keys"], *side["columns"].values(), *filtered, *side.get("strata", {}).values()]
@@ -445,6 +446,7 @@ def _classed(name: str, side: Plan, engine: str, relation: Relation, refused: li
             why = ENGINES[engine].unkeyable
             _refuse(refused, f"side {name}: {shown} {why}")
     facts = relation.facts
+    collations = {column: list(named) for column in side["keys"] if (named := by[column].collation)}
     side |= {
         "engine": engine,
         "server": facts["server"],
@@ -452,6 +454,7 @@ def _classed(name: str, side: Plan, engine: str, relation: Relation, refused: li
         **({"tls": facts["tls"]} if "tls" in facts else {}),  # a file side has no session to encrypt
         "classes": {column: by[column].cls for column in read},
         "declared": {column: by[column].declared for column in read},
+        **({"collations": collations} if collations else {}),
     } | facts.get("stored", {})  # a file side's: its file member and what its pins say
     if "pinned" in facts:  # read by its probe, then sealed by its run
         side["pinned"] = facts["pinned"]

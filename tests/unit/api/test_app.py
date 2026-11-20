@@ -275,7 +275,7 @@ def test_a_library_value_error_while_a_run_is_created_is_a_500_without_its_text(
     fault: a 500 that says nothing of it, logged by its type and where it was raised, never a 422 that
     repeats its text."""
 
-    def taken(*_: Any) -> None:
+    def taken(*_: Any, **__: Any) -> None:
         int("K12345678")
 
     monkeypatch.setattr("deltasleuth.runner.runs.run_keys", taken)

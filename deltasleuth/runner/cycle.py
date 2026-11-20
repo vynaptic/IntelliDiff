@@ -48,7 +48,7 @@ from deltasleuth.runner.recheck import INTERMITTENT_B, RecheckPolicy
 from deltasleuth.runner.scan import new_scan
 from deltasleuth.runner.stop import StopConditions
 from deltasleuth.security.crypto import MaskedAlike
-from deltasleuth.security.tokenise import mask_key, mask_pointer
+from deltasleuth.security.tokenise import KeyForm, key_form, mask_key, mask_pointer
 from deltasleuth.store import repo
 
 CANCELLED = "cancelled"  # the stop reason of a cancel asked for through the API
@@ -78,7 +78,7 @@ async def summarise(ctx: Context, conn: repo.Conn, spec: CompiledSpec, run: repo
             # Root causes group discrepant findings only, so only discrepant results are re-derived.
             if tally.add(r, fs) is Verdict.DIFFERENT:
                 discrepant.append((r, fs))
-        grouped += await _members(ctx, conn, spec, run_id, discrepant, caps)
+        grouped += await _members(ctx, conn, spec, run_id, discrepant, caps, key_form(run["params"]))
     groups = await asyncio.to_thread(rootcause.group_members, grouped)
     links = {m.ref: rc.root_cause_id for rc, ms in groups for m in ms if m.ref is not None}
     await repo.replace_root_causes(conn, run_id, cycle, [rc for rc, _ in groups], links)
@@ -96,10 +96,12 @@ async def _members(
     run_id: str,
     discrepant: list[tuple[repo.Row, list[repo.Row]]],
     caps: Capabilities,
+    form: KeyForm,
 ) -> list[rootcause.Member]:
     """One page's discrepant (result, stored findings), derived again from their evidence, as members of
-    root causes. A member's ``ref`` is its stored finding's id (known by its masked key and pointer), or
-    None. Keys whose stored findings a recheck tagged intermittent are tagged again."""
+    root causes, each key masked in the run's ``form``. A member's ``ref`` is its stored finding's id (known
+    by its masked key and pointer), or None. Keys whose stored findings a recheck tagged intermittent are
+    tagged again."""
     if not discrepant:
         return []
     tagged = {r["key_masked"] for r, fs in discrepant if any(f["value_class"] == INTERMITTENT_B for f in fs)}
@@ -113,10 +115,12 @@ async def _members(
 
     def stored(f: Finding) -> str | None:
         pointer = repo.storable(mask_pointer(f.pointer_parts, spec, tok, key=f.key))
-        return ids.get((mask_key(f.key, spec, tok), pointer, f.change_type.value))
+        return ids.get((mask_key(f.key, spec, tok, form=form), pointer, f.change_type.value))
 
     def read() -> list[rootcause.Member]:
-        return [m for r in derived for m in rootcause.members(r, spec=spec, tokeniser=tok, ref=stored)]
+        return [
+            m for r in derived for m in rootcause.members(r, spec=spec, tokeniser=tok, form=form, ref=stored)
+        ]
 
     return await asyncio.to_thread(read)
 
@@ -231,10 +235,11 @@ def _boundary(spec: CompiledSpec, run: repo.Row) -> tuple[datetime, str | None]:
 async def _rolled(
     ctx: Context, spec: CompiledSpec, run: repo.Row
 ) -> tuple[dict[str, str] | None, dict[str, int] | None, dict[str, Any] | None]:
-    """A rolling soak's key set, read again, how maxKeys cut it and its read's record (a listing's census,
-    a key table's read); ``(None, None, None)`` keeps the previous cycle's keys and cut, as does a failed
-    read. A key table's read holds the worker's sweep, so the cycle interval bounds it, an hour at most; one
-    whose target refuses the credential is raised, never tried again in a loop."""
+    """A rolling soak's key set, read again and masked in the form the run recorded at its creation, how
+    maxKeys cut it and its read's record (a listing's census, a key table's read); ``(None, None, None)``
+    keeps the previous cycle's keys and cut, as does a failed read. A key table's read holds the worker's
+    sweep, so the cycle interval bounds it, an hour at most; one whose target refuses the credential is
+    raised, never tried again in a loop."""
     params = run["params"]
     if params["keys_source"] == "hash_sample":  # no keys: its next cycle draws its own sample
         return {}, None, None
@@ -252,7 +257,7 @@ async def _rolled(
         async with repo.audited(ctx.pool) as (_, audit):
             await audit(WORKER, "rolling_resolve_failed", run["run_id"], {"error": error})
         return None, None, None
-    taken = await asyncio.to_thread(run_keys, resolved, spec, ctx.tokeniser)
+    taken = await asyncio.to_thread(run_keys, resolved, spec, ctx.tokeniser, form=key_form(params))
     return taken, keys_cut(resolved, taken), walk
 
 

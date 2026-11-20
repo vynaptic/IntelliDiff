@@ -23,6 +23,7 @@ from deltasleuth.core.types import (
 )
 from deltasleuth.security.policy import canonical_policy
 from deltasleuth.security.tokenise import (
+    KEY_FORM,
     mask_document,
     mask_finding,
     mask_path_pattern,
@@ -49,7 +50,7 @@ def _jane_flag(make_finding, key: str = "K1", email: str = JANE):
 def test_map_keyed_by_email_never_leaks_from_a_finding_row(make_spec, make_finding, tok) -> None:
     spec = make_spec(tokenize=MAP_RULES)
     [f] = enrich([_jane_flag(make_finding)], spec, today=TODAY)
-    row = mask_finding(f, spec, tok)
+    row = mask_finding(f, spec, tok, form=KEY_FORM)
     assert row["path_pattern"] == "$.contactVerified[*]"
     assert row["json_pointer"] == f"/contactVerified/{tok.token('email', JANE)}"
     assert (row["value_a_tok"], row["value_b_tok"]) == (True, False)  # booleans stay clear
@@ -138,9 +139,9 @@ def test_root_causes_group_map_members_under_the_published_pattern(make_spec, ma
         )
         for key, email in (("K1", JANE), ("K2", BOB))
     ]
-    [rc] = root_causes(results, spec=spec, tokeniser=tok)
+    [rc] = root_causes(results, spec=spec, tokeniser=tok, form=KEY_FORM)
     assert (rc.kind, rc.path_pattern, rc.affected_keys) == ("signature", "$.contactVerified[*]", 2)
-    [(grouped, fs)] = groups(results, spec=spec, tokeniser=tok)
+    [(grouped, fs)] = groups(results, spec=spec, tokeniser=tok, form=KEY_FORM)
     assert (grouped, {f.key for f in fs}) == (rc, {"K1", "K2"})
     assert JANE not in repr(rc) and BOB not in repr(rc)
 

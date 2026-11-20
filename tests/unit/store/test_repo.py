@@ -38,7 +38,7 @@ from deltasleuth.core.types import (
     SideStateKind,
 )
 from deltasleuth.runner.scan import new_scan
-from deltasleuth.security.tokenise import Tokeniser, mask_finding
+from deltasleuth.security.tokenise import VALUE_FORM, Tokeniser, mask_finding
 from deltasleuth.store import repo
 from deltasleuth.store.db import MIGRATIONS, migrate
 from tests.conftest import TEST_DATA_KEY, TEST_SEALER, TESTER, evidence_store
@@ -113,9 +113,8 @@ def result(
 
 
 async def save(conn: repo.Conn, run_id: str, r: KeyResult, cycle: int = 1) -> int:
-    return await repo.save_key_result(
-        conn, run_id, cycle, f"m-{r.key}", r, [mask_finding(f, SPEC, TOKENISER) for f in r.findings]
-    )
+    masked = [mask_finding(f, SPEC, TOKENISER, form=VALUE_FORM) for f in r.findings]
+    return await repo.save_key_result(conn, run_id, cycle, f"m-{r.key}", r, masked)
 
 
 def opened(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

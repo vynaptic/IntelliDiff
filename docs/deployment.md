@@ -22,11 +22,11 @@ sh deploy/up.sh
 | `--port N` | The port on this machine, from 1024 to 65535 | `8000` |
 | `--subnet A.B.C.0/24` | The subnet of the installation's Docker network | `172.30.0.0/24` |
 
-The script creates what is missing. It changes, overwrites and deletes no existing file: run again, it prints `kept` in place of `created`. It creates:
+The script creates what is missing and deletes no file: run again, it prints `kept` in place of `created`. On an installation whose app still signs in as the database's superuser it changes two files once and prints `changed`: `db_dsn`, written anew for the app's own role, and the settings, given the line `migrate_dsn_ref`. It creates:
 
 - the settings `deploy/config/deltasleuth.yaml`, `targets.yaml` and `llm_profiles.yaml`, copied from their `*.example.yaml` files, the site file `deploy/docker-compose.site.yml`, and `.env`;
-- four secrets in `deploy/secrets/`: `db_password`, `db_dsn`, `kek` and `tokeniser`;
-- the image `deltasleuth:source`, built from the checkout, the database, and the containers `db`, `app` and `mocks`;
+- five secrets in `deploy/secrets/`: `db_password`, the database superuser's; `db_dsn` and `db_owner_dsn`, the addresses of the app's own role and of the schema's owner, each with a password of its own; `kek` and `tokeniser`;
+- the image `deltasleuth:source`, built from the checkout, the database with its two roles, and the containers `db`, `migrate` (run to its end before each start of the app), `app` and `mocks`;
 - a first API token in the file `.deltasleuth/tokens/first-run`, with the role `spec_author`. It is never printed, and it expires at most 90 days after it was made.
 
 Then sign in:
@@ -55,7 +55,7 @@ Later, in the same folder:
   ```bash
   docker compose --profile mocks up -d
   ```
-- Update. Fetch the newer source, then run the script again: it rebuilds the image, stops the app, applies the new migrations and starts the containers on the new image. Files, data and the token stay.
+- Update. Fetch the newer source, then run the script again: it rebuilds the image, stops the app, has the `migrate` service apply the new migrations as the schema's owner (first moving an installation whose app signed in as the superuser to two roles), and starts the containers on the new image. Files, data and the token stay.
   ```bash
   git pull
   ```
@@ -92,19 +92,21 @@ Later, in the same folder:
    - `auth.trusted_proxies`: switch the line on. It names the gateway of the Compose network, `172.30.0.1/32`, through which a proxy on the host connects.
    - Sign-in with OIDC: switch on the `auth.oidc` lines and fill in `issuer`, `client_id`, the claims and `roles`. `client_secret_ref` names the secret `oidc_client_secret` (step 3).
    - Sign-in with tokens: leave `auth.oidc` off. Everyone then signs in with an API token (step 8). No token can hold `admin`, so administration is done with `ds` on the host.
+   - `worker.judge_processes`: switch the line on to judge keys in that many processes beside the app, each about 50 MB and holding no key (at most the host's CPUs; 0, the default, judges in the app's own process). It pays from answers of a few kB: measured on one 16-core host, 2.8 kB answers went from 128 to 218 keys a second with 2, and 28 kB answers from 23 to 60 with 4.
    - Roles, lowest first, each holding the ones below it: `viewer` (read), `operator` (start runs), `spec_author` (upload specs), `rule_approver` (approve), `pii_reader` and `admin`. `auth.oidc.roles` maps each role to group ids of the identity provider, matched exactly. A token holds one of the first three only.
 3. **Create the secrets.** A secret is one file in `deploy/secrets/` that holds one value on one line. Compose mounts it read-only at `/run/secrets/<name>`. The settings name a secret only as a `file:` reference: no credential is ever written in a settings file. Paste this block whole.
    ```bash
    mkdir -p deploy/secrets && chmod 700 deploy/secrets
    (umask 077
     openssl rand -hex 24 > deploy/secrets/db_password
-    { printf 'postgresql://deltasleuth:'; tr -d '\n' < deploy/secrets/db_password; printf '@db:5432/deltasleuth'; } > deploy/secrets/db_dsn
+    { printf 'postgresql://deltasleuth_owner:'; openssl rand -hex 24 | tr -d '\n'; printf '@db:5432/deltasleuth'; } > deploy/secrets/db_owner_dsn
+    { printf 'postgresql://deltasleuth_app:'; openssl rand -hex 24 | tr -d '\n'; printf '@db:5432/deltasleuth'; } > deploy/secrets/db_dsn
     openssl rand -hex 32 > deploy/secrets/kek
     openssl rand -hex 32 > deploy/secrets/tokeniser)
    chmod 444 deploy/secrets/*
    ```
    Keep a copy of `kek` and `tokeniser` in a vault, never beside a backup: they open the stored data, and a lost key cannot be made again. A further secret, such as the OIDC client secret or a target's credential, takes four actions. Write `deploy/secrets/<name>` and `chmod 444` it. In the site file, add `<name>` to `services.app.secrets` and the line `<name>: {file: ./secrets/<name>}` under the top-level `secrets:`. Reference it as `file:/run/secrets/<name>`. Apply it with `docker compose up -d`.
-4. **The database** needs no further setting. The `db` service is PostgreSQL 16, with a user and a database both named `deltasleuth`. It takes `db_password` when its volume is first created, and the app connects with `db_dsn`. `ds migrate` creates the schema `ds`. Later, `ds serve` and `ds worker` apply pending migrations as they start; any other command stops with `the database needs migrations: run ds migrate` until then. To keep the app's role from switching the audit log's triggers off, give it a role of its own: `ds db grants --help` gives the steps; with `migrate_dsn_ref` set only `ds migrate` changes the schema, so an update runs it before `docker compose up -d`. The database takes 512 MB of shared buffers and 32 MB of work memory per sort, sized for a host of 4 GB or more; a site file's `db` `command` can change them.
+4. **The database** needs no further setting. The `db` service is PostgreSQL 16, with a database `deltasleuth` whose superuser `deltasleuth` takes `db_password` when the volume is first created; the app never uses it. Before each start of the app the one-shot `migrate` service, which alone mounts `db_password` and `db_owner_dsn`, runs `ds db setup`: it makes the roles `deltasleuth_owner` (the schema's owner) and `deltasleuth_app` (the app's), each with its address's password, applies pending migrations as the owner, and grants the app's role only the data rights `ds db grants` prints, so whoever holds `db_dsn` cannot switch the audit log's triggers off; the app's start log and `ds audit verify` say `roles: separate`. With migrations pending it refuses while the app runs. Any other command stops with `the database needs migrations: run ds migrate` until then. The database takes 512 MB of shared buffers and 32 MB of work memory per sort, sized for a host of 4 GB or more; a site file's `db` `command` can change them.
 5. **Declare the targets**, `deploy/config/targets.yaml`. It is the allow-list: DeltaSleuth calls only the targets declared there or in the product. Replace the example entries with real ones, and delete the four mock targets. [The example](../deploy/config/targets.example.yaml) shows each kind.
    - A service: `base_url`, `auth` (`kind: none`, `bearer` or `header`, with a `secret_ref`), and the agreed load as `rate_per_s` and `max_concurrency`.
    - A database: `dsn_ref` for PostgreSQL; `engine: mysql` or `engine: oracle` with `host`, `port`, `user`, `password_ref` and `tls_ca_ref`.
@@ -114,15 +116,12 @@ Later, in the same folder:
    ```bash
    docker compose run --rm app ds llm-probe --profile gateway
    ```
-7. **Build, initialise and start**, with these four commands in order. With OIDC, run `docker compose run --rm --no-deps app ds auth check` before the last one: it checks the settings against the identity provider and prints the two redirect URIs to register there.
+7. **Build, initialise and start**, with these three commands in order; `up -d` runs the `migrate` service before the app. With OIDC, run `docker compose run --rm --no-deps app ds auth check` before the last one: it checks the settings against the identity provider and prints the two redirect URIs to register there.
    ```bash
    docker compose build
    ```
    ```bash
    docker compose run --rm app ds init
-   ```
-   ```bash
-   docker compose run --rm app ds migrate
    ```
    ```bash
    docker compose up -d
@@ -135,18 +134,18 @@ Later, in the same folder:
 10. **Back up.** State lives in four Docker volumes: `pgdata` (the database), `evidence` (response bodies, encrypted), `workspace` (working files, and the targets declared in the product with their credentials) and `p0` (samples and specs for `ds` commands). A backup is a database dump, then a copy of the evidence volume, with a copy of `deploy/config`, the site file and `.env`. The keys `kek` and `tokeniser` never go into it. The app keeps running. Paste this block whole.
     ```bash
     mkdir -p -m 700 ~/deltasleuth-backups
-    (umask 077; docker compose exec -T db pg_dump -U deltasleuth deltasleuth > ~/deltasleuth-backups/ds-$(date +%F).sql)
+    (umask 077; docker compose exec -T db pg_dump -U deltasleuth_owner deltasleuth > ~/deltasleuth-backups/ds-$(date +%F).sql)
     (umask 077; docker compose run --rm --no-deps -T app tar -C /var/lib/deltasleuth/evidence --exclude=./spill -cf - . > ~/deltasleuth-backups/evidence-$(date +%F).tar)
     ```
-11. **Restore** into an empty database, with the app stopped. On a new host, first put back the copies of `deploy/config`, the site file and `.env`, create the secrets as in step 3 but with the backup's `kek` and `tokeniser` in place of new ones, and build the image. `<date>` is the day in the backup's file names. The six commands, in order: start the database alone; load the dump, whole or not at all; put the evidence back; check that every stored body opens: the `blobs:` line reads `0 missing, 0 corrupted, 0 unreadable` and no line starts with `error:`; pause every schedule, so that no run starts by surprise; start the app. Targets declared in the product are not in the backup: declare them again. On the host the backup came from, first stop the app, empty the database and move the audit anchor aside, which names rows the backup may lack:
+11. **Restore** into an empty database, with the app stopped. On a new host, first put back the copies of `deploy/config`, the site file and `.env`, create the secrets as in step 3 but with the backup's `kek` and `tokeniser` in place of new ones, and build the image. `<date>` is the day in the backup's file names. The six commands, in order: start the database and make its two roles, without a schema; load the dump as the schema's owner, whole or not at all, its grants with it; put the evidence back; check that every stored body opens: the `blobs:` line reads `0 missing, 0 corrupted, 0 unreadable` and no line starts with `error:`; pause every schedule, so that no run starts by surprise; start the app. Targets declared in the product are not in the backup: declare them again. A dump taken before the roles were apart loads with `-U deltasleuth`; `migrate` then hands its schema to the owner. On the host the backup came from, first stop the app, empty the database and move the audit anchor aside, which names rows the backup may lack:
     ```bash
     docker compose stop app && docker compose exec -T db dropdb -U deltasleuth deltasleuth && docker compose exec -T db createdb -U deltasleuth deltasleuth && docker compose run --rm --no-deps app sh -c 'cd /var/lib/deltasleuth/workspace && [ ! -e audit-anchor.json ] || mv audit-anchor.json audit-anchor.before-restore.json'
     ```
     ```bash
-    docker compose up -d db
+    docker compose run --rm migrate --roles-only
     ```
     ```bash
-    docker compose exec -T db psql -U deltasleuth -d deltasleuth -q -v ON_ERROR_STOP=1 -1 < ~/deltasleuth-backups/ds-<date>.sql
+    docker compose exec -T db psql -U deltasleuth_owner -d deltasleuth -q -v ON_ERROR_STOP=1 -1 < ~/deltasleuth-backups/ds-<date>.sql
     ```
     ```bash
     docker compose run --rm --no-deps -T app tar -C /var/lib/deltasleuth/evidence -xf - < ~/deltasleuth-backups/evidence-<date>.tar
@@ -160,12 +159,12 @@ Later, in the same folder:
     ```bash
     docker compose up -d
     ```
-12. **Update.** Take a backup first: it is the way back. Then fetch the newer source and rebuild. The app applies pending database migrations as it starts, and refuses a database a newer build migrated or whose applied migrations this build changed beyond comments and layout. To go back, check out the older source, rebuild its image, and restore the backup as in step 11. Under single sign-on, a stored spec whose side has a `map`, or a `select` of part of the answer, needs a new approval that covers `transforms` before its next run or resume.
+12. **Update.** Take a backup first: it is the way back. Then fetch the newer source, rebuild, stop the app and start it: the `migrate` service applies pending migrations as the schema's owner before the app starts, and the app refuses a database a newer build migrated or whose applied migrations this build changed beyond comments and layout. To go back, check out the older source, rebuild its image, and restore the backup as in step 11. Under single sign-on, a stored spec whose side has a `map`, or a `select` of part of the answer, needs a new approval that covers `transforms` before its next run or resume.
     ```bash
     git pull
     ```
     ```bash
-    docker compose up -d --build
+    docker compose build && docker compose stop app && docker compose up -d
     ```
 13. **Check health and read the logs.** The first command answers with the status, whether AI is on, the sign-in mode and the worker's last sweep (its time and age in seconds); a server that runs its own worker answers 503 once no sweep has run for 30 s, or three polls if longer. The second shows the app's newest lines: a configuration problem stops the app with one line that starts `error:`. Each container's log rotates at 10 MB, three files kept, and a stop gives the app 40 s to hand back its work. An API read whose statement takes longer than `api.read_timeout_s` (default 30) is cancelled and answers 503, so it never holds a connection the worker needs. Each log line has its time, level and logger; audit rows are JSON lines on standard output; a line `audit anchor {…}` gives the audit chain's head, at most once a minute: keep a copy off the host for `ds audit verify --anchor <file>`. A failed run's error names its type and where in the code it was raised, never its message, and a 500's log line names the request id its response carried. A line `<job> job failed: <type> at <file:line>` names a worker job that met a fault; the sweep and the slots go on. After a change to a settings file or to a secret's content, run `docker compose restart app`; after a change to the site file, run `docker compose up -d`.
     ```bash
@@ -208,5 +207,6 @@ This is developer mode, for one person's machine: there is no sign-in, and whoev
 | `error: the app did not become healthy` | The app stopped as it started | The line above it is the app's last `error:` line. Correct what it names and run the script again |
 | `cross-origin request refused` under "Sign in" | The page was opened at another address than `public_url`, such as `http://127.0.0.1:8000` | Open `public_url` exactly. `invalid or expired API token` means the paste was not an active token |
 | `unexpected Host header` (status 400) | The proxy does not pass the host name of `public_url` | Pass the `Host` header (section 3, step 9) |
-| `the database needs migrations: run ds migrate` | This build has migrations the database lacks; only `ds serve`, `ds worker` and `ds migrate` apply them | Run `docker compose run --rm app ds migrate`, or start the app |
+| `the database needs migrations: run ds migrate` | This build has migrations the database lacks; only `ds serve`, `ds worker` and `ds migrate` apply them | Run `docker compose run --rm migrate`, or start the app |
+| `migrations are pending and the application's role deltasleuth_app has 1 session(s) open` | `migrate` ran while the older app still ran | Run `docker compose stop app`, then `docker compose up -d` |
 | `cannot read secret file /run/secrets/<name>` | The secret is not mounted, or the container's user cannot read it | Name it in the site file and `chmod 444` it (section 3, step 3), then run `docker compose up -d` |

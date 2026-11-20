@@ -1,6 +1,6 @@
 # This installation's changes to docker-compose.yml, which you never edit (docs/deployment.md). Upgrades
 # never overwrite this file. Compose adds these lists to the base file's. As copied it changes nothing:
-# token sign-in with AI off needs no secret beyond the base file's four.
+# token sign-in with AI off needs no secret beyond the base file's five.
 services:
   app:
     secrets: []                                # single sign-on: oidc_client_secret; AI chat: llm_key; each with its line under secrets: below

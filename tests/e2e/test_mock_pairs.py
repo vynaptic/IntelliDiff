@@ -75,16 +75,17 @@ def key_problems(
     return problems + finding_problems(row["findings"], exp["findings"])
 
 
+@pytest.mark.parametrize("judges", [0, 2])  # judged in a thread, or by two judge processes
 @pytest.mark.parametrize("mode", ["live", "file"])
 @pytest.mark.parametrize("pair", PAIRS)
 async def test_the_seeded_discrepancies_and_nothing_else(
-    serve: Any, make_stack: Any, tmp_path: Path, pair: str, mode: str
+    serve: Any, make_stack: Any, tmp_path: Path, pair: str, mode: str, judges: int
 ) -> None:
     expected = json.loads((pair_dir(pair) / "expected.json").read_text())
     samples = tmp_path / "samples" if mode == "file" else None
     if samples:
         write_fixtures(pair, samples)
-    async with make_stack(serve(pair).targets()).context() as ctx:
+    async with make_stack(serve(pair).targets(), judge_processes=judges).context() as ctx:
         spec_id = await store_spec(ctx, pair_dir(pair) / "spec.yaml")
         run = await finish(ctx, await create_run(ctx, spec_id, "batch", samples_dir=samples, who=TESTER))
         run_id = run["run_id"]

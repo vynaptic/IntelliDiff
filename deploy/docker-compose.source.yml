@@ -9,3 +9,4 @@ services:
     image: *image
     volumes: ["../mocks:/app/mocks:ro", "../examples:/app/examples:ro"]
   mocks: {image: *image}                       # the app's build: one image, built once
+  migrate: {image: *image}

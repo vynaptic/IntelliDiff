@@ -106,7 +106,7 @@ def _harness(monkeypatch: pytest.MonkeyPatch, source: Source, stop: dict[str, An
     monkeypatch.setattr(scanning, "unsealed", lambda *args: plans)
     monkeypatch.setattr(scanning, "_snapshot", snapshot)
     monkeypatch.setattr(scanning.drift, "check", drift)
-    monkeypatch.setattr(scanning, "mask_key", lambda key, *args: key)
+    monkeypatch.setattr(scanning, "mask_key", lambda key, *args, **kwargs: key)
     ctx = SimpleNamespace(pool=SimpleNamespace(connection=connection), spec=get_spec, sealer=get_sealer,
                           targets=SimpleNamespace(live=lambda target: target), tokeniser=None)
     return SimpleNamespace(

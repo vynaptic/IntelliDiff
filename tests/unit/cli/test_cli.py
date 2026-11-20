@@ -309,7 +309,7 @@ def test_a_library_value_error_while_ds_run_creates_its_run_exits_3_without_its_
     config = store()
     (tmp_path / "s.yaml").write_text(APPROVED.replace("keys: [K1]", "keys: [K40045123]"))
 
-    def taken(keys: list[str], *_: Any) -> None:  # int()'s ValueError quotes the key
+    def taken(keys: list[str], *_: Any, **__: Any) -> None:  # int()'s ValueError quotes the key
         int(keys[0])
 
     monkeypatch.setattr("deltasleuth.runner.runs.run_keys", taken)

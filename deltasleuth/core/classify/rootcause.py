@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from deltasleuth.core.classify.signatures import signature_hash
-from deltasleuth.core.masking import Tokeniser, mask_key, mask_member_key, mask_path_pattern
+from deltasleuth.core.masking import KeyForm, Tokeniser, mask_key, mask_member_key, mask_path_pattern
 from deltasleuth.core.types import (
     ChangeType,
     CompiledSpec,
@@ -56,18 +56,23 @@ class Member:
     ref: Any = None
 
 
-def root_causes(results: Iterable[KeyResult], *, spec: CompiledSpec, tokeniser: Tokeniser) -> list[RootCause]:
-    """Root causes of a run: fan-out groups first, then by severity and reach."""
-    return [rc for rc, _ in groups(results, spec=spec, tokeniser=tokeniser)]
+def root_causes(
+    results: Iterable[KeyResult], *, spec: CompiledSpec, tokeniser: Tokeniser, form: KeyForm
+) -> list[RootCause]:
+    """Root causes of a run whose keys are masked in ``form``: fan-out groups first, then by severity and
+    reach."""
+    return [rc for rc, _ in groups(results, spec=spec, tokeniser=tokeniser, form=form)]
 
 
 def _bug_rule(f: Finding) -> str | None:
     return f.rule_id if f.rule_classification is RuleClassification.BUG else None
 
 
-def groups(results: Iterable[KeyResult], *, spec: CompiledSpec, tokeniser: Tokeniser) -> list[Group]:
+def groups(
+    results: Iterable[KeyResult], *, spec: CompiledSpec, tokeniser: Tokeniser, form: KeyForm
+) -> list[Group]:
     """``root_causes``, each with its findings."""
-    found = [m for r in results for m in members(r, spec=spec, tokeniser=tokeniser)]
+    found = [m for r in results for m in members(r, spec=spec, tokeniser=tokeniser, form=form)]
     return [(rc, [m.ref for m in ms]) for rc, ms in group_members(found)]
 
 
@@ -76,11 +81,13 @@ def members(
     *,
     spec: CompiledSpec,
     tokeniser: Tokeniser,
+    form: KeyForm,
     ref: Callable[[Finding], Any] = lambda f: f,
 ) -> list[Member]:
-    """The result's discrepant findings as members, in finding order; each member's ``ref`` is ``ref`` of
-    its finding (by default the finding). A bug rule's finding is still discrepant: grouped apart, under
-    its rule. Shared texts (patterns, signatures) are interned: a cycle repeats them across keys."""
+    """The result's discrepant findings as members, in finding order, each key masked in the run's ``form``
+    (``masking.key_form``); each member's ``ref`` is ``ref`` of its finding (by default the finding). A bug
+    rule's finding is still discrepant: grouped apart, under its rule. Shared texts (patterns, signatures)
+    are interned: a cycle repeats them across keys."""
     masked: dict[str, str] = {}
     found = []
     for f in result.findings:
@@ -88,7 +95,7 @@ def members(
         if f.classified_severity.rank <= 0 or (f.suppressed and bug is None):
             continue
         if f.key not in masked:
-            masked[f.key] = mask_key(f.key, spec, tokeniser)
+            masked[f.key] = mask_key(f.key, spec, tokeniser, form=form)
         pattern = sys.intern(mask_path_pattern(f.path_pattern, spec))
         fanout = None
         one_sided = f.change_type in (ChangeType.MISSING_IN_B, ChangeType.EXTRA_IN_B)

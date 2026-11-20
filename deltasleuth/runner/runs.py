@@ -7,7 +7,9 @@ result is due one, and then its key and the run are done (unless it was cancelle
 the capabilities its targets declare at its creation (``params["capabilities"]``) and its table sides'
 column plan (``params["tables"]``), so it reads the same once they change. A run's raw keys are sealed under
 a data key of its own; a complete key listing is its first cycle's census, and a key table's read is audited
-with the run, a key list as any other. Its key set is normalised, masked and sealed off the event loop. A
+with the run, a key list as any other. Its key set is normalised, masked and sealed off the event loop, each
+key masked as a key token, the derivation it records (``params["key_tokens"]``) and every later mask of its
+keys reads (``masking.key_form``). A
 run is written while no target of the product's list changes (``targets.unmoved``): one whose target was
 moved or removed since its spec was judged, while its keys were listed, is refused. Under SSO a spec version
 that needs a four-eyes approval starts, compares and resumes only under one (``approvals.gate``): refused
@@ -51,7 +53,7 @@ from deltasleuth.runner.recheck import RecheckPolicy, confirm, freeze
 from deltasleuth.runner.scan import new_scan
 from deltasleuth.runner.stop import STOP_PREFIX
 from deltasleuth.security.crypto import Sealer
-from deltasleuth.security.tokenise import mask_document
+from deltasleuth.security.tokenise import KEY_FORM, KeyForm, key_form, mask_document
 from deltasleuth.store import repo
 
 AUTH_PAUSE = "run_paused_auth_error"  # a side refused the credential; a resume means it was fixed
@@ -140,7 +142,7 @@ async def create_run(
     planned = await tables.planning(ctx.targets, spec, scanning=scanning)  # refuses a missing table or column
     plan = planned.plan
     resolved, walk = ([], None) if scanning or spec.sample else await resolve(ctx, spec, keys)
-    taken = await asyncio.to_thread(run_keys, resolved, spec, ctx.tokeniser)
+    taken = await asyncio.to_thread(run_keys, resolved, spec, ctx.tokeniser, form=KEY_FORM)
     params = {
         "keys_source": "table_scan"
         if scanning
@@ -151,6 +153,7 @@ async def create_run(
         "soak": {"rolling": bool((soak or {}).get("rolling"))} if mode == "soak" else None,
         "tables": plan,
         "approval": approval,
+        "key_tokens": KEY_FORM,
     }
     if spec.sample is not None:
         params |= {"method": spec.sample.method, "population": list(spec.sample.population)}
@@ -350,16 +353,18 @@ async def outcome_changes(ctx: Context, run_id: str) -> list[dict[str, Any]]:
 
 
 async def compare_one(ctx: Context, spec_id: int, key: str, *, who: Principal) -> KeyResult:
-    """Compare one key now; the result's ``attrs["run_id"]`` names the one-shot run holding it, and its
-    ``attrs["warnings"]`` say how its tables differ from those the version's newest earlier run read (the
-    schema guard's lines: a one-shot run is never paused by it and records no shape).
+    """Compare one key now; the result's ``attrs["run_id"]`` names the one-shot run holding it, its
+    ``attrs["key_masked"]`` the key as that run holds it and ``attrs["key_form"]`` that run's key form (its
+    findings are masked so), and its ``attrs["warnings"]`` say how its tables differ from those the version's
+    newest earlier run read (the schema guard's lines: a one-shot run is never paused by it and records no
+    shape).
     ApprovalRequired when the spec version lacks its four-eyes approval, or when a revoke of it stopped
     the run meanwhile; LicenceRefused when the licence does not allow the run."""
     async with ctx.pool.connection() as conn:
         spec = await ctx.spec(conn, spec_id, live=True)
         _, approval = await approvals.gate(ctx, conn, spec_id, spec)  # refused before the key is read
         await licence.admit(ctx, conn, spec)
-    taken = run_keys(normalise_keys([key], spec), spec, ctx.tokeniser)
+    taken = run_keys(normalise_keys([key], spec), spec, ctx.tokeniser, form=KEY_FORM)
     key, masked = next(iter(taken.items()))
     planned = await tables.planning(ctx.targets, spec)
     plan = planned.plan
@@ -369,6 +374,7 @@ async def compare_one(ctx: Context, spec_id: int, key: str, *, who: Principal) -
         "capabilities": ctx.declared(spec),
         "tables": plan,
         "approval": approval,
+        "key_tokens": KEY_FORM,
     }
     run_id = repo.new_run_id()
     kek, wrapped, sealer = ctx.new_sealer(run_id)
@@ -390,7 +396,9 @@ async def compare_one(ctx: Context, spec_id: int, key: str, *, who: Principal) -
         if pair is not None:  # a new pair
             await audit(who, "licence.pair", pair[0], pair[1] | {"run_id": run_id})
     try:
-        result = await _read_now(ctx, spec, ctx.capabilities(run), reader, run_id, key, sealer)
+        result = await _read_now(
+            ctx, spec, ctx.capabilities(run), reader, run_id, key, sealer, key_form(run["params"])
+        )
     except Exception as exc:
         await fail_run(ctx, run_id, exc, who=who)
         raise
@@ -419,6 +427,7 @@ async def compare_one(ctx: Context, spec_id: int, key: str, *, who: Principal) -
         if stopped["stop_reason"] == approvals.APPROVAL_REVOKED:  # its result is no evidence
             raise approvals.revoked(spec_id, spec, approval_id)
     result.attrs["run_id"], result.attrs["warnings"] = run_id, warnings
+    result.attrs["key_masked"], result.attrs["key_form"] = masked, KEY_FORM
     return result
 
 
@@ -516,9 +525,11 @@ async def _read_now(
     run_id: str,
     key: str,
     sealer: Sealer,
+    form: KeyForm,
 ) -> KeyResult:
-    """The first pass, then up to ``oneShot.times`` recheck passes while the result is due one; a recheck
-    reads no side of fixed files again, and a read of them on both sides is final."""
+    """The first pass, then up to ``oneShot.times`` recheck passes while the result is due one, each saved
+    with the key masked in the run's ``form``; a recheck reads no side of fixed files again, and a read of
+    them on both sides is final."""
     policy = RecheckPolicy.from_spec(spec.raw)
     result, reads = await evaluate(ctx, spec, caps, reader, key, run_id=run_id, pass_no=1)
     for pass_no in range(1, policy.one_shot_times + 2):
@@ -531,7 +542,7 @@ async def _read_now(
             result = confirm(result, second, spec=spec, last=pass_no > policy.one_shot_times)
         result = freeze(result, reader.fixed)
         async with ctx.pool.connection() as conn:
-            await save_pass(ctx, conn, spec, run_id, 1, pass_no, result, reads, sealer)
+            await save_pass(ctx, conn, spec, run_id, 1, pass_no, result, reads, sealer, form=form)
         if not policy.due(result, reader.fixed):
             break
     return result

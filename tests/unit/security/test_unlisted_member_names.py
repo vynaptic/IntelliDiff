@@ -13,7 +13,13 @@ from deltasleuth.core.classify.enrich import enrich
 from deltasleuth.core.classify.rootcause import root_causes
 from deltasleuth.core.jsonio import dumps
 from deltasleuth.core.types import ChangeType, KeyResult, Outcome, Side, SideConfig, SideState
-from deltasleuth.security.tokenise import mask_document, mask_finding, mask_path_pattern, mask_pointer
+from deltasleuth.security.tokenise import (
+    KEY_FORM,
+    mask_document,
+    mask_finding,
+    mask_path_pattern,
+    mask_pointer,
+)
 
 CHANGED = ChangeType.VALUE_CHANGED
 ADA, BOB = "ada@example.org", "bob@example.org"
@@ -57,7 +63,7 @@ def test_a_value_mapped_into_a_member_name_is_masked(make_spec, tok) -> None:
 def test_the_pointer_the_pattern_and_the_view_agree(make_spec, make_finding, tok) -> None:
     spec = make_spec()
     [f] = enrich([_age(make_finding)], spec, today=TODAY)
-    row = mask_finding(f, spec, tok)
+    row = mask_finding(f, spec, tok, form=KEY_FORM)
     shown = tok.token("free_text", ADA)
     assert (row["path_pattern"], row["json_pointer"]) == ("$.contacts[*].age", f"/contacts/{shown}/age")
     assert list(mask_document({"contacts": {ADA: {"age": "x"}}}, spec, tok, key="K1")["contacts"]) == [shown]
@@ -128,6 +134,6 @@ def test_one_field_under_data_names_is_one_signature_and_one_root_cause(make_spe
         for key, email in (("K1", ADA), ("K2", BOB))
     ]
     assert len({f.signature_hash for r in results for f in r.findings}) == 1
-    [rc] = root_causes(results, spec=spec, tokeniser=tok)
+    [rc] = root_causes(results, spec=spec, tokeniser=tok, form=KEY_FORM)
     assert (rc.kind, rc.path_pattern, rc.affected_keys) == ("signature", "$.contacts[*].age", 2)
     assert "ada" not in repr(rc) and "bob" not in repr(rc)

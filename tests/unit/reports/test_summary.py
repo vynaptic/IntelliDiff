@@ -17,7 +17,7 @@ from deltasleuth.reports.data import load_run
 from deltasleuth.reports.measure import measure_run
 from deltasleuth.reports.render import Document
 from deltasleuth.reports.summary import summary_document, summary_report
-from deltasleuth.security.tokenise import mask_key
+from deltasleuth.security.tokenise import KEY_FORM, mask_key
 
 from .conftest import SECRET_NAME, SPEC_YAML, doc, seed_graph_run, seed_run, unit_spec
 from .packs import labelled_cycle, listed_spec, signed_cycle
@@ -90,8 +90,8 @@ async def test_key_line_names_parts(ctx: Context, tmp_path: Path) -> None:
         "Key item_id (string, class business_code)",
         "Key link (composite, class identifier)",
     ]
-    assert mask_key("EU|s1|7", spec, ctx.tokeniser) == "EU|s1|7"
-    masked = mask_key("EU|s1|7", unit_spec(key=key | {"class": "identifier"}), ctx.tokeniser)
+    assert mask_key("EU|s1|7", spec, ctx.tokeniser, form=KEY_FORM) == "EU|s1|7"
+    masked = mask_key("EU|s1|7", unit_spec(key=key | {"class": "identifier"}), ctx.tokeniser, form=KEY_FORM)
     assert masked.startswith("tok:identifier:") and masked.count("tok:") == 1 and "|" not in masked
 
 

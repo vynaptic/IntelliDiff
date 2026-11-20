@@ -526,23 +526,43 @@ def test_a_run_stays_readable_after_its_targets_are_removed(open_client: Any, se
 
 
 def test_compare_runs_one_key_now_and_answers_with_its_key_view(client: TestClient, seeded: Any) -> None:
+    """The answer is the key view of the one-shot run that holds the result, under that run's masked key: a
+    key token, where the seeded run, stored as a run created before key tokens is, holds the value token."""
     now = client.post("/v1/compare", json={"spec_id": seeded.spec_id, "key": seeded.raw_key})
     view = now.json()
-    assert (view["key_masked"], view["result"]["outcome"], view["result"]["confirmation"]) == (
-        seeded.key,
-        "MISMATCH",
-        "rechecked",
-    )
+    assert (view["result"]["outcome"], view["result"]["confirmation"]) == ("MISMATCH", "rechecked")
+    shown = view["key_masked"]
+    assert shown != seeded.key and shown.startswith("tok:identifier:k1:")
     assert view["run_id"] != seeded.run_id and view["canonical"]["b"]["price"] == 2.5
     assert seeded.raw_key not in now.text
+    assert client.get(f"/v1/runs/{view['run_id']}/keys/{shown}").json()["key_masked"] == shown
     # The key screen knows a key by its masked form only: its run resolves it.
     by_run = {"spec_id": seeded.spec_id, "key": seeded.key, "run_id": seeded.run_id}
-    assert client.post("/v1/compare", json=by_run).json()["key_masked"] == seeded.key
+    again = client.post("/v1/compare", json=by_run).json()
+    assert again["key_masked"] == shown and again["run_id"] not in (view["run_id"], seeded.run_id)
     refused = [
         client.post("/v1/compare", json={"spec_id": 999, "key": seeded.raw_key}),
         client.post("/v1/compare", json={"spec_id": seeded.spec_id, "key": "not-a-key"}),
     ]
     assert [r.status_code for r in refused] == [404, 422]
+
+
+def test_a_key_compared_now_shows_as_a_key_token_and_never_as_its_value_token(
+    client: TestClient, spec_yaml: str
+) -> None:
+    """A key someone chooses to compare is no oracle: it shows as a key token, never as the token its text has
+    as a value of the key's class, which this and any other run's documents and findings show for it. The
+    run records the derivation it masks its keys with."""
+    doc = yaml.safe_load(spec_yaml)
+    doc["security"] |= {"tokenize": [{"path": "$.id", "class": "identifier"}]}  # the key's text, as a value
+    spec_id = client.post("/v1/specs", json=doc).json()["spec_id"]
+    view = client.post("/v1/compare", json={"spec_id": spec_id, "key": RAW_KEY}).json()
+    value = client.app.state.ctx.tokeniser.token("identifier", RAW_KEY)
+    assert view["canonical"]["a"]["id"] == view["canonical"]["b"]["id"] == value
+    assert view["key_masked"] != value and view["key_masked"].startswith("tok:identifier:k1:")
+    assert client.get(f"/v1/runs/{view['run_id']}").json()["params"]["key_tokens"] == "k1"
+    created = client.post("/v1/runs", json={"spec_id": spec_id, "mode": "batch", "keys": [RAW_KEY]}).json()
+    assert client.get(f"/v1/runs/{created['run_id']}").json()["params"]["key_tokens"] == "k1"
 
 
 def test_compare_by_masked_key_refuses_another_spec(client: TestClient, seeded: Any, spec_yaml: str) -> None:

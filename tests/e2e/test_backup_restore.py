@@ -1,9 +1,13 @@
-"""An installation lost and restored from its backup, with the commands docs/deployment.md gives: a plain
-``pg_dump`` of the store and one archive of the evidence directory, taken while the app runs, are loaded
-into an empty database (``psql``, whole or not at all) and an empty evidence directory, beside the same
-two key files. The restored store's key check then reads every stored body, its audit chain verifies and
-takes new rows, and a token made before the backup reads what it read before: the run and its counters,
-its results and findings, and a key whose two documents are derived again from the stored evidence.
+"""An installation lost and restored from its backup, with the commands docs/deployment.md gives, its
+database roles apart as the Compose kit keeps them: the app signs in as a role of its own, and the schema's
+owner takes a plain ``pg_dump`` of the store while the app runs, beside one archive of the evidence
+directory. The installation is lost with both roles, as on a new host. ``ds db setup --roles-only`` makes the
+roles again, the owner loads the dump into an empty database (``psql``, whole or not at all), and the dump's
+own grants let the app's role read it at once; ``ds db setup``, which the migrate service runs before the
+app, then changes no role and grants what it granted. The evidence goes back beside the same two key files.
+The restored store's key check reads every stored body, its audit chain verifies and takes new rows, and a
+token made before the backup reads what it read before: the run and its counters, its results and
+findings, and a key whose two documents are derived again from the stored evidence.
 
 ``pg_dump`` and ``psql`` run inside the fixtures' PostgreSQL container, as the documented commands run
 them inside the database's; ``tar`` is the host's.
@@ -15,7 +19,8 @@ import re
 import shutil
 import subprocess
 import time
-from collections.abc import Callable
+import uuid
+from collections.abc import Callable, Iterator
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
@@ -24,7 +29,7 @@ from urllib.parse import quote
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
-from psycopg.conninfo import conninfo_to_dict
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from typer.testing import CliRunner
 
 from deltasleuth.api import create_app
@@ -42,6 +47,10 @@ KEYS = ["C00012001", "C00012003", "C00012027", "C00012031"]
 OUTCOMES = {"MATCH": 1, "MISMATCH": 1, "NOT_FOUND_B": 1, "KNOWN_DIFF": 1}
 # The key check's line when it read back every body the store names: none missing, none unreadable.
 READ_BACK = re.compile(r"^blobs: (\d+) checked: (\d+) readable, 0 missing, 0 corrupted, 0 unreadable", re.M)
+SEPARATE = (
+    "roles: separate: the role of database_dsn_ref owns nothing in schema ds and cannot switch the audit"
+    " log's triggers off; migrate_dsn_ref's role applies the migrations"
+)
 
 
 def _piped(command: list[str], *, source: Path | None = None, to: Path | None = None) -> None:
@@ -97,21 +106,48 @@ def _chained(said: str) -> int:
     return int(rows.replace(",", ""))
 
 
+@pytest.fixture
+def roles(pg_server: str, pg_dsn: str) -> Iterator[tuple[str, str]]:
+    """The schema owner's and the app's role names for this test; each is dropped with what it owns and
+    was granted, wherever the test left it."""
+    tag = uuid.uuid4().hex[:8]
+    made = (f"ds_owner_{tag}", f"ds_app_{tag}")
+    yield made
+    with psycopg.connect(pg_dsn, autocommit=True) as conn:
+        for role in made:
+            if conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone():
+                conn.execute(f"REASSIGN OWNED BY {role} TO CURRENT_USER".encode())
+                conn.execute(f"DROP OWNED BY {role}".encode())
+                conn.execute(f"DROP ROLE {role}".encode())
+
+
 def test_a_lost_installation_is_restored_from_its_backup(
     serve: Callable[[str], ServedPair],
     make_stack: Callable[..., Stack],
     pg_server: str,
     pg_dsn: str,
+    roles: tuple[str, str],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("DS_OPERATOR", "tester")  # the name the command line's audit rows record
     stack = make_stack(serve("customer").targets(), auth=AUTH)
-    settings = load_settings(stack.settings)
     store = conninfo_to_dict(pg_dsn)
-    user, database = str(store["user"]), str(store["dbname"])
+    superuser, database = str(store["user"]), str(store["dbname"])
+    owner, application = roles
+    # The kit's roles: db_dsn the app's own role's address, db_owner_dsn the schema owner's.
+    app_dsn = make_conninfo("", **store | {"user": application, "password": "invented-app-password"})
+    (tmp_path / "dsn").write_text(app_dsn)
+    owner_dsn = make_conninfo("", **store | {"user": owner, "password": "invented-owner-password"})
+    (tmp_path / "owner_dsn").write_text(owner_dsn)
+    (tmp_path / "superuser").write_text(f"{store['password']}\n")
+    migrating = f"migrate_dsn_ref: file:{tmp_path / 'owner_dsn'}\n"
+    stack.settings.write_text(stack.settings.read_text() + migrating)
+    settings = load_settings(stack.settings)
     in_db = ["docker", "exec", "-i", _container(str(store["port"]))]
     dump, archive = tmp_path / "ds.sql", tmp_path / "evidence.tar"
+    setup = ("db", "setup", "--superuser", superuser)
+    setup += ("--superuser-password-ref", f"file:{tmp_path / 'superuser'}")
 
     def ds(*args: str) -> str:
         """The command's standard output; it ended without an error."""
@@ -119,7 +155,8 @@ def test_a_lost_installation_is_restored_from_its_backup(
         assert result.exit_code == 0 and "error:" not in result.output, result.output
         return result.stdout
 
-    assert ds("migrate").startswith("migrations applied: 1, ")  # as the deployment's set-up does
+    made = ds(*setup).splitlines()  # as the migrate service does before the app's first start
+    assert made[3].startswith("migrations applied: 1, ") and made[-1] == SEPARATE
     made = ds("token", "create", "--name", "restore-drill", "--owner", "tests", "--role", "spec_author")
     token = made.strip()  # the command's only line of standard output
     with _serving(settings, token) as client:
@@ -132,26 +169,42 @@ def test_a_lost_installation_is_restored_from_its_backup(
             time.sleep(0.1)
         original = _read(client, run_id)
         logged = _chained(ds("audit", "verify"))
-        # The backup, while the app runs: the database's dump, then the evidence without its spill directory.
-        _piped([*in_db, "pg_dump", "-U", user, database], to=dump)
+        # The backup, while the app runs: the database's dump, by the schema's owner, then the evidence
+        # without its spill directory.
+        _piped([*in_db, "pg_dump", "-U", owner, database], to=dump)
         _piped(["tar", "-C", str(settings.evidence_dir), "--exclude=./spill", "-cf", "-", "."], to=archive)
     assert {name: n for name, n in original["counters"]["by_outcome"].items() if n} == OUTCOMES
     assert len(original["results"]) == len(KEYS) and original["findings"]
     assert original["key"]["canonical"]["a"] and original["key"]["canonical"]["b"]
 
-    # The installation is lost: its database is dropped and made again empty, and its evidence and workspace
-    # directories are deleted and made again as new volumes are, empty and private. The settings file and
-    # the two key files stay.
+    # The installation is lost: its database is dropped and made again empty, with neither role, as on a
+    # new host, and its evidence and workspace directories are deleted and made again as new volumes are,
+    # empty and private. The settings file, the addresses and the two key files stay.
     with psycopg.connect(pg_server, autocommit=True) as conn:
         conn.execute(f'DROP DATABASE "{database}" WITH (FORCE)')
         conn.execute(f'CREATE DATABASE "{database}"')
+        for role in roles:
+            conn.execute(f"DROP ROLE {role}".encode())
     for volume in (settings.evidence_dir, settings.workspace_dir):
         shutil.rmtree(volume)
         volume.mkdir(mode=0o700)
 
-    # The restore, in its order: the dump in one transaction, the evidence, the key check, which reads back
-    # every stored body, every schedule paused, and then the app.
-    _piped([*in_db, "psql", "-U", user, "-d", database, "-q", "-v", "ON_ERROR_STOP=1", "-1"], source=dump)
+    # The restore, in its order: the roles alone, the dump by the owner in one transaction, the setup the
+    # migrate service runs before the app, the evidence, the key check, which reads back every stored body,
+    # every schedule paused, and then the app.
+    assert ds(*setup, "--roles-only").splitlines() == [
+        f"role {owner} made", f"role {application} made",
+        f"role {owner} may connect to and create in database {database}",
+    ]  # fmt: skip
+    _piped([*in_db, "psql", "-U", owner, "-d", database, "-q", "-v", "ON_ERROR_STOP=1", "-1"], source=dump)
+    with psycopg.connect(app_dsn) as conn:  # the dump carried the app's grants: it reads at once
+        assert conn.execute("SELECT count(*) FROM ds.runs WHERE run_id = %s", (run_id,)).fetchone() == (1,)
+    assert ds(*setup).splitlines() == [
+        f"roles {owner} and {application}: as they were",
+        "schema up to date",
+        f"grants of {application}: as 'ds db grants' prints them",
+        SEPARATE,
+    ]
     _piped(["tar", "-C", str(settings.evidence_dir), "-xf", "-"], source=archive)
     read_back = READ_BACK.search(checked := ds("keys", "status", "--verify"))
     assert read_back and read_back[1] == read_back[2] != "0", checked

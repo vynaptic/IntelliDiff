@@ -24,6 +24,7 @@ from deltasleuth.connectors import tables
 from deltasleuth.connectors.files import SampleWriter
 from deltasleuth.connectors.postgres import engine as postgresql
 from deltasleuth.connectors.postgres.errors import wrapped
+from deltasleuth.core import judge
 from deltasleuth.core.types import SideStateKind
 from deltasleuth.errors import Invalid
 from deltasleuth.evidence import store
@@ -943,13 +944,13 @@ async def test_a_slow_spec_map_does_not_stall_the_event_loop(
     harness: Harness, service: ScriptedService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     service.both("K001", doc("K001"), doc("K001"))
-    observe = compare.observe
+    observe = judge.observe
 
     def heavy(*args: Any) -> Any:
         time.sleep(0.5)  # a CPU-bound JSONata map over a large response
         return observe(*args)
 
-    monkeypatch.setattr(compare, "observe", heavy)
+    monkeypatch.setattr(judge, "observe", heavy)
     ticks: list[float] = []
 
     async def tick() -> None:

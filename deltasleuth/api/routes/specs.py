@@ -27,7 +27,7 @@ from deltasleuth.profiler import bootstrap
 from deltasleuth.profiler.draft import render_yaml
 from deltasleuth.runner.compare import connect
 from deltasleuth.runner.keys import normalise_keys
-from deltasleuth.security.tokenise import Tokeniser, is_stand_in, mask_key, mask_raw
+from deltasleuth.security.tokenise import KEY_FORM, Tokeniser, is_stand_in, mask_key, mask_raw
 from deltasleuth.store import repo
 
 router = APIRouter()
@@ -328,7 +328,7 @@ async def try_side(ctx: Ctx, who: SpecAuthor, sent: Request) -> Response:
         "side": side,
         "method": request["method"],
         "request_sha256": content_hash({"target": target, "request": request}),  # a template: no key
-        "key_masked": mask_key(key, spec, ctx.tokeniser),
+        "key_masked": mask_key(key, spec, ctx.tokeniser, form=KEY_FORM),  # a key token, as a run's now
         "raw": raw,
     }
     async with repo.audited(ctx.pool) as (_, audit):  # committed before the read, as a compare's row is

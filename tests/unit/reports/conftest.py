@@ -35,7 +35,7 @@ from deltasleuth.runner.compare import save_pass
 from deltasleuth.runner.counters import count_cycle
 from deltasleuth.runner.recheck import RecheckPolicy
 from deltasleuth.security.signing import PackSigner
-from deltasleuth.security.tokenise import Tokeniser, mask_finding, mask_key
+from deltasleuth.security.tokenise import KeyForm, Tokeniser, key_form, mask_finding, mask_key
 from deltasleuth.store import repo
 from deltasleuth.store.db import migrate
 from tests.conftest import TEST_KEYRING, TESTER, create_run, evidence_store
@@ -166,8 +166,16 @@ async def compare_key(
         states.append(observe(obs, cfg, spec, ctx.targets.get(cfg.target).capabilities))
     result = compare_pair(key, *states, spec, today=TODAY, tokeniser=ctx.tokeniser)
     result = replace(result, obs_a_id=reads[Side.A].obs_id, obs_b_id=reads[Side.B].obs_id, **result_changes)
-    await save_pass(ctx, conn, spec, run_id, cycle, pass_no, result, reads, await ctx.sealer(conn, run_id))
+    sealer, form = await ctx.sealer(conn, run_id), await run_form(conn, run_id)
+    await save_pass(ctx, conn, spec, run_id, cycle, pass_no, result, reads, sealer, form=form)
     return result
+
+
+async def run_form(conn: Any, run_id: str) -> KeyForm:
+    """How the run masks its keys, as it recorded at its creation."""
+    run = await repo.get_run(conn, run_id)
+    assert run is not None
+    return key_form(run["params"])
 
 
 async def store_counters(conn: Any, spec: CompiledSpec, run_id: str, cycle: int, live: bool) -> None:
@@ -183,8 +191,9 @@ async def store_counters(conn: Any, spec: CompiledSpec, run_id: str, cycle: int,
 
 async def store_root_causes(ctx: Context, conn: Any, spec: CompiledSpec, run_id: str, cycle: int,
                             results: list[KeyResult]) -> None:  # fmt: skip
-    grouped = groups(results, spec=spec, tokeniser=ctx.tokeniser)
-    masked = [(rc, f, mask_finding(f, spec, ctx.tokeniser)) for rc, fs in grouped for f in fs]
+    form = await run_form(conn, run_id)
+    grouped = groups(results, spec=spec, tokeniser=ctx.tokeniser, form=form)
+    masked = [(rc, f, mask_finding(f, spec, ctx.tokeniser, form=form)) for rc, fs in grouped for f in fs]
     by_masked = {(m["key"], m["json_pointer"], f.change_type.value): rc.root_cause_id for rc, f, m in masked}
     rows, _ = await repo.list_findings(conn, run_id, cycle, limit=10_000)
     links = {
@@ -205,9 +214,9 @@ async def seed_run(
     spec = spec or unit_spec()
     async with ctx.pool.connection() as conn:
         spec_id = await repo.save_spec(conn, spec, created_by=TESTER.actor)
-        keys = {key: mask_key(key, spec, ctx.tokeniser) for key in samples}
         params = {"capabilities": ctx.declared(spec)} | ({} if live else {"samples_dir": "samples"})
-        params |= {"tables": tables} if tables else {}
+        params |= {"tables": tables} if tables else {}  # no key_tokens: as a run created before them
+        keys = {key: mask_key(key, spec, ctx.tokeniser, form=key_form(params)) for key in samples}
         run_id, _ = await create_run(ctx, conn, spec_id, mode, keys, params, scan)
         results = [
             await compare_key(ctx, conn, spec, run_id, key, pair, n=n)

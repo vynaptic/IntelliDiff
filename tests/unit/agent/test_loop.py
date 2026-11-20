@@ -22,6 +22,7 @@ from deltasleuth.llm.client import LLMClient
 from deltasleuth.llm.model import LLMRequest, Message, TextPart
 from deltasleuth.llm.policy import EgressPolicy
 from deltasleuth.reports.pdf import report_document
+from deltasleuth.security.tokenise import KEY_FORM
 from deltasleuth.store import repo
 from tests.conftest import TESTER
 
@@ -47,6 +48,12 @@ async def _stored(ctx: Any, session_id: str) -> tuple[list[dict[str, Any]], list
         sealer = await ctx.sealer(conn, session["run_id"])
         cur = await conn.execute("SELECT error FROM ds.llm_calls WHERE session_id = %s", (session_id,))
         return [sealer.open_row(m) for m in session["messages"]], [row[0] for row in await cur.fetchall()]
+
+
+def one_shot(result: KeyResult) -> KeyResult:
+    """``result`` as ``compare_one`` answers: naming the key form of the one-shot run that holds it."""
+    result.attrs["key_form"] = KEY_FORM
+    return result
 
 
 @pytest.mark.parametrize("dialect", DIALECTS)
@@ -141,7 +148,7 @@ async def test_compare_key_is_masked_and_rate_limited_per_asker(scripted, make_c
         side = SideState(SideStateKind.COMPLETE)
         finding = Finding(key, "/email", "$.email", ChangeType.VALUE_CHANGED, RAW_EMAIL, "b@example.org",
                           pointer_parts=(("field", "email"),))  # fmt: skip
-        return KeyResult(key, Outcome.MISMATCH, side, side, findings=[finding])
+        return one_shot(KeyResult(key, Outcome.MISMATCH, side, side, findings=[finding]))
 
     monkeypatch.setattr("deltasleuth.runner.runs.compare_one", compare_one)
     call = ("compare_key", {"key": seeded.key})
@@ -216,7 +223,7 @@ async def test_each_key_the_chat_reads_is_a_key_view_of_the_session(scripted, ma
 
     async def compare_one(ctx: Any, spec_id: int, key: str, *, who: Any) -> KeyResult:
         side = SideState(SideStateKind.COMPLETE)
-        return KeyResult(key, Outcome.MATCH, side, side)
+        return one_shot(KeyResult(key, Outcome.MATCH, side, side))
 
     monkeypatch.setattr("deltasleuth.runner.runs.compare_one", compare_one)
     llm.say("", ("get_observations", {"key": seeded.key}), ("get_observations", {"key": "tok:x"}))
@@ -635,7 +642,7 @@ async def test_the_agent_acts_for_the_asker(scripted, make_ctx, monkeypatch) -> 
     async def compare_one(ctx: Any, spec_id: int, key: str, *, who: Any) -> KeyResult:
         asked.append(who)
         side = SideState(SideStateKind.COMPLETE)
-        return KeyResult(key, Outcome.MATCH, side, side)
+        return one_shot(KeyResult(key, Outcome.MATCH, side, side))
 
     monkeypatch.setattr("deltasleuth.runner.runs.compare_one", compare_one)
     call = ("compare_key", {"key": seeded.key})

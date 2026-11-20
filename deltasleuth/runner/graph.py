@@ -26,7 +26,7 @@ from deltasleuth.connectors.base import utc_now_iso
 from deltasleuth.connectors.postgres import errors as pg_errors
 from deltasleuth.context import Context
 from deltasleuth.core.types import CompiledSpec, Side
-from deltasleuth.security.tokenise import mask_key
+from deltasleuth.security.tokenise import VALUE_FORM, mask_key
 
 BATCH = 500  # groups or members a lookup reads at once
 FETCH = 10_000  # group rows a stream fetches at once
@@ -90,7 +90,9 @@ async def _analysed(ctx: Context, spec: CompiledSpec, tables: pg.Plan, state: Ro
     cap = graph.get("maxComponent", 10_000)
 
     def mask(text: str) -> str:
-        return mask_key(text, spec, ctx.tokeniser)
+        # A group or a member is a part of keys read from the tables: data, masked as a value of the key's
+        # class is, in every run. A key token would match the token of a key someone chooses to compare.
+        return mask_key(text, spec, ctx.tokeniser, form=VALUE_FORM)
 
     async with AsyncExitStack() as stack:  # one read-only snapshot a side for the whole analysis
         conns = {

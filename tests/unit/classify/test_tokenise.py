@@ -36,6 +36,21 @@ def test_token_format_and_reference_value() -> None:
     assert Tokeniser(KEY, "v2").token("name", "Ada").startswith("tok:name:v2:")
 
 
+def test_a_key_token_has_a_derivation_of_its_own() -> None:
+    """A run's key is tokenised under a label of its own and written ``k1``: never the token the same text has
+    as a value of the key's class, so a key someone chooses to compare confirms no value a token stands
+    for. It reads the canonical text as a value token does, and has a token's form."""
+    digest = hmac.new(KEY, b"\x00key\x1fname\x1fAda Smithson", hashlib.sha256).digest()
+    tok = Tokeniser(KEY)
+    key = tok.key_token("name", "Ada Smithson")
+    assert key == "tok:name:k1:" + base64.b32encode(digest).decode()[:26]
+    assert key.split(":")[3] != tok.token("name", "Ada Smithson").split(":")[3]
+    assert is_token(key) and tok.key_token("name", "é") == tok.key_token("name", "é")  # NFC
+    assert tok.key_token("name", "1") != tok.key_token("account_number", "1")
+    with pytest.raises(TokeniserError):
+        tok.key_token("Name", "Ada")
+
+
 def test_tokens_are_deterministic_keyed_and_domain_separated() -> None:
     tok = Tokeniser(KEY)
     assert tok.token("phone", "12345678") == Tokeniser(KEY).token("phone", "12345678")

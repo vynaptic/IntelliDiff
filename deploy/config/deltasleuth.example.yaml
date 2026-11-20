@@ -6,7 +6,8 @@
 ## and switches on the lines it uses: a line that starts "# " is a setting switched off, and removing
 ## those two characters switches it on.
 
-database_dsn_ref: file:/run/secrets/db_dsn       # postgresql://deltasleuth:<password>@db:5432/deltasleuth
+database_dsn_ref: file:/run/secrets/db_dsn       # the app's own role: data rights in schema ds, nothing more
+migrate_dsn_ref: file:/run/secrets/db_owner_dsn  # the schema's owner: read by ds migrate and ds db setup alone
 evidence_dir: /var/lib/deltasleuth/evidence      # response bodies, encrypted and content-addressed (volume)
 workspace_dir: /var/lib/deltasleuth/workspace    # working files (volume)
 targets_file: targets.yaml
@@ -32,12 +33,14 @@ encryption:                                      # required with auth: vault bot
 retention:                                       # days raw data is kept after each cycle ends, by the spec's class
   standard_days: 90                              # 7..3650
   audit_days: 365                                # 7..3650, at least standard_days
-worker: {concurrency: 4, lease_seconds: 120, poll_seconds: 1}
+worker:                                          # the slots that lease, read, judge and save keys
+  concurrency: 4
+  lease_seconds: 120
+  poll_seconds: 1
+## Judging large answers in 2 processes that hold no key (0, the default: in the app's own; at most the CPUs).
+#   judge_processes: 2
 
 ## ---- optional blocks: remove the leading "# " of the lines you use; each loads as written ----
-## Database roles apart: the schema's owner, which only ds migrate reads (ds serve and ds worker then apply
-## no migration), while db_dsn names a role with data rights only: 'ds db grants --help' gives the steps.
-# migrate_dsn_ref: file:/run/secrets/db_owner_dsn
 ## AI chat: your gateway's profile in llm_profiles.yaml, and the llm_key secret in the site file. Without these three lines AI is off.
 # llm_profiles_file: llm_profiles.yaml
 # llm_profile: gateway

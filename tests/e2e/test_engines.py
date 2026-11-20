@@ -741,6 +741,54 @@ async def test_a_key_a_latin1_column_cannot_hold_is_skipped_and_the_scan_resumes
     assert run["counters"]["by_outcome"]["MATCH"] == 5  # every other key compared
 
 
+async def test_a_killed_scan_of_a_key_in_its_byte_order_reads_and_resumes_it_by_its_index(
+    engines: Callable[..., Stack], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from deltasleuth.connectors.tables import mysql
+    from deltasleuth.runner import scan as scanning
+
+    # Side a's key is a VARCHAR in utf8mb4_0900_bin, which compares UTF-8 bytes as they are: each pass of the
+    # scan reads it by its primary key, and the pass after a lost checkpoint resumes there by range. Side b,
+    # PostgreSQL, holds the same keys; one row differs.
+    keys = [f"k{i:02d}" for i in range(1, 13)] + ["a", "a ", "Z", "E", "e", "é", "\U0001f600"]
+    values = ", ".join(f"('{key}', 'v')" for key in keys)
+    binary = f"""
+        CREATE TABLE users (userid VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin PRIMARY KEY,
+                            email VARCHAR(20));
+        INSERT INTO users VALUES {values};
+    """  # noqa: S608 (constants)
+    pg = f"""
+        CREATE TABLE users (userid text PRIMARY KEY, email text); INSERT INTO users VALUES {values};
+        UPDATE users SET email = 'changed' WHERE userid = 'e';
+    """  # noqa: S608 (constants)
+    monkeypatch.setattr(scanning, "BATCH", 5)
+    saves, real_save, real_sql, statements = 0, repo.save_scan, mysql.scan_sql, []
+
+    async def dying_save(*args: Any, **kwargs: Any) -> bool:
+        nonlocal saves
+        saves += 1
+        if saves == 3:  # the worker dies before its third checkpoint commits
+            raise psycopg.OperationalError("killed")
+        return await real_save(*args, **kwargs)
+
+    def scan_sql(side: Any, after: Any) -> str:
+        statements.append(real_sql(side, after))
+        return statements[-1]
+
+    monkeypatch.setattr(repo, "save_scan", dying_save)
+    monkeypatch.setattr(mysql, "scan_sql", scan_sql)
+    doc = table_spec(sides=both({"name": "users", "keyColumns": ["userid"]}))
+    async with engines(("mysql", binary), ("postgresql", pg), lease_seconds=2).context() as ctx:
+        run = await finish(ctx, await create_run(ctx, await store_spec(ctx, doc), "batch", who=TESTER))
+        found = await results(ctx, run["run_id"])
+    assert run["params"]["tables"]["a"]["collations"] == {"userid": ["utf8mb4", "utf8mb4_0900_bin"]}
+    assert (run["status"], scanned(run)) == ("completed", (19, 19, 0, 0, 18, 1))
+    assert {key: r["outcome"] for key, r in found.items()} == {"e": "MISMATCH"}
+    assert len(statements) == 2 and all(s.endswith(" ORDER BY t.`userid`") for s in statements)
+    assert " AND ((t.`userid` > _utf8mb4 X'" not in statements[0]
+    assert " AND ((t.`userid` > _utf8mb4 X'" in statements[1]  # after the last saved key
+
+
 @oracle
 async def test_a_killed_scan_resumes_past_an_empty_key_part_on_oracle(
     engines: Callable[..., Stack], monkeypatch: pytest.MonkeyPatch

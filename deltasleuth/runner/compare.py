@@ -6,12 +6,12 @@ captured samples (file mode). Every read, a failed call included, is named as ev
 and stored before its observation is saved: a group's blobs are durable before the transaction that names
 them commits, each directory synced once a group. A key that cannot be read is INCONCLUSIVE, never a
 failure of the run: no sample, or a key that cannot be sent, is ``skipped``; a malformed sample is
-``unparseable``. Observing and comparing run off the event loop, so a heavy spec map never stalls
-the API or the other keys. A run is observed with the capabilities its targets declared when it
-was created (``Context.capabilities``). Stored observations are opened with the run's sealer, and
-their headers sealed with it when saved. A side that reads fixed files is read
-once: a recheck keeps its first observation of that side, after one stat check of the files, and reads
-the other side alone.
+``unparseable``. Observing and comparing run off the event loop, in a thread or in the worker's judge
+processes (``runner.judges``), so a heavy spec map never stalls the API or the other keys. A run is
+observed with the capabilities its targets declared when it was created (``Context.capabilities``).
+Stored observations are opened with the run's sealer, and their headers sealed with it when saved. A side
+that reads fixed files is read once: a recheck keeps its first observation of that side, after one stat
+check of the files, and reads the other side alone.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 from collections.abc import Callable, Container, Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -31,8 +31,7 @@ from deltasleuth.connectors.rest import RestConnector
 from deltasleuth.connectors.tables import Plan, TableConnector
 from deltasleuth.context import Capabilities, Context
 from deltasleuth.core import jsonio
-from deltasleuth.core.canonical.observe import observe
-from deltasleuth.core.classify.outcome import compare_pair
+from deltasleuth.core.judge import compared, observe_one, observed
 from deltasleuth.core.spec import SecretError
 from deltasleuth.core.spec.keys import fit_parts
 from deltasleuth.core.types import (
@@ -47,9 +46,10 @@ from deltasleuth.core.types import (
 )
 from deltasleuth.errors import Invalid
 from deltasleuth.evidence.store import EvidenceNotFoundError
+from deltasleuth.runner.judges import ENDED_DETAIL, Ended, Item, Judged, Judges
 from deltasleuth.runner.recheck import tag_intermittent
 from deltasleuth.security.crypto import Sealer
-from deltasleuth.security.tokenise import mask_finding, mask_key
+from deltasleuth.security.tokenise import KeyForm, mask_finding, mask_key
 from deltasleuth.store import repo
 
 Reads = dict[Side, Observation]
@@ -319,12 +319,14 @@ def _observed(first: KeyResult, side: Side) -> tuple[str, SideState] | None:
 
 
 def _observe(spec: CompiledSpec, caps: Capabilities, obs: Observation) -> SideState:
-    side = spec.sides[obs.side]
-    return observe(obs, side, spec, caps[side.target])
+    return observe_one(spec, caps, obs)
 
 
-def _compare(ctx: Context, spec: CompiledSpec, key: str, a: SideState, b: SideState) -> KeyResult:
-    return compare_pair(key, a, b, spec, today=datetime.now(UTC).date(), tokeniser=ctx.tokeniser)
+def _compare(
+    ctx: Context, spec: CompiledSpec, key: str, a: SideState, b: SideState, today: date | None = None
+) -> KeyResult:
+    today = today or datetime.now(UTC).date()
+    return compared(spec, key, {Side.A: a, Side.B: b}, today=today, tokeniser=ctx.tokeniser)
 
 
 async def evaluate(
@@ -353,20 +355,36 @@ async def evaluate_many(
     *,
     run_id: str,
     held: Mapping[str, Held] | None = None,
+    judges: Judges | None = None,
 ) -> list[tuple[KeyResult, Reads]]:
     """``evaluate`` for each (key, pass_no): the reads first (a prefetched table side answers at
-    once), then the evidence and the judgement of them all in one thread call. A recheck's key keeps the
-    sides ``held`` holds of it (``LiveReader.standing``): they are not read, and its result names the same
-    observation. The reads end at the first refused credential, which is not tried on the group's other
-    keys: the results are then of the keys read, and their caller hands the group back."""
+    once), then the evidence and the judgement of them all in one thread call, or with ``judges`` the
+    evidence named in a thread and the reads judged by a judge process, which holds no key: its answers
+    are finished here (``_finished``). A recheck's key keeps the sides ``held`` holds of it
+    (``LiveReader.standing``): they are not read, and its result names the same observation. The reads end
+    at the first refused credential, which is not tried on the group's other keys: the results are then of
+    the keys read, and their caller hands the group back."""
     fetched = []
     for key, pass_no in keys:
         kept = (held or {}).get(key, {})
         fetched.append((*await _fetch(reader, key, run_id=run_id, pass_no=pass_no, held=kept), kept))
         if any(obs.error_class == "auth_error" for obs in fetched[-1][0].values()):
             break
+    if judges is None:
+        return await asyncio.to_thread(
+            lambda: [_judge(ctx, spec, caps, key, *f) for (key, _), f in zip(keys, fetched, strict=False)]
+        )
+    today = datetime.now(UTC).date()  # one day for the group, wherever each key of it is judged
+    named = await asyncio.to_thread(
+        lambda: [{side: ctx.evidence.identify(obs) for side, obs in f[0].items()} for f in fetched]
+    )
+    items: list[Item] = [(key, reads, f[1]) for (key, _), reads, f in zip(keys, named, fetched, strict=False)]
+    answers = await judges.judge(spec, caps, items, today)
     return await asyncio.to_thread(
-        lambda: [_judge(ctx, spec, caps, key, *f) for (key, _), f in zip(keys, fetched, strict=False)]
+        lambda: [
+            _settled(ctx, spec, caps, item, f[2], answer, today)
+            for item, f, answer in zip(items, fetched, answers, strict=True)
+        ]
     )
 
 
@@ -405,11 +423,49 @@ def _judge(
     event loop: a heavy map must not stall the API or the other keys); a side ``held`` keeps is named by its
     stored observation."""
     reads = {side: ctx.evidence.identify(obs) for side, obs in observations.items()}
-    states = states | {side: _observe(spec, caps, obs) for side, obs in reads.items()}
-    result = _compare(ctx, spec, key, states[Side.A], states[Side.B])
+    return _settled(ctx, spec, caps, (key, reads, states), held, None)
+
+
+def _settled(
+    ctx: Context,
+    spec: CompiledSpec,
+    caps: Capabilities,
+    item: Item,
+    held: Held,
+    answer: Judged,
+    today: date | None = None,
+) -> tuple[KeyResult, Reads]:
+    """``_finished``, its result naming the observations it judged: ``item``'s reads (named evidence) and
+    those ``held`` keeps."""
+    key, reads, states = item
+    result = _finished(ctx, spec, caps, key, reads, states, answer, today)
     ids = {side: obs.obs_id for side, obs in reads.items()} | {side: kept[0] for side, kept in held.items()}
     result.obs_a_id, result.obs_b_id = (ids.get(s) for s in Side)
     return result, reads
+
+
+def _finished(
+    ctx: Context,
+    spec: CompiledSpec,
+    caps: Capabilities,
+    key: str,
+    reads: Mapping[Side, Observation],
+    states: dict[Side, SideState],
+    answer: Judged,
+    today: date | None = None,
+) -> KeyResult:
+    """A key's result from a judge process's ``answer``: its result as given; its states compared here,
+    with the tokeniser; for None, its reads observed and compared here, as without judges; and for a key
+    whose judging ended a judge twice, INCONCLUSIVE, each side it read ``resource_limit``."""
+    if isinstance(answer, KeyResult):
+        return answer
+    if answer is Ended.JUDGE:
+        states = states | {side: SideState.incomplete("resource_limit", ENDED_DETAIL) for side in reads}
+    elif answer is None:
+        states = observed(spec, caps, reads, states)
+    else:
+        states = answer
+    return _compare(ctx, spec, key, states[Side.A], states[Side.B], today)
 
 
 async def side_state(
@@ -427,9 +483,13 @@ async def side_state(
 def _stored(
     ctx: Context, spec: CompiledSpec, caps: Capabilities, obs: Observation
 ) -> tuple[Observation, SideState]:
-    if obs.content_hash is not None:
-        obs = dataclasses.replace(obs, body=body_of(ctx, obs))
+    obs = _opened(ctx, obs)
     return obs, _observe(spec, caps, obs)
+
+
+def _opened(ctx: Context, obs: Observation) -> Observation:
+    """A stored observation with its body from the evidence."""
+    return obs if obs.content_hash is None else dataclasses.replace(obs, body=body_of(ctx, obs))
 
 
 async def rederive_all(
@@ -440,11 +500,12 @@ async def rederive_all(
     rows: Sequence[Mapping],
     caps: Capabilities,
     intermittent: Container[str] = (),
+    judges: Judges | None = None,
 ) -> list[KeyResult]:
     """Each stored result's comparison again, from its observations and their evidence: the
-    observations are read in one query and judged in one thread call. The keys (masked) in
-    ``intermittent`` had their stored findings tagged by a recheck (``confirm``), so they are tagged
-    again."""
+    observations are read in one query and judged in one thread call, or with ``judges`` opened in a
+    thread and judged by a judge process (``evaluate_many``). The keys (masked) in ``intermittent`` had
+    their stored findings tagged by a recheck (``confirm``), so they are tagged again."""
     if not rows:
         return []
     ids = [row[f"obs_{s}_id"] for row in rows for s in "ab" if row[f"obs_{s}_id"]]
@@ -452,15 +513,31 @@ async def rederive_all(
     found = await repo.get_observations(conn, run_id, ids)
     observations = {obs_id: repo.as_observation(sealer.open_row(row)) for obs_id, row in found.items()}
 
-    def judged(row: Mapping) -> KeyResult:
-        stored = [_stored(ctx, spec, caps, observations[row[f"obs_{s}_id"]]) for s in "ab"]
-        result = _compare(ctx, spec, stored[0][0].key, stored[0][1], stored[1][1])
+    def judged(row: Mapping, result: KeyResult | None = None) -> KeyResult:
+        if result is None:
+            stored = [_stored(ctx, spec, caps, observations[row[f"obs_{s}_id"]]) for s in "ab"]
+            result = _compare(ctx, spec, stored[0][0].key, stored[0][1], stored[1][1])
         result.obs_a_id, result.obs_b_id = row["obs_a_id"], row["obs_b_id"]
         if row["key_masked"] in intermittent:
             result.findings = tag_intermittent(result.findings, spec)
         return result
 
-    return await asyncio.to_thread(lambda: [judged(row) for row in rows])
+    if judges is None:
+        return await asyncio.to_thread(lambda: [judged(row) for row in rows])
+
+    def opened(row: Mapping) -> Item:
+        a, b = (_opened(ctx, observations[row[f"obs_{s}_id"]]) for s in "ab")
+        return a.key, {Side.A: a, Side.B: b}, {}
+
+    today = datetime.now(UTC).date()
+    items = await asyncio.to_thread(lambda: [opened(row) for row in rows])
+    answers = await judges.judge(spec, caps, items, today)
+    return await asyncio.to_thread(
+        lambda: [
+            judged(row, _finished(ctx, spec, caps, *item, answer, today))
+            for row, item, answer in zip(rows, items, answers, strict=True)
+        ]
+    )
 
 
 async def save_pass(
@@ -473,9 +550,11 @@ async def save_pass(
     result: KeyResult,
     reads: Reads,
     sealer: Sealer,
+    *,
+    form: KeyForm,
 ) -> None:
     """The pass's observations, then the key's result and masked findings."""
-    await save_passes(ctx, conn, spec, run_id, cycle, [(pass_no, result, reads)], sealer)
+    await save_passes(ctx, conn, spec, run_id, cycle, [(pass_no, result, reads)], sealer, form=form)
 
 
 async def save_passes(
@@ -486,14 +565,17 @@ async def save_passes(
     cycle: int,
     passes: Sequence[tuple[int, KeyResult, Reads]],
     sealer: Sealer,
+    *,
+    form: KeyForm,
 ) -> None:
     """``save_pass`` for each (pass_no, result, reads), with one statement per table, in the caller's
-    transaction. Each key is saved by its masked form (the foreign keys refuse a mismatch) and each
-    observation's headers sealed by the run's ``sealer``; a first pass is a fresh read, a sample's retry
-    replacing a stored result. The blob lock, shared, is taken and the group's blobs are stored first (in a
-    thread: each file fsynced, then each directory that gained one once), so every blob these rows name is
-    durable before they commit, and a drain cannot delete one meanwhile."""
-    keys = [mask_key(result.key, spec, ctx.tokeniser) for _, result, _ in passes]
+    transaction. Each key is saved by its masked form in the run's ``form`` (``masking.key_form``; the
+    foreign keys refuse a mismatch) and each observation's headers sealed by the run's ``sealer``; a first
+    pass is a fresh read, a sample's retry replacing a stored result. The blob lock, shared, is taken and
+    the group's blobs are stored first (in a thread: each file fsynced, then each directory that gained one
+    once), so every blob these rows name is durable before they commit, and a drain cannot delete one
+    meanwhile."""
+    keys = [mask_key(result.key, spec, ctx.tokeniser, form=form) for _, result, _ in passes]
     observations = [
         (pass_no, masked, obs, _sealed_headers(sealer, cycle, obs))
         for (pass_no, _, reads), masked in zip(passes, keys, strict=True)
@@ -503,7 +585,7 @@ async def save_passes(
     await asyncio.to_thread(ctx.evidence.put_all, [obs for _, _, obs, _ in observations])
     await repo.insert_observations(conn, run_id, cycle, observations)
     masked = [
-        (key, result, [mask_finding(f, spec, ctx.tokeniser) for f in result.findings])
+        (key, result, [mask_finding(f, spec, ctx.tokeniser, form=form) for f in result.findings])
         for (_, result, _), key in zip(passes, keys, strict=True)
     ]
     fresh = {key for (pass_no, _, _), key in zip(passes, keys, strict=True) if pass_no == 1}

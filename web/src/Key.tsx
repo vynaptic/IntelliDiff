@@ -66,7 +66,7 @@ export function KeyScreen({ runId, keyMasked, query }: { runId: string; keyMaske
       {now && (
         <section className="panel">
           <h2>
-            Compared now (<a href={href(['runs', now.run_id, 'keys', keyMasked])}>run {now.run_id}</a>){' '}
+            Compared now (<a href={href(['runs', now.run_id, 'keys', now.key_masked])}>run {now.run_id}</a>){' '}
             <Badge v={now.result?.outcome} />
           </h2>
           <Detail d={now} />

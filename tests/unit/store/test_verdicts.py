@@ -23,7 +23,7 @@ from deltasleuth.core.types import (
     Verdict,
     derive_verdict,
 )
-from deltasleuth.security.tokenise import mask_finding
+from deltasleuth.security.tokenise import VALUE_FORM, mask_finding
 from deltasleuth.store import repo
 from tests.conftest import TEST_DATA_KEY, TEST_SEALER, TESTER
 from tests.unit.store.test_repo import SPEC, TOKENISER
@@ -71,7 +71,7 @@ async def _run(pool: AsyncConnectionPool, cycles: list[dict[str, tuple[Outcome, 
                 await repo._insert_keys(conn, run_id, cycle, sealed, None)
             for key, (outcome, bug) in results.items():
                 r = _result(key, outcome, bug)
-                masked = [mask_finding(f, SPEC, TOKENISER) for f in r.findings]
+                masked = [mask_finding(f, SPEC, TOKENISER, form=VALUE_FORM) for f in r.findings]
                 await repo.save_key_result(conn, run_id, cycle, key, r, masked)
     return run_id
 

@@ -263,7 +263,9 @@ async def _compare_key(ctx: Context, scope: Scope, key: str) -> Any:
     if compared is None:
         raise ToolError(f"no key {key} in run {scope.run_id}")
     result = compared.result
-    findings = [mask_finding(f, compared.spec, ctx.tokeniser) for f in result.findings[:DEFAULT_FINDINGS]]
+    form = result.attrs["key_form"]  # the one-shot run's, which holds these findings
+    shown = result.findings[:DEFAULT_FINDINGS]
+    findings = [mask_finding(f, compared.spec, ctx.tokeniser, form=form) for f in shown]
     scope.views.append((key, compared.cycle))
     return {
         "spec_id": compared.spec_id,

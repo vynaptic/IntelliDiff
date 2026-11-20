@@ -1,6 +1,7 @@
 """A mock pair compared end to end with the database's roles apart: ``ds migrate`` runs as the schema's
 owner (``migrate_dsn_ref``), and the app's role holds the data rights ``ds db grants`` prints and nothing
-more. The run, its report and ``ds audit verify``, anchored by the worker's sweeps, go as with one role."""
+more, set by hand or by ``ds db setup`` as the Compose kit's migrate service runs it. The run, its report
+and ``ds audit verify``, anchored by the worker's sweeps, go as with one role."""
 
 from __future__ import annotations
 
@@ -22,6 +23,10 @@ from mocks.registry import pair_dir
 pytestmark = [pytest.mark.e2e, pytest.mark.db]
 SPEC = str(pair_dir("linker") / "spec.yaml")
 PASSWORD = "invented-app-password"  # noqa: S105 - a throwaway role's, on a throwaway server
+SEPARATE = (
+    "roles: separate: the role of database_dsn_ref owns nothing in schema ds and cannot switch the audit"
+    " log's triggers off; migrate_dsn_ref's role applies the migrations"
+)
 
 
 @pytest.fixture
@@ -68,4 +73,59 @@ def test_a_run_goes_end_to_end_under_the_application_s_own_role(
     assert [line for line in verified if line.startswith("roles: ")] == [
         "roles: separate: the role of database_dsn_ref owns nothing in schema ds and cannot switch the audit"
         " log's triggers off; migrate_dsn_ref's role applies the migrations"
+    ]
+
+
+@pytest.fixture
+def roles(pg_dsn: str) -> Iterator[tuple[str, str]]:
+    """The schema owner's and the application's role names for this test, which ``ds db setup`` makes; each
+    is dropped with what it owns and was granted."""
+    tag = uuid.uuid4().hex[:8]
+    made = (f"ds_owner_{tag}", f"ds_app_{tag}")
+    yield made
+    with psycopg.connect(pg_dsn, autocommit=True) as conn:
+        for role in made:
+            if conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone():
+                conn.execute(f"REASSIGN OWNED BY {role} TO CURRENT_USER".encode())
+                conn.execute(f"DROP OWNED BY {role}".encode())
+                conn.execute(f"DROP ROLE {role}".encode())
+
+
+def test_ds_db_setup_keeps_the_roles_apart_and_a_run_goes_end_to_end(
+    serve: Any, make_stack: Any, pg_dsn: str, tmp_path: Path, roles: tuple[str, str]
+) -> None:
+    """As the Compose kit's migrate service runs it: ``ds db setup`` as the superuser makes both roles, each
+    with its address's password, and migrates as the owner; a run then goes end to end as the application's
+    role, whose start line and ``ds audit verify`` say ``roles: separate``. A second setup changes nothing."""
+    owner, application = roles
+    stack = make_stack(serve("linker").targets())
+    store = conninfo_to_dict(pg_dsn)
+    (tmp_path / "superuser").write_text(f"{store['password']}\n")
+    for name, role in (("owner_dsn", owner), ("dsn", application)):
+        password = f"invented-{name.replace('_', '-')}-password"
+        (tmp_path / name).write_text(make_conninfo("", **store | {"user": role, "password": password}))
+    settings = yaml.safe_load(stack.settings.read_text())
+    settings["migrate_dsn_ref"] = f"file:{tmp_path / 'owner_dsn'}"
+    stack.settings.write_text(yaml.safe_dump(settings))
+    config = ("--config", stack.settings)
+    superuser = ("--superuser", store["user"], "--superuser-password-ref", f"file:{tmp_path / 'superuser'}")
+    setup = ("db", "setup", *superuser)
+
+    def ds(*args: Any, code: int = 0) -> str:
+        result = CliRunner().invoke(app, [str(a) for a in args])
+        assert result.exit_code == code, result.output
+        return result.stdout
+
+    first = ds(*setup, *config).splitlines()
+    assert first[:3] == [f"role {owner} made", f"role {application} made",
+                         f"role {owner} may connect to and create in database {store['dbname']}"]  # fmt: skip
+    assert first[3].startswith("migrations applied: 1, ") and first[-1] == SEPARATE
+    live = ds("run", SPEC, "--fail-on-diff", *config, code=1)  # as the application's role
+    assert "\ncompleted\n" in live and "total 61" in live
+    assert SEPARATE in ds("audit", "verify", *config).splitlines()
+    assert ds(*setup, *config).splitlines() == [
+        f"roles {owner} and {application}: as they were",
+        "schema up to date",
+        f"grants of {application}: as 'ds db grants' prints them",
+        SEPARATE,
     ]

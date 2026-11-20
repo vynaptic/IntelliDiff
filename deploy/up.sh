@@ -4,9 +4,11 @@
 #
 #   sh deploy/up.sh [--project NAME] [--port N] [--subnet A.B.C.0/24]
 #
-# It creates what is missing and changes, overwrites and deletes no file: the settings (deploy/config),
-# the site file and .env, four secrets (deploy/secrets), an unsigned image built from this checkout, the
-# database, the containers and the token (.deltasleuth/tokens/first-run, never printed).
+# It creates what is missing: the settings (deploy/config), the site file and .env, five secrets
+# (deploy/secrets), an unsigned image built from this checkout, the database with the schema owner's role
+# and the app's own role, the containers and the token (.deltasleuth/tokens/first-run, never printed). It
+# deletes no file and changes two, once, where the app still signs in as the database's superuser: db_dsn,
+# written anew for the app's own role, and the settings, given their migrate_dsn_ref line.
 # It runs no "docker pull". The build and the first start fetch what this machine does not hold: the
 # images python:3.13-slim and node:24-alpine (pinned by digest in deploy/Dockerfile) and
 # postgres:16-alpine, and the Python and npm packages. Without that network access, load or mirror them
@@ -27,6 +29,7 @@ UNCHANGED='this script changes no existing file (edit it yourself, or give the o
 AGAIN='remove it yourself, then run this script again'
 MOVE='choose another with --port N (for a first installation on this machine that option alone is enough)'
 SETTINGS=deploy/config/deltasleuth.yaml
+OWNER='migrate_dsn_ref: file:/run/secrets/db_owner_dsn' # the settings' line that names the schema's owner
 SITE=deploy/docker-compose.site.yml
 TOKEN=.deltasleuth/tokens/first-run
 SUBNET=172.30.0.0/24 # the base file's
@@ -76,11 +79,13 @@ kept() {
     printf 'kept     %s\n' "$1"
 }
 
-# The file in progress, $new, is complete: it becomes $1.
+# The file in progress, $new, is complete: it becomes $1, which is "created", or "changed" where $1 was there.
 made() {
+    said=created
+    [ ! -e "$1" ] || said=changed
     mv "$new" "$1"
     new=
-    printf 'created  %s\n' "$1"
+    printf '%-9s%s\n' "$said" "$1"
 }
 
 # -- options ---------------------------------------------------------------------------------------
@@ -141,13 +146,14 @@ docker info > /dev/null 2>&1 || die 'Docker is not running, or this account may 
 
 # A link to a file that is not there exists too: refused here, since "-e" below does not see it.
 for file in .env "$SITE" "$SETTINGS" deploy/config/targets.yaml deploy/config/llm_profiles.yaml \
-    deploy/secrets/db_password deploy/secrets/db_dsn deploy/secrets/kek deploy/secrets/tokeniser "$TOKEN"; do
+    deploy/secrets/db_password deploy/secrets/db_dsn deploy/secrets/kek deploy/secrets/tokeniser \
+    deploy/secrets/db_owner_dsn "$TOKEN"; do
     if [ -e "$file.new" ] || [ -L "$file.new" ]; then die "$file.new is left by an interrupted run: $AGAIN"; fi
     [ ! -L "$file" ] || [ -e "$file" ] ||
         die "$file is a link to a file that is not there: put that file back, or remove the link yourself; this script changes no existing file"
 done
 for file in deploy/secrets/db_password deploy/secrets/db_dsn deploy/secrets/kek deploy/secrets/tokeniser \
-    "$TOKEN"; do
+    deploy/secrets/db_owner_dsn "$TOKEN"; do
     [ ! -e "$file" ] || [ -s "$file" ] || die "$file is empty: $AGAIN"
 done
 
@@ -192,6 +198,11 @@ if [ -e "$SETTINGS" ]; then
     [ -z "$port" ] || [ "$port" = "${address##*:}" ] ||
         die "$SETTINGS exists and does not say port $port in public_url: $UNCHANGED"
     port=${address##*:}
+    if ! grep -q '^migrate_dsn_ref:' "$SETTINGS"; then # step 1 adds the line after database_dsn_ref's
+        if [ -L "$SETTINGS" ] || [ "$(grep -c '^database_dsn_ref:' "$SETTINGS")" != 1 ]; then
+            die "$SETTINGS has no line \"$OWNER\", which this script adds only after the one line \"database_dsn_ref: …\" of a file that is not a link: add it yourself, then run this script again"
+        fi
+    fi
 else
     port=${port:-8000}
     address=http://localhost:$port
@@ -219,18 +230,22 @@ if [ -d deploy/secrets ]; then
     esac
 fi
 secrets=
-for name in db_password db_dsn kek tokeniser; do
+for name in db_password db_dsn kek tokeniser db_owner_dsn; do
     [ ! -e "deploy/secrets/$name" ] || secrets="$secrets $name"
 done
+# Step 2 makes the two roles' addresses where missing, each with a password of its own; the other three
+# cannot be made again for the data they hold or protect.
 case $secrets in
-    '' | ' db_password db_dsn kek tokeniser') ;;
-    ' db_password kek tokeniser') # step 2 makes db_dsn, and writes the password into it as it stands
-        if tr -d '\n' < deploy/secrets/db_password | grep -q '[^A-Za-z0-9._~-]'; then
-            die 'deploy/secrets/db_password holds characters an address cannot carry as written: write deploy/secrets/db_dsn yourself (postgresql://deltasleuth:<the password, percent-encoded>@db:5432/deltasleuth), then run this script again'
-        fi
-        ;;
-    *) die 'deploy/secrets holds some of db_password, db_dsn, kek and tokeniser but not all: put the missing ones back; new ones cannot open what the old ones protected' ;;
+    '' | ' db_password'*' kek tokeniser'*) ;;
+    *) die 'deploy/secrets holds some of its secrets but not all of db_password, kek and tokeniser: put the missing ones back; new ones cannot open what the old ones protected' ;;
 esac
+# An app that signs in as the database's superuser: step 2 writes db_dsn anew for the app's own role.
+superuser=
+if [ -e deploy/secrets/db_dsn ] && grep -Eq '^postgres(ql)?://deltasleuth[:@]' deploy/secrets/db_dsn; then
+    [ ! -L deploy/secrets/db_dsn ] ||
+        die "deploy/secrets/db_dsn is a link and names the database's superuser, as whom the app no longer signs in: write postgresql://deltasleuth_app:<a new password>@db:5432/deltasleuth into the file it links to, then run this script again"
+    superuser=yes
+fi
 here=$(cd ./deploy && pwd -P)
 started=$(docker ps -a --filter "label=com.docker.compose.project=$project" \
     --format 'x{{.Label "com.docker.compose.project.working_dir"}}') # x: one without the label is a line too
@@ -280,11 +295,18 @@ trap 'exit 143' TERM
 printf '== 1/6 Settings, site file and .env\n'
 for name in deltasleuth targets llm_profiles; do
     file=deploy/config/$name.yaml
-    if [ -e "$file" ]; then
+    if [ -e "$file" ] && { [ "$name" != deltasleuth ] || grep -q '^migrate_dsn_ref:' "$file"; }; then
         kept "$file"
         continue
     fi
     new=$file.new
+    if [ -e "$file" ]; then # settings from before the roles were apart: the line after database_dsn_ref's
+        cp -p "$file" "$new"  # its mode, which the app's reading needs
+        sed "/^database_dsn_ref:/a\\
+$OWNER" "$file" > "$new"
+        made "$file"
+        continue
+    fi
     if [ "$name" = deltasleuth ] && [ "$port" != 8000 ]; then
         sed "s|^  public_url: http://localhost:8000 |  public_url: http://localhost:$port |" \
             deploy/config/deltasleuth.example.yaml > "$new"
@@ -337,25 +359,35 @@ holds "$rendered" "published: \"$port\"" ||
 
 printf '== 2/6 Secrets\n'
 [ -d deploy/secrets ] || (umask 077 && mkdir deploy/secrets)
-for name in db_password db_dsn kek tokeniser; do
+# db_password is the database's superuser's, which only the db and migrate services read; db_dsn is the
+# app's own role's address and db_owner_dsn the schema owner's, each with a password of its own.
+for name in db_password db_dsn kek tokeniser db_owner_dsn; do
     file=deploy/secrets/$name
-    if [ -e "$file" ]; then
+    if [ -e "$file" ] && { [ "$name" != db_dsn ] || [ -z "$superuser" ]; }; then
         kept "$file"
         continue
     fi
+    role=deltasleuth_app
+    [ "$name" != db_owner_dsn ] || role=deltasleuth_owner
     new=$file.new
     (
         umask 077
         case $name in
             db_password) openssl rand -hex 24 ;;
-            db_dsn)
-                printf 'postgresql://deltasleuth:'
-                tr -d '\n' < deploy/secrets/db_password
+            db_dsn | db_owner_dsn)
+                printf 'postgresql://%s:' "$role"
+                openssl rand -hex 24 | tr -d '\n'
                 printf '@db:5432/deltasleuth'
                 ;;
             *) openssl rand -hex 32 ;;
         esac > "$new"
     )
+    case $name in # a pipe hides a failed openssl: the address is checked whole
+        db_dsn | db_owner_dsn)
+            grep -Eqx "postgresql://$role:[0-9a-f]{48}@db:5432/deltasleuth" "$new" ||
+                die "$file was not made (the lines above say why)"
+            ;;
+    esac
     chmod 444 "$new" # the containers' users read it; the folder keeps it private
     made "$file"
 done
@@ -369,11 +401,14 @@ printf '== 3/6 Build the image %s:source\n' "$project"
 docker compose build || failed 'the build'
 
 printf '== 4/6 Workspace and database\n'
-docker compose run --rm app ds init || failed 'ds init'
+docker compose run --rm --no-deps app ds init || failed 'ds init' # the workspace alone: no database
 # The app an earlier run started stops before the migration: its worker would meet a schema its build does
 # not know. Step 5 starts it on the new image. Where no app container exists, Compose stops nothing.
 docker compose stop app || failed 'docker compose stop app'
-docker compose run --rm app ds migrate || failed 'ds migrate'
+# The migrate service, which alone reads the superuser's and the schema owner's secrets, runs ds db setup:
+# the two roles made, schema ds handed to the owner, the migrations applied as the owner and the app's role
+# given its data rights. Each start of the app runs it again first, and finds nothing to do.
+docker compose run --rm migrate || failed 'ds db setup'
 
 # The app is not healthy: its last error line, if it logged one, then the refusal.
 unhealthy() {

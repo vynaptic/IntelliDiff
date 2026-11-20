@@ -40,7 +40,7 @@ from deltasleuth.runner import resume_run, run_worker
 from deltasleuth.runner.runs import KEY_PAUSE
 from deltasleuth.runner.worker import LOCK_ID
 from deltasleuth.security import legacy
-from deltasleuth.security.tokenise import Tokeniser, mask_key
+from deltasleuth.security.tokenise import VALUE_FORM, Tokeniser, mask_key
 from deltasleuth.store import db, repo
 from deltasleuth.store.db import MIGRATIONS, MigrationError
 from tests.conftest import TESTER
@@ -90,7 +90,8 @@ MISSING = "legacy plaintext remains: stop the app and run 'ds keys migrate'"
 
 _spec = compile_spec(parse_yaml_text(SPEC))
 _tokeniser = Tokeniser(TOKENISER_KEY)
-MASKED = {key: mask_key(key, _spec, _tokeniser) for key in (K1, K2, K3, FOUND)}
+# A store before key tokens: its runs record no key_tokens, and their keys are value tokens.
+MASKED = {key: mask_key(key, _spec, _tokeniser, form=VALUE_FORM) for key in (K1, K2, K3, FOUND)}
 
 
 def at(hours: float) -> datetime:

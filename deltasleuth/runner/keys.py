@@ -38,7 +38,7 @@ from deltasleuth.runner.census import TIMEOUT_S
 from deltasleuth.runner.compare import connect
 from deltasleuth.runner.stop import StopConditions
 from deltasleuth.security.policy import BUSINESS_CODE
-from deltasleuth.security.tokenise import Tokeniser, mask_key
+from deltasleuth.security.tokenise import KeyForm, Tokeniser, mask_key
 
 KEYLESS = "the key source holds {:,} row(s) without a key: leave them out with table.where"
 UNROWED = (
@@ -147,11 +147,12 @@ def _refuse_alike(keys: Iterable[str], spec: CompiledSpec) -> None:
         raise Invalid(ALIKE.format(len(ranked), shown))
 
 
-def run_keys(keys: Sequence[str], spec: CompiledSpec, tokeniser: Tokeniser) -> dict[str, str]:
-    """The keys a run takes (the first ``maxKeys``), each with its masked form."""
-    return {
-        key: mask_key(key, spec, tokeniser) for key in keys[: StopConditions.from_spec(spec.raw).max_keys]
-    }
+def run_keys(
+    keys: Sequence[str], spec: CompiledSpec, tokeniser: Tokeniser, *, form: KeyForm
+) -> dict[str, str]:
+    """The keys a run takes (the first ``maxKeys``), each masked in the run's ``form``."""
+    taken = keys[: StopConditions.from_spec(spec.raw).max_keys]
+    return {key: mask_key(key, spec, tokeniser, form=form) for key in taken}
 
 
 def keys_cut(resolved: Sequence[str], taken: Mapping[str, str]) -> dict[str, int] | None:

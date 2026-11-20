@@ -9,7 +9,9 @@ member name is protected as the object holding it says (``Policy.names``).
 Tokens are deterministic, one-way HMACs separated by value class, under a key the caller reads
 (``security.tokenise`` reads it from its ``file:``). A class-only value (``date_of_birth``) shows as its
 class, never a linkable token; member names that are data are tokens in pointers and views and ``[*]`` in
-patterns.
+patterns. A run's request keys are key tokens, of a derivation of their own, so a key someone chooses to
+compare never shows as the token its text has as a value; a run records the derivation at its creation
+(``key_form``), and one created before key tokens keeps its keys' value tokens.
 """
 
 from __future__ import annotations
@@ -18,11 +20,11 @@ import base64
 import hashlib
 import hmac
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from functools import lru_cache
-from typing import Any
+from typing import Any, Literal
 
 from deltasleuth.core.canonical.encoding import scalar_text
 from deltasleuth.core.canonical.paths import ROOT_PATTERN, child_pattern, member_pattern, render_pointer
@@ -195,6 +197,9 @@ _CLASS = re.compile(r"[a-z][a-z0-9_]*")  # the class and version must not break 
 _VERSION = re.compile(r"[A-Za-z0-9]+")
 _TOKEN = re.compile(rf"tok:{_CLASS.pattern}:{_VERSION.pattern}:[A-Z2-7]{{{TOKEN_CHARS}}}")
 _INLINE = re.compile(r"masked key [1-9][0-9]* of [1-9][0-9]*")  # an inline key's place in its list
+KeyForm = Literal["value", "k1"]
+KEY_FORM: KeyForm = "k1"  # key tokens: what a run created now records as ``params["key_tokens"]``
+VALUE_FORM: KeyForm = "value"  # a run created before key tokens: its keys are value tokens of their class
 
 
 class TokeniserError(ValueError):
@@ -222,6 +227,16 @@ class Tokeniser:
         _check_class(value_class)
         mac = self._mac(f"{value_class}\x1f{scalar_text(value)}")
         return f"tok:{value_class}:{self.version}:{mac}"
+
+    def key_token(self, value_class: str, key: JSON) -> str:
+        """``tok:<class>:k1:<26 base32>``: a run's request key, under a derivation of its own, so no key
+        token is the token of the same text as a value (``token``), and a key someone chooses to compare
+        confirms no value a token stands for."""
+        _check_class(value_class)
+        # The NUL prefix keeps key tokens apart from value tokens (no class starts with NUL), and the label
+        # apart from scoped labels.
+        mac = self._mac(f"\x00key\x1f{value_class}\x1f{scalar_text(key)}")
+        return f"tok:{value_class}:{KEY_FORM}:{mac}"
 
     def scoped_label(self, value_class: str, scope: str, value: JSON) -> str:
         """``class:<class>#<10 base32>``: equal values agree under one ``scope`` (the key) only."""
@@ -261,13 +276,28 @@ def is_stand_in(text: str) -> bool:
     return is_token(text) or _INLINE.fullmatch(text) is not None
 
 
-def mask_key(key: str, spec: CompiledSpec, tok: Tokeniser) -> str:
-    """The request key as reports show it: clear for a business code, else a token of its class.
+def key_form(params: Mapping[str, Any]) -> KeyForm:
+    """How a run masks its keys, as its ``params`` recorded at its creation: ``key_tokens`` names the
+    derivation; a run created before key tokens names none, and its keys stay value tokens. A derivation this
+    build does not know is refused, never guessed: its keys would be masked otherwise than stored."""
+    form = params.get("key_tokens")
+    if form is None:
+        return VALUE_FORM
+    if form == KEY_FORM:
+        return KEY_FORM
+    raise TokeniserError(f"a run's key_tokens {form!r} is no key derivation this build knows")
+
+
+def mask_key(key: str, spec: CompiledSpec, tok: Tokeniser, *, form: KeyForm) -> str:
+    """The request key as reports show it: clear for a business code, else, in the run's ``form``
+    (``key_form``), a key token of its class, or for a run created before key tokens the value token.
 
     A class-only key is tokenised all the same: every key must stay distinguishable.
     """
     cls = spec.key.value_class
-    return key if cls == BUSINESS_CODE else tok.token(cls, key)
+    if cls == BUSINESS_CODE:
+        return key
+    return tok.key_token(cls, key) if form == KEY_FORM else tok.token(cls, key)
 
 
 def _label(text: str, cls: str | None, tok: Tokeniser | None, key: str | None) -> str:
@@ -388,8 +418,9 @@ def _cell(tree: Any) -> Any:
     return dumps(tree, sort_keys=True)
 
 
-def mask_finding(f: Finding, spec: CompiledSpec, tok: Tokeniser) -> dict[str, Any]:
-    """The report row of a finding: key, pointer, patterns, values and member key masked.
+def mask_finding(f: Finding, spec: CompiledSpec, tok: Tokeniser, *, form: KeyForm) -> dict[str, Any]:
+    """The report row of a finding: key, pointer, patterns, values and member key masked; the key in the
+    run's ``form`` (``mask_key``).
 
     A NORMALIZATION_ONLY finding (``raw_only``) shows its raw values, its normalised ones being
     equal. A document-level finding's value is the whole document, which the side-by-side view
@@ -401,13 +432,13 @@ def mask_finding(f: Finding, spec: CompiledSpec, tok: Tokeniser) -> dict[str, An
     segs = segments(f.path_pattern)
     a, b = (f.a_raw, f.b_raw) if f.raw_only else (f.a_value, f.b_value)
     if document:
-        member: str | None = mask_key(f.key, spec, tok)
+        member: str | None = mask_key(f.key, spec, tok, form=form)
     elif f.member_key is not None and f.array_path is not None:
         member = mask_member_key(f.member_key, f.array_path, spec, tok, key=f.key)
     else:
         member = None
     return {
-        "key": mask_key(f.key, spec, tok),
+        "key": mask_key(f.key, spec, tok, form=form),
         "path_pattern": mask_path_pattern(f.path_pattern, spec),
         "json_pointer": mask_pointer(f.pointer_parts, spec, tok, key=f.key),
         "change_type": f.change_type.value,

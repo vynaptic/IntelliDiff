@@ -50,7 +50,6 @@ from deltasleuth.core.types import Outcome, Severity
 from deltasleuth.reports import accuracy
 from deltasleuth.runner import census, drift
 from deltasleuth.runner.purge import days
-from deltasleuth.security.tokenise import mask_key
 from deltasleuth.store import repo
 
 if TYPE_CHECKING:
@@ -453,7 +452,7 @@ async def compare(ctx: Ctx, who: Operator, body: CompareIn) -> Response:
 
     with _runner_errors():
         async with ctx.pool.connection() as conn:
-            spec = await ctx.spec(conn, body.spec_id)
+            await ctx.spec(conn, body.spec_id)  # an unknown spec is refused before any key is read
         if body.run_id is None:
             result = await compare_one(ctx, body.spec_id, body.key, who=who)
         else:
@@ -463,5 +462,6 @@ async def compare(ctx: Ctx, who: Operator, body: CompareIn) -> Response:
             result = need(again, f"key {body.key}").result
     from deltasleuth.runner.runs import key_view
 
-    view = await key_view(ctx, result.attrs["run_id"], mask_key(result.key, spec, ctx.tokeniser))
+    # The one-shot run's own masked key: a key token, whatever form a run the key was given by holds it in.
+    view = await key_view(ctx, result.attrs["run_id"], result.attrs["key_masked"])
     return ok(_key_shown(need(view, f"key {body.key}")) | {"warnings": result.attrs["warnings"]})

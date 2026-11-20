@@ -20,6 +20,7 @@ from deltasleuth.core.types import (
     Severity,
     SideState,
 )
+from deltasleuth.security.tokenise import KEY_FORM
 
 MISSING, EXTRA, CHANGED = ChangeType.MISSING_IN_B, ChangeType.EXTRA_IN_B, ChangeType.VALUE_CHANGED
 PHONE = "+447700900123"
@@ -30,7 +31,7 @@ def causes(spec, tok):
     """(root causes, bug-rule causes, finding -> cause) of results, masked as reports publish them."""
 
     def causes(results):
-        masked = {"spec": spec, "tokeniser": tok}
+        masked = {"spec": spec, "tokeniser": tok, "form": KEY_FORM}
         mapped = {
             (f.key, f.json_pointer, f.change_type.value): rc.root_cause_id
             for rc, fs in groups(results, **masked)
@@ -86,9 +87,9 @@ def test_the_same_member_missing_under_several_keys_is_one_cause(causes, phone_m
     assert (rc.affected_keys, rc.finding_count, rc.max_severity) == (3, 3, Severity.MEDIUM)
     assert (rc.taxonomy_code, rc.value_class) == ("FIELD_MISSING", "other")
     assert re.fullmatch(r"RC-[0-9a-f]{12}", rc.root_cause_id)
-    # masked: the member key and sample keys are tokens, never raw values
+    # masked: the member key and sample keys are tokens, never raw values; the keys as the run holds them
     assert rc.member_key_tok == tok.token("phone", PHONE)
-    assert rc.sample_keys == tuple(sorted(tok.token("identifier", f"C0000000{i}") for i in (1, 2, 3)))
+    assert rc.sample_keys == tuple(sorted(tok.key_token("identifier", f"C0000000{i}") for i in (1, 2, 3)))
     assert PHONE not in repr(rc) and "C0000000" not in repr(rc)
     assert causes(results)[0][0].root_cause_id == rc.root_cause_id
 
@@ -183,7 +184,7 @@ def test_sample_keys_are_capped(causes, phone_missing, tok) -> None:
     keys = [f"C0000001{i}" for i in range(8)]
     [rc], _, _ = causes([result(k, phone_missing(k)) for k in keys])
     assert rc.affected_keys == 8
-    assert rc.sample_keys == tuple(sorted(tok.token("identifier", k) for k in keys))[:5]
+    assert rc.sample_keys == tuple(sorted(tok.key_token("identifier", k) for k in keys))[:5]
 
 
 def test_every_grouped_finding_maps_to_its_cause(causes, phone_missing, changed) -> None:
@@ -219,7 +220,7 @@ def test_bug_suppressed_findings_are_root_causes_of_their_own(causes, phone_miss
     assert (plain.kind, plain.affected_keys, plain.sample_keys) == (
         "signature",
         1,
-        (tok.token("identifier", "C00000003"),),
+        (tok.key_token("identifier", "C00000003"),),
     )
     assert mapped[("C00000001", "/segment", "value_changed")] in flagged
     assert mapped[("C00000003", "/segment", "value_changed")] == plain.root_cause_id
@@ -246,7 +247,7 @@ def test_members_read_page_by_page_group_as_the_results_at_once(phone_missing, c
         result("C00000003", phone_missing("C00000003")),
         result("C00000004", phone_missing("C00000004", "+447700900999"), bug(changed("C00000004"))),
     ]
-    masked = {"spec": spec, "tokeniser": tok}
+    masked = {"spec": spec, "tokeniser": tok, "form": KEY_FORM}
     at_once = groups(results, **masked)
     paged = []
     for page in (results[:1], results[1:3], results[3:]):
@@ -260,7 +261,9 @@ def test_members_read_page_by_page_group_as_the_results_at_once(phone_missing, c
 
 def test_a_member_keeps_no_value_and_no_document(phone_missing, spec, tok) -> None:
     f = phone_missing("C00000001")
-    [m] = members(result("C00000001", f), spec=spec, tokeniser=tok, ref=lambda found: found.json_pointer)
+    [m] = members(
+        result("C00000001", f), spec=spec, tokeniser=tok, form=KEY_FORM, ref=lambda found: found.json_pointer
+    )
     held = {name: getattr(m, name) for name in m.__slots__ if name != "ref"}  # the caller's own
     assert PHONE not in repr(held)  # the member key is masked; the value a side held is not kept
     assert m.ref == f.json_pointer and m.key == "C00000001"

@@ -32,7 +32,7 @@ from deltasleuth.reports.adjudicate import store_draw, store_score
 from deltasleuth.reports.csv import parse_csv, render_csv
 from deltasleuth.runner import census, sample
 from deltasleuth.security.signing import PackSigner
-from deltasleuth.security.tokenise import mask_key
+from deltasleuth.security.tokenise import key_form, mask_key
 from deltasleuth.store import repo
 from deltasleuth.store.chain import chain_hash
 from tests.conftest import licensed_once
@@ -176,7 +176,6 @@ async def signed_cycle(
         await grant(conn, spec_approval_id, carol, asked)
         run_id = repo.new_run_id()
         kek, wrapped, sealer = ctx.new_sealer(run_id)
-        keys = {key: mask_key(key, spec, ctx.tokeniser) for key in pairs}
         plan = {"schema": "public", "name": "items", "keys": ["id"], "columns": {"name": "name"},
                 "where": None}  # fmt: skip
         params = {
@@ -188,6 +187,8 @@ async def signed_cycle(
         params |= {"tables": dict(tables)} if tables else {}
         params |= {"pinned": plans.sealed(sealer, pinned)} if pinned else {}
         params |= {"schedule": dict(schedule)} if schedule else {}
+        # No key_tokens: its keys value tokens, as a run created before them holds its keys.
+        keys = {key: mask_key(key, spec, ctx.tokeniser, form=key_form(params)) for key in pairs}
         starter = WORKER if schedule else olga
         stored = await repo.create_run(
             conn, spec_id, mode, sealer.seal_keys(keys), params, scan, run_id=run_id,
