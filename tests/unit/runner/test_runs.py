@@ -500,6 +500,7 @@ async def test_the_sweep_isolates_a_run_the_store_refuses(
     other = await create_run(harness.ctx, spec_id, "batch", keys=["K001"], who=TESTER)
     refused = await create_run(harness.ctx, spec_id, "batch", keys=["K001"], who=TESTER)
     summarise, finish, ended = cycle.summarise, cycle.finish_cycle, []
+    both_ready = asyncio.Barrier(2)
 
     async def refusing(*args: Any) -> dict[str, Any]:
         ended.append(args[3]["run_id"])
@@ -508,18 +509,22 @@ async def test_the_sweep_isolates_a_run_the_store_refuses(
         return await summarise(*args)
 
     async def together(ctx: Any, run_id: str, **options: Any) -> None:
-        """Each run's cycle end waits until both runs' keys are done, so that both ends run at once."""
-        done = False
-        while not done:
-            await asyncio.sleep(0.02)
-            async with ctx.pool.connection() as conn:
-                done = await repo.cycle_done(conn, other, 1) and await repo.cycle_done(conn, refused, 1)
+        """Exercise a refusal while both cycle-end tasks are in flight."""
+        await both_ready.wait()
         await finish(ctx, run_id, **options)
 
     monkeypatch.setattr(cycle, "summarise", refusing)
     monkeypatch.setattr("deltasleuth.runner.jobs.finish_cycle", together)
-    assert (await harness.finish(other, timeout=20))["status"] == "completed"
-    failed = await harness.run(refused)  # each end is a task of its own: the refused one fails its run only
+    stop = asyncio.Event()
+    worker = asyncio.create_task(run_worker(harness.ctx, stop=stop))
+    try:
+        completed, failed = await asyncio.gather(
+            harness.wait(other, timeout=20), harness.wait(refused, timeout=20)
+        )
+    finally:
+        stop.set()
+        await worker
+    assert completed["status"] == "completed"
     assert failed["status"] == "failed" and re.fullmatch("CheckViolation" + AT, failed["error"])
     assert sorted(ended) == sorted([refused, other])
 
