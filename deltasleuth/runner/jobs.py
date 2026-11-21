@@ -54,6 +54,7 @@ PURGE_EVERY_S = 3600  # a purge pass at most hourly
 WATCH_EVERY_S = 3600  # and a look at the licence's state
 ORPHANS_EVERY_S = 7 * 86400  # with the orphan sweep weekly
 GRACE_DAYS = 7  # no pass within this many days of 006: holds can follow an upgrade
+STATISTICS_EVERY_S = 5.0  # while a run runs, a look this often for a new store's tables without statistics
 log = logging.getLogger("deltasleuth.runner.worker")  # the worker's lines, whichever of its parts writes them
 
 
@@ -678,6 +679,30 @@ class Purge(Job):
         else:
             log.warning("purge pass failed: %s", located(exc))
         return False
+
+
+class Statistics(Job):
+    """While a run runs, looks every ``STATISTICS_EVERY_S`` for a table of a new store that holds rows but no
+    statistics, and analyses them (``repo.analyse_new``). Until then the planner takes such a table for
+    nearly empty, and the plan each connection keeps for a save's foreign-key checks may find an observation
+    among all of its run's; the ANALYZE has every connection plan them again. Once analysed, autovacuum keeps
+    their statistics."""
+
+    name = "statistics"
+
+    def __init__(self, ctx: Context) -> None:
+        super().__init__(ctx)
+        self.looked_at = -float("inf")  # monotonic: the last look
+
+    async def act(self, active: list[repo.Row]) -> None:
+        if active and not self.tasks and time.monotonic() - self.looked_at >= STATISTICS_EVERY_S:
+            self.looked_at = time.monotonic()
+            self.tasks.start(None, self._look())
+
+    async def _look(self) -> None:
+        async with self.ctx.pool.connection() as conn:
+            if await repo.analyse_new(conn):
+                log.info("a new store's tables analysed as their first rows came")
 
 
 class Notifications(Job):

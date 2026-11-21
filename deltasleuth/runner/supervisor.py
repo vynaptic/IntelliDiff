@@ -40,6 +40,7 @@ from deltasleuth.runner.jobs import (
     Scans,
     Schedules,
     SchemaGuard,
+    Statistics,
     StopFeed,
     SweepRecord,
 )
@@ -65,6 +66,7 @@ class Supervisor:
         self.licence = LicenceWatch(ctx)
         self.purge = Purge(ctx)
         self.stops = StopFeed(ctx)
+        self.statistics = Statistics(ctx)
         self.ends = CycleEnds(ctx)
         self.notifier = Notifications(ctx)
         self.readiness = Readiness(ctx)
@@ -82,6 +84,7 @@ class Supervisor:
             self.licence,
             self.purge,
             self.stops,
+            self.statistics,
             self.ends,
             self.notifier,
             self.readiness,

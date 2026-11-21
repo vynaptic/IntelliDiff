@@ -49,13 +49,15 @@ async def health(ctx: Ctx) -> Response:
     seconds the pool is given to hand one out, under the image health check's four. The statement itself
     is not bounded. ``ai`` and ``auth`` tell the UI what to offer. ``worker`` is the worker's last sweep,
     whichever process holds the worker lock: when it ran and its age in seconds, null before any (which
-    process holds it, a host name and a process id, is the worker's log line's, not an open answer's); a
+    process holds it, a host name and a process id, is the worker's log line's, not an open answer's), and
+    ``workers`` how many worker processes process keys now (the sweep's and each ``--slots-only`` one); a
     process that runs its own worker answers 503, ``status: stale``, once no sweep has run for longer than
     ``worker.stale_after`` (a ``--no-worker`` one only shows it)."""
     try:
         async with ctx.pool.connection(timeout=3) as conn:
             await repo.ping(conn)
             swept = await repo.last_sweep(conn)
+            workers = len(await repo.live_workers(conn))
     except psycopg.OperationalError:  # the pool's timeout among them
         raise HTTPException(
             503, "the database is not answering, or the pool gave no connection in 3 s"
@@ -66,7 +68,7 @@ async def health(ctx: Ctx) -> Response:
     }
     stale = worker.stalled(ctx, None if swept is None else swept["age_s"])
     body = {"status": "stale" if stale else "ok", "ai": ctx.llm is not None, "auth": ctx.settings.auth_mode}
-    return ok(body | {"worker": sweep}, 503 if stale else 200)
+    return ok(body | {"worker": sweep, "workers": workers}, 503 if stale else 200)
 
 
 @router.get("/targets")

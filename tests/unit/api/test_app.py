@@ -41,7 +41,8 @@ def test_health_needs_no_credential_and_says_what_is_on(
     open_client: OpenClient, auth: dict[str, Any] | None, mode: str
 ) -> None:
     with open_client(auth=auth, ai=True) as client:
-        assert client.get("/v1/health").json() == {"status": "ok", "ai": True, "auth": mode, "worker": None}
+        body = client.get("/v1/health").json()
+        assert body == {"status": "ok", "ai": True, "auth": mode, "worker": None, "workers": 0}
 
 
 def test_health_says_when_the_database_does_not_answer(
@@ -470,8 +471,8 @@ def test_health_shows_the_worker_s_sweep_and_answers_503_once_it_stops(
     open_client: OpenClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Each sweep records its holder (host name and process id) and its time in one row; health shows its
-    time and age, never the holder, and a process that runs its own worker answers 503 once no sweep has run
-    for longer than the threshold."""
+    time and age, never the holder, and how many workers process keys; a process that runs its own worker
+    answers 503 once no sweep has run for longer than the threshold."""
     monkeypatch.setattr(worker, "STALE_S", 1.0)  # three polls of 0.1 s are less
     with open_client(worker=True) as client:
         deadline = time.monotonic() + 30
@@ -481,6 +482,7 @@ def test_health_shows_the_worker_s_sweep_and_answers_503_once_it_stops(
         seen = health.json()["worker"]
         assert health.status_code == 200 and health.json()["status"] == "ok"
         assert set(seen) == {"last_sweep_at", "age_s"} and 0 <= seen["age_s"] < 5
+        assert health.json()["workers"] == 1
         assert datetime.fromisoformat(seen["last_sweep_at"]).tzinfo is not None
 
         async def stuck(self: Any) -> None:

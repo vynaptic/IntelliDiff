@@ -113,6 +113,43 @@ async def test_a_job_that_meets_a_bug_ends_neither_the_sweep_nor_the_slots(
     assert not [m for m in caplog.messages if m.startswith(("sweep failed", "worker stopped"))]
 
 
+async def test_a_new_store_s_tables_are_analysed_while_its_first_run_runs(
+    harness: Harness, service: ScriptedService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A store whose tables were never analysed has those that hold rows analysed while its first run still
+    reads its keys, not first at its cycle end: autovacuum is off here."""
+    monkeypatch.setattr(jobs, "STATISTICS_EVERY_S", 0.1)
+    keys = [f"K{n:03}" for n in range(1, 41)]
+    for key in keys:
+        service.both(key, doc(key), doc(key))
+    service.slow = 0.05
+    tables = ("run_keys", "results", "findings", "observations")
+    counted = (
+        "SELECT array_agg(DISTINCT tablename) FROM pg_stats WHERE schemaname = 'ds' AND tablename = ANY(%s)"
+    )
+    async with harness.ctx.pool.connection() as conn:
+        for table in tables:
+            await conn.execute(f"ALTER TABLE ds.{table} SET (autovacuum_enabled = off)")  # type: ignore[arg-type]
+    spec = spec_text(keys, execution="concurrency: 1")
+    run_id = await create_run(harness.ctx, await harness.spec(spec), "batch", who=TESTER)
+    stop = asyncio.Event()
+    working = asyncio.create_task(worker.run_worker(harness.ctx, stop=stop))
+    try:
+        deadline = time.monotonic() + 30
+        while True:
+            async with harness.ctx.pool.connection() as conn:
+                analysed = (await (await conn.execute(counted, (list(tables),))).fetchone())[0]  # type: ignore[index]
+                unread = (await repo.cycle_counts(conn, run_id))["keys"].get("pending", 0)
+            if analysed and "observations" in analysed:
+                break
+            assert time.monotonic() < deadline
+            await asyncio.sleep(0.05)
+    finally:
+        stop.set()
+        await working
+    assert unread > 0 and {"results", "observations"} <= set(analysed)
+
+
 async def test_a_recheck_s_jitter_comes_from_the_masked_key(
     harness: Harness, service: ScriptedService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
