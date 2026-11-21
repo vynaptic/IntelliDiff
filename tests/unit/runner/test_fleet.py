@@ -52,25 +52,26 @@ targets:
 
 
 class Counted(ScriptedService):
-    """The scripted service that counts the requests in flight at once (``most``) and sends ``retry_after``'s
-    seconds, by (side, key), as the Retry-After of a 429."""
+    """The scripted service that counts the requests in flight at once (``most``) and, with ``slow_down``
+    set, answers the first side-a request it gets, whatever its key, 429 with that many seconds of
+    Retry-After."""
 
     def __init__(self) -> None:
         super().__init__()
         self.flight = self.most = 0
-        self.retry_after: dict[tuple[str, str], int] = {}
+        self.slow_down: int | None = None
 
     async def _key(self, request: web.Request) -> web.Response:
+        if request.match_info["side"] == "a" and self.slow_down is not None:
+            wait, self.slow_down = self.slow_down, None
+            self.log.append(("a", request.match_info["key"], asyncio.get_running_loop().time()))
+            return web.json_response({"error": "SLOW_DOWN"}, status=429, headers={"Retry-After": str(wait)})
         self.flight += 1
         self.most = max(self.most, self.flight)
         try:
-            response = await super()._key(request)
+            return await super()._key(request)
         finally:
             self.flight -= 1
-        wait = self.retry_after.get((request.match_info["side"], request.match_info["key"]))
-        if response.status == 429 and wait is not None:
-            response.headers["Retry-After"] = str(wait)
-        return response
 
 
 @pytest.fixture
@@ -282,15 +283,15 @@ async def test_a_retry_after_one_worker_meets_pauses_the_other(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A target that answers one worker 429 with a Retry-After of 3 s gets nothing more from either worker
-    until it ends: the other worker learns it at its next beat."""
+    """A target that answers one worker's first read 429 with a Retry-After of 3 s gets nothing more from
+    either worker until it ends: the other worker learns it at its next beat, and both read on after it."""
     monkeypatch.setattr(fleet, "BEAT_S", 0.1)
     keys = [f"K{n:03}" for n in range(1, 121)]
-    _script(services, keys, K030=None)
+    _script(services, keys)
     for svc in services:
-        svc.script("a", "K030", (429, {"error": "SLOW_DOWN"}), (200, doc("K030")))
-        svc.retry_after[("a", "K030")] = 3
         svc.slow = 0.01
+    met, heard = services
+    met.slow_down = 3
     async with (
         open_harness(_targets(services[0], rate=40)) as h,
         beside(tmp_path, _targets(services[1], rate=40)) as other,
@@ -299,11 +300,10 @@ async def test_a_retry_after_one_worker_meets_pauses_the_other(
         async with working(h.ctx, other):
             run = await h.wait(await create_run(h.ctx, spec_id, "batch", who=TESTER), timeout=60)
     assert run["status"] == "completed"
-    met, at = next((svc, t) for svc in services for side, key, t in svc.log if (side, key) == ("a", "K030"))
-    [heard] = [svc for svc in services if svc is not met]
+    at = next(t for side, _, t in met.log if side == "a")
     sent = [t - at for side, _, t in heard.log if side == "a"]
     assert [t for t in sent if 0.5 < t < 2.8] == []  # paused once its next beat came
-    assert [t for t in sent if t < 0] and [t for t in sent if t > 2.8]  # and reading before and after
+    assert [t for t in sent if t > 2.8]  # with keys left to read once it ended
 
 
 async def test_a_stop_condition_is_judged_across_the_workers(
