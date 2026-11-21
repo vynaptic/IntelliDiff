@@ -245,7 +245,6 @@ class ProfileRegistry:
     hosts: Mapping[str, Trust]
     profiles: Mapping[str, LLMProfile]
     gates: dict[str, Gate] = field(default_factory=dict, repr=False, compare=False)  # made on first use
-    rates: dict[str, Rate] = field(default_factory=dict, repr=False, compare=False)  # made on first use
 
     def get(self, profile_id: str) -> LLMProfile:
         try:
@@ -258,13 +257,6 @@ class ProfileRegistry:
         if profile_id not in self.gates:
             self.gates[profile_id] = Gate(self.get(profile_id).limits)
         return self.gates[profile_id]
-
-    def rate(self, name: str, limit: int) -> Rate:
-        """The one rate of this name for as long as this registry is loaded: ``limit`` a minute per key,
-        over every chat question of the process and forgotten at its restart."""
-        if name not in self.rates:
-            self.rates[name] = Rate(limit)
-        return self.rates[name]
 
 
 @with_config(_CLOSED)

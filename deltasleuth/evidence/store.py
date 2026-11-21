@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import errno
 import hashlib
 import hmac
 import os
@@ -29,6 +30,7 @@ import re
 import time
 from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
+from typing import TypeGuard
 
 import zstandard
 from cryptography.exceptions import InvalidTag
@@ -38,6 +40,7 @@ from cryptography.hazmat.primitives.keywrap import InvalidUnwrap, aes_key_unwrap
 from deltasleuth.core import jsonio
 from deltasleuth.core.canonical.encoding import content_hash as hash_body
 from deltasleuth.core.types import Observation
+from deltasleuth.errors import Refused
 from deltasleuth.evidence.fsio import ensure_private_dir, fsync_dir, write_synced
 from deltasleuth.security.crypto import KEY_BYTES, NONCE_BYTES, TAG_BYTES, WRAPPED_BYTES, DataKey
 
@@ -313,3 +316,29 @@ class EvidenceStore:
             return zstandard.ZstdDecompressor().decompress(frame)
         except zstandard.ZstdError:
             raise EvidenceCorruptedError(f"blob {address} is not a valid zstd frame") from None
+
+
+# The store's writes: an OSError raised under one (a full disk, an I/O error, too many open files) is the
+# store refusing to write, which waits for a person to put it right.
+WRITES = frozenset(f.__code__ for f in (EvidenceStore.put_blob, EvidenceStore.put_all, EvidenceStore.ensure))
+
+
+def unwritable(exc: BaseException) -> TypeGuard[OSError]:
+    """Whether ``exc`` is an ``OSError`` that one of the store's writes met. Of its traceback only each
+    frame's code is looked at: nothing a frame holds is read."""
+    trace = exc.__traceback__ if isinstance(exc, OSError) else None
+    while trace is not None:
+        if trace.tb_frame.f_code in WRITES:
+            return True
+        trace = trace.tb_next
+    return False
+
+
+class Unwritable(Refused):
+    """A key compared at once whose evidence the store could not write: 503, and the key is not compared. The
+    message names the error's errno, never its text, which names a path."""
+
+    def __init__(self, exc: OSError) -> None:
+        code = errno.errorcode.get(exc.errno or 0, "no errno")
+        why = f"the evidence store could not write ({code}): the key was not compared; try again once it can"
+        super().__init__(503, why)

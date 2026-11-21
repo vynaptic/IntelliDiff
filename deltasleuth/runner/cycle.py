@@ -219,8 +219,12 @@ async def finish_cycle(
 
 
 def due(spec: CompiledSpec, run: repo.Row, cycle: int) -> datetime:
-    """When a soak's cycle ``cycle`` falls due, at the earliest: ``cycleInterval`` after the previous
-    one's nominal start."""
+    """When a soak's cycle ``cycle`` falls due: the run's current cycle when its cycle end opened it
+    (``cycle_due_at``, past the nominal start where the soak missed starts); any other, and a cycle opened
+    before that was recorded, ``cycleInterval`` after the previous one's nominal start."""
+    if cycle == run["cycle"] and cycle > 1 and run.get("cycle_due_at") is not None:
+        opened: datetime = run["cycle_due_at"]
+        return opened
     interval = timedelta(seconds=parse_duration(spec.raw["execution"]["cycleInterval"]))
     return run["started_at"] + interval * (cycle - 1)
 

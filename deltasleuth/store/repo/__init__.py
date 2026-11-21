@@ -276,6 +276,7 @@ from deltasleuth.store.repo.prechecks import (
     save_pair,
     settle_target,
 )
+from deltasleuth.store.repo.rates import hit_rate
 from deltasleuth.store.repo.readiness import (
     _BEFORE_014,
     _BUCKETS,
@@ -693,6 +694,7 @@ __all__ = [
     "hand_back",
     "held_back",
     "held_guard",
+    "hit_rate",
     "hold_exclusions",
     "hold_pair",
     "insert_adjudication",

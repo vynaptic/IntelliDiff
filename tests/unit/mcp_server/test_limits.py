@@ -18,7 +18,7 @@ from deltasleuth.mcp import server, tools
 from deltasleuth.store import repo
 from tests.unit.runner.conftest import until
 
-from .conftest import EVERY, OPERATOR, VIEWER, World, ask, audited, token
+from .conftest import EVERY, OPERATOR, VIEWER, Harness, World, ask, audited, token
 
 
 class Clock:
@@ -41,8 +41,8 @@ def test_a_rate_slides_and_forgets_the_callers_longest_idle() -> None:
     assert len(tools.Limits(EVERY).calls._keys) == 0 and tools.Limits(EVERY).calls.size == 10_000
 
 
-async def test_a_callers_calls_a_minute(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Every call counts, a refused one too; and ten compares and ten readiness judgements."""
+async def test_a_callers_calls_a_minute() -> None:
+    """Every call counts, a refused one too."""
     clock = Clock()
     limits = tools.Limits(replace(EVERY, calls_per_minute=3), clock=clock)
     over = ("rate limited: at most 3 MCP tool calls a minute per caller", True)
@@ -54,22 +54,33 @@ async def test_a_callers_calls_a_minute(monkeypatch: pytest.MonkeyPatch) -> None
     clock.now += 60
     assert (await ask(None, VIEWER, "nope", limits=limits))[0] == "unknown tool 'nope'"  # type: ignore[arg-type]
 
+
+@pytest.mark.db
+async def test_ten_compares_and_ten_readiness_judgements_a_minute_held_in_the_store(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ten of each a minute per caller, counted in the store, so that a second process (or the same after a
+    restart) refuses the eleventh too; bad arguments are not counted."""
+
     async def run(ctx: Any, asked: Any, **args: Any) -> Any:
         return {}
 
     for name in tools.LIMITED:
         monkeypatch.setitem(tools.CATALOGUE, name, replace(tools.CATALOGUE[name], run=run))
-    limits = tools.Limits(replace(EVERY, calls_per_minute=600), clock=clock)
+    ctx, settings = harness.ctx, replace(EVERY, calls_per_minute=600)
     asked = {"compare_key": {"run_id": "R-1", "key": "k"}, "get_readiness": {}}
     assert tools.LIMITED == ("compare_key", "get_readiness") and tools.COMPARE_LIMIT == 10
     for name, args in asked.items():
         said = (f"rate limited: at most 10 {name} calls a minute per caller", True)
-        assert await ask(None, OPERATOR, name, {"junk": 1}, limits=limits) != said  # type: ignore[arg-type]
-        answers = [await ask(None, OPERATOR, name, args, limits=limits) for _ in range(11)]  # type: ignore[arg-type]
-        assert answers == [({}, False)] * 10 + [said]  # bad arguments were not counted
-        assert await ask(None, token("operator", 9), name, args, limits=limits) == ({}, False)  # type: ignore[arg-type]
-    clock.now += 60
-    assert await ask(None, OPERATOR, "compare_key", asked["compare_key"], limits=limits) == ({}, False)  # type: ignore[arg-type]
+        assert await ask(ctx, OPERATOR, name, {"junk": 1}, limits=tools.Limits(settings)) != said
+        limits = tools.Limits(settings)
+        answers = [await ask(ctx, OPERATOR, name, args, limits=limits) for _ in range(10)]
+        assert answers == [({}, False)] * 10
+        assert await ask(ctx, OPERATOR, name, args, limits=tools.Limits(settings)) == said  # another process
+        assert await ask(ctx, token("operator", 9), name, args, limits=limits) == ({}, False)
+    async with ctx.pool.connection() as conn:  # a minute on
+        await conn.execute("UPDATE ds.rate_hits SET at = at - interval '61 seconds'")
+    assert await ask(ctx, OPERATOR, "compare_key", asked["compare_key"], limits=limits) == ({}, False)
 
 
 async def test_slots_and_a_callers_share_of_them(monkeypatch: pytest.MonkeyPatch) -> None:

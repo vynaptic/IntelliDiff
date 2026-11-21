@@ -52,9 +52,12 @@ class ExplainIn(Payload):
     root_cause_id: str | None = Field(None, pattern=r"^RC-[0-9a-f]{12}$")  # none: summarise the run
 
 
-def _asking(ctx: Context, who: Principal) -> None:
-    """Count a question of ``who`` against the process's one rate of chat questions: 429 past it."""
-    if ctx.llm is not None and not ctx.llm.rate("chat.ask", ASK_LIMIT).hit(who.actor):
+async def _asking(ctx: Context, who: Principal) -> None:
+    """Count a question of ``who`` against the chat questions' rate, kept in the store so that it holds across
+    the app's processes and its restarts: 429 past it."""
+    async with ctx.pool.connection() as conn:
+        within = await repo.hit_rate(conn, "chat.ask", who.actor, ASK_LIMIT)
+    if not within:
         raise HTTPException(
             429,
             f"rate limited: at most {ASK_LIMIT} chat questions a minute per caller",
@@ -84,7 +87,7 @@ async def explain(ctx: Ctx, who: Viewer, body: ExplainIn) -> Response:
     """Start a run-scoped session and ask it a fixed question: explain one root cause of the run's
     current cycle, or summarise the run. The agent acts as a viewer, whoever asks. Returns the session
     with every message, the last one the answer or (``citations: []``) the refusal."""
-    _asking(ctx, who)
+    await _asking(ctx, who)
     cause, about, detail = body.root_cause_id, None, {"question": "summarise"}
     async with repo.audited(ctx.pool) as (conn, audit):
         run = await run_of(conn, body.run_id)
@@ -108,7 +111,7 @@ async def explain(ctx: Ctx, who: Viewer, body: ExplainIn) -> Response:
 async def ask(ctx: Ctx, who: Viewer, session_id: str, body: MessageIn) -> Response:
     """Ask within the session's scope; the agent, acting for the asker, stores the question, its tool
     calls and the answer. Returns the session with every message."""
-    _asking(ctx, who)
+    await _asking(ctx, who)
     async with ctx.pool.connection() as conn:
         own = await _own(conn, session_id, who, recent=0)
         await refuse_chat(conn, await run_of(conn, own["run_id"]))

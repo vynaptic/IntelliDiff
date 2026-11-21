@@ -154,6 +154,7 @@ database; they are in the evidence store. Settings and targets are files, not ta
 | `notify_cursor`, `notify_deliveries`, `notify_mutes` | The notifier's position in the audit chain, its deliveries and its mutes. |
 | `worker_sweep` | The worker's holder (host name and process id) and its last sweep, whose time and age `/v1/health` shows. |
 | `workers`, `target_pauses`, `stop_feed` | The live workers that process keys; the targets' pauses they share; each saved group's stop-condition inputs, while more than one works. |
+| `rate_hits` | The last minute's chat questions and `compare_key` calls of each caller, counted across the app's processes and restarts. |
 | `installation`, `licences`, `schema_version` | The installation id, licence files (unused in the open build) and the applied migrations. |
 
 ## 7. Connectors

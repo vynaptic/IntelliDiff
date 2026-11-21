@@ -418,6 +418,27 @@ async def test_a_worker_that_stops_as_a_slot_hands_its_keys_back_waits_for_it(
         assert (await repo.cycle_counts(conn, run_id))["keys"] == {"pending": 1}
 
 
+async def test_a_key_compared_at_once_on_a_full_evidence_disk_is_refused_for_now(
+    harness: Harness, service: ScriptedService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A full evidence disk refuses a key compared at once with 503, naming the errno and never the path, and
+    fails its one-shot run: nothing of it is kept as evidence."""
+    service.both("K001", doc("K001"), doc("K001"))
+
+    def full(path: Path, data: bytes) -> None:
+        raise OSError(errno.ENOSPC, "No space left on device", str(path))
+
+    monkeypatch.setattr(store, "write_synced", full)
+    spec_id = await harness.spec(spec_text(["K001"]))
+    with pytest.raises(store.Unwritable) as refused:
+        await compare_one(harness.ctx, spec_id, "K001", who=TESTER)
+    told = str(refused.value)
+    assert refused.value.status == 503 and "(ENOSPC)" in told and "/" not in told and "space" not in told
+    async with harness.ctx.pool.connection() as conn:
+        [run], _ = await repo.list_runs(conn, spec_id=spec_id)
+    assert (run["mode"], run["status"]) == ("one_shot", "failed")
+
+
 async def test_an_os_error_outside_the_evidence_store_still_fails_the_run(
     harness: Harness, service: ScriptedService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -634,6 +655,8 @@ async def test_a_late_soak_skips_its_missed_cycles_instead_of_running_them_back_
     reads = [t for side, _, t in service.log if side == "a"]
     assert (run["status"], run["cycle"], len(reads)) == ("completed", 3, 3)
     assert all(later - earlier >= 0.9 for earlier, later in pairwise(reads))
+    # Its last cycle fell due when the boundary opened it, about a minute past its nominal start
+    assert run["cycle_due_at"] - run["started_at"] > timedelta(seconds=50)
 
 
 def test_a_soak_on_time_starts_its_next_cycle_at_its_nominal_start() -> None:
@@ -646,6 +669,19 @@ def test_a_soak_on_time_starts_its_next_cycle_at_its_nominal_start() -> None:
     late = {"cycle": 2, "started_at": now - timedelta(hours=24)}
     next_at, reason = cycle._boundary(spec, late)
     assert reason is None and now + interval <= next_at <= datetime.now(UTC) + interval
+
+
+def test_a_late_soak_s_current_cycle_falls_due_when_its_cycle_end_opened_it() -> None:
+    """A start the soak missed moves its current cycle's due time, which a resume's licence check and the
+    schema guard read; any other cycle, and one opened before that time was recorded, is due at its nominal
+    start."""
+    spec: Any = SimpleNamespace(raw={"execution": {"cycleInterval": "10m"}})
+    started, opened = datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 2, tzinfo=UTC)
+    interval = timedelta(minutes=10)
+    late = {"cycle": 3, "started_at": started, "cycle_due_at": opened}
+    assert cycle.due(spec, late, 3) == opened
+    assert cycle.due(spec, late, 4) == started + 3 * interval
+    assert cycle.due(spec, late | {"cycle_due_at": None}, 3) == started + 2 * interval
 
 
 @pytest.mark.parametrize(

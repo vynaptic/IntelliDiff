@@ -42,7 +42,6 @@ from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TypeGuard
 
 import psycopg
 
@@ -50,7 +49,7 @@ from deltasleuth.auth.principal import WORKER
 from deltasleuth.connectors.tables import unsealed
 from deltasleuth.context import Capabilities, Context
 from deltasleuth.core.types import CompiledSpec, KeyResult, Side, SideStateKind
-from deltasleuth.evidence.store import EvidenceKeyError, EvidenceStore
+from deltasleuth.evidence.store import EvidenceKeyError, unwritable
 from deltasleuth.runner import drift, sample
 from deltasleuth.runner.compare import (
     FileReader,
@@ -74,11 +73,6 @@ READ_BATCH = 200  # keys a slot reads at once from a run that reads in groups (`
 FILE_BATCH = 2000  # beside fixed files whose rows are not large: one pass over them, judged READ_BATCH a time
 LOB_BATCH = 4  # of a run whose rows may hold large values: 16 MiB of them a row
 KEY_MISSING = (KeyringError, EvidenceKeyError)  # a KEK the keyring lacks: the run waits for it
-# The evidence store's writes: an OSError raised under one (a full disk, an I/O error, too many open files)
-# pauses the run until a person puts it right.
-EVIDENCE_WRITES = frozenset(
-    f.__code__ for f in (EvidenceStore.put_blob, EvidenceStore.put_all, EvidenceStore.ensure)
-)
 REFUSALS = 10  # times a key goes back unread for reads refused unsent before it is judged as read
 REFUSED_WAIT_S = 1.0  # the least wait of a key handed back so
 HAND_BACK_S = 5.0  # how long a stopping worker's slot waits to hand its keys back before it ends
@@ -211,7 +205,7 @@ class Slots:
         except psycopg.OperationalError as exc:  # the store is unreachable: the keys are read again
             log.warning("keys of run %s not saved: %s", run_id, type(exc).__name__)
         except Exception as exc:  # a bug, or data the store refuses: never read again in a loop
-            if _unwritable(exc):  # the keys go back unsaved, until the evidence store can write again
+            if unwritable(exc):  # the keys go back unsaved, until the evidence store can write again
                 await self._unwritten(run_id, exc)
                 return
             finished = await self._release(owner)  # first, so the failed run cancels this key too
@@ -408,17 +402,6 @@ class Slots:
         policy = RecheckPolicy.from_spec(spec.raw)
         form = key_form(stored["params"])
         return _Run(spec, caps, reader, not samples, policy, monitor, lanes, form)
-
-
-def _unwritable(exc: BaseException) -> TypeGuard[OSError]:
-    """Whether ``exc`` is an ``OSError`` that one of the evidence store's writes met. Of its traceback only
-    each frame's code is looked at: nothing a frame holds is read."""
-    trace = exc.__traceback__ if isinstance(exc, OSError) else None
-    while trace is not None:
-        if trace.tb_frame.f_code in EVIDENCE_WRITES:
-            return True
-        trace = trace.tb_next
-    return False
 
 
 async def _fed(ctx: Context, conn: repo.Conn, run: _Run, run_id: str, tally: list[Passed]) -> bool:

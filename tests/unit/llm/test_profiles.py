@@ -225,15 +225,6 @@ def test_the_daily_budget_is_finite_unless_a_profile_lifts_it() -> None:
     assert _pointer(_doc(budgets={"per_actor_tokens": 5})) == "/profiles/prof/budgets/per_actor_tokens"
 
 
-def test_a_registry_holds_one_rate_per_name() -> None:
-    """As it holds one gate per profile: a rate counts over every question while the registry is loaded."""
-    registry = parse_profiles(_doc())
-    questions = registry.rate("questions", 2)
-    assert registry.rate("questions", 2) is questions and registry.rate("compare_key", 2) is not questions
-    assert [questions.hit("user:U-1") for _ in range(3)] == [True, True, False]
-    assert questions.hit("user:U-2") and parse_profiles(_doc()).rate("questions", 2).hit("user:U-1")
-
-
 def test_a_profile_lists_clear_declared_values_like_any_class() -> None:
     listed = _profile(data_classes=["production_tokenised", "production_clear_declared"])
     assert listed.data_classes == {DataClass.PRODUCTION_TOKENISED, DataClass.PRODUCTION_CLEAR_DECLARED}

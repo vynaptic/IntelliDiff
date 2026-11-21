@@ -25,7 +25,6 @@ from deltasleuth.context import Context
 from deltasleuth.core import jsonio
 from deltasleuth.core.types import CompiledSpec, SideState
 from deltasleuth.llm.model import ToolSpec
-from deltasleuth.llm.profiles import Rate
 from deltasleuth.reports import accuracy
 from deltasleuth.security.policy import BUSINESS_CODE
 from deltasleuth.security.tokenise import mask_finding
@@ -79,7 +78,7 @@ class Scope:
 
     run_id: str
     who: Principal  # the asker, ``via`` the session
-    compares: Rate | None = None  # what compare_key counts against, by actor; None: the caller limits it
+    compares: str | None = None  # the store's rate compare_key counts against, by actor; None: the caller's
     # The stored keys the calls read, each with its cycle (get_observations, compare_key): a key view each.
     views: list[tuple[str, int]] = field(default_factory=list)
     cycle: int | None = None  # a chat pins its turn; direct tools default to the current cycle
@@ -264,8 +263,11 @@ async def _compare_key(ctx: Context, scope: Scope, key: str) -> Any:
     from deltasleuth.licence import LicenceRefused
     from deltasleuth.runner.runs import compare_again  # the runner is needed by this tool only
 
-    if scope.compares is not None and not scope.compares.hit(scope.who.actor):
-        raise ToolError(f"rate limited: at most {COMPARE_LIMIT} compare_key calls a minute per caller")
+    if scope.compares is not None:
+        async with ctx.pool.connection() as conn:
+            within = await repo.hit_rate(conn, scope.compares, scope.who.actor, COMPARE_LIMIT)
+        if not within:
+            raise ToolError(f"rate limited: at most {COMPARE_LIMIT} compare_key calls a minute per caller")
     try:  # always under the run's own spec: another spec could mask the key and its values less
         compared = await compare_again(ctx, scope.run_id, key, who=scope.who, cycle=scope.cycle)
     except (approvals.ApprovalRequired, LicenceRefused) as exc:  # no four-eyes approval, or the licence

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import ipaddress
+import logging
 import os
 import re
 import shutil
@@ -43,7 +44,7 @@ if TYPE_CHECKING:
     from deltasleuth.context import Context
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-LATEST_SCHEMA = 24
+LATEST_SCHEMA = 25
 PG_IMAGE = "postgres:16-alpine"  # the local image; tests never pull
 MYSQL_IMAGE = "mysql:8.4"
 ORACLE_IMAGE = "gvenzl/oracle-free:23-slim-faststart"
@@ -84,6 +85,16 @@ def judged_in_a_thread() -> Iterator[None]:
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(config, "judges_by_default", lambda: 0)
         yield
+
+
+@pytest.fixture(autouse=True)
+def audit_copied_as_it_was() -> Iterator[None]:
+    """The audit logger as each test found it: a command a test invokes in this process copies audit rows to
+    a stream of its choosing (``cli.common._siem``), and the first stream chosen would stay for the rest."""
+    audit = logging.getLogger("deltasleuth.audit")
+    handlers, level, propagate = list(audit.handlers), audit.level, audit.propagate
+    yield
+    audit.handlers[:], audit.level, audit.propagate = handlers, level, propagate
 
 
 @pytest.fixture

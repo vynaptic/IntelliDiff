@@ -25,7 +25,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from deltasleuth.agent import prompt
-from deltasleuth.agent.tools import COMPARE_LIMIT, Scope, ToolError, clear_egress_reason, run_tool, tools_for
+from deltasleuth.agent.tools import Scope, ToolError, clear_egress_reason, run_tool, tools_for
 from deltasleuth.agent.validate import Evidence, check
 from deltasleuth.auth.principal import Principal
 from deltasleuth.context import Context
@@ -180,9 +180,8 @@ class _Turn:
         for m in tools:
             self.evidence.add(prompt.unframe(m["content"]))
         self.must: str | None = None  # the root cause a fixed question asked about
-        compares = ctx.llm.rate("compare_key", COMPARE_LIMIT) if ctx.llm is not None else None
         self.scope = Scope(
-            session["run_id"], replace(who, via=f"chat:{session['session_id']}"), compares,
+            session["run_id"], replace(who, via=f"chat:{session['session_id']}"), "chat.compare_key",
             cycle=session["current_cycle"],
         )
         self.messages = [Message.system(prompt.SYSTEM), *self._replayed(earlier)]

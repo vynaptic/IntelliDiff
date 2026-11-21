@@ -25,6 +25,7 @@ import psycopg
 from psycopg.conninfo import make_conninfo
 
 from deltasleuth.context import Context
+from deltasleuth.evidence.store import WRITES as EVIDENCE_WRITES
 from deltasleuth.runner.cycle import located
 from deltasleuth.runner.fleet import Roster
 from deltasleuth.runner.jobs import (
@@ -38,7 +39,6 @@ from deltasleuth.runner.jobs import (
 )
 from deltasleuth.runner.judges import Judges
 from deltasleuth.runner.slots import (
-    EVIDENCE_WRITES,
     FILE_BATCH,
     KEY_MISSING,
     LOB_BATCH,

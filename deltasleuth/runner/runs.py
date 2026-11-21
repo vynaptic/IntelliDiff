@@ -45,6 +45,7 @@ from deltasleuth.core.canonical.encoding import sha256_hex
 from deltasleuth.core.masking import run_masking
 from deltasleuth.core.types import CompiledSpec, KeyResult, Observation, SideState
 from deltasleuth.errors import Invalid, NotFound
+from deltasleuth.evidence.store import Unwritable, unwritable
 from deltasleuth.runner import census, drift, sample
 from deltasleuth.runner.compare import FileReader, LiveReader, evaluate, save_pass, side_state
 from deltasleuth.runner.cycle import CANCELLED, due, fail_run, final_status, finish_cycle, summarise
@@ -407,6 +408,8 @@ async def compare_one(ctx: Context, spec_id: int, key: str, *, who: Principal) -
         )
     except Exception as exc:
         await fail_run(ctx, run_id, exc, who=who)
+        if unwritable(exc):  # a full disk, say: refused until there is room, never a fault
+            raise Unwritable(exc) from None
         raise
     finally:
         await reader.aclose()

@@ -383,13 +383,14 @@ async def start_next_cycle(
     keys: Mapping[str, bytes] | None = None,
     scan: Mapping[str, Any] | None = None,
 ) -> int:
-    """Open the run's next cycle, due at ``available_at``, with ``keys`` (masked -> key_enc) or else
-    the previous cycle's key set (a key_enc is sealed for every cycle) and labels, its retries reset, and
-    ``scan`` as its scan's state; return the new cycle number."""
+    """Open the run's next cycle, due at ``available_at`` (recorded as its ``cycle_due_at``), with ``keys``
+    (masked -> key_enc) or else the previous cycle's key set (a key_enc is sealed for every cycle) and
+    labels, its retries reset, and ``scan`` as its scan's state; return the new cycle number."""
     cycle: int = await _value(
         conn,
-        "UPDATE ds.runs SET cycle = cycle + 1, updated_at = now() WHERE run_id = %s RETURNING cycle",
-        (run_id,),
+        """UPDATE ds.runs SET cycle = cycle + 1, cycle_due_at = %s, updated_at = now() WHERE run_id = %s
+           RETURNING cycle""",
+        (available_at, run_id),
     )
     if scan is not None:
         await conn.execute(

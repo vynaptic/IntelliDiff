@@ -174,10 +174,11 @@ class ToolSpec:
 
 class Limits:
     """The ``mcp`` block as one process applies it, with what it keeps of its callers, in memory and
-    forgotten at restart: each caller's calls of the last minute and its ``LIMITED`` ones, the
-    calls in flight, and the two audit throttles: ``mcp.read`` rows, one per caller, tool and run an
-    hour (``reads``, asked under ``reading``), and ``authz.denied`` rows, one per caller and tool a minute
-    (``denials``: ``ds serve`` hands the one its routes share)."""
+    forgotten at restart: each caller's calls of the last minute (its ``LIMITED`` ones are counted in the
+    store, ``_within``, across processes and restarts), the calls in flight, and the two audit throttles:
+    ``mcp.read`` rows, one per caller, tool and run an hour (``reads``, asked under ``reading``), and
+    ``authz.denied`` rows, one per caller and tool a minute (``denials``: ``ds serve`` hands the one its
+    routes share)."""
 
     def __init__(
         self,
@@ -188,7 +189,6 @@ class Limits:
     ) -> None:
         self.settings = settings
         self.calls = Rate(settings.calls_per_minute, clock=clock)
-        self.limited = Rate(COMPARE_LIMIT, clock=clock)
         self.reads = Throttle(3600, clock=clock)
         self.denials = denials or Throttle(60, clock=clock)
         self._running: Counter[str] = Counter()  # caller -> its calls in flight
@@ -539,6 +539,12 @@ def _fitted(spec: ToolSpec, data: dict[str, Any]) -> str:
     return text
 
 
+async def _within(ctx: Context, who: Principal, name: str) -> bool:
+    """Count a ``LIMITED`` call of ``who`` against its rate, kept in the store: whether it is within it."""
+    async with ctx.pool.connection() as conn:
+        return await repo.hit_rate(conn, f"mcp.{name}", who.actor, COMPARE_LIMIT)
+
+
 async def _denied(ctx: Context, limits: Limits, who: Principal, spec: ToolSpec) -> None:
     """Audit a role refusal as the routes audit theirs (``api.deps.require``): ``authz.denied`` on ``MCP
     <tool>``, at most one row per caller and tool a minute, the others a WARNING line on
@@ -602,7 +608,7 @@ async def _answered(
     if (error := next(_VALIDATORS[spec.name].iter_errors(args), None)) is not None:
         raise ToolError(f"invalid arguments: {error.message}")
     args = taken(args)  # as the chat's tools take theirs
-    if spec.name in LIMITED and not limits.limited.hit((who.actor, spec.name)):
+    if spec.name in LIMITED and not await _within(ctx, who, spec.name):
         raise ToolError(f"rate limited: at most {COMPARE_LIMIT} {spec.name} calls a minute per caller")
     async with limits.slot(who.actor):
         found = await spec.run(ctx, asked, **args)
