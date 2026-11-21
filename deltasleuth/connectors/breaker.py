@@ -3,7 +3,9 @@ declaration (``TargetGate.breaker``).
 
 Closed: outcomes fill a sliding window; once it is full and its error share reaches
 ``error_rate`` the circuit opens and refuses calls for ``cooldown_s``. Then one probe is let
-through (half-open): success closes the circuit with a fresh window, failure re-opens it.
+through (half-open): success closes the circuit with a fresh window, failure re-opens it. Where more than
+one worker processes keys, an opening reaches the others' breakers of the same declaration (``untold``,
+``hold``), each of which then probes on its own.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ class CircuitBreaker:
         self.state: Literal["closed", "open", "half_open"] = "closed"
         self._opened_at = 0.0
         self._probing = False
+        self.told = 0.0  # the opening the other workers know of (``_opened_at``)
 
     def admit(self) -> Ticket | None:
         """A ticket for an admitted call, or None when the circuit refuses it."""
@@ -66,6 +69,25 @@ class CircuitBreaker:
         if self.state == "open":
             return max(self._opened_at + self._cooldown_s - self._clock(), 0.0)
         return self._cooldown_s if self.state == "half_open" and self._probing else 0.0
+
+    def untold(self) -> bool:
+        """Whether the circuit is open on an opening the other workers do not know of yet, which counts as
+        told from now on."""
+        if self.state != "open" or self._opened_at <= self.told or not self.closed_for():
+            return False
+        self.told = self._opened_at
+        return True
+
+    def hold(self, seconds: float) -> None:
+        """Keep the circuit open ``seconds`` from now at least: another worker's breaker of the same
+        declaration opened. A probe in flight settles it on its own."""
+        if self.state == "half_open" and self._probing:
+            return
+        opened = self._clock() + seconds - self._cooldown_s
+        if self.state == "open" and opened <= self._opened_at:
+            return
+        self.state, self._opened_at, self.told = "open", opened, opened
+        self._outcomes.clear()
 
     def release(self, ticket: Ticket) -> None:
         """Forget an admitted call that ended without an outcome (cancelled, or never sent)."""

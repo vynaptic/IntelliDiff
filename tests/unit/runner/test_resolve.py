@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from deltasleuth.runner.runs import create_run
-from deltasleuth.runner.stop import StopMonitor
+from deltasleuth.runner.stop import Passed, StopMonitor
 from deltasleuth.store import repo
 from tests.conftest import TESTER
 
@@ -204,13 +204,13 @@ async def test_first_reads_are_counted_once(
     harness: Harness, service: ScriptedService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     firsts: list[tuple[str, bool]] = []
-    record = StopMonitor.record_result
+    record = StopMonitor.record_pass
 
-    def recorded(self: StopMonitor, key: str, result: Any, *, first_read: bool) -> None:
-        firsts.append((key, first_read))
-        record(self, key, result, first_read=first_read)
+    def recorded(self: StopMonitor, passed: Passed) -> None:
+        firsts.append((passed.key, passed.inconclusive is not None))  # a first read feeds the window
+        record(self, passed)
 
-    monkeypatch.setattr(StopMonitor, "record_result", recorded)
+    monkeypatch.setattr(StopMonitor, "record_pass", recorded)
     service.script("a", "K001", UNAVAILABLE)
     await _sampled(harness, service, _spec(outcomes=UNRECHECKED))
     assert [first for key, first in firsts if key == "K001"] == [True, False, False]

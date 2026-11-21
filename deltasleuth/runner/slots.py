@@ -14,15 +14,19 @@ back, so a kill -9 costs at most the keys in flight and never duplicates a resul
 candidates for the same first read and recheck as other live keys.
 
 Politeness: one gate per target for the process (``ctx.gates``: rate budget, in-flight cap, and a breaker
-for each ``execution.circuitBreaker`` its specs declare, so a run is governed by its own spec's), at most
+for each ``execution.circuitBreaker`` its specs declare, so a run is governed by its own spec's; where more
+than one worker processes keys, this process's share of the target's budget), at most
 ``execution.concurrency`` groups of a live run in flight, each pausing ``execution.delay`` plus jitter (from
-a hash of a key) before its next group; no slot leases keys of a run with none of those free, and keys are
-read only if their run still runs. A free slot leases a key of the run with the fewest groups in flight. A
-live 401/403 pauses the run and hands the group back unjudged, to be read again once resumed, with the
-credentials read again; so does a key the keyring lacks (the run's data key, or an evidence key), and an
-evidence write the disk refuses; a stop condition stops the run; a column or a table the plan reads that is
+a hash of a key) before its next group; no slot leases keys of a run with none of those free, or of a run
+that reads a target whose in-flight cap leaves this process no share, and keys are read only if their run
+still runs. A free slot leases a key of the run with the fewest groups in flight. A live 401/403 pauses
+the run and hands the group back unjudged, to be read again once resumed, with the credentials read again;
+so does a key the keyring lacks (the run's data key, or an evidence key), and an evidence write the disk
+refuses; a stop condition stops the run; a column or a table the plan reads that is
 gone pauses it through the schema guard; any other failure fails it. With key censuses counted, no slot
-leases the keys of a cycle whose census is not recorded.
+leases the keys of a cycle whose census is not recorded. A worker alone judges a run's stop conditions as
+its slots save groups; where more than one processes keys, each group's save feeds them to the store in its
+transaction, for the sweep to judge (``runner.stop``).
 """
 
 from __future__ import annotations
@@ -52,6 +56,7 @@ from deltasleuth.runner.compare import (
     FileReader,
     LiveReader,
     Reader,
+    Reads,
     evaluate_many,
     rederive_all,
     save_passes,
@@ -60,7 +65,7 @@ from deltasleuth.runner.cycle import fail_run, located
 from deltasleuth.runner.judges import Judges
 from deltasleuth.runner.recheck import RecheckPolicy, confirm, freeze, key_fraction
 from deltasleuth.runner.runs import AUTH_PAUSE, EVIDENCE_PAUSE, KEY_PAUSE, pause_run, run_status, stop_run
-from deltasleuth.runner.stop import StopConditions, StopMonitor
+from deltasleuth.runner.stop import Passed, StopConditions, StopMonitor
 from deltasleuth.security.crypto import KeyringError, Sealer
 from deltasleuth.security.tokenise import KeyForm, key_form
 from deltasleuth.store import repo
@@ -94,6 +99,7 @@ class _Run:
     lanes: asyncio.Semaphore | None  # live runs: execution.concurrency groups of keys in flight
     form: KeyForm  # how its keys are masked, as it recorded at its creation
     halted: bool = False  # this process paused or stopped the run
+    feeding: bool = False  # its last group fed its stop conditions to the store, for the sweep to judge
 
 
 async def key_missing(ctx: Context, run_id: str, exc: Exception) -> None:
@@ -122,7 +128,11 @@ class Slots:
         poll, and any other failure ends the slot (``run_worker`` restarts the slots)."""
         while True:
             owner = f"{self.name}:{secrets.token_hex(4)}"
-            full = [run_id for run_id, run in self.runs.items() if run.lanes and run.lanes.locked()]
+            full = [
+                run_id
+                for run_id, run in self.runs.items()
+                if (run.lanes and run.lanes.locked()) or self._starved(run)
+            ]
             try:
                 async with self.ctx.pool.connection() as conn:
                     leased = await repo.lease_due(
@@ -167,6 +177,8 @@ class Slots:
         self.busy[run_id] += 1
         try:
             run = await self._run(rows[0])
+            if self._starved(run):  # its keys go back, for a worker with a share of its targets' slots
+                return
             if run.reader.batches:  # a group
                 async with self.ctx.pool.connection() as conn:
                     # Few keys where a row may be large; beside fixed files FILE_BATCH (READ_BATCH where a
@@ -215,6 +227,13 @@ class Slots:
             renewing.cancel()
             if not finished:
                 await self._release(owner)
+
+    def _starved(self, run: _Run) -> bool:
+        """Whether this process holds no share of the in-flight cap of a target the run reads: more workers
+        process keys than the target admits at once."""
+        gates = self.ctx.gates
+        targets = {side.target for side in run.spec.sides.values()} if run.live else set()
+        return any(gates[t].max_concurrency == 0 for t in targets if t in gates)
 
     async def _renewed(self, owner: str) -> bool:
         async with self.ctx.pool.connection() as conn:
@@ -311,7 +330,9 @@ class Slots:
             ):
                 retry[masked] = resolve.delay_s + run.policy.jitter_s * key_fraction(masked)
             passes.append((row, read, result, reads))
+        tally = [_tallied(row, read, result, reads) for row, read, result, reads in passes]
         async with ctx.pool.connection() as conn:
+            fed = await _fed(ctx, conn, run, run_id, tally)
             if passes:
                 await save_passes(
                     ctx,
@@ -336,12 +357,8 @@ class Slots:
                 "run %s: %d key(s) handed back unread, a target refusing reads for %.1f s",
                 run_id, len(refused), max(refused.values()),
             )  # fmt: skip
-        for row, read, result, reads in passes:
-            for side in reads:
-                state = read.side_a if side is Side.A else read.side_b
-                run.monitor.record_call(failed=state.kind is SideStateKind.ERROR)
-            first_read = row["pass_no"] == 1 and row["retries"] == 0  # a retry's read is counted once
-            run.monitor.record_result(row["key_masked"], result, first_read=first_read)
+        for passed in [] if fed else tally:
+            run.monitor.record_pass(passed)
         if reason := run.monitor.reason(datetime.now(UTC)):
             run.halted = True
             await stop_run(ctx, run_id, reason, who=WORKER)
@@ -360,6 +377,7 @@ class Slots:
 
     async def _load(self, run_id: str) -> _Run:
         async with self.ctx.pool.connection() as conn:
+            await repo.analyse_keys(conn)  # a new store's: before its groups' saves look keys up
             stored = await repo.get_run(conn, run_id)
             assert stored is not None  # a run is never deleted while its keys are leased
             samples = stored["params"].get("samples_dir")
@@ -389,6 +407,34 @@ def _unwritable(exc: BaseException) -> TypeGuard[OSError]:
             return True
         trace = trace.tb_next
     return False
+
+
+async def _fed(ctx: Context, conn: repo.Conn, run: _Run, run_id: str, tally: list[Passed]) -> bool:
+    """Feed the group's ``tally`` to the store, in its transaction, where the run's stop conditions count
+    calls or keys and more than one worker processes keys: the sweep judges them; whether it did. A run whose
+    last group was fed and whose worker is alone again has them judged afresh by its slots, the CRITICAL
+    findings read again from the store."""
+    conditions = run.monitor.conditions
+    feeding = conditions.counted and ctx.gates.count > 1
+    if feeding and not run.feeding:
+        log.info("run %s: its stop conditions are judged by the sweep, beside other workers", run_id)
+    elif run.feeding and not feeding:
+        counts = conditions.max_unexplained_critical is not None
+        critical = await repo.unexplained_critical(conn, run_id) if counts else None
+        run.monitor = StopMonitor(conditions, run.monitor.started_at, critical)
+    run.feeding = feeding
+    if feeding and tally:
+        keyed = conditions.max_unexplained_critical is not None
+        await repo.feed_stops(conn, run_id, [passed.stored(keyed) for passed in tally])
+    return feeding
+
+
+def _tallied(row: repo.Row, read: KeyResult, result: KeyResult, reads: Reads) -> Passed:
+    """What a saved pass gives the stop conditions: each side it read failed or not, and its result."""
+    states = {Side.A: read.side_a, Side.B: read.side_b}
+    calls = tuple(states[side].kind is SideStateKind.ERROR for side in reads)
+    first_read = row["pass_no"] == 1 and row["retries"] == 0  # a retry's read is counted once
+    return Passed.of(row["key_masked"], calls, result, first_read=first_read)
 
 
 def _confirmed(run: _Run, pass_no: int, read: KeyResult, first: KeyResult | None) -> KeyResult:

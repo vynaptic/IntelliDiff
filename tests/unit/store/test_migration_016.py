@@ -96,7 +96,9 @@ async def stored(empty_pool: AsyncConnectionPool) -> AsyncConnectionPool:
     async with empty_pool.connection() as conn:
         after = dict(await _all(conn, tables))
         assert {name: after[name] for name in before} == before  # no table is rewritten: not ds.runs
-        assert set(after) - set(before) == {"prechecks", "precheck_pairs", "worker_sweep"}  # 022's too
+        assert set(after) - set(before) == {
+            "prechecks", "precheck_pairs", "worker_sweep", "workers", "target_pauses", "stop_feed"
+        }  # 022's and 024's too
         assert await _all(conn, triggers) == fired and await _all(conn, functions) == made_
         assert await _all(conn, "SELECT count(*), count(guard) FROM ds.runs") == [(3, 0)]
         # Nor scanned: the column is nullable, has no default and brings no constraint to validate.

@@ -98,6 +98,9 @@ if tool == "ds":
         if scenario.get("signal"):
             os.kill(os.getpid(), scenario["signal"])
         done(code=scenario.get("exit", 0))
+    if args[0] == "worker":
+        time.sleep(scenario.get("worker_s", 0))
+        done(code=scenario.get("worker_exit", 0))
     done("ds says this\n")
 done(code=99, err=f"the {tool} stub has no answer for {args}\n")
 """
@@ -553,6 +556,8 @@ def test_conditions_say_stock_only_for_the_image_s_settings(tmp_path: Path) -> N
     assert "poll 0.05 s, judge processes by default;" in stock
     made["profile"] = bench._profile(10**8, judges=0)
     assert "poll 0.05 s, judge processes 0;" in bench._conditions(path, made)
+    made["options"]["slot_workers"] = 2
+    assert "judge processes 0, 2 slots-only workers beside it;" in bench._conditions(path, made)
 
 
 def test_report_warns_changed_code_and_mixed_hosts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -947,6 +952,8 @@ def test_refusals_by_stage(stubs: Stubs, tmp_path: Path, monkeypatch: pytest.Mon
         " parameters in the file",
         ("--out", str(tmp_path / "none")): f"--out {tmp_path / 'none'} is not a folder",
         ("--judges", "100000"): f"--judges 100000: at most this host's CPU count, {os.process_cpu_count()}",
+        ("--slot-workers", "100000"): "--slot-workers 100000: at most this host's CPU count,"
+        f" {os.process_cpu_count()}",
         ("--server", f"file:{tmp_path / 'remote'}"): "the server's DSN names a remote host with sslmode"
         " prefer: use sslmode=verify-full, since the benchmark connects as a superuser",
     }  # fmt: skip
@@ -1207,7 +1214,8 @@ def test_judges_are_the_worker_s_judge_processes(
     stubs: Stubs, monkeypatch: pytest.MonkeyPatch, judges: int | None
 ) -> None:
     """``--judges`` is ds's worker.judge_processes, in both settings files ds reads, the result's profile and
-    its options; without it the settings name none, and ds judges as it does by default on the host."""
+    its options; without it the settings name none, and ds judges as it does by default on the host. The
+    options keep ``--slot-workers`` too, none unless named."""
     written: dict[str, Any] = {}
 
     def ds(b: bench.Bench, *args: str) -> Any:
@@ -1221,6 +1229,7 @@ def test_judges_are_the_worker_s_judge_processes(
     monkeypatch.setattr(bench, "_ds", ds)
     monkeypatch.setattr(bench, "_size", fake_size(10**6))
     named = [] if judges is None else ["--judges", str(judges)]
+    named += ["--slot-workers", "1"] if judges == 2 else []
     done = stubs.bench("--allow-dirty", "--scenarios", "sparse", *named)
     assert done.exit_code == 0, done.output
     worker = bench.WORKER | ({} if judges is None else {"judge_processes": judges})
@@ -1228,6 +1237,37 @@ def test_judges_are_the_worker_s_judge_processes(
     [path] = stubs.out.iterdir()
     kept = json.loads(path.read_text())
     assert (kept["options"]["judges"], kept["profile"]["settings"]["worker"]) == (judges, worker)
+    assert kept["options"]["slot_workers"] == (1 if judges == 2 else 0)
+
+
+def test_slot_workers_run_beside_ds_run_and_stop_with_it(stubs: Stubs) -> None:
+    """``--slot-workers N`` starts N ``ds worker --slots-only`` on ds run's settings, with the one
+    environment, each logging to a file of its own; they are stopped once the run ended, their CPU and memory
+    kept, and one that ended before then is named by its exit code."""
+    settings, env = stubs.work / "settings.json", {"PATH": "/usr/bin:/bin", "HOME": str(stubs.tmp)}
+    opts = SimpleNamespace(slot_workers=2, ds=stubs.bin / "ds")
+    beside = SimpleNamespace(opts=opts, work=stubs.work, env=env)
+    stubs.scenario(worker_s=30)
+    started = bench._slots(beside, settings)  # type: ignore[arg-type]
+    deadline = time.monotonic() + 10
+    while len(stubs.runs("ds")) < 2:  # each has logged its argv: it runs
+        assert time.monotonic() < deadline, "the slots-only workers did not start"
+        time.sleep(0.05)
+    stopped = bench._slots_stopped(started)
+    assert all(proc.returncode is not None for proc in started)
+    assert (stopped["count"], stopped["ended_early"]) == (2, []) and stopped["peak_rss_bytes"] > 0
+    argv = ["worker", "--slots-only", "--config", str(settings)]
+    assert [run["argv"] for run in stubs.runs("ds")] == [argv] * 2
+    assert all(run["env"] == beside.env for run in stubs.runs("ds"))
+    assert sorted(p.name for p in stubs.work.glob("ds-slots-*.log")) == ["ds-slots-1.log", "ds-slots-2.log"]
+    stubs.scenario(worker_s=0, worker_exit=3)
+    early = bench._slots(beside, settings)  # type: ignore[arg-type]
+    for proc in early:  # ended, and left for _reap to reap
+        os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOWAIT)
+    assert bench._slots_stopped(early)["ended_early"] == [3, 3]
+    beside.opts.slot_workers = 0
+    assert bench._slots(beside, settings) == [] and bench._slots_stopped([]) == {  # type: ignore[arg-type]
+        "count": 0, "cpu_s": 0, "peak_rss_bytes": None, "ended_early": []}
 
 
 def test_clean_removes_marked_work_folders(stubs: Stubs) -> None:

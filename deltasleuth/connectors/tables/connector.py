@@ -23,7 +23,7 @@ from deltasleuth.connectors.base import (
     guarded,
     utc_now_iso,
 )
-from deltasleuth.connectors.http import TargetGate
+from deltasleuth.connectors.http import Gates, TargetGate
 from deltasleuth.connectors.tables.engine import (
     TIMEOUT,
     UNREACHABLE,
@@ -51,10 +51,10 @@ FIXED_ARMS = 2000  # keys of a statement over fixed files whose rows are not lar
 
 @asynccontextmanager
 async def population_snapshot[S: Session](
-    gates: dict[str, TargetGate], engine: Engine[S], target: Target, timeout_s: float
+    gates: Gates, engine: Engine[S], target: Target, timeout_s: float
 ) -> AsyncIterator[S]:
     """A census, key listing or sample frame holds one target slot and one rate tick for its read."""
-    gate = gates.setdefault(target.target_id, TargetGate.for_target(target))
+    gate = gates.of(target)
     async with gate.semaphore:
         await gate.limiter.acquire()
         async with engine.snapshot(target, timeout_s=timeout_s) as session:
@@ -63,7 +63,7 @@ async def population_snapshot[S: Session](
 
 @asynccontextmanager
 async def scan_slots(
-    gates: dict[str, TargetGate], targets: Collection[Target], *, prefetch: bool = False
+    gates: Gates, targets: Collection[Target], *, prefetch: bool = False
 ) -> AsyncIterator[asyncio.Lock | None]:
     """Reserve the two sides' read slots before opening either snapshot, in target order across runs.
     When both sides use one target and only one slot is free, share it and serialise their cursor I/O."""
@@ -71,7 +71,7 @@ async def scan_slots(
     async with AsyncExitStack() as stack:
         for target in sorted(targets, key=lambda t: t.target_id):
             if target.target_id not in held:
-                gate = gates.setdefault(target.target_id, TargetGate.for_target(target))
+                gate = gates.of(target)
                 held[target.target_id] = gate.semaphore
                 await stack.enter_async_context(gate.semaphore)
         serial = None

@@ -3,8 +3,10 @@
 ``maxKeys`` caps the key set when the run is created. ``maxCycles``, ``until`` and ``maxDuration``
 end a soak at a cycle boundary; ``until`` and ``maxDuration`` also stop a cycle in progress, like
 the call and key conditions a ``StopMonitor`` judges as keys finish. Rates are judged once their
-window is full, so the first few calls cannot stop a run on their own. Each worker process judges
-the calls and keys it made itself; the CRITICAL findings count every key's latest saved result.
+window is full, so the first few calls cannot stop a run on their own. A worker alone judges the calls
+and keys of its slots as it saves them; where more than one worker processes keys, each saved group feeds
+the store what it gives the conditions (``Passed``), and the sweep judges the run's feed in the order the
+groups were saved. The CRITICAL findings count every key's latest saved result.
 """
 
 from __future__ import annotations
@@ -53,6 +55,19 @@ class StopConditions:
             max_unexplained_critical=entry.get("maxUnexplainedCritical"),
         )
 
+    @property
+    def counted(self) -> bool:
+        """Whether a condition counts calls or keys: the run's saved groups feed it."""
+        return any(
+            limit is not None
+            for limit in (
+                self.max_error_rate,
+                self.max_inconclusive_rate,
+                self.max_consecutive_errors,
+                self.max_unexplained_critical,
+            )
+        )
+
     def expired(self, started_at: datetime, now: datetime) -> str | None:
         """``until`` or ``maxDuration`` (counted from the run's start) reached at ``now``."""
         if self.until is not None and now >= self.until:
@@ -66,6 +81,37 @@ class StopConditions:
         if self.max_cycles is not None and cycle >= self.max_cycles:
             return STOP_PREFIX + "maxCycles"
         return self.expired(started_at, next_at)
+
+
+@dataclass(frozen=True)
+class Passed:
+    """What one saved pass of a key gives the stop conditions: whether each side it read failed (judged
+    ERROR), in the order read; whether its first read was INCONCLUSIVE (None: not a first read); and its
+    unsuppressed CRITICAL findings, of the masked ``key``."""
+
+    key: str
+    calls: tuple[bool, ...]
+    inconclusive: bool | None
+    critical: int
+
+    @classmethod
+    def of(cls, key: str, calls: tuple[bool, ...], result: KeyResult, *, first_read: bool) -> Passed:
+        inconclusive = result.outcome is Outcome.INCONCLUSIVE if first_read else None
+        return cls(key, calls, inconclusive, _critical(result))
+
+    def stored(self, keyed: bool) -> list[Any]:
+        """As ``ds.stop_feed`` holds it; the masked key only where ``keyed`` (the run counts CRITICAL
+        findings)."""
+        return [self.key if keyed else "", list(self.calls), self.inconclusive, self.critical]
+
+    @classmethod
+    def loaded(cls, item: list[Any]) -> Passed:
+        key, calls, inconclusive, critical = item
+        return cls(key, tuple(calls), inconclusive, int(critical))
+
+
+def _critical(result: KeyResult) -> int:
+    return sum(1 for f in result.findings if not f.suppressed and f.severity is Severity.CRITICAL)
 
 
 def _window(entry: Mapping[str, Any] | None) -> RateWindow | None:
@@ -112,14 +158,23 @@ class StopMonitor:
 
     def record_result(self, key: str, result: KeyResult, *, first_read: bool) -> None:
         """A first read feeds the INCONCLUSIVE window; every result replaces the key's CRITICAL count."""
+        self._settled(Passed.of(key, (), result, first_read=first_read))
+
+    def record_pass(self, passed: Passed) -> None:
+        """A saved pass: its calls, then its result."""
+        for failed in passed.calls:
+            self.record_call(failed=failed)
+        self._settled(passed)
+
+    def _settled(self, passed: Passed) -> None:
         c = self.conditions
-        if first_read:
-            self._keys.append(result.outcome is Outcome.INCONCLUSIVE)
+        if passed.inconclusive is not None:
+            self._keys.append(passed.inconclusive)
             if _exceeded(self._keys, c.max_inconclusive_rate):
                 self._fire("maxInconclusiveRate")
         if c.max_unexplained_critical is None:
             return
-        count = sum(1 for f in result.findings if not f.suppressed and f.severity is Severity.CRITICAL)
+        key, count = passed.key, passed.critical
         self._critical_total += count - self.critical.pop(key, 0)
         if count:
             self.critical[key] = count

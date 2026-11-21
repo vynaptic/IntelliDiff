@@ -122,7 +122,7 @@ def connect(
     target = ctx.targets.live(target_id)
     if capabilities is not None:
         target = dataclasses.replace(target, capabilities=capabilities)
-    gate = ctx.gates.setdefault(target_id, TargetGate.for_target(target))
+    gate = ctx.gates.of(target)
     limits = {"table": table, "max_body_bytes": max_body_bytes, "max_values": max_values}
     return CONNECTORS[target.kind](target, execution, gate, **limits)
 

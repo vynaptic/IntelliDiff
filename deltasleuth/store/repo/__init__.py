@@ -152,6 +152,7 @@ from deltasleuth.store.repo.connection import (
 )
 from deltasleuth.store.repo.datakeys import data_key, data_keys, insert_data_key, rewrap_data_key
 from deltasleuth.store.repo.keys import (
+    analyse_keys,
     analyse_new,
     cancel_keys,
     complete_inline,
@@ -462,6 +463,16 @@ from deltasleuth.store.repo.users import (
     upsert_user,
     user_tokens,
 )
+from deltasleuth.store.repo.workers import (
+    beat_worker,
+    feed_stops,
+    leave_worker,
+    live_workers,
+    pause_targets,
+    stored_evidence,
+    take_stop_feed,
+    target_pauses,
+)
 
 __all__ = [
     "COUNTED",
@@ -568,6 +579,7 @@ __all__ = [
     "adjudication_draw",
     "adjudication_holders",
     "analyse_cause_links",
+    "analyse_keys",
     "analyse_new",
     "annex_answers",
     "append_chat_message",
@@ -587,6 +599,7 @@ __all__ = [
     "audit_upgrade_seq",
     "audited",
     "backfill_owed",
+    "beat_worker",
     "blob_addresses",
     "bound_notify_feed",
     "brief_causes",
@@ -646,6 +659,7 @@ __all__ = [
     "end_cycle",
     "end_delivery",
     "end_mute",
+    "feed_stops",
     "finish_precheck",
     "finish_purge",
     "finished_since",
@@ -712,6 +726,7 @@ __all__ = [
     "last_readiness",
     "last_sweep",
     "lease_due",
+    "leave_worker",
     "ledger",
     "ledger_draw",
     "legacy_blob_names",
@@ -745,6 +760,7 @@ __all__ = [
     "list_tokens",
     "list_users",
     "live_sampled_runs",
+    "live_workers",
     "lock_blobs",
     "lock_pairs",
     "lost",
@@ -768,6 +784,7 @@ __all__ = [
     "pages",
     "pair_targets",
     "pause_schedule",
+    "pause_targets",
     "ping",
     "precheck_pair",
     "precheck_pairs",
@@ -860,7 +877,10 @@ __all__ = [
     "start_next_cycle",
     "start_purge",
     "storable",
+    "stored_evidence",
     "stratum_counts",
+    "take_stop_feed",
+    "target_pauses",
     "token_by_id",
     "touch_session",
     "touch_token",

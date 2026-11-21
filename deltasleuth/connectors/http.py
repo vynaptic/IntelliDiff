@@ -12,9 +12,10 @@ import asyncio
 import random
 import time
 from collections import OrderedDict
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from types import TracebackType
+from typing import Any
 
 import aiohttp
 from aiohttp.abc import AbstractResolver
@@ -87,18 +88,29 @@ class _TargetSlots:
         self._admit()
 
 
+def share(total: int, count: int, rank: int) -> int:
+    """One worker's part of an in-flight cap of ``total`` that ``count`` workers share, by its ``rank`` among
+    them (0 first): the parts sum to ``total``, the first ranks taking what does not divide, so a worker
+    may get none."""
+    return total // count + (rank < total % count)
+
+
 class TargetGate:
     """Politeness state shared by every connector of one target: budget, slots, pause, and a breaker for
     each ``execution.circuitBreaker`` its connectors declare.
 
     One request per ``1 / rate_per_s`` seconds with no burst, so no second ever carries more
-    than ``rate_per_s + 1`` requests. ``not_before`` (a Retry-After pause) only moves later.
+    than ``rate_per_s + 1`` requests. ``not_before`` (a Retry-After pause) only moves later. Where
+    ``count`` workers process keys, this process holds its share (``count``, its ``rank``): the rate divided
+    by ``count``, and its ``share`` of the in-flight cap.
     """
 
-    def __init__(self, rate_per_s: float, max_concurrency: int) -> None:
+    def __init__(self, rate_per_s: float, max_concurrency: int, shared: tuple[int, int] = (1, 0)) -> None:
         self.semaphore = _TargetSlots()
+        self._shared = shared
         self.rebudget(rate_per_s, max_concurrency)
         self.not_before = 0.0  # time.monotonic() before which nothing is sent
+        self.told = 0.0  # the latest not_before the other workers know of
         self._breakers: dict[tuple[float | None, int, float], CircuitBreaker] = {}
 
     def rebudget(self, rate_per_s: float, max_concurrency: int) -> None:
@@ -107,8 +119,19 @@ class TargetGate:
         the slots they hold."""
         if rate_per_s <= 0 or max_concurrency < 1:
             raise ConnectorConfigError("rate_per_s must be > 0 and max_concurrency >= 1")
-        self.limiter = AsyncLimiter(1, 1.0 / rate_per_s)
-        self.semaphore.resize(max_concurrency)
+        self.budget = (rate_per_s, max_concurrency)
+        self._apply()
+
+    def share(self, count: int, rank: int) -> None:
+        """Hold this process's share of the budget: ``count`` workers process keys, this one ``rank``th of
+        them (0 first). Calls in flight finish in the slots they hold."""
+        self._shared = (count, rank)
+        self._apply()
+
+    def _apply(self) -> None:
+        (rate, cap), (count, rank) = self.budget, self._shared
+        self.limiter = AsyncLimiter(1, count / rate)
+        self.semaphore.resize(share(cap, count, rank))
 
     @property
     def max_concurrency(self) -> int:
@@ -122,12 +145,75 @@ class TargetGate:
         """Seconds left of the target's Retry-After pause, before which nothing is sent; 0 when none."""
         return max(self.not_before - time.monotonic(), 0.0)
 
+    def pause(self, seconds: float) -> None:
+        """Send nothing for ``seconds`` from now at least: another worker met the target's Retry-After."""
+        until = time.monotonic() + seconds
+        self.not_before = max(self.not_before, until)
+        self.told = max(self.told, until)
+
     def breaker(self, execution: ExecutionConfig) -> CircuitBreaker:
         """The target's breaker for what ``execution`` declares (rate, window, cooldown), shared by every
         connector that declares the same: a spec's own settings govern its calls, and an open breaker
         refuses no call of a spec that declares another, or none (whose own never opens)."""
         declared = (execution.breaker_error_rate, execution.breaker_window, execution.breaker_cooldown_s)
         return self._breakers.setdefault(declared, CircuitBreaker(*declared))
+
+    def breakers(self) -> dict[str, CircuitBreaker]:
+        """The gate's breakers, each by its declaration as the store names it (rate/window/cooldown)."""
+        return {"/".join(map(str, declared)): breaker for declared, breaker in self._breakers.items()}
+
+
+class Gates(dict[str, TargetGate]):
+    """The process's gate of each target, by its id, which every connector, scan and census of the process
+    shares. Where more than one worker processes keys (``runner.fleet``), each gate holds this process's
+    share of its target's budget, and the pauses one worker meets reach the others through the store."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.count, self.rank = 1, 0  # the workers that process keys, and this process's place among them
+
+    def of(self, target: Target) -> TargetGate:
+        """The target's gate, made at its first use with this process's share."""
+        gate = self.get(target.target_id)
+        if gate is None:
+            gate = self[target.target_id] = TargetGate(
+                target.rate_per_s, target.max_concurrency, (self.count, self.rank)
+            )
+        return gate
+
+    def share(self, count: int, rank: int) -> None:
+        """Hold this process's share of every target's budget: ``count`` workers process keys, this one
+        ``rank``th of them (0 first)."""
+        if (count, rank) != (self.count, self.rank):
+            self.count, self.rank = count, rank
+            for gate in self.values():
+                gate.share(count, rank)
+
+    def untold(self) -> dict[tuple[str, str], float]:
+        """The pauses this process met that the other workers do not know of yet, which count as told from
+        now on: by (target id, '' for a Retry-After, else the breaker's declaration), the seconds left."""
+        found: dict[tuple[str, str], float] = {}
+        for target_id, gate in self.items():
+            if gate.not_before > gate.told and (left := gate.paused_for()) > 0:
+                gate.told = gate.not_before
+                found[(target_id, "")] = left
+            for name, breaker in gate.breakers().items():
+                if breaker.untold():
+                    found[(target_id, name)] = breaker.closed_for()
+        return found
+
+    def hold(self, pauses: Iterable[Mapping[str, Any]]) -> None:
+        """Honour the pauses the workers recorded (``target_id``, ``breaker``, ``left_s``), each on this
+        process's gate of its target and that gate's breaker of its declaration, where they exist: one made
+        later takes the pause in at the next beat."""
+        for pause in pauses:
+            gate = self.get(pause["target_id"])
+            if gate is None:
+                continue
+            if not pause["breaker"]:
+                gate.pause(pause["left_s"])
+            elif (breaker := gate.breakers().get(pause["breaker"])) is not None:
+                breaker.hold(pause["left_s"])
 
 
 class _Deadline:
@@ -208,7 +294,7 @@ class HttpCaller:
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession(
                 connector=aiohttp.TCPConnector(
-                    limit=self._gate.max_concurrency,
+                    limit=max(self._gate.max_concurrency, 1),  # 0 would mean no limit at all
                     resolver=self._resolver,
                     use_dns_cache=False,  # every new connection is re-checked by the SSRF guard
                 ),

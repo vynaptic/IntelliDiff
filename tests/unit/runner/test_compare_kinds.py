@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from deltasleuth.connectors.base import BatchConnector, Connector
+from deltasleuth.connectors.http import Gates
 from deltasleuth.connectors.rest import RestConnector
 from deltasleuth.core.spec import compile_spec, load_targets
 from deltasleuth.core.spec.documents import parse_yaml_text
@@ -58,7 +59,7 @@ async def test_a_third_kind_is_selected_by_its_target_s_kind(
 
     monkeypatch.setitem(compare.CONNECTORS, "queue", queue)
     monkeypatch.setattr(compare.product, "follow", lambda ctx: None)  # no product list to take in
-    reader = compare.LiveReader(SimpleNamespace(targets=targets, gates={}), spec)  # type: ignore[arg-type]
+    reader = compare.LiveReader(SimpleNamespace(targets=targets, gates=Gates()), spec)  # type: ignore[arg-type]
     try:
         assert isinstance(made[0], Connector) and not isinstance(made[0], BatchConnector)
         assert isinstance(reader._connectors[Side.A], RestConnector)  # side a's target is still a service

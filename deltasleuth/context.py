@@ -1,6 +1,7 @@
 """The long-lived objects every entry point shares: db pool, targets (the targets file's and those
 declared in the product, ``deltasleuth.targets``), tokeniser, keyring, evidence, LLM profiles, and one
-politeness gate per target for the whole process.
+politeness gate per target for the whole process (its share of the target's budget where several workers
+process keys).
 
 The store is async (psycopg ``AsyncConnectionPool``) throughout this release: the API and the runner
 share one event loop. The keyring and the tokeniser key are ``file:`` secrets named by
@@ -27,7 +28,7 @@ from psycopg_pool import AsyncConnectionPool
 from deltasleuth import targets as product
 from deltasleuth.auth.oidc import Oidc
 from deltasleuth.config import KEY_FILE, Settings
-from deltasleuth.connectors.http import TargetGate
+from deltasleuth.connectors.http import Gates
 from deltasleuth.core.masking import run_masking
 from deltasleuth.core.secrets import read_secret
 from deltasleuth.core.spec import TargetRegistry, compile_spec
@@ -128,8 +129,9 @@ class Context:
     kek: str | None = None  # the KEK new data keys are wrapped under (None: the current one)
     signer: PackSigner | None = None  # the evidence packs' signing key, which only the server loads
     anchor_key: bytes = field(default=b"", repr=False)  # empty: no anchor is written or read
-    # target id -> its gate, shared by the worker, compares and key listings: one rate budget
-    gates: dict[str, TargetGate] = field(default_factory=dict)
+    # target id -> its gate, shared by the worker, compares and key listings: one rate budget, of which this
+    # process holds its share while other workers process keys too
+    gates: Gates = field(default_factory=Gates)
     _sealers: dict[str, Sealer] = field(default_factory=dict, repr=False)  # run id -> its sealer
 
     def new_sealer(self, run_id: str) -> tuple[str, bytes, Sealer]:

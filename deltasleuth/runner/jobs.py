@@ -44,6 +44,7 @@ from deltasleuth.runner.keys import KeyAuthRefused
 from deltasleuth.runner.runs import AUTH_PAUSE, pause_run, stop_run
 from deltasleuth.runner.scan import scan
 from deltasleuth.runner.slots import KEY_MISSING, Slots, key_missing
+from deltasleuth.runner.stop import Passed, StopConditions, StopMonitor
 from deltasleuth.store import chain, repo
 
 STALLS = (SnapshotLost, TargetRefused, KeyUnfit)  # a scan resumes after them, unless it saved no checkpoint
@@ -162,6 +163,54 @@ class Cancellations(Job):
         for run in active:
             if run["status"] == "cancelling":
                 await repo.cancel_keys(conn, run["run_id"])
+
+
+class StopFeed(Job):
+    """Judges the stop conditions of the runs whose saved groups fed them to the store (``ds.stop_feed``),
+    which their slots do while more than one worker processes keys: in the order the groups were saved, one
+    monitor a run, as its slots judge them alone. A run that meets one is stopped, whichever worker read its
+    keys. Each sweep takes the feed first, on a connection of its own, so a group is judged once; a cycle
+    does not end while a group of it waits to be judged (``repo.cycle_done``)."""
+
+    name = "stop conditions"
+
+    def __init__(self, ctx: Context) -> None:
+        super().__init__(ctx)
+        self.monitors: dict[str, StopMonitor] = {}  # by run, while it runs
+        self.met: list[tuple[str, str]] = []  # (run id, reason): the runs to stop this sweep
+
+    async def before(self) -> None:
+        async with self.ctx.pool.connection() as conn:
+            fed = await repo.take_stop_feed(conn)
+        for row in fed:
+            monitor = self.monitors.get(row["run_id"]) or await self._monitor(row["run_id"])
+            if monitor is not None:  # else the run no longer runs
+                for item in row["passes"]:
+                    monitor.record_pass(Passed.loaded(item))
+
+    async def look(self, conn: repo.Conn, active: list[repo.Row]) -> None:
+        running = {run["run_id"] for run in active if run["status"] == "running"}
+        self.monitors = {run_id: m for run_id, m in self.monitors.items() if run_id in running}
+        now = datetime.now(UTC)
+        self.met = [(run_id, reason) for run_id, m in self.monitors.items() if (reason := m.reason(now))]
+
+    async def act(self, active: list[repo.Row]) -> None:
+        for run_id, reason in self.met:
+            log.info("run %s stopped: %s, judged across the workers", run_id, reason)
+            await stop_run(self.ctx, run_id, reason, who=WORKER)
+
+    async def _monitor(self, run_id: str) -> StopMonitor | None:
+        """A new monitor of the run, with its CRITICAL findings as the store holds them; None when it no
+        longer runs."""
+        async with self.ctx.pool.connection() as conn:
+            run = await repo.get_run(conn, run_id)
+            if run is None or run["status"] != "running":
+                return None
+            conditions = StopConditions.from_spec((await self.ctx.run_spec(conn, run)).raw)
+            counts = conditions.max_unexplained_critical is not None
+            critical = await repo.unexplained_critical(conn, run_id) if counts else None
+        monitor = self.monitors[run_id] = StopMonitor(conditions, run["started_at"], critical)
+        return monitor
 
 
 class CycleEnds(Job):

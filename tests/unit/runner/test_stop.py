@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import time
 from datetime import UTC, datetime, timedelta
 
 from deltasleuth.core.types import Canonical, ChangeType, Finding, KeyResult, Outcome, Severity, SideState
-from deltasleuth.runner.stop import RateWindow, StopConditions, StopMonitor
+from deltasleuth.runner.stop import Passed, RateWindow, StopConditions, StopMonitor
 
 T0 = datetime(2026, 9, 24, tzinfo=UTC)
 
@@ -110,3 +111,24 @@ def test_time_limits_and_cycle_boundaries() -> None:
     assert c.at_boundary(2, T0, T0 + timedelta(seconds=30)) is None
     assert c.at_boundary(3, T0, T0 + timedelta(seconds=30)) == "stop_condition:maxCycles"
     assert c.at_boundary(1, T0, T0 + timedelta(seconds=90)) == "stop_condition:maxDuration"
+
+
+def test_a_monitor_fed_through_the_store_judges_as_one_fed_by_its_slots() -> None:
+    """Passes stored as the stop feed holds them and loaded again give a monitor what the slots give it, in
+    the same order: the same counts and the same first reason. A run that counts no CRITICAL finding stores
+    no key."""
+    conditions = StopConditions(max_consecutive_errors=4, max_unexplained_critical=3)
+    direct, fed = StopMonitor(conditions, T0, {"K9": 1}), StopMonitor(conditions, T0, {"K9": 1})
+    passes = [
+        Passed.of("K1", (True, False), _result(Outcome.MISMATCH, critical=1), first_read=True),
+        Passed.of("K2", (True, True), _result(Outcome.INCONCLUSIVE), first_read=True),
+        Passed.of("K9", (), _result(Outcome.MATCH), first_read=False),  # its stored count replaced
+        Passed.of("K3", (True, True), _result(Outcome.MISMATCH, critical=2), first_read=False),
+    ]
+    for passed in passes:
+        direct.record_pass(passed)
+        fed.record_pass(Passed.loaded(json.loads(json.dumps(passed.stored(keyed=True)))))
+    assert direct.critical == fed.critical == {"K1": 1, "K3": 2}
+    assert direct.reason(T0) == fed.reason(T0) == "stop_condition:maxConsecutiveErrors"
+    assert [p.inconclusive for p in passes] == [False, True, None, None]
+    assert passes[0].stored(keyed=False) == ["", [True, False], False, 1]

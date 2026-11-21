@@ -1,14 +1,17 @@
 """The worker (``ds worker``, also inside ``ds serve``): processes the due keys of running runs.
 
-One worker per database processes keys (it holds a Postgres advisory lock); another waits until it stops, so
-a target's rate budget holds across processes. While it holds the lock it runs two parts: its slots
-(``runner.slots``), which lease, read, judge and save keys, and its sweep (``runner.supervisor``), which each
-poll gives every job (``runner.jobs``) its turn: cancellations, cycle ends (each run's end a task of its own),
-table scans, key censuses, sample draws, the schema guard, schedules, table pre-checks, purge, the licence
-watch, the notifier, readiness, the sweep record, the audit anchor and the readers of ended runs. A job's
-failure is logged by its type and where it was raised, and costs that job's turn alone: it never ends the
-sweep or restarts the slots. The worker of ``ds worker`` or ``ds serve`` fires schedules; ``ds run``'s
-in-process worker fires none (``run_worker(schedules=False)``).
+One worker per database sweeps (it holds a Postgres advisory lock); another waits until it stops. While it
+holds the lock it runs two parts: its slots (``runner.slots``), which lease, read, judge and save keys, and
+its sweep (``runner.supervisor``), which each poll gives every job (``runner.jobs``) its turn: cancellations,
+stop conditions, cycle ends (each run's end a task of its own), table scans, key censuses, sample draws, the
+schema guard, schedules, table pre-checks, purge, the licence watch, the notifier, readiness, the sweep
+record, the audit anchor and the readers of ended runs. A job's failure is logged by its type and where it
+was raised, and costs that job's turn alone: it never ends the sweep or restarts the slots. The worker of
+``ds worker`` or ``ds serve`` fires schedules; ``ds run``'s in-process worker fires none
+(``run_worker(schedules=False)``). A slots-only worker (``ds worker --slots-only``) never takes the lock: its
+slots lease, read, judge and save keys beside the sweeping worker's, and it closes the readers of ended runs
+itself. Every worker that processes keys registers among them (``runner.fleet``) and holds its share of each
+target's budget, so a target's limits hold for the whole installation.
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from psycopg.conninfo import make_conninfo
 
 from deltasleuth.context import Context
 from deltasleuth.runner.cycle import located
+from deltasleuth.runner.fleet import Roster
 from deltasleuth.runner.jobs import (
     FIRING,
     GRACE_DAYS,
@@ -152,8 +156,11 @@ def _probes(check_s: float) -> dict[str, int]:
     }
 
 
-async def run_worker(ctx: Context, *, stop: asyncio.Event | None = None, schedules: bool = True) -> None:
+async def run_worker(
+    ctx: Context, *, stop: asyncio.Event | None = None, schedules: bool = True, slots_only: bool = False
+) -> None:
     """Process keys until ``stop`` is set or the task is cancelled; unfinished leases are handed back.
+    ``slots_only``: never take the lock or sweep, only process keys beside the worker that does.
 
     The worker lock lives on its own connection, with TCP keepalive probes. If that connection is lost (a
     database restart), or a check on it is not answered within the check period (a failover, a half-open
@@ -173,6 +180,9 @@ async def run_worker(ctx: Context, *, stop: asyncio.Event | None = None, schedul
     try:
         while not stop.is_set():
             try:
+                if slots_only:
+                    await _work(ctx, None, stop, schedules, judges)
+                    continue
                 address = ctx.pool.conninfo
                 assert isinstance(address, str)  # the store's address, as the pool was given it
                 with_probes = make_conninfo(address, **probes)
@@ -182,7 +192,8 @@ async def run_worker(ctx: Context, *, stop: asyncio.Event | None = None, schedul
                         return
                     await _work(ctx, lock, stop, schedules, judges)
             except Exception as exc:  # the lock lost, or a slot or the sweep ended on a bug
-                log.warning("worker stopped (%s): slots restart once the lock is retaken", located(exc))
+                again = "the slots restart" if slots_only else "slots restart once the lock is retaken"
+                log.warning("worker stopped (%s): %s", located(exc), again)
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(stop.wait(), poll_s)
     finally:
@@ -209,24 +220,37 @@ def stalled(ctx: Context, age_s: float | None) -> bool:
 
 async def _work(
     ctx: Context,
-    lock: psycopg.AsyncConnection,
+    lock: psycopg.AsyncConnection | None,
     stop: asyncio.Event,
     schedules: bool,
     judges: Judges | None = None,
 ) -> None:
-    """Run the slots and the sweep while holding the lock; raise when it is lost or one of them ends."""
-    worker = _Worker(ctx, schedules, judges)
-    tasks = [asyncio.create_task(worker.slot()) for _ in range(ctx.settings.worker.concurrency)]
-    tasks.append(asyncio.create_task(worker.sweep()))
+    """Run the slots, and the sweep while holding the lock on ``lock`` (None: the slots alone, which close
+    the readers of ended runs themselves); raise when the lock is lost or one of them ends. The process
+    registers among the workers before its slots lease a key, and beats beside them."""
+    roster = Roster(ctx, sweep=lock is not None)
+    worker = _Worker(ctx, schedules, judges) if lock is not None else None
+    slots = worker.slots if worker is not None else Slots(ctx, judges)
+    tasks: list[asyncio.Task[None]] = []
     check_s = ctx.settings.worker.lease_seconds / 3  # well before any lease this worker holds expires
     try:
+        await roster.beat()
+        slot = worker.slot if worker is not None else slots.slot
+        tasks += [asyncio.create_task(slot()) for _ in range(ctx.settings.worker.concurrency)]
+        if worker is not None:
+            tasks.append(asyncio.create_task(worker.sweep()))
+        tasks.append(asyncio.create_task(roster.beating()))
         while not stop.is_set():
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), check_s)
-            try:
-                await asyncio.wait_for(repo.ping(lock), check_s)
-            except TimeoutError:
-                raise LockSilent(f"the lock's connection did not answer within {check_s:g} s") from None
+            if lock is not None:
+                try:
+                    await asyncio.wait_for(repo.ping(lock), check_s)
+                except TimeoutError:
+                    raise LockSilent(f"the lock's connection did not answer within {check_s:g} s") from None
+            else:
+                with contextlib.suppress(psycopg.Error):  # a store out of reach: at the next check
+                    await slots.forget(set())  # the readers of runs that ended
             for task in tasks:
                 if task.done():  # they loop forever: an ended one met a bug
                     task.result()
@@ -234,4 +258,5 @@ async def _work(
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        await worker.close()
+        await (worker.close() if worker is not None else slots.close())
+        await roster.leave()

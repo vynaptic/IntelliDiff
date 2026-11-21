@@ -2,18 +2,19 @@
 
     uv run python tools/bench.py run --out DIR [--rows 100k,1M,10M] [--scenarios sparse,dense,clustered,graph]
         [--shape narrow|wide] [--repeat 3] [--server file:/abs/admin-dsn] [--work DIR] [--timeout 240]
-        [--stall 10] [--max-rss BYTES] [--judges N] [--allow-dirty]
+        [--stall 10] [--max-rss BYTES] [--judges N] [--slot-workers N] [--allow-dirty]
     uv run python tools/bench.py report FILE... [--draft] [--extrapolate ROWS]
     uv run python tools/bench.py clean [--server file:/abs/admin-dsn] [--work DIR]
 
 ``run`` starts a throwaway postgres:16-alpine (never pulled), or takes a dedicated server, generates
 deterministic tables in it with generate_series, runs the product's own ``ds run`` on a fresh control plane
-per repetition, gates each repetition on exact ground truth and rewrites one deltasleuth-bench/1 result file
-in DIR after each (``bench-results/``, which git ignores, is the usual folder); ``report`` renders result
-files as Markdown, a file that is not publishable only with ``--draft``, marked DRAFT; ``clean`` recovers from
-a kill. It removes only the containers it labelled and drops only the databases it marked. Every child gets
-one scrubbed environment, and the database password stays in 0600 files, never in an argv, ``docker inspect``
-or the environment of the harness or its children; the image's entrypoint exports it, though, so the
+per repetition (with ``--slot-workers`` that many ``ds worker --slots-only`` beside it), gates each
+repetition on exact ground truth and rewrites one deltasleuth-bench/1 result file in DIR after each
+(``bench-results/``, which git ignores, is the usual folder); ``report`` renders result files as Markdown, a
+file that is not publishable only with ``--draft``, marked DRAFT; ``clean`` recovers from a kill. It removes
+only the containers it labelled and drops only the databases it marked. Every child gets one scrubbed
+environment, and the database password stays in 0600 files, never in an argv, ``docker inspect`` or the
+environment of the harness or its children; the image's entrypoint exports it, though, so the
 container's postmaster keeps it in its environment while the container runs, readable by root or uid 70 where
 the container runs (Docker Desktop's VM on darwin) and through ``docker exec``. Every number is observed on
 stated hardware, synthetic data.
@@ -240,6 +241,7 @@ class Options:
     allow_dirty: bool
     ds: Path
     judges: int | None = None  # worker.judge_processes; None: the settings name none
+    slot_workers: int = 0  # ds worker --slots-only processes beside ds run
 
 
 def sizes(text: str, option: str = "--rows") -> list[int]:
@@ -342,6 +344,8 @@ def _refuse_arguments(
         fail(f"--out {out} is not a folder")
     if (judges := given.get("judges")) is not None and judges > (most := os.process_cpu_count() or 1):
         fail(f"--judges {judges}: at most this host's CPU count, {most}")
+    if (slots := given.get("slot_workers", 0)) > (most := os.process_cpu_count() or 1):
+        fail(f"--slot-workers {slots}: at most this host's CPU count, {most}")
     picked = [name for name in SCENARIOS if name in names]  # the table pairs first, then the links
     return Options(out, chosen, picked, shape, server=admin, parent=parent, ds=ds, **given)
 
@@ -709,6 +713,29 @@ def _ds(bench: Bench, *args: str) -> Any:
     return usage
 
 
+def _slots(bench: Bench, settings: Path) -> list[subprocess.Popen[bytes]]:
+    """``--slot-workers`` slots-only workers on ds run's settings, each logging to a file of its own."""
+    started = []
+    for n in range(1, bench.opts.slot_workers + 1):
+        with (bench.work / f"ds-slots-{n}.log").open("wb") as out:
+            argv = [str(bench.opts.ds), "worker", "--slots-only", "--config", str(settings)]
+            started.append(subprocess.Popen(argv, env=bench.env, cwd=bench.work, stdout=out, stderr=out))  # noqa: S603
+    return started
+
+
+def _slots_stopped(started: list[subprocess.Popen[bytes]]) -> dict[str, Any]:
+    """Stop each slots-only worker as ``_stop`` does: their count, CPU seconds together, the most memory one
+    held, and the exit code of each that had ended before."""
+    usages, ended = [], []
+    for proc in started:
+        if (usage := _reap(proc)) is not None:
+            ended.append(proc.returncode)
+        usages.append(usage or _stop(proc))
+    return {"count": len(started), "cpu_s": round(sum(u.ru_utime + u.ru_stime for u in usages), 2),
+            "peak_rss_bytes": max((_rss_bytes(u.ru_maxrss) for u in usages), default=None),
+            "ended_early": ended}  # fmt: skip
+
+
 def _ps(pid: int, env: dict[str, str]) -> int | None:
     out = _run(["ps", "-o", "rss=", "-p", str(pid)], check=False, env=env).stdout.strip()
     return int(out) * 1024 if out.isdigit() else None
@@ -941,18 +968,22 @@ def repetition(
         before = _stats(conn, bench)
     cpu, graph, err = bench.db.cpu_usec(), SCENARIOS[scenario].table == "links", bench.work / "ds-run.err"
     spec, settings = bench.work / f"bench-{'graph' if graph else 'tables'}.json", bench.work / "settings.json"
-    with err.open("wb") as stderr, (bench.work / "ds-run.out").open("wb") as stdout:
-        argv = [str(bench.opts.ds), "run", str(spec), "--config", str(settings)]
-        proc = subprocess.Popen(argv, env=bench.env, cwd=bench.work, stdout=stdout, stderr=stderr)  # noqa: S603
+    beside = _slots(bench, settings)
     try:
-        with _Poll(bench.db.dsn(run_db), [bench.database(s) for s in "ab"]) as poll:
-            w = _watch(proc, poll, time.time, err=err, limits=bench.opts.limits, stopped=bench.db.stopped,
-                       env=bench.env, mask=_masker(bench.work))  # fmt: skip
-    except BaseException:
-        if proc.returncode is None:
-            _stop(proc)
-        raise
-    rep |= {"exit": proc.returncode, "aborted": w.abort}
+        with err.open("wb") as stderr, (bench.work / "ds-run.out").open("wb") as stdout:
+            argv = [str(bench.opts.ds), "run", str(spec), "--config", str(settings)]
+            proc = subprocess.Popen(argv, env=bench.env, cwd=bench.work, stdout=stdout, stderr=stderr)  # noqa: S603
+        try:
+            with _Poll(bench.db.dsn(run_db), [bench.database(s) for s in "ab"]) as poll:
+                w = _watch(proc, poll, time.time, err=err, limits=bench.opts.limits, stopped=bench.db.stopped,
+                           env=bench.env, mask=_masker(bench.work))  # fmt: skip
+        except BaseException:
+            if proc.returncode is None:
+                _stop(proc)
+            raise
+    finally:
+        slots = _slots_stopped(beside)
+    rep |= {"exit": proc.returncode, "aborted": w.abort} | ({"slot_workers": slots} if beside else {})
     if w.abort and w.abort.startswith("the benchmark database stopped"):
         rep["noise"]["slept_s"] = None
         return rep, w.lines[-5:]
@@ -1001,6 +1032,7 @@ def repetition(
                 t: {"analyze_s": a, "autoanalyze_s": b} for _, t, a, b in analysed}}}  # fmt: skip
     rep["noise"]["slept_s"] = round((time.time() - wall) - (time.monotonic() - mono), 1)
     wrong = _judge(rep, truth(scenario, rows), counters)
+    wrong += [f"a slots-only worker exited {code} before the run ended" for code in slots["ended_early"]]
     rep["correct"] = not wrong and not rep["aborted"]
     rep["problems"] = wrong + (["restart was not clean (crash recovery)"] if clean is False else [])
     return rep, w.lines[-5:]
@@ -1269,7 +1301,7 @@ def _bench(bench: Bench, facts: dict[str, Any], started: datetime) -> int:
         options = {"rows": opts.rows, "scenarios": opts.scenarios, "shape": opts.shape, "repeat": opts.repeat,
                    "server": opts.server is not None, "timeout_min": opts.limits.timeout_min,
                    "stall_min": opts.limits.stall_min, "max_rss_bytes": opts.limits.max_rss,
-                   "judges": opts.judges}  # fmt: skip
+                   "judges": opts.judges, "slot_workers": opts.slot_workers}  # fmt: skip
         bench.result = {
             "format": FORMAT, "bench_id": bench.id, "complete": False,
             "started": f"{started:%Y-%m-%dT%H:%M:%SZ}", "ended": None, "publishable": False, "problems": [],
@@ -1342,6 +1374,9 @@ def run(
     judges: Annotated[
         int | None, typer.Option(min=0, help="ds's worker.judge_processes (default: ds's for the host).")
     ] = None,
+    slot_workers: Annotated[
+        int, typer.Option(min=0, help="ds worker --slots-only processes beside ds run (default: none).")
+    ] = 0,
     allow_dirty: Annotated[
         bool, typer.Option("--allow-dirty", help="Run uncommitted code: unpublishable.")
     ] = False,
@@ -1350,7 +1385,7 @@ def run(
     truth per repetition, one result file rewritten after each."""
     limits = Limits(timeout, stall, max_rss or int(0.6 * _memory()))
     opts = _refuse_arguments(out, rows, scenarios, shape, server, work, repeat=repeat, limits=limits,
-                             allow_dirty=allow_dirty, judges=judges)  # fmt: skip
+                             allow_dirty=allow_dirty, judges=judges, slot_workers=slot_workers)  # fmt: skip
     env, facts = _refuse_environment(opts)
     bench_id, started = secrets.token_hex(4), datetime.now(UTC)
     folder = opts.parent.resolve() / f"dsbench-{bench_id}"
@@ -1538,8 +1573,14 @@ def _conditions(path: Path, result: dict[str, Any]) -> str:
             f" {where}; PostgreSQL {pg['version']}{image} with {settings} holding"
             f" both sources and the control plane; topology {env['topology']}, rtt {env['rtt_ms']} ms; worker"
             f" concurrency {w['concurrency']}, lease {w['lease_seconds']} s, poll {w['poll_seconds']} s,"
-            f" judge processes {w.get('judge_processes', 'by default')};"
+            f" judge processes {w.get('judge_processes', 'by default')}{_beside(result)};"
             f" {result['options']['shape']} rows.")  # fmt: skip
+
+
+def _beside(result: dict[str, Any]) -> str:
+    """The slots-only workers beside ds run, as the conditions line names them; none: nothing."""
+    count = result["options"].get("slot_workers") or 0
+    return f", {count} slots-only worker{'s' if count > 1 else ''} beside it" if count else ""
 
 
 def _flags(result: dict[str, Any], record: dict[str, Any], name: str, stats: dict[str, Any]) -> str:

@@ -39,19 +39,20 @@ async def lease_due(
     groups the worker has in flight, by run; the keys of the run with the fewest come first, so runs share
     the slots in turn, and a run's own keys go by when they fell due, then in its order. Rows: run_id,
     cycle, key_masked, key_enc, pass_no (1 for the first reads, 2+ for a recheck), signoff_member and
-    retries (a sample's), refused (``hand_back``) and spec_id.
+    retries (a sample's), refused (``hand_back``) and spec_id. Each leased row is updated where the lease
+    locked it (its ctid), so no plan of the update looks a key up among all of its cycle's keys.
     """
     busy = busy or {}
     return await _rows(
         conn,
         f"""WITH due AS (
-                SELECT k.run_id, k.cycle, k.key_masked, r.spec_id, k.available_at, k.seq,
+                SELECT k.locked, k.run_id, k.cycle, k.key_masked, r.spec_id, k.available_at, k.seq,
                     coalesce(b.groups, 0) AS groups
                 FROM ds.runs r
                 LEFT JOIN unnest(%(busy)s::text[], %(groups)s::int[]) AS b (run_id, groups)
                     ON b.run_id = r.run_id
                 CROSS JOIN LATERAL (
-                    SELECT k.* FROM ds.run_keys k
+                    SELECT k.ctid AS locked, k.* FROM ds.run_keys k
                     WHERE k.run_id = r.run_id AND k.state IN ('pending', 'leased', 'recheck')
                       AND k.available_at <= now()
                     ORDER BY k.available_at, k.seq LIMIT %(limit)s FOR UPDATE SKIP LOCKED) k
@@ -62,7 +63,8 @@ async def lease_due(
             UPDATE ds.run_keys k SET state = 'leased', lease_owner = %(owner)s,
                 lease_until = now() + %(seconds)s * interval '1 second',
                 available_at = now() + %(seconds)s * interval '1 second'
-            FROM due WHERE (k.run_id, k.cycle, k.key_masked) = (due.run_id, due.cycle, due.key_masked)
+            FROM due WHERE k.ctid = due.locked
+              AND (k.run_id, k.cycle, k.key_masked) = (due.run_id, due.cycle, due.key_masked)
             RETURNING k.run_id, k.cycle, k.key_masked, k.key_enc, k.pass_no, k.signoff_member, k.retries,
                 k.refused, due.spec_id""",  # noqa: S608
         {
@@ -224,12 +226,14 @@ async def last_sweep(conn: Conn) -> Row | None:
 
 
 async def cycle_done(conn: Conn, run_id: str, cycle: int) -> bool:
-    """True when every key of the cycle is done or cancelled, no running scan still adds keys and no
-    running run's sample is still to be drawn (a stopped run ends its cycle undrawn)."""
+    """True when every key of the cycle is done or cancelled, no running scan still adds keys, no running
+    run's sample is still to be drawn (a stopped run ends its cycle undrawn) and the sweep has judged the stop
+    conditions of every group saved (``ds.stop_feed``)."""
     return await _value(
         conn,
         """SELECT NOT EXISTS (SELECT 1 FROM ds.run_keys WHERE run_id = %(run_id)s AND cycle = %(cycle)s
                                 AND state IN ('pending', 'leased', 'recheck'))
+              AND NOT EXISTS (SELECT 1 FROM ds.stop_feed WHERE run_id = %(run_id)s)
               AND NOT EXISTS (SELECT 1 FROM ds.scans sc JOIN ds.runs r USING (run_id)
                               WHERE sc.run_id = %(run_id)s AND sc.cycle = %(cycle)s AND r.status = 'running'
                                 AND NOT (sc.state->>'done')::boolean)
@@ -242,21 +246,38 @@ async def cycle_done(conn: Conn, run_id: str, cycle: int) -> bool:
 async def analyse_new(conn: Conn) -> bool:
     """ANALYZE the tables a cycle end joins when one of them holds rows but no column statistics, as in a
     new store autovacuum has not analysed yet (its insert-driven VACUUM counts the rows, reltuples, but
-    gathers no statistics): without them the planner takes a run's rows for one and joins each key to all
-    of the run's findings and results, quadratic in differing keys. An
-    analysed empty table has neither. Whether it analysed."""
+    gathers no statistics), or one whose rows came after a worker analysed it empty or analysed only the run's
+    keys (``analyse_keys``): without them the planner takes a run's rows for one and joins each key to all
+    of the run's findings and results, quadratic in differing keys. An empty table has no rows to look at.
+    Whether it analysed."""
     if not await _value(
         conn,
-        """SELECT EXISTS (SELECT 1 FROM pg_class c
-                  WHERE c.oid IN ('ds.run_keys'::regclass, 'ds.results'::regclass, 'ds.findings'::regclass,
-                                  'ds.observations'::regclass)
-                    AND c.reltuples <> 0
-                    AND NOT EXISTS (SELECT 1 FROM pg_stats s WHERE s.schemaname = 'ds'
-                                    AND s.tablename = c.relname))""",
+        """SELECT EXISTS (SELECT 1 FROM (VALUES ('run_keys', EXISTS (SELECT 1 FROM ds.run_keys)),
+                                             ('results', EXISTS (SELECT 1 FROM ds.results)),
+                                             ('findings', EXISTS (SELECT 1 FROM ds.findings)),
+                                             ('observations', EXISTS (SELECT 1 FROM ds.observations)))
+                                     AS t (name, held)
+                  WHERE t.held AND NOT EXISTS (SELECT 1 FROM pg_stats s WHERE s.schemaname = 'ds'
+                                               AND s.tablename = t.name))""",
         None,
     ):
         return False
     await conn.execute("ANALYZE ds.run_keys, ds.results, ds.findings, ds.observations")
+    return True
+
+
+async def analyse_keys(conn: Conn) -> bool:
+    """ANALYZE ds.run_keys when it holds rows but no column statistics, as in a new store autovacuum has not
+    analysed yet: until then a plan may find a key among all of its cycle's keys, as the foreign keys of each
+    observation and result check it, which every group of a long run pays. Whether it analysed."""
+    if not await _value(
+        conn,
+        """SELECT EXISTS (SELECT 1 FROM ds.run_keys)
+              AND NOT EXISTS (SELECT 1 FROM pg_stats WHERE schemaname = 'ds' AND tablename = 'run_keys')""",
+        None,
+    ):
+        return False
+    await conn.execute("ANALYZE ds.run_keys")
     return True
 
 

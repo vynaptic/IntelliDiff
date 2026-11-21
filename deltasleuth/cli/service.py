@@ -201,17 +201,32 @@ def _bindable(host: str, port: int) -> None:
         raise SettingsError(f"cannot listen on {host}:{port}: {why}") from None
 
 
-def worker(config: ConfigOpt = None) -> None:
-    """Process the keys of running runs until interrupted or terminated; unfinished keys are handed back."""
+def worker(
+    slots_only: Annotated[
+        bool,
+        _o("Only lease, read, judge and save keys, beside the worker that sweeps (a ds serve or ds"
+           " worker); never sweep. It needs the same settings, workspace and evidence folder.",
+           "--slots-only"),
+    ] = False,
+    config: ConfigOpt = None,
+) -> None:
+    """Process the keys of running runs until interrupted or terminated; unfinished keys are handed back.
+
+    One worker of a database sweeps (ends cycles, scans tables, fires schedules and the like); another waits
+    until it stops. With --slots-only it never sweeps: it processes keys beside the one that does, and each
+    target's rate budget and in-flight cap are shared out among the workers."""
     from deltasleuth.runner import run_worker
+    from deltasleuth.runner.fleet import check_evidence
     from deltasleuth.store import chain
 
     async def work(ctx: Context) -> None:
         await _warned(ctx)
         _notify_warned(ctx.settings)
+        if slots_only:
+            await check_evidence(ctx)
         async with chain.kept(ctx):  # the roles line, and the audit chain anchored at start and stop
             with _stopping() as stop:
-                await run_worker(ctx, stop=stop)
+                await run_worker(ctx, stop=stop, slots_only=slots_only)
 
     _service_logs()
     _siem("stdout")

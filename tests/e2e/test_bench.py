@@ -118,6 +118,23 @@ def test_harness_end_to_end_small(pg_server: str, tmp_path: Path) -> None:
     assert drafted.exit_code == 0 and "| `dense` | 20k | 200 | restarted (only) |" in drafted.stdout
 
 
+def test_harness_with_a_slots_only_worker(pg_server: str, tmp_path: Path) -> None:
+    """``--slot-workers 1``: a ``ds worker --slots-only`` beside ``ds run`` shares its differing keys,
+    the repetition still meets its truth exactly, and the worker is stopped with the run, its CPU kept."""
+    done = run(tmp_path, "--rows", "20k", "--scenarios", "dense", "--slot-workers", "1")
+    assert done.exit_code == 0, done.output
+    assert leftovers(tmp_path) == []
+    path, result = kept(tmp_path)
+    [record] = result["sizes"][0]["scenarios"]
+    [rep] = record["repetitions"]
+    assert rep["correct"] and (rep["exit"], rep["status"], rep["problems"]) == (0, "completed", [])
+    assert rep["reads"]["keys"] == record["truth"]["candidates"]  # each differing key read once on side a
+    slots = rep["slot_workers"]
+    assert (slots["count"], slots["ended_early"]) == (1, []) and slots["cpu_s"] > 0
+    assert result["options"]["slot_workers"] == 1
+    assert "1 slots-only worker beside it;" in bench._conditions(path, result)
+
+
 def _pairs(dsn: str, table: str) -> dict[Any, tuple[Any, ...]]:
     with psycopg.connect(dsn) as conn:
         rows = conn.execute(f"SELECT * FROM {table}").fetchall()  # noqa: S608 - a constant

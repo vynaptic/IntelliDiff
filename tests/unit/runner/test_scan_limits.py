@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from deltasleuth.connectors.http import TargetGate
+from deltasleuth.connectors.http import Gates, TargetGate
 from deltasleuth.connectors.tables.connector import scan_slots
 from deltasleuth.core.types import Side, Target
 from deltasleuth.runner import scan as scanning
@@ -153,7 +153,7 @@ def _harness(monkeypatch: pytest.MonkeyPatch, source: Source, stop: dict[str, An
         return Target(target_id, "", rate_per_s=10_000, max_concurrency=1)
 
     ctx = SimpleNamespace(pool=SimpleNamespace(connection=connection), spec=get_spec, sealer=get_sealer,
-                          targets=SimpleNamespace(live=target), gates={}, tokeniser=None)
+                          targets=SimpleNamespace(live=target), gates=Gates(), tokeniser=None)
     return SimpleNamespace(
         ctx=ctx, run=run, saved=saved, keys=keys, bounds=bounds, spec=spec, sealer=sealer, plans=plans,
         waits=waits,
@@ -195,7 +195,8 @@ async def test_same_target_scan_shares_one_slot_with_key_reads_and_serialises_fe
 
 async def test_reversed_scan_pairs_share_slots_and_release_a_partial_reservation_on_cancel() -> None:
     a, b = (Target(name, "", max_concurrency=1) for name in ("a", "b"))
-    gates = {t.target_id: TargetGate.for_target(t) for t in (a, b)}
+    gates = Gates()
+    gates.update({t.target_id: TargetGate.for_target(t) for t in (a, b)})
     entered, release = asyncio.Event(), asyncio.Event()
 
     async def scan(pair: tuple[Target, Target]) -> None:

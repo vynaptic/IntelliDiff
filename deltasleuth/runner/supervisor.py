@@ -6,9 +6,10 @@ the connection back and has each job ``act``. A job's failure at any of its turn
 where it was raised, and the sweep goes on to the next job; only a store that cannot be reached while the
 sweep reads fails the sweep, which tries again a poll later. The jobs take their turns in this order:
 cancellations, the audit anchor, the schema guard, key censuses, draws, table pre-checks, schedules, scans,
-the licence watch, purge, cycle ends, the notifier, readiness, the sweep record and the readers of ended runs.
-Cancellations look before cycle ends, so a run cancelled since the last sweep ends in this one; the sweep
-record looks last, once the rest has been read.
+the licence watch, purge, stop conditions, cycle ends, the notifier, readiness, the sweep record and the
+readers of ended runs. Cancellations look before cycle ends, so a run cancelled since the last sweep ends in
+this one, and the stop conditions act before them, so a run stopped by its last group ends stopped; the
+sweep record looks last, once the rest has been read.
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ from deltasleuth.runner.jobs import (
     Scans,
     Schedules,
     SchemaGuard,
+    StopFeed,
     SweepRecord,
 )
 from deltasleuth.runner.slots import Slots
@@ -62,6 +64,7 @@ class Supervisor:
         self.scans = Scans(ctx)
         self.licence = LicenceWatch(ctx)
         self.purge = Purge(ctx)
+        self.stops = StopFeed(ctx)
         self.ends = CycleEnds(ctx)
         self.notifier = Notifications(ctx)
         self.readiness = Readiness(ctx)
@@ -78,6 +81,7 @@ class Supervisor:
             self.scans,
             self.licence,
             self.purge,
+            self.stops,
             self.ends,
             self.notifier,
             self.readiness,
