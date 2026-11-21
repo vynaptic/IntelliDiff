@@ -100,7 +100,7 @@ export function Targets() {
   const listed = !!targets.data?.items.some((t) => t.declared_in === 'product');
   // A credential's box: masked, never offered to the browser's own stores and inside no form that submits.
   const credential = (value: string, kept: boolean | undefined, onChange: (value: string) => void) => (
-    <input type="password" autoComplete="off" size={32} value={value} onChange={(ev) => onChange(ev.target.value)}
+    <input type="password" autoComplete="off" aria-label="Credential" size={32} value={value} onChange={(ev) => onChange(ev.target.value)}
       placeholder={kept ? 'stored: leave empty to keep it' : undefined} />
   );
 

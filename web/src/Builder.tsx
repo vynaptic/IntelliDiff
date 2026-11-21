@@ -109,7 +109,7 @@ export function Builder({ id, form, standIns = false }: { id: string; form: Spec
         <h2>Everything else (YAML)</h2>
         <p className="muted">The requests above replace each side's target and request in this text.</p>
         {standIns && <p className="muted">{STAND_INS}</p>}
-        <textarea rows={22} value={d.text} onChange={(e) => setD({ ...d, text: e.target.value })} spellCheck={false} />
+        <textarea aria-label="Everything else (YAML)" rows={22} value={d.text} onChange={(e) => setD({ ...d, text: e.target.value })} spellCheck={false} />
         <p className="inline">
           <button onClick={() => check('validate')} disabled={busy}>Validate</button>
           <button className="primary" onClick={() => check('save')} disabled={busy}>Save as a new version</button>
@@ -226,7 +226,7 @@ function SideRows({ rows, items, declares, keyed, send, onRows }: {
       )}
       {rows.method === 'POST' && !!rows.body.trim() && !isJson(rows.body) && <Err error={NOT_JSON} />}
       {command !== undefined && (
-        <textarea rows={5} value={command} onChange={(e) => setCommand(e.target.value)} spellCheck={false} autoFocus placeholder="curl 'https://…' -H '…'" />
+        <textarea aria-label="curl command to import" rows={5} value={command} onChange={(e) => setCommand(e.target.value)} spellCheck={false} autoFocus placeholder="curl 'https://…' -H '…'" />
       )}
       <p className="inline">
         {command === undefined ? (

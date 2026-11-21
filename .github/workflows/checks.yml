@@ -27,7 +27,7 @@ jobs:
           python-version: "3.13"
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "22.12"  # the oldest the UI's engines admit; web/.npmrc refuses an older one
           cache: npm
           cache-dependency-path: web/package-lock.json
       - name: Pull the images the database tests start (the tests never pull)
