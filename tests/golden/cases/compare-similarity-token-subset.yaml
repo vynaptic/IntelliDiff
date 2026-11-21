@@ -1,0 +1,26 @@
+description: >
+  token_set is word-order insensitive but never ignores a dropped or added word: at threshold 1.0
+  a lost flat number, an added company suffix or a second address appended is value_changed (a
+  subset-blind token set ratio would score each of them as identical and hide it completely), and
+  so is a repeated word.
+  A reordering is accepted and reported at INFO.
+compare:
+  fields:
+    - {path: $.address, normalize: [address_std], compare: {similarity: {threshold: 1.0}}}
+    - {path: $.name, compare: {similarity: {threshold: 1.0}}}
+    - {path: $.lines, compare: {similarity: {threshold: 1.0}}}
+    - {path: $.order, compare: {similarity: {threshold: 1.0}}}
+    - {path: $.repeat, compare: {similarity: {threshold: 1.0}}}
+a:
+  body: '{"address": "Flat 3, 12 High Street", "name": "ACME", "lines": "1 MAIN ST", "order": "HOLDINGS ACME", "repeat": "MAIN ST"}'
+b:
+  body: '{"address": "12 High Street", "name": "ACME HOLDINGS LTD", "lines": "1 MAIN ST 2 MAIN ST", "order": "ACME HOLDINGS", "repeat": "MAIN ST MAIN ST"}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/address, $.address, value_changed, null]
+    - [/name, $.name, value_changed, null]
+    - [/lines, $.lines, value_changed, null]
+    - [/order, $.order, value_changed, NORMALIZATION_ONLY]
+    - [/repeat, $.repeat, value_changed, null]

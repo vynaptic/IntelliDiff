@@ -1,0 +1,17 @@
+description: nfkc, upper and lower.
+compare:
+  fields:
+    - {path: $.a, normalize: [nfkc]}
+    - {path: $.b, normalize: [upper]}
+    - {path: $.c, normalize: [lower]}
+a:
+  body: '{"a": "ﬁle ①", "b": "abc", "c": "ÀB"}'
+b:
+  body: '{"a": "file 1", "b": "ABC", "c": "àb"}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/a, $.a, value_changed, NORMALIZATION_ONLY]
+    - [/b, $.b, value_changed, NORMALIZATION_ONLY]
+    - [/c, $.c, value_changed, NORMALIZATION_ONLY]

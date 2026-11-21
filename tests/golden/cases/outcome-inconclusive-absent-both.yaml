@@ -1,0 +1,17 @@
+description: A key neither side holds is INCONCLUSIVE absent_both, never MATCH.
+sides:
+  a: {notFound: {status: [404]}}
+  b: {notFound: {status: [404]}}
+targets:
+  a: {authoritativeAbsence: {status: [404]}}
+  b: {authoritativeAbsence: {status: [404]}}
+a:
+  status: 404
+  body: '{"error": "not found"}'
+b:
+  status: 404
+  body: '{"error": "not found"}'
+expect:
+  a: ABSENT
+  b: ABSENT
+  outcome: INCONCLUSIVE absent_both

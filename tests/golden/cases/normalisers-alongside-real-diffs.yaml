@@ -1,0 +1,24 @@
+description: >
+  NORMALIZATION_ONLY is emitted per pointer even when the key also has real differences, and
+  never for a pointer already reported by the normalised walk.
+compare:
+  arrays:
+    - {path: $.xs, mode: keyed, key: [id]}
+  fields:
+    - {path: "$.xs[*].id", normalize: [upper]}
+    - {path: "$.xs[*].name", normalize: [trim]}
+    - {path: "$.xs[*].city", normalize: [trim]}
+a:
+  body: '{"xs": [{"id": "k1", "name": " Ann ", "age": 30, "city": " Leeds"}]}'
+b:
+  body: '{"xs": [{"id": "K1", "name": "Ann", "age": 31, "city": "York"}]}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/xs/K1/age, "$.xs[*].age", value_changed, null]
+    - [/xs/K1/city, "$.xs[*].city", value_changed, null]
+    - [/xs/K1/id, "$.xs[*].id", value_changed, NORMALIZATION_ONLY]
+    - finding: [/xs/K1/name, "$.xs[*].name", value_changed, NORMALIZATION_ONLY]
+      member_key: K1
+      raw_only: true

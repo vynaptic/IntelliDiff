@@ -1,0 +1,23 @@
+description: >
+  Without a rule, each change type takes its core code at MEDIUM: a field only in A is FIELD_MISSING,
+  only in B FIELD_EXTRA, another value VALUE_MISMATCH, another JSON type TYPE_MISMATCH; any one of
+  them makes the key MISMATCH.
+a:
+  body: '{"code": "ORG-000123", "status": "ACTIVE", "tier": 2, "region": "north"}'
+b:
+  body: '{"code": "ORG-000123", "status": "CLOSED", "tier": "2", "segment": "retail"}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  outcome: MISMATCH
+  findings:
+    - finding: [/region, $.region, missing_in_b, null]
+      taxonomy: [FIELD_MISSING, MEDIUM]
+      direction: a_only
+    - finding: [/segment, $.segment, extra_in_b, null]
+      taxonomy: [FIELD_EXTRA, MEDIUM]
+      direction: b_only
+    - finding: [/status, $.status, value_changed, null]
+      taxonomy: [VALUE_MISMATCH, MEDIUM]
+    - finding: [/tier, $.tier, type_changed, null]
+      taxonomy: [TYPE_MISMATCH, MEDIUM]

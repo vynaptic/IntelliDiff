@@ -1,0 +1,12 @@
+description: An ordered array holding the same members in another order is ORDER_MISMATCH, and MISMATCH.
+a:
+  body: '{"code": "ORG-000123", "steps": ["open", "review", "close"]}'
+b:
+  body: '{"code": "ORG-000123", "steps": ["review", "open", "close"]}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  outcome: MISMATCH
+  findings:
+    - finding: [/steps, $.steps, order_changed, null]
+      taxonomy: [ORDER_MISMATCH, MEDIUM]

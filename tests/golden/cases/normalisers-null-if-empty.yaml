@@ -1,0 +1,15 @@
+description: null_if_empty maps "" and empty containers to null; the raw type change is INFO.
+compare:
+  fields:
+    - {path: $.middle, normalize: [null_if_empty]}
+    - {path: $.tags, normalize: [null_if_empty]}
+a:
+  body: '{"middle": "", "tags": []}'
+b:
+  body: '{"middle": null, "tags": null}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/middle, $.middle, type_changed, NORMALIZATION_ONLY]
+    - [/tags, $.tags, type_changed, NORMALIZATION_ONLY]

@@ -1,0 +1,15 @@
+description: address_std (only valid with similarity compare) applies abbreviations and punctuation rules.
+compare:
+  fields:
+    - {path: $.address, normalize: [address_std], compare: {similarity: {threshold: 0.95}}}
+    - {path: $.address2, normalize: [address_std], compare: {similarity: {threshold: 0.95}}}
+a:
+  body: '{"address": "12 North Street, Apt. 4", "address2": "1 High Road"}'
+b:
+  body: '{"address": "12 N St Apt 4", "address2": "1 High Rd"}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/address, $.address, value_changed, NORMALIZATION_ONLY]
+    - [/address2, $.address2, value_changed, NORMALIZATION_ONLY]

@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ doc.title }}</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0 auto; max-width: 1100px; padding: 24px 16px; font: 15px/1.5 system-ui, sans-serif; }
+  h2 { margin-top: 32px; border-top: 1px solid #8886; padding-top: 8px; }
+  .wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0 16px; }
+  th, td { text-align: left; vertical-align: top; padding: 4px 8px; border-bottom: 1px solid #8886; }
+  .meta { opacity: 0.75; }
+  .warning { font-weight: 600; color: #c62828; }
+</style>
+</head>
+<body>
+<h1>{{ doc.title }}</h1>
+{% if doc.warning %}
+<p class="warning">{{ doc.warning }}</p>
+{% endif %}
+<p class="meta">{{ doc.meta }}</p>
+{% for s in doc.sections %}
+<h2>{{ loop.index }}. {{ s.title }}</h2>
+{% if s.lines %}
+<ul>
+{% for line in s.lines %}
+<li>{{ line }}</li>
+{% endfor %}
+</ul>
+{% endif %}
+{% if s.header %}
+<div class="wrap"><table>
+<tr>{% for h in s.header %}<th>{{ h }}</th>{% endfor %}</tr>
+{% for row in s.rows %}
+<tr>{% for c in row %}<td>{{ "" if c is none else c }}</td>{% endfor %}</tr>
+{% endfor %}
+</table></div>
+{% endif %}
+{% endfor %}
+</body>
+</html>

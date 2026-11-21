@@ -1,0 +1,15 @@
+description: Multiset arrays are unordered with multiplicity; a count difference is value_changed.
+compare:
+  arrays:
+    - {path: $.codes, mode: multiset}
+a:
+  body: '{"codes": ["x", "x", "y"]}'
+b:
+  body: '{"codes": ["y", "x", "y", "z"]}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - ['/codes/"x"', "$.codes[*]", value_changed, null]
+    - ['/codes/"y"', "$.codes[*]", value_changed, null]
+    - ['/codes/"z"', "$.codes[*]", extra_in_b, null]

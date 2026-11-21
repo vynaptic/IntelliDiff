@@ -1,0 +1,10 @@
+description: Invalid JSON is INCOMPLETE unparseable; nesting beyond the target's max depth is resource_limit.
+targets:
+  b: {maxDepth: 3}
+a:
+  body: '{"a": 1,'
+b:
+  body: '{"a": {"b": {"c": {"d": 1}}}}'
+expect:
+  a: INCOMPLETE unparseable
+  b: INCOMPLETE resource_limit

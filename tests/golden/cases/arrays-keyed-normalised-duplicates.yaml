@@ -1,0 +1,18 @@
+description: >
+  Key fields are normalised before member keys are built, so "k" and "K" under an upper rule
+  are duplicates of one member; raw and normalised trees stay aligned.
+compare:
+  arrays:
+    - {path: $.xs, mode: keyed, key: [id]}
+  fields:
+    - {path: "$.xs[*].id", normalize: [upper]}
+a:
+  body: '{"xs": [{"id": "k"}, {"id": "K"}]}'
+b:
+  body: '{"xs": [{"id": "K"}]}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - finding: [/xs/K/@1, "$.xs[*]", missing_in_b, null]
+      value_class: duplicate_key

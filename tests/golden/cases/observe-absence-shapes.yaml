@@ -1,0 +1,20 @@
+description: >
+  Where the target names absence shapes, a not-found is authoritative only if its body matches
+  one (e.g. an entity 404 vs a routing 404 from a gateway).
+sides:
+  a: {notFound: {status: [404]}}
+  b: {notFound: {status: [404]}}
+targets:
+  a: &shaped
+    authoritativeAbsence: {status: [404], shapes: [entity_missing]}
+    absenceShapes: {entity_missing: "has(body.code) && body.code == 'ENTITY_NOT_FOUND'"}
+  b: *shaped
+a:
+  status: 404
+  body: '{"code": "ENTITY_NOT_FOUND"}'
+b:
+  status: 404
+  body: '{"code": "ROUTE_NOT_FOUND"}'
+expect:
+  a: ABSENT
+  b: INCOMPLETE absence_unconfirmed

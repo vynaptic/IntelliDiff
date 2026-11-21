@@ -1,0 +1,11 @@
+description: A select that matches nothing, or a map that yields undefined, is INCOMPLETE unparseable.
+sides:
+  a: {select: $.result}
+  b: {map: "missingField"}
+a:
+  body: '{"other": 1}'
+b:
+  body: '{"a": 1}'
+expect:
+  a: INCOMPLETE unparseable
+  b: INCOMPLETE unparseable

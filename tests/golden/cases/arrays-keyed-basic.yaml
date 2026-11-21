@@ -1,0 +1,25 @@
+description: Keyed members are matched by key; one missing, one extra, one changed field.
+compare:
+  arrays:
+    - {path: $.accounts, mode: keyed, key: [id]}
+a:
+  body: |
+    {"accounts": [{"id": "A1", "balance": 10, "status": "open"},
+                  {"id": "A2", "balance": 5, "status": "open"}]}
+b:
+  body: |
+    {"accounts": [{"id": "A2", "balance": 5, "status": "closed"},
+                  {"id": "A3", "balance": 1, "status": "open"}]}
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - finding: [/accounts/A1, "$.accounts[*]", missing_in_b, null]
+      member_key: A1
+      array_path: $.accounts
+      direction: a_only
+    - finding: [/accounts/A2/status, "$.accounts[*].status", value_changed, null]
+      member_key: A2
+      direction: both
+    - finding: [/accounts/A3, "$.accounts[*]", extra_in_b, null]
+      direction: b_only

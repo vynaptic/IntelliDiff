@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.deltasleuth.example/packs/entity-linking/v1/config.schema.json",
+  "title": "DeltaSleuth entity-linking domain pack configuration (domainPack.config, pack 1.x)",
+  "description": "Configuration schema of the optional entity-linking domain pack (pack name entity-linking, versions 1.x): the schema of domainPack.config. It is owned and registered by the pack, not by the core: the core spec.schema.json only requires domainPack.config to be an object, and the spec loader validates the config against this schema when domainPack.name is entity-linking, rejecting the spec with paths under domainPack.config. It drives the pack's link semantics, explainer adapter, taxonomy aliases (MISSING_ENTITY / EXTRA_ENTITY for the core MISSING_DOCUMENT / EXTRA_DOCUMENT, MISSING_LINK, HOT_IDENTIFIER_POLICY and so on) and the existence double-check. $refs point at core $defs through the core schema's $id, so the loader registers both documents in one registry. Loader cross-checks: in canonical graph mode hopDepth equals canonical.scope.depth, and linkDirection agrees with the directed flag of the edge type at linksPath.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["hopDepth", "rollUpMembersToParent", "linkingIdentifierTypes"],
+  "properties": {
+    "hopDepth": {
+      "description": "Number of link hops the comparison covers. 1 compares direct links only; links at a greater hop count are out of scope (HOP_SEMANTICS if one side returns them). In canonical graph mode it must equal canonical.scope.depth (loader check).",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3
+    },
+    "rollUpMembersToParent": {
+      "description": "When true, members roll up to their owning organisation: links held by a member are attributed to the organisation, and membership under an organisation is compared as attachments (MISSING_ATTACHMENT / EXTRA_ATTACHMENT).",
+      "type": "boolean"
+    },
+    "linksPath": {
+      "description": "Canonical path of the link set that the explainer adapter interprets. Defaults to $.links. In canonical graph mode, point it at the typed edge array, for example $.edges.LINKED_TO.",
+      "$ref": "https://schemas.deltasleuth.example/comparison-spec/v1/spec.schema.json#/$defs/jsonPath",
+      "default": "$.links"
+    },
+    "attachmentsPath": {
+      "description": "Canonical path of the attachment set (members under an organisation). Defaults to $.members. In canonical graph mode, point it at the typed edge array, for example $.edges.HAS_MEMBER.",
+      "$ref": "https://schemas.deltasleuth.example/comparison-spec/v1/spec.schema.json#/$defs/jsonPath",
+      "default": "$.members"
+    },
+    "linkDirection": {
+      "description": "Whether links are compared as undirected pairs or as directed edges (DIRECTIONALITY when sides disagree). In canonical graph mode it must agree with the directed flag of the edge type at linksPath (loader check).",
+      "type": "string",
+      "enum": ["undirected", "directed"],
+      "default": "undirected"
+    },
+    "linkingIdentifierTypes": {
+      "description": "Identifier types that are allowed to create links (upper snake case, for example PHONE, EMAIL, TAX_ID). A link evidenced by any other type is out of policy.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "description": "Identifier type code.",
+        "type": "string",
+        "pattern": "^[A-Z][A-Z0-9_]*$"
+      }
+    },
+    "validityFilter": {
+      "description": "Temporal validity filter applied to link members on both sides before diffing (TEMPORAL_VALIDITY when sides disagree on validity).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "description": "current keeps links valid at compare time; as_of keeps links valid at asOf; all disables filtering.",
+          "type": "string",
+          "enum": ["current", "as_of", "all"]
+        },
+        "asOf": {
+          "description": "Instant (RFC 3339) used when mode is as_of.",
+          "type": "string",
+          "format": "date-time"
+        },
+        "validFromField": {
+          "description": "Field on each link member holding the start of validity (inclusive).",
+          "type": "string",
+          "minLength": 1
+        },
+        "validToField": {
+          "description": "Field on each link member holding the end of validity (exclusive); null means open-ended.",
+          "type": "string",
+          "minLength": 1
+        },
+        "clockSkew": {
+          "description": "Tolerance applied at validity boundaries to absorb clock differences between the two systems.",
+          "$ref": "https://schemas.deltasleuth.example/comparison-spec/v1/spec.schema.json#/$defs/duration"
+        }
+      },
+      "if": {
+        "properties": {
+          "mode": {
+            "description": "Condition: mode is as_of.",
+            "const": "as_of"
+          }
+        }
+      },
+      "then": { "required": ["asOf"] }
+    },
+    "hotIdentifiers": {
+      "description": "Hot-identifier policy: identifiers that must not create links because they are shared by too many entities (HOT_IDENTIFIER_POLICY when sides disagree).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["degreeCap"],
+      "properties": {
+        "degreeCap": {
+          "description": "Maximum number of entities an identifier value may connect before it is treated as hot and excluded from linking.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "policy": {
+          "description": "exclude_from_linking drops links evidenced only by a hot identifier; flag_only keeps them and labels the finding.",
+          "type": "string",
+          "enum": ["exclude_from_linking", "flag_only"],
+          "default": "exclude_from_linking"
+        },
+        "stoplist": {
+          "description": "Identifier values that never create links regardless of degree (switchboards, registered-agent addresses, placeholder tax ids). Values are given in normalized form.",
+          "type": "array",
+          "items": {
+            "description": "One stoplisted identifier value.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["idType", "value", "reason"],
+            "properties": {
+              "idType": {
+                "description": "Identifier type of the stoplisted value.",
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]*$"
+              },
+              "value": {
+                "description": "Normalized identifier value.",
+                "type": "string",
+                "minLength": 1
+              },
+              "reason": {
+                "description": "Why the value is stoplisted.",
+                "type": "string",
+                "minLength": 3
+              }
+            }
+          }
+        }
+      }
+    },
+    "existenceDoubleCheck": {
+      "description": "Enables the existence double-check on a one-sided authoritative not-found. The check is the target connector's declared existence_check capability (for example a second lookup endpoint the target declares), which the core calls only when the connector declares it. If a probe finds the entity, the outcome stays NOT_FOUND_A / NOT_FOUND_B and an INTERNAL_INCONSISTENCY finding is attached.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": {
+        "enabled": {
+          "description": "Whether to run the existence double-check.",
+          "type": "boolean"
+        },
+        "methods": {
+          "description": "Names of the existence probes to run, each one a probe the target of a side declares in its capabilities (existence_check.probes), for example a second lookup endpoint the target declares. The loader requires every name to be declared by that target. Probes are endpoint behaviour: the pack never names how a target stores or looks up its data.",
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 1,
+          "items": {
+            "description": "Probe name as the target declares it (lower snake case, at most 32 characters). primary is reserved for the ordinary read.",
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,31}$",
+            "not": { "const": "primary" }
+          }
+        }
+      }
+    },
+    "provenance": {
+      "description": "Where link provenance (the identifier that created a link) is available. The explainer adapter copies it into findings.link_reason. Provenance is typically present on one side only and should be listed in compare.exclude. It is an optional enrichment: the generic root-causer groups one-sided members by (array path_pattern, member key token) without it, and link_reason / explaining_id_tok are filled only when a side exposes provenance.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["side", "viaField"],
+      "properties": {
+        "side": {
+          "description": "Side that returns provenance.",
+          "type": "string",
+          "enum": ["a", "b"]
+        },
+        "viaField": {
+          "description": "Field on each link member holding the provenance object.",
+          "type": "string",
+          "minLength": 1
+        },
+        "idTypeField": {
+          "description": "Field inside the provenance object holding the identifier type; becomes findings.link_reason.",
+          "type": "string",
+          "minLength": 1,
+          "default": "idType"
+        },
+        "valueField": {
+          "description": "Field inside the provenance object holding the identifier value; tokenized before use as a root cause key.",
+          "type": "string",
+          "minLength": 1,
+          "default": "value"
+        }
+      }
+    }
+  }
+}

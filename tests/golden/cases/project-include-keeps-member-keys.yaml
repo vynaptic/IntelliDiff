@@ -1,0 +1,16 @@
+description: >
+  include keeps the key fields of kept keyed members, so members still match after projection;
+  fields outside the include are not compared.
+compare:
+  include: ["$.accounts[*].balance"]
+  arrays:
+    - {path: $.accounts, mode: keyed, key: [id]}
+a:
+  body: '{"accounts": [{"id": "A1", "balance": 1, "x": 1}, {"id": "A2", "balance": 2}], "top": 1}'
+b:
+  body: '{"accounts": [{"id": "A2", "balance": 2, "x": 5}, {"id": "A1", "balance": 3}], "top": 2}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/accounts/A1/balance, "$.accounts[*].balance", value_changed, null]

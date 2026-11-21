@@ -1,0 +1,28 @@
+description: >
+  e164 normalises only phone-shaped text: a device id or serial that holds a digit run is not a
+  phone number, so two ids differing only in their letters stay two keyed members (one missing,
+  one extra) and a plain field stays a real difference. A phone number in another format is still
+  format only.
+compare:
+  arrays:
+    - {path: $.devices, mode: keyed, key: [value]}
+  fields:
+    - {path: "$.devices[*].value", normalize: [trim, {e164: {defaultRegion: GB}}]}
+    - {path: $.serial, normalize: [{e164: {defaultRegion: GB}}]}
+    - {path: $.phone, normalize: [{e164: {defaultRegion: GB}}]}
+a:
+  body: >
+    {"devices": [{"value": "ABCD-1234-5678"}], "serial": "SN-2079460000-B", "phone": "07700 900123"}
+b:
+  body: >
+    {"devices": [{"value": "WXYZ-1234-5678"}], "serial": "SN-2079460000-C", "phone": "+447700900123"}
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - finding: ["/devices/ABCD-1234-5678", "$.devices[*]", missing_in_b, null]
+      member_key: "ABCD-1234-5678"
+    - finding: ["/devices/WXYZ-1234-5678", "$.devices[*]", extra_in_b, null]
+      member_key: "WXYZ-1234-5678"
+    - [/serial, $.serial, value_changed, null]
+    - [/phone, $.phone, value_changed, NORMALIZATION_ONLY]

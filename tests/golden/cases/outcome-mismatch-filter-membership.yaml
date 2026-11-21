@@ -1,0 +1,18 @@
+description: >
+  A member selected on one side only is FILTER_MEMBERSHIP at MEDIUM, a discrepancy: the key is
+  MISMATCH, not MATCH because the other side filtered the member out.
+compare:
+  arrays:
+    - {path: $.links, mode: keyed, key: [to]}
+  valueFilter: "!(path == '$.links[*]' && value.status == 'inactive')"
+a:
+  body: '{"links": [{"to": "ORG-000123", "status": "active"}, {"to": "ORG-000124", "status": "active"}]}'
+b:
+  body: '{"links": [{"to": "ORG-000123", "status": "active"}, {"to": "ORG-000124", "status": "inactive"}]}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  outcome: MISMATCH
+  findings:
+    - finding: [/links/ORG-000124, "$.links[*]", missing_in_b, FILTER_MEMBERSHIP]
+      taxonomy: [FILTER_MEMBERSHIP, MEDIUM]

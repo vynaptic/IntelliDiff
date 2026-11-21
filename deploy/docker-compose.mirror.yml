@@ -1,0 +1,22 @@
+# Apply after docker-compose.source.yml to build and pull from the configured mirrors.
+services:
+  db:
+    image: "${MIRROR_DOCKER:?set MIRROR_DOCKER in .env}/postgres:${MIRROR_POSTGRES_TAG:-16-alpine}"
+  app:
+    build:
+      args:
+        PYTHON: "${MIRROR_DOCKER:?set MIRROR_DOCKER in .env}/python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90"
+        NODE: "${MIRROR_DOCKER:?set MIRROR_DOCKER in .env}/node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1"
+        MIRROR_BUILD: "1"
+        MIRROR_PYPI: "${MIRROR_PYPI:?set MIRROR_PYPI in .env}"
+        MIRROR_NPM: "${MIRROR_NPM:?set MIRROR_NPM in .env}"
+        MIRROR_DEBIAN: "${MIRROR_DEBIAN:?set MIRROR_DEBIAN in .env}"
+        MIRROR_DEBIAN_SECURITY: "${MIRROR_DEBIAN_SECURITY:?set MIRROR_DEBIAN_SECURITY in .env}"
+      secrets: [mirror_ca, mirror_netrc, mirror_npmrc, mirror_apt_auth]
+
+# These files go only to the build steps that need them. An empty file permits anonymous access.
+secrets:
+  mirror_ca: {file: "${MIRROR_CA_FILE:-/dev/null}"}
+  mirror_netrc: {file: "${MIRROR_NETRC_FILE:-/dev/null}"}
+  mirror_npmrc: {file: "${MIRROR_NPMRC_FILE:-/dev/null}"}
+  mirror_apt_auth: {file: "${MIRROR_APT_AUTH_FILE:-/dev/null}"}

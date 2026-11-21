@@ -1,0 +1,25 @@
+description: >
+  One member name spelled in NFC on side a and NFD on side b is one field, as the canonical hash
+  writes it, whatever another field does. An accepted tolerance difference on amount makes the
+  normalised walk run; the name still pairs, and its spelling is reported only by the raw walk as
+  NORMALIZATION_ONLY, exactly as it is when amount is equal.
+compare:
+  fields:
+    - {path: $.amount, compare: {tolerance: {abs: 0.01}}}
+a:
+  body: '{"caf\u00e9": 1, "amount": 1.00}'
+b:
+  body: '{"cafe\u0301": 1, "amount": 1.001}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - finding: [/amount, $.amount, value_changed, NORMALIZATION_ONLY]
+      severity: INFO
+      raw_only: false
+    - finding: ["/caf\u00e9", "$['caf\u00e9']", missing_in_b, NORMALIZATION_ONLY]
+      severity: INFO
+      raw_only: true
+    - finding: ["/cafe\u0301", "$['cafe\u0301']", extra_in_b, NORMALIZATION_ONLY]
+      severity: INFO
+      raw_only: true

@@ -1,0 +1,22 @@
+description: >-
+  An include that reaches inside keyed members keeps every member's presence: a closed
+  account with no balance that exists only on side a is still reported missing, and side b's
+  array (whose only member lacks the field) is not mistaken for a missing array.
+compare:
+  include: ["$.accounts[*].balance"]
+  arrays:
+    - {path: $.accounts, mode: keyed, key: [id]}
+a:
+  body: |
+    {"accounts": [{"id": "A1", "balance": 10}, {"id": "A2", "status": "CLOSED"}],
+     "other": [{"id": "X1"}]}
+b:
+  body: |
+    {"accounts": [{"id": "A1", "balance": 10}, {"id": "A3", "status": "OPEN"}],
+     "other": []}
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/accounts/A2, "$.accounts[*]", missing_in_b, null]
+    - [/accounts/A3, "$.accounts[*]", extra_in_b, null]

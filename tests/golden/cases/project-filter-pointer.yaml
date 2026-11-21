@@ -1,0 +1,16 @@
+description: >
+  valueFilter sees every declared variable: pointer (the node's json_pointer as the differ
+  renders it, keyed members by member key) and, in P0, stratum null and strata empty.
+compare:
+  arrays:
+    - {path: $.xs, mode: keyed, key: [id]}
+  valueFilter: "!pointer.startsWith('/debug') && pointer != '/xs/k2/v' && stratum == null && size(strata) == 0"
+a:
+  body: '{"debug": {"t": 1}, "xs": [{"id": "k1", "v": 1}, {"id": "k2", "v": 1}]}'
+b:
+  body: '{"debug": {"t": 2}, "xs": [{"id": "k1", "v": 2}, {"id": "k2", "v": 2}]}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/xs/k1/v, "$.xs[*].v", value_changed, null]

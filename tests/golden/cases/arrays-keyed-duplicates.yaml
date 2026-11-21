@@ -1,0 +1,23 @@
+description: >
+  Duplicate members under one key are kept, not collapsed. A surplus duplicate is its own @i
+  pointer segment with value_class duplicate_key; duplicates on both sides diff pairwise in
+  canonical order.
+compare:
+  arrays:
+    - {path: $.links, mode: keyed, key: [to]}
+a:
+  body: |
+    {"links": [{"to": "E1", "kind": "x"}, {"to": "E2"},
+               {"to": "E3", "w": 2}, {"to": "E3", "w": 1}]}
+b:
+  body: |
+    {"links": [{"to": "E1", "kind": "x"}, {"to": "E1", "kind": "x"}, {"to": "E2"},
+               {"to": "E3", "w": 1}, {"to": "E3", "w": 3}]}
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - finding: [/links/E1/@1, "$.links[*]", extra_in_b, null]
+      value_class: duplicate_key
+      member_key: E1
+    - [/links/E3/@1/w, "$.links[*].w", value_changed, null]

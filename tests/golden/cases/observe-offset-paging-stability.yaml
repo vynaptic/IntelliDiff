@@ -1,0 +1,17 @@
+description: >
+  Offset paging over several pages is no completeness proof unless the target declares stable
+  ordering.
+sides:
+  a: &paged {pagination: {kind: offset, itemsPath: $.items, pageParam: offset, sizeParam: limit, size: 50}}
+  b: *paged
+targets:
+  b: {stableOrdering: true}
+a:
+  body: '{"items": [1, 2]}'
+  pages: 3
+b:
+  body: '{"items": [1, 2]}'
+  pages: 3
+expect:
+  a: INCOMPLETE unstable_pagination
+  b: COMPLETE

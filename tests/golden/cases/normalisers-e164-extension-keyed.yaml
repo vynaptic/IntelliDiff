@@ -1,0 +1,29 @@
+description: >
+  e164 keeps a phone extension (E.164 + ";ext=" + digits): two extensions of one switchboard are
+  different numbers, both as a keyed-array key (one member missing, one extra) and as a plain
+  field; spellings of the same extension still normalise alike.
+compare:
+  arrays:
+    - {path: $.phones, mode: keyed, key: [number]}
+  fields:
+    - {path: "$.phones[*].number", normalize: [{e164: {defaultRegion: GB}}]}
+    - {path: $.fax, normalize: [{e164: {defaultRegion: GB}}]}
+    - {path: $.desk, normalize: [{e164: {defaultRegion: GB}}]}
+a:
+  body: >
+    {"phones": [{"kind": "WORK", "number": "+44 20 7946 0958 ext. 201"}],
+     "fax": "020 7946 0958 x201", "desk": "+44 20 7946 0958 ext. 7"}
+b:
+  body: >
+    {"phones": [{"kind": "WORK", "number": "+44 20 7946 0958 ext. 305"}],
+     "fax": "020 7946 0958 x305", "desk": "+442079460958;ext=7"}
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - finding: ["/phones/+442079460958;ext=201", "$.phones[*]", missing_in_b, null]
+      member_key: "+442079460958;ext=201"
+    - finding: ["/phones/+442079460958;ext=305", "$.phones[*]", extra_in_b, null]
+      member_key: "+442079460958;ext=305"
+    - [/fax, $.fax, value_changed, null]
+    - [/desk, $.desk, value_changed, NORMALIZATION_ONLY]

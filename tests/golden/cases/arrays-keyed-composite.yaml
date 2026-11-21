@@ -1,0 +1,17 @@
+description: Composite member keys join parts with | and escape a literal | in a part.
+compare:
+  arrays:
+    - {path: $.ids, mode: keyed, key: [country, number]}
+a:
+  body: |
+    {"ids": [{"country": "GB", "number": "1|2", "v": 1}]}
+b:
+  body: |
+    {"ids": [{"country": "GB", "number": "1|2", "v": 2}, {"country": "US", "number": 9}]}
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - finding: ['/ids/GB|1\|2/v', "$.ids[*].v", value_changed, null]
+      member_key: 'GB|1\|2'
+    - [/ids/US|9, "$.ids[*]", extra_in_b, null]

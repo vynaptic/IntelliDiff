@@ -1,0 +1,17 @@
+description: >
+  A later page declared itself truncated. The stored merged envelope looks complete and
+  the other side has the same items, but the incomplete walk cannot certify a match.
+sides:
+  a: {select: "$.items"}
+  b: {select: "$.items"}
+a:
+  body: '{"items":[1,2],"partial":false}'
+  pages: 2
+  pages_eof: false
+b:
+  body: '{"items":[1,2],"partial":false}'
+  pages: 2
+expect:
+  a: INCOMPLETE truncated
+  b: COMPLETE
+  outcome: INCONCLUSIVE truncated

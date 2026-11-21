@@ -1,0 +1,15 @@
+description: An ordered array inside a keyed member reports order_changed under the member pointer.
+compare:
+  arrays:
+    - {path: $.xs, mode: keyed, key: [id]}
+a:
+  body: '{"xs": [{"id": "1", "hist": [1, 2]}]}'
+b:
+  body: '{"xs": [{"id": "1", "hist": [2, 1]}]}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - finding: [/xs/1/hist, "$.xs[*].hist", order_changed, null]
+      member_key: "1"
+      array_path: $.xs

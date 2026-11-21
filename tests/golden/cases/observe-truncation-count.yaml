@@ -1,0 +1,13 @@
+description: >
+  With a reported total: a complete page of exactly cap items with total == cap is not
+  truncated; total above what was returned is.
+sides:
+  a: &trunc {truncation: {cap: 3, itemsPath: $.items, countPath: $.total}}
+  b: *trunc
+a:
+  body: '{"items": [1, 2, 3], "total": 3}'
+b:
+  body: '{"items": [1, 2, 3], "total": 7}'
+expect:
+  a: COMPLETE
+  b: INCOMPLETE truncated

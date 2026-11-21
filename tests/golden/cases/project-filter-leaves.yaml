@@ -1,0 +1,12 @@
+description: valueFilter also removes leaf values (here volatile debug fields) on both sides.
+compare:
+  valueFilter: "path != '$.debug' && path != '$.meta.trace'"
+a:
+  body: '{"debug": "x", "meta": {"trace": "t1", "v": 1}, "v": 1}'
+b:
+  body: '{"debug": "y", "meta": {"trace": "t2", "v": 1}, "v": 2}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/v, $.v, value_changed, null]

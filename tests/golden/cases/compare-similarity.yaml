@@ -1,0 +1,23 @@
+description: >
+  Similarity compare (score in [0, 1] >= threshold) for each method. Values a method accepts
+  although they differ are still reported, as NORMALIZATION_ONLY / INFO; values below the
+  threshold are value_changed.
+compare:
+  fields:
+    - {path: $.name, compare: {similarity: {threshold: 0.9}}}
+    - {path: $.city, compare: {similarity: {threshold: 0.95, method: jaro_winkler}}}
+    - {path: $.street, compare: {similarity: {threshold: 0.9, method: levenshtein_ratio}}}
+    - {path: $.same, compare: {similarity: {threshold: 0.9}}}
+a:
+  body: '{"name": "Acme Holdings Limited", "city": "MARTHA", "street": "kitten", "same": "x"}'
+b:
+  body: '{"name": "Limited Acme Holdings", "city": "MARHTA", "street": "sitting", "same": "x"}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - finding: [/name, $.name, value_changed, NORMALIZATION_ONLY]
+      severity: INFO
+      raw_only: false
+    - [/city, $.city, value_changed, NORMALIZATION_ONLY]
+    - [/street, $.street, value_changed, null]

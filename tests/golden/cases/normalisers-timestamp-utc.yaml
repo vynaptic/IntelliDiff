@@ -1,0 +1,24 @@
+description: timestamp_utc parses ISO 8601 to UTC at a precision, truncating or rounding.
+compare:
+  fields:
+    - {path: $.ts, normalize: [{timestamp_utc: {precision: s}}]}
+    - {path: $.ts_ms, normalize: [{timestamp_utc: {precision: ms, mode: round}}]}
+    - {path: $.day, normalize: [{timestamp_utc: {precision: s}}]}
+    - {path: $.bad, normalize: [{timestamp_utc: {precision: s}}]}
+    - {path: $.moved, normalize: [{timestamp_utc: {precision: s}}]}
+a:
+  body: |
+    {"ts": "2024-03-01T12:00:00+01:00", "ts_ms": "2024-03-01T11:00:00.1236Z",
+     "day": "2024-03-01", "bad": "2024-02-30", "moved": "2024-03-01T11:00:00Z"}
+b:
+  body: |
+    {"ts": "2024-03-01T11:00:00Z", "ts_ms": "2024-03-01T11:00:00.124Z",
+     "day": "2024-03-01T00:00:00Z", "bad": "2024-02-30", "moved": "2024-03-01T11:00:01.2Z"}
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/ts, $.ts, value_changed, NORMALIZATION_ONLY]
+    - [/ts_ms, $.ts_ms, value_changed, NORMALIZATION_ONLY]
+    - [/day, $.day, value_changed, NORMALIZATION_ONLY]
+    - [/moved, $.moved, value_changed, null]

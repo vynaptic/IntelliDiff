@@ -1,0 +1,16 @@
+description: e164 with a default region; unparseable input is left unchanged.
+compare:
+  fields:
+    - {path: $.phone, normalize: [{e164: {defaultRegion: GB}}]}
+    - {path: $.other, normalize: [{e164: {defaultRegion: GB}}]}
+    - {path: $.fax, normalize: [{e164: {defaultRegion: GB}}]}
+a:
+  body: '{"phone": "020 7946 0018", "other": "020 7946 0018", "fax": "none"}'
+b:
+  body: '{"phone": "+44 20 7946 0018", "other": "020 7946 0019", "fax": "none"}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/phone, $.phone, value_changed, NORMALIZATION_ONLY]
+    - [/other, $.other, value_changed, null]

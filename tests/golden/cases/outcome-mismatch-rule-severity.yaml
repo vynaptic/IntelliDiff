@@ -1,0 +1,26 @@
+description: >
+  An array rule's severity rates its one-sided members and a field rule's its value changes; the
+  code stays the core default. A LOW finding is still discrepant: the key is MISMATCH.
+compare:
+  arrays:
+    - {path: $.accounts, mode: keyed, key: [id], severity: HIGH}
+  fields:
+    - {path: "$.accounts[*].balance", severity: CRITICAL}
+    - {path: $.note, severity: LOW}
+a:
+  body: |
+    {"accounts": [{"id": "MBR-0045123", "balance": 10}, {"id": "MBR-0045124", "balance": 5}],
+     "note": "first"}
+b:
+  body: '{"accounts": [{"id": "MBR-0045123", "balance": 12}], "note": "second"}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  outcome: MISMATCH
+  findings:
+    - finding: [/accounts/MBR-0045123/balance, "$.accounts[*].balance", value_changed, null]
+      taxonomy: [VALUE_MISMATCH, CRITICAL]
+    - finding: [/accounts/MBR-0045124, "$.accounts[*]", missing_in_b, null]
+      taxonomy: [FIELD_MISSING, HIGH]
+    - finding: [/note, $.note, value_changed, null]
+      taxonomy: [VALUE_MISMATCH, LOW]

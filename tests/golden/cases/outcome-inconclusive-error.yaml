@@ -1,0 +1,11 @@
+description: >
+  A side that could not be read makes the key INCONCLUSIVE with that side's reason, and nothing is
+  compared, whatever the other side holds.
+a:
+  error_class: timeout
+b:
+  body: '{"code": "ORG-000123", "status": "ACTIVE"}'
+expect:
+  a: ERROR timeout
+  b: COMPLETE
+  outcome: INCONCLUSIVE timeout

@@ -1,0 +1,119 @@
+[project]
+name = "deltasleuth"
+version = "0.1.0.dev0"
+description = "DeltaSleuth: black-box parity and discrepancy investigation for any two services"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+license = "Apache-2.0"
+dependencies = [
+    "pydantic>=2.12,<2.14",
+    "pyyaml>=6.0.2",
+    "jsonschema>=4.25",
+    "python-jsonpath>=2.0",
+    "jsonata-python>=0.6",
+    "cel-expr-python>=0.1.2",
+    "aiohttp>=3.12",
+    "aiolimiter>=1.2",
+    "stamina>=25.1",
+    "zstandard>=0.24",
+    "phonenumbers>=9.0",
+    "python-stdnum>=2.0",
+    "rapidfuzz>=3.13,!=3.14.4",
+    "genson>=1.3",
+    "scipy>=1.15",
+    "typer>=0.16",
+    "jinja2>=3.1.6",
+    "openai>=3.16,<4",
+    "anthropic>=1.7,<2",
+    "httpx2>=2.7",
+    "fastapi>=0.115",
+    "uvicorn>=0.35",
+    "psycopg[binary]>=3.2",
+    "psycopg-pool>=3.2",
+    "reportlab>=4.4",
+    "pyjwt[crypto]>=2.10,<3",
+    "cryptography>=46",
+    "oracledb==26.0.0",
+    "pymysql==1.2.3",
+    "duckdb==1.5.5",
+    "mcp==2.2.0",
+    "regex>=2026.9.10",
+]
+
+[project.scripts]
+ds = "deltasleuth.cli.main:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4",
+    "pytest-asyncio>=1.0",
+    "hypothesis>=6.130",
+    "pytest-timeout>=2.4",
+    "ruff>=0.12",
+    "httpx>=0.28",
+    "pip-audit>=2.10.1",
+    "mypy>=2.4.1",
+    "types-pymysql>=1.2.0.20260923",
+    "types-pyyaml>=6.0.12.20261103",
+    "types-jsonschema>=4.26.0.20261006",
+    "types-regex>=2026.9.29.20261030",
+    "types-reportlab>=5.0,<5.1",  # the stubs of the reportlab release the lock holds
+]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["deltasleuth"]
+
+[tool.uv]
+# Supply-chain cooldown: resolve only releases at least 3 days old.
+exclude-newer = "2026-11-06T00:00:00Z"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "live_llm: calls a real LLM API (needs an explicit key file; skipped by default)",
+    "e2e: end-to-end tests that start temporary services",
+    "db: needs PostgreSQL (a local postgres:16-alpine container; skipped without Docker unless DS_REQUIRE_DB=1)",
+    "mysql: needs MySQL (a local mysql:8.4 container; skipped without Docker unless DS_REQUIRE_DB=1)",
+    "oracle: needs Oracle (a local gvenzl/oracle-free container; skipped without Docker unless DS_REQUIRE_DB=1)",
+]
+addopts = "-m 'not live_llm' --import-mode=importlib"
+# A hung test fails after ten minutes instead of hanging the run (pytest-timeout; tests/conftest.py gives
+# the opt-in measurements an hour).
+timeout = 600
+
+[tool.mypy]
+python_version = "3.13"
+files = ["deltasleuth"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+check_untyped_defs = true
+no_implicit_optional = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = ["deltasleuth", "deltasleuth.*"]
+disallow_untyped_defs = true
+
+# Libraries that ship no types and have no small stub package.
+[[tool.mypy.overrides]]
+module = ["cel_expr_python", "cel_expr_python.*", "genson", "genson.*", "jsonata", "jsonata.*", "scipy.*"]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 110
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "RUF", "C901"]
+ignore = ["S101"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 29  # no function may pass it: the most complex one's (scan, in runner/scan.py)
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S603", "S607"]  # tests start local helper processes (docker, mock servers)

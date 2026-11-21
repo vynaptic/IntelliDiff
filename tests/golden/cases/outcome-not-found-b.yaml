@@ -1,0 +1,22 @@
+description: >
+  A key B authoritatively does not hold is NOT_FOUND_B, with one MISSING_DOCUMENT finding (CRITICAL)
+  at the root whose member key is the key itself.
+key: ORG-000123
+sides:
+  b: {notFound: {status: [404]}}
+targets:
+  b: {authoritativeAbsence: {status: [404]}}
+a:
+  body: '{"code": "ORG-000123", "status": "ACTIVE"}'
+b:
+  status: 404
+  body: '{"error": "not found"}'
+expect:
+  a: COMPLETE
+  b: ABSENT
+  outcome: NOT_FOUND_B
+  findings:
+    - finding: ["", $, missing_in_b, MISSING_DOCUMENT]
+      taxonomy: [MISSING_DOCUMENT, CRITICAL]
+      member_key: ORG-000123
+      direction: a_only

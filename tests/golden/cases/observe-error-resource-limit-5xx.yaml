@@ -1,0 +1,6 @@
+description: A body over the fetcher's size cap is INCOMPLETE resource_limit; 5xx after retries is ERROR.
+a: {status: null, error_class: resource_limit}
+b: {status: 503, error_class: http_5xx}
+expect:
+  a: INCOMPLETE resource_limit
+  b: ERROR error_b

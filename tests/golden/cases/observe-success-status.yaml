@@ -1,0 +1,12 @@
+description: Declared success statuses carry documents; any other status is ERROR (never compared).
+sides:
+  a: {success: {status: [200, 203]}}
+a:
+  status: 203
+  body: '{"a": 1}'
+b:
+  status: 500
+  body: '{"error": "boom"}'
+expect:
+  a: COMPLETE
+  b: ERROR error_b

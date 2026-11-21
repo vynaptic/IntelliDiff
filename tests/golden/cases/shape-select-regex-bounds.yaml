@@ -1,0 +1,15 @@
+description: >
+  A select filter's regular expression may come from the answer itself. One with a repeat inside a repeat
+  can backtrack for hours, so side b's, read from its answer, is refused at once and the side is
+  INCOMPLETE, never a match. Side a's ordinary pattern, written in the spec, selects as before.
+sides:
+  a: {select: "$.items[?match(@.code, 'ORG-[0-9]+')]"}
+  b: {select: "$.items[?match(@.code, @.pattern)]"}
+a:
+  body: '{"items": [{"code": "ORG-000123"}, {"code": "MBR-0045123"}]}'
+b:
+  body: '{"items": [{"code": "ORG-000123", "pattern": "ORG-(0+)+123"}, {"code": "MBR-0045123", "pattern": "x"}]}'
+expect:
+  a: COMPLETE
+  b: INCOMPLETE unparseable
+  outcome: INCONCLUSIVE unparseable

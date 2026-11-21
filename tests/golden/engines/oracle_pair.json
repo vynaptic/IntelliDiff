@@ -1,0 +1,326 @@
+{
+ "plain": {
+  "schema": "APP",
+  "name": "CUSTOMERS",
+  "keys": [
+   "ID"
+  ],
+  "key_maps": [
+   null
+  ],
+  "columns": {
+   "email": "EMAIL",
+   "amount": "AMOUNT"
+  },
+  "where": null,
+  "types": {},
+  "digest": [
+   "amount",
+   "email"
+  ],
+  "engine": "oracle",
+  "classes": {
+   "ID": "integer",
+   "EMAIL": "text",
+   "AMOUNT": "decimal"
+  },
+  "declared": {
+   "ID": "NUMBER(10)",
+   "EMAIL": "VARCHAR2(120 CHAR)",
+   "AMOUNT": "NUMBER(10,2)"
+  }
+ },
+ "mapped": {
+  "schema": "APP",
+  "name": "Accounts",
+  "keys": [
+   "BRANCH",
+   "NO",
+   "AMT"
+  ],
+  "key_maps": [
+   null,
+   {
+    "kind": "prefix_pad",
+    "prefix": "A-",
+    "width": 6,
+    "sideType": "integer"
+   },
+   null
+  ],
+  "columns": {
+   "status": "ST",
+   "opened": "OPENED",
+   "seen": "SEEN",
+   "rate": "RATE",
+   "note": "NOTE",
+   "blob": "RAW",
+   "doc": "DOC",
+   "flag": "FLAG",
+   "span": "SPAN",
+   "at": "AT"
+  },
+  "where": "\"ST\" = 'ok' AND (\"RATE\" BETWEEN 1 AND 2.5 OR \"NOTE\" NOT LIKE 'x\\_%') AND \"NO\" IN (1, 2) AND \"OPENED\" < '2024-01-01' AND \"RAW\" IS NOT NULL AND \"FLAG\" AND \"ST\" IN ('a', 'b') AND \"ST\" BETWEEN 'a' AND 'b' AND \"ST\" < 'c'",
+  "types": {
+   "opened": {
+    "as": "timestamp"
+   }
+  },
+  "digest": [
+   "at",
+   "blob",
+   "doc",
+   "flag",
+   "note",
+   "opened",
+   "rate",
+   "seen",
+   "span",
+   "status"
+  ],
+  "strata": {
+   "region": "BRANCH",
+   "kind": "ST"
+  },
+  "engine": "oracle",
+  "classes": {
+   "BRANCH": "char",
+   "NO": "integer",
+   "AMT": "decimal",
+   "ST": "char",
+   "OPENED": "timestamp",
+   "SEEN": "instant",
+   "RATE": "float32",
+   "NOTE": "text",
+   "RAW": "bytes",
+   "DOC": "json",
+   "FLAG": "boolean",
+   "SPAN": "other",
+   "AT": "timestamp"
+  },
+  "declared": {
+   "BRANCH": "CHAR(4)",
+   "NO": "NUMBER(8)",
+   "AMT": "NUMBER(10,2)",
+   "ST": "CHAR(3)",
+   "OPENED": "DATE",
+   "SEEN": "TIMESTAMP(6) WITH TIME ZONE",
+   "RATE": "BINARY_FLOAT",
+   "NOTE": "CLOB",
+   "RAW": "RAW(16)",
+   "DOC": "JSON",
+   "FLAG": "BOOLEAN",
+   "SPAN": "INTERVAL DAY(2) TO SECOND(6)",
+   "AT": "TIMESTAMP(9)"
+  }
+ },
+ "sent": {
+  "plain": {
+   "rows": [
+    "(SELECT 0, t.\"EMAIL\", TO_CHAR(t.\"AMOUNT\", 'TM9'), TO_CHAR(t.\"ID\", 'TM9'), 1 FROM \"APP\".\"CUSTOMERS\" t WHERE t.\"ID\" IN (TO_NUMBER(:b0)) AND TO_CHAR(t.\"ID\", 'TM9') = :b1 ORDER BY 5 DESC FETCH FIRST 2 ROWS ONLY) UNION ALL (SELECT 2, t.\"EMAIL\", TO_CHAR(t.\"AMOUNT\", 'TM9'), TO_CHAR(t.\"ID\", 'TM9'), 1 FROM \"APP\".\"CUSTOMERS\" t WHERE t.\"ID\" IN (TO_NUMBER(:b2)) AND TO_CHAR(t.\"ID\", 'TM9') = :b3 ORDER BY 5 DESC FETCH FIRST 2 ROWS ONLY)",
+    {
+     "b0": "7",
+     "b1": "7",
+     "b2": "1.5",
+     "b3": "1.5"
+    }
+   ],
+   "scan": [
+    "SELECT TO_CHAR(t.\"ID\", 'TM9'), TO_CHAR(t.\"AMOUNT\", 'TM9'), t.\"EMAIL\" FROM \"APP\".\"CUSTOMERS\" t WHERE TO_CHAR(t.\"ID\", 'TM9') IS NOT NULL ORDER BY TO_CHAR(t.\"ID\", 'TM9')",
+    {}
+   ],
+   "scan_after": [
+    "SELECT TO_CHAR(t.\"ID\", 'TM9'), TO_CHAR(t.\"AMOUNT\", 'TM9'), t.\"EMAIL\" FROM \"APP\".\"CUSTOMERS\" t WHERE TO_CHAR(t.\"ID\", 'TM9') IS NOT NULL AND ((TO_CHAR(t.\"ID\", 'TM9') > :b0)) ORDER BY TO_CHAR(t.\"ID\", 'TM9')",
+    {
+     "b0": "41"
+    }
+   ],
+   "scan_hashed": [
+    "SELECT TO_CHAR(t.\"ID\", 'TM9'), STANDARD_HASH(STANDARD_HASH(TO_CHAR(t.\"AMOUNT\", 'TM9'), 'SHA256') || STANDARD_HASH(t.\"EMAIL\", 'SHA256'), 'SHA256') FROM \"APP\".\"CUSTOMERS\" t WHERE TO_CHAR(t.\"ID\", 'TM9') IS NOT NULL ORDER BY TO_CHAR(t.\"ID\", 'TM9')",
+    {}
+   ],
+   "census": [
+    "SELECT TO_CHAR(t.\"ID\", 'TM9') FROM \"APP\".\"CUSTOMERS\" t WHERE TO_CHAR(t.\"ID\", 'TM9') IS NOT NULL ORDER BY TO_CHAR(t.\"ID\", 'TM9')",
+    {}
+   ],
+   "frame": [
+    "SELECT TO_CHAR(t.\"ID\", 'TM9') FROM \"APP\".\"CUSTOMERS\" t WHERE TO_CHAR(t.\"ID\", 'TM9') IS NOT NULL ORDER BY TO_CHAR(t.\"ID\", 'TM9')",
+    {}
+   ],
+   "null_keys": [
+    "SELECT COUNT(*) FROM \"APP\".\"CUSTOMERS\" t WHERE (TO_CHAR(t.\"ID\", 'TM9') IS NULL)",
+    {}
+   ],
+   "probe": [
+    "SELECT 1 FROM (SELECT TO_CHAR(t.\"ID\", 'TM9'), t.\"EMAIL\", TO_CHAR(t.\"AMOUNT\", 'TM9') FROM \"APP\".\"CUSTOMERS\" t WHERE TO_CHAR(t.\"ID\", 'TM9') IS NOT NULL) WHERE 1 = 0",
+    {}
+   ]
+  },
+  "mapped": {
+   "rows": [
+    "(SELECT 0, t.\"ST\", TO_CHAR(t.\"OPENED\", 'SYYYY-MM-DD\"T\"HH24:MI:SS'), TO_CHAR(SYS_EXTRACT_UTC(t.\"SEEN\"), 'SYYYY-MM-DD\"T\"HH24:MI:SS.FF9'), TO_CHAR(t.\"RATE\"), CASE WHEN (COALESCE(LENGTH(t.\"NOTE\"), 0) + COALESCE(LENGTH(t.\"DOC\"), 0) > 16777216) THEN NULL ELSE t.\"NOTE\" END, t.\"RAW\", CASE WHEN (COALESCE(LENGTH(t.\"NOTE\"), 0) + COALESCE(LENGTH(t.\"DOC\"), 0) > 16777216) THEN NULL ELSE JSON_SERIALIZE(t.\"DOC\" RETURNING CLOB) END, TO_CHAR(t.\"FLAG\"), TO_CHAR(t.\"SPAN\"), TO_CHAR(t.\"AT\", 'SYYYY-MM-DD\"T\"HH24:MI:SS.FF9'), CASE WHEN (COALESCE(LENGTH(t.\"NOTE\"), 0) + COALESCE(LENGTH(t.\"DOC\"), 0) > 16777216) THEN 1 ELSE 0 END, RTRIM(t.\"BRANCH\", ' '), CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END, TO_CHAR(t.\"AMT\", 'FM99999990.00'), CASE WHEN (t.\"ST\" = CAST(:b1 AS CHAR(2000)) AND ( t.\"RATE\" BETWEEN TO_NUMBER(:b2) AND TO_NUMBER(:b3) OR t.\"NOTE\" NOT LIKE :b4 ESCAPE '\\' ) AND t.\"NO\" IN ( TO_NUMBER(:b5) , TO_NUMBER(:b6) ) AND t.\"OPENED\" < TO_DATE(:b7, 'YYYY-MM-DD HH24:MI:SS') AND t.\"RAW\" IS NOT NULL AND t.\"FLAG\" AND t.\"ST\" IN ( CAST(:b8 AS CHAR(2000)) , CAST(:b9 AS CHAR(2000)) ) AND t.\"ST\" BETWEEN CAST(:b10 AS CHAR(2000)) AND CAST(:b11 AS CHAR(2000)) AND t.\"ST\" < CAST(:b12 AS CHAR(2000))) THEN 1 ELSE 0 END FROM \"APP\".\"Accounts\" t WHERE t.\"BRANCH\" IN (CAST(:b13 AS CHAR(2000))) AND t.\"NO\" IN (TO_NUMBER(:b14)) AND t.\"AMT\" IN (TO_NUMBER(:b15)) AND RTRIM(t.\"BRANCH\", ' ') = :b16 AND CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END = :b17 AND TO_CHAR(t.\"AMT\", 'FM99999990.00') = :b18 ORDER BY 16 DESC FETCH FIRST 2 ROWS ONLY) UNION ALL (SELECT 1, t.\"ST\", TO_CHAR(t.\"OPENED\", 'SYYYY-MM-DD\"T\"HH24:MI:SS'), TO_CHAR(SYS_EXTRACT_UTC(t.\"SEEN\"), 'SYYYY-MM-DD\"T\"HH24:MI:SS.FF9'), TO_CHAR(t.\"RATE\"), CASE WHEN (COALESCE(LENGTH(t.\"NOTE\"), 0) + COALESCE(LENGTH(t.\"DOC\"), 0) > 16777216) THEN NULL ELSE t.\"NOTE\" END, t.\"RAW\", CASE WHEN (COALESCE(LENGTH(t.\"NOTE\"), 0) + COALESCE(LENGTH(t.\"DOC\"), 0) > 16777216) THEN NULL ELSE JSON_SERIALIZE(t.\"DOC\" RETURNING CLOB) END, TO_CHAR(t.\"FLAG\"), TO_CHAR(t.\"SPAN\"), TO_CHAR(t.\"AT\", 'SYYYY-MM-DD\"T\"HH24:MI:SS.FF9'), CASE WHEN (COALESCE(LENGTH(t.\"NOTE\"), 0) + COALESCE(LENGTH(t.\"DOC\"), 0) > 16777216) THEN 1 ELSE 0 END, RTRIM(t.\"BRANCH\", ' '), CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END, TO_CHAR(t.\"AMT\", 'FM99999990.00'), CASE WHEN (t.\"ST\" = CAST(:b1 AS CHAR(2000)) AND ( t.\"RATE\" BETWEEN TO_NUMBER(:b2) AND TO_NUMBER(:b3) OR t.\"NOTE\" NOT LIKE :b4 ESCAPE '\\' ) AND t.\"NO\" IN ( TO_NUMBER(:b5) , TO_NUMBER(:b6) ) AND t.\"OPENED\" < TO_DATE(:b7, 'YYYY-MM-DD HH24:MI:SS') AND t.\"RAW\" IS NOT NULL AND t.\"FLAG\" AND t.\"ST\" IN ( CAST(:b8 AS CHAR(2000)) , CAST(:b9 AS CHAR(2000)) ) AND t.\"ST\" BETWEEN CAST(:b10 AS CHAR(2000)) AND CAST(:b11 AS CHAR(2000)) AND t.\"ST\" < CAST(:b12 AS CHAR(2000))) THEN 1 ELSE 0 END FROM \"APP\".\"Accounts\" t WHERE t.\"BRANCH\" IN (CAST(:b19 AS CHAR(2000))) AND t.\"NO\" IN (TO_NUMBER(:b20)) AND t.\"AMT\" IN (TO_NUMBER(:b21)) AND RTRIM(t.\"BRANCH\", ' ') = :b22 AND CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END = :b23 AND TO_CHAR(t.\"AMT\", 'FM99999990.00') = :b24 ORDER BY 16 DESC FETCH FIRST 2 ROWS ONLY) UNION ALL (SELECT 3, t.\"ST\", TO_CHAR(t.\"OPENED\", 'SYYYY-MM-DD\"T\"HH24:MI:SS'), TO_CHAR(SYS_EXTRACT_UTC(t.\"SEEN\"), 'SYYYY-MM-DD\"T\"HH24:MI:SS.FF9'), TO_CHAR(t.\"RATE\"), CASE WHEN (COALESCE(LENGTH(t.\"NOTE\"), 0) + COALESCE(LENGTH(t.\"DOC\"), 0) > 16777216) THEN NULL ELSE t.\"NOTE\" END, t.\"RAW\", CASE WHEN (COALESCE(LENGTH(t.\"NOTE\"), 0) + COALESCE(LENGTH(t.\"DOC\"), 0) > 16777216) THEN NULL ELSE JSON_SERIALIZE(t.\"DOC\" RETURNING CLOB) END, TO_CHAR(t.\"FLAG\"), TO_CHAR(t.\"SPAN\"), TO_CHAR(t.\"AT\", 'SYYYY-MM-DD\"T\"HH24:MI:SS.FF9'), CASE WHEN (COALESCE(LENGTH(t.\"NOTE\"), 0) + COALESCE(LENGTH(t.\"DOC\"), 0) > 16777216) THEN 1 ELSE 0 END, RTRIM(t.\"BRANCH\", ' '), CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END, TO_CHAR(t.\"AMT\", 'FM99999990.00'), CASE WHEN (t.\"ST\" = CAST(:b1 AS CHAR(2000)) AND ( t.\"RATE\" BETWEEN TO_NUMBER(:b2) AND TO_NUMBER(:b3) OR t.\"NOTE\" NOT LIKE :b4 ESCAPE '\\' ) AND t.\"NO\" IN ( TO_NUMBER(:b5) , TO_NUMBER(:b6) ) AND t.\"OPENED\" < TO_DATE(:b7, 'YYYY-MM-DD HH24:MI:SS') AND t.\"RAW\" IS NOT NULL AND t.\"FLAG\" AND t.\"ST\" IN ( CAST(:b8 AS CHAR(2000)) , CAST(:b9 AS CHAR(2000)) ) AND t.\"ST\" BETWEEN CAST(:b10 AS CHAR(2000)) AND CAST(:b11 AS CHAR(2000)) AND t.\"ST\" < CAST(:b12 AS CHAR(2000))) THEN 1 ELSE 0 END FROM \"APP\".\"Accounts\" t WHERE t.\"BRANCH\" IN (CAST(:b25 AS CHAR(2000))) AND t.\"NO\" IN (TO_NUMBER(:b26)) AND t.\"AMT\" IN (TO_NUMBER(:b27)) AND RTRIM(t.\"BRANCH\", ' ') = :b28 AND CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END = :b29 AND TO_CHAR(t.\"AMT\", 'FM99999990.00') = :b30 ORDER BY 16 DESC FETCH FIRST 2 ROWS ONLY) UNION ALL (SELECT -1, t.\"ST\", TO_CHAR(t.\"OPENED\", 'SYYYY-MM-DD\"T\"HH24:MI:SS'), TO_CHAR(SYS_EXTRACT_UTC(t.\"SEEN\"), 'SYYYY-MM-DD\"T\"HH24:MI:SS.FF9'), TO_CHAR(t.\"RATE\"), CASE WHEN (COALESCE(LENGTH(t.\"NOTE\"), 0) + COALESCE(LENGTH(t.\"DOC\"), 0) > 16777216) THEN NULL ELSE t.\"NOTE\" END, t.\"RAW\", CASE WHEN (COALESCE(LENGTH(t.\"NOTE\"), 0) + COALESCE(LENGTH(t.\"DOC\"), 0) > 16777216) THEN NULL ELSE JSON_SERIALIZE(t.\"DOC\" RETURNING CLOB) END, TO_CHAR(t.\"FLAG\"), TO_CHAR(t.\"SPAN\"), TO_CHAR(t.\"AT\", 'SYYYY-MM-DD\"T\"HH24:MI:SS.FF9'), CASE WHEN (COALESCE(LENGTH(t.\"NOTE\"), 0) + COALESCE(LENGTH(t.\"DOC\"), 0) > 16777216) THEN 1 ELSE 0 END, RTRIM(t.\"BRANCH\", ' '), CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END, TO_CHAR(t.\"AMT\", 'FM99999990.00'), CASE WHEN (t.\"ST\" = CAST(:b1 AS CHAR(2000)) AND ( t.\"RATE\" BETWEEN TO_NUMBER(:b2) AND TO_NUMBER(:b3) OR t.\"NOTE\" NOT LIKE :b4 ESCAPE '\\' ) AND t.\"NO\" IN ( TO_NUMBER(:b5) , TO_NUMBER(:b6) ) AND t.\"OPENED\" < TO_DATE(:b7, 'YYYY-MM-DD HH24:MI:SS') AND t.\"RAW\" IS NOT NULL AND t.\"FLAG\" AND t.\"ST\" IN ( CAST(:b8 AS CHAR(2000)) , CAST(:b9 AS CHAR(2000)) ) AND t.\"ST\" BETWEEN CAST(:b10 AS CHAR(2000)) AND CAST(:b11 AS CHAR(2000)) AND t.\"ST\" < CAST(:b12 AS CHAR(2000))) THEN 1 ELSE 0 END FROM \"APP\".\"Accounts\" t WHERE t.\"BRANCH\" IN (CAST(:b25 AS CHAR(2000))) AND t.\"NO\" IN (TO_NUMBER(:b26)) AND t.\"AMT\" IN (TO_NUMBER(:b27)) AND RTRIM(t.\"BRANCH\", ' ') = :b28 AND CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END = :b29 AND TO_CHAR(t.\"AMT\", 'FM99999990.00') = :b30 ORDER BY 16 DESC FETCH FIRST 2 ROWS ONLY)",
+    {
+     "b0": "A-",
+     "b1": "ok",
+     "b2": "1",
+     "b3": "2.5",
+     "b4": "x\\_%",
+     "b5": "1",
+     "b6": "2",
+     "b7": "2024-01-01",
+     "b8": "a",
+     "b9": "b",
+     "b10": "a",
+     "b11": "b",
+     "b12": "c",
+     "b13": "eu",
+     "b14": "42",
+     "b15": "1.50",
+     "b16": "eu",
+     "b17": "A-000042",
+     "b18": "1.50",
+     "b19": "e'u",
+     "b20": "7",
+     "b21": "-0.50",
+     "b22": "e'u",
+     "b23": "A-000007",
+     "b24": "-0.50",
+     "b25": "us",
+     "b26": "3",
+     "b27": "2.00",
+     "b28": "us",
+     "b29": "A-000003",
+     "b30": "2.00"
+    }
+   ],
+   "scan": [
+    "SELECT RTRIM(t.\"BRANCH\", ' '), CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END, TO_CHAR(t.\"AMT\", 'FM99999990.00'), TO_CHAR(t.\"AT\", 'SYYYY-MM-DD\"T\"HH24:MI:SS.FF9'), t.\"RAW\", CASE WHEN (COALESCE(LENGTH(t.\"DOC\"), 0) + COALESCE(LENGTH(t.\"NOTE\"), 0) > 16777216) THEN NULL ELSE JSON_SERIALIZE(t.\"DOC\" RETURNING CLOB) END, TO_CHAR(t.\"FLAG\"), CASE WHEN (COALESCE(LENGTH(t.\"DOC\"), 0) + COALESCE(LENGTH(t.\"NOTE\"), 0) > 16777216) THEN NULL ELSE t.\"NOTE\" END, TO_CHAR(t.\"OPENED\", 'SYYYY-MM-DD\"T\"HH24:MI:SS'), TO_CHAR(t.\"RATE\"), TO_CHAR(SYS_EXTRACT_UTC(t.\"SEEN\"), 'SYYYY-MM-DD\"T\"HH24:MI:SS.FF9'), TO_CHAR(t.\"SPAN\"), t.\"ST\", CASE WHEN (COALESCE(LENGTH(t.\"DOC\"), 0) + COALESCE(LENGTH(t.\"NOTE\"), 0) > 16777216) THEN 1 ELSE 0 END FROM \"APP\".\"Accounts\" t WHERE RTRIM(t.\"BRANCH\", ' ') IS NOT NULL AND CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END IS NOT NULL AND TO_CHAR(t.\"AMT\", 'FM99999990.00') IS NOT NULL AND (t.\"ST\" = CAST(:b1 AS CHAR(2000)) AND ( t.\"RATE\" BETWEEN TO_NUMBER(:b2) AND TO_NUMBER(:b3) OR t.\"NOTE\" NOT LIKE :b4 ESCAPE '\\' ) AND t.\"NO\" IN ( TO_NUMBER(:b5) , TO_NUMBER(:b6) ) AND t.\"OPENED\" < TO_DATE(:b7, 'YYYY-MM-DD HH24:MI:SS') AND t.\"RAW\" IS NOT NULL AND t.\"FLAG\" AND t.\"ST\" IN ( CAST(:b8 AS CHAR(2000)) , CAST(:b9 AS CHAR(2000)) ) AND t.\"ST\" BETWEEN CAST(:b10 AS CHAR(2000)) AND CAST(:b11 AS CHAR(2000)) AND t.\"ST\" < CAST(:b12 AS CHAR(2000))) ORDER BY RTRIM(t.\"BRANCH\", ' '), CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END, TO_CHAR(t.\"AMT\", 'FM99999990.00')",
+    {
+     "b0": "A-",
+     "b1": "ok",
+     "b2": "1",
+     "b3": "2.5",
+     "b4": "x\\_%",
+     "b5": "1",
+     "b6": "2",
+     "b7": "2024-01-01",
+     "b8": "a",
+     "b9": "b",
+     "b10": "a",
+     "b11": "b",
+     "b12": "c"
+    }
+   ],
+   "scan_after": [
+    "SELECT RTRIM(t.\"BRANCH\", ' '), CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END, TO_CHAR(t.\"AMT\", 'FM99999990.00'), TO_CHAR(t.\"AT\", 'SYYYY-MM-DD\"T\"HH24:MI:SS.FF9'), t.\"RAW\", CASE WHEN (COALESCE(LENGTH(t.\"DOC\"), 0) + COALESCE(LENGTH(t.\"NOTE\"), 0) > 16777216) THEN NULL ELSE JSON_SERIALIZE(t.\"DOC\" RETURNING CLOB) END, TO_CHAR(t.\"FLAG\"), CASE WHEN (COALESCE(LENGTH(t.\"DOC\"), 0) + COALESCE(LENGTH(t.\"NOTE\"), 0) > 16777216) THEN NULL ELSE t.\"NOTE\" END, TO_CHAR(t.\"OPENED\", 'SYYYY-MM-DD\"T\"HH24:MI:SS'), TO_CHAR(t.\"RATE\"), TO_CHAR(SYS_EXTRACT_UTC(t.\"SEEN\"), 'SYYYY-MM-DD\"T\"HH24:MI:SS.FF9'), TO_CHAR(t.\"SPAN\"), t.\"ST\", CASE WHEN (COALESCE(LENGTH(t.\"DOC\"), 0) + COALESCE(LENGTH(t.\"NOTE\"), 0) > 16777216) THEN 1 ELSE 0 END FROM \"APP\".\"Accounts\" t WHERE RTRIM(t.\"BRANCH\", ' ') IS NOT NULL AND CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END IS NOT NULL AND TO_CHAR(t.\"AMT\", 'FM99999990.00') IS NOT NULL AND (t.\"ST\" = CAST(:b1 AS CHAR(2000)) AND ( t.\"RATE\" BETWEEN TO_NUMBER(:b2) AND TO_NUMBER(:b3) OR t.\"NOTE\" NOT LIKE :b4 ESCAPE '\\' ) AND t.\"NO\" IN ( TO_NUMBER(:b5) , TO_NUMBER(:b6) ) AND t.\"OPENED\" < TO_DATE(:b7, 'YYYY-MM-DD HH24:MI:SS') AND t.\"RAW\" IS NOT NULL AND t.\"FLAG\" AND t.\"ST\" IN ( CAST(:b8 AS CHAR(2000)) , CAST(:b9 AS CHAR(2000)) ) AND t.\"ST\" BETWEEN CAST(:b10 AS CHAR(2000)) AND CAST(:b11 AS CHAR(2000)) AND t.\"ST\" < CAST(:b12 AS CHAR(2000))) AND ((RTRIM(t.\"BRANCH\", ' ') > :b13) OR (RTRIM(t.\"BRANCH\", ' ') = :b13 AND CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END IS NOT NULL) OR (RTRIM(t.\"BRANCH\", ' ') = :b13 AND 1 = 0 AND TO_CHAR(t.\"AMT\", 'FM99999990.00') > :b14)) ORDER BY RTRIM(t.\"BRANCH\", ' '), CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END, TO_CHAR(t.\"AMT\", 'FM99999990.00')",
+    {
+     "b0": "A-",
+     "b1": "ok",
+     "b2": "1",
+     "b3": "2.5",
+     "b4": "x\\_%",
+     "b5": "1",
+     "b6": "2",
+     "b7": "2024-01-01",
+     "b8": "a",
+     "b9": "b",
+     "b10": "a",
+     "b11": "b",
+     "b12": "c",
+     "b13": "eu",
+     "b14": "1.50"
+    }
+   ],
+   "scan_hashed": [
+    "SELECT RTRIM(t.\"BRANCH\", ' '), CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END, TO_CHAR(t.\"AMT\", 'FM99999990.00'), STANDARD_HASH(STANDARD_HASH(TO_CHAR(t.\"AT\", 'SYYYY-MM-DD\"T\"HH24:MI:SS.FF9'), 'SHA256') || STANDARD_HASH(t.\"RAW\", 'SHA256') || STANDARD_HASH(TO_CHAR(t.\"FLAG\"), 'SHA256') || STANDARD_HASH(TO_CHAR(t.\"RATE\"), 'SHA256') || STANDARD_HASH(TO_CHAR(SYS_EXTRACT_UTC(t.\"SEEN\"), 'SYYYY-MM-DD\"T\"HH24:MI:SS.FF9'), 'SHA256') || STANDARD_HASH(TO_CHAR(t.\"SPAN\"), 'SHA256') || STANDARD_HASH(t.\"ST\", 'SHA256'), 'SHA256'), CASE WHEN (COALESCE(LENGTH(t.\"DOC\"), 0) + COALESCE(LENGTH(t.\"NOTE\"), 0) > 16777216) THEN NULL ELSE JSON_SERIALIZE(t.\"DOC\" RETURNING CLOB) END, CASE WHEN (COALESCE(LENGTH(t.\"DOC\"), 0) + COALESCE(LENGTH(t.\"NOTE\"), 0) > 16777216) THEN NULL ELSE t.\"NOTE\" END, TO_CHAR(t.\"OPENED\", 'SYYYY-MM-DD\"T\"HH24:MI:SS'), CASE WHEN (COALESCE(LENGTH(t.\"DOC\"), 0) + COALESCE(LENGTH(t.\"NOTE\"), 0) > 16777216) THEN 1 ELSE 0 END FROM \"APP\".\"Accounts\" t WHERE RTRIM(t.\"BRANCH\", ' ') IS NOT NULL AND CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END IS NOT NULL AND TO_CHAR(t.\"AMT\", 'FM99999990.00') IS NOT NULL AND (t.\"ST\" = CAST(:b1 AS CHAR(2000)) AND ( t.\"RATE\" BETWEEN TO_NUMBER(:b2) AND TO_NUMBER(:b3) OR t.\"NOTE\" NOT LIKE :b4 ESCAPE '\\' ) AND t.\"NO\" IN ( TO_NUMBER(:b5) , TO_NUMBER(:b6) ) AND t.\"OPENED\" < TO_DATE(:b7, 'YYYY-MM-DD HH24:MI:SS') AND t.\"RAW\" IS NOT NULL AND t.\"FLAG\" AND t.\"ST\" IN ( CAST(:b8 AS CHAR(2000)) , CAST(:b9 AS CHAR(2000)) ) AND t.\"ST\" BETWEEN CAST(:b10 AS CHAR(2000)) AND CAST(:b11 AS CHAR(2000)) AND t.\"ST\" < CAST(:b12 AS CHAR(2000))) ORDER BY RTRIM(t.\"BRANCH\", ' '), CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END, TO_CHAR(t.\"AMT\", 'FM99999990.00')",
+    {
+     "b0": "A-",
+     "b1": "ok",
+     "b2": "1",
+     "b3": "2.5",
+     "b4": "x\\_%",
+     "b5": "1",
+     "b6": "2",
+     "b7": "2024-01-01",
+     "b8": "a",
+     "b9": "b",
+     "b10": "a",
+     "b11": "b",
+     "b12": "c"
+    }
+   ],
+   "census": [
+    "SELECT RTRIM(t.\"BRANCH\", ' '), CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END, TO_CHAR(t.\"AMT\", 'FM99999990.00') FROM \"APP\".\"Accounts\" t WHERE RTRIM(t.\"BRANCH\", ' ') IS NOT NULL AND CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END IS NOT NULL AND TO_CHAR(t.\"AMT\", 'FM99999990.00') IS NOT NULL AND (t.\"ST\" = CAST(:b1 AS CHAR(2000)) AND ( t.\"RATE\" BETWEEN TO_NUMBER(:b2) AND TO_NUMBER(:b3) OR t.\"NOTE\" NOT LIKE :b4 ESCAPE '\\' ) AND t.\"NO\" IN ( TO_NUMBER(:b5) , TO_NUMBER(:b6) ) AND t.\"OPENED\" < TO_DATE(:b7, 'YYYY-MM-DD HH24:MI:SS') AND t.\"RAW\" IS NOT NULL AND t.\"FLAG\" AND t.\"ST\" IN ( CAST(:b8 AS CHAR(2000)) , CAST(:b9 AS CHAR(2000)) ) AND t.\"ST\" BETWEEN CAST(:b10 AS CHAR(2000)) AND CAST(:b11 AS CHAR(2000)) AND t.\"ST\" < CAST(:b12 AS CHAR(2000))) ORDER BY RTRIM(t.\"BRANCH\", ' '), CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END, TO_CHAR(t.\"AMT\", 'FM99999990.00')",
+    {
+     "b0": "A-",
+     "b1": "ok",
+     "b2": "1",
+     "b3": "2.5",
+     "b4": "x\\_%",
+     "b5": "1",
+     "b6": "2",
+     "b7": "2024-01-01",
+     "b8": "a",
+     "b9": "b",
+     "b10": "a",
+     "b11": "b",
+     "b12": "c"
+    }
+   ],
+   "frame": [
+    "SELECT RTRIM(t.\"BRANCH\", ' '), CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END, TO_CHAR(t.\"AMT\", 'FM99999990.00'), t.\"BRANCH\", t.\"ST\" FROM \"APP\".\"Accounts\" t WHERE RTRIM(t.\"BRANCH\", ' ') IS NOT NULL AND CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END IS NOT NULL AND TO_CHAR(t.\"AMT\", 'FM99999990.00') IS NOT NULL AND (t.\"ST\" = CAST(:b1 AS CHAR(2000)) AND ( t.\"RATE\" BETWEEN TO_NUMBER(:b2) AND TO_NUMBER(:b3) OR t.\"NOTE\" NOT LIKE :b4 ESCAPE '\\' ) AND t.\"NO\" IN ( TO_NUMBER(:b5) , TO_NUMBER(:b6) ) AND t.\"OPENED\" < TO_DATE(:b7, 'YYYY-MM-DD HH24:MI:SS') AND t.\"RAW\" IS NOT NULL AND t.\"FLAG\" AND t.\"ST\" IN ( CAST(:b8 AS CHAR(2000)) , CAST(:b9 AS CHAR(2000)) ) AND t.\"ST\" BETWEEN CAST(:b10 AS CHAR(2000)) AND CAST(:b11 AS CHAR(2000)) AND t.\"ST\" < CAST(:b12 AS CHAR(2000))) ORDER BY RTRIM(t.\"BRANCH\", ' '), CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END, TO_CHAR(t.\"AMT\", 'FM99999990.00'), t.\"BRANCH\", t.\"ST\"",
+    {
+     "b0": "A-",
+     "b1": "ok",
+     "b2": "1",
+     "b3": "2.5",
+     "b4": "x\\_%",
+     "b5": "1",
+     "b6": "2",
+     "b7": "2024-01-01",
+     "b8": "a",
+     "b9": "b",
+     "b10": "a",
+     "b11": "b",
+     "b12": "c"
+    }
+   ],
+   "null_keys": [
+    "SELECT COUNT(*) FROM \"APP\".\"Accounts\" t WHERE (RTRIM(t.\"BRANCH\", ' ') IS NULL OR CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END IS NULL OR TO_CHAR(t.\"AMT\", 'FM99999990.00') IS NULL) AND (t.\"ST\" = CAST(:b1 AS CHAR(2000)) AND ( t.\"RATE\" BETWEEN TO_NUMBER(:b2) AND TO_NUMBER(:b3) OR t.\"NOTE\" NOT LIKE :b4 ESCAPE '\\' ) AND t.\"NO\" IN ( TO_NUMBER(:b5) , TO_NUMBER(:b6) ) AND t.\"OPENED\" < TO_DATE(:b7, 'YYYY-MM-DD HH24:MI:SS') AND t.\"RAW\" IS NOT NULL AND t.\"FLAG\" AND t.\"ST\" IN ( CAST(:b8 AS CHAR(2000)) , CAST(:b9 AS CHAR(2000)) ) AND t.\"ST\" BETWEEN CAST(:b10 AS CHAR(2000)) AND CAST(:b11 AS CHAR(2000)) AND t.\"ST\" < CAST(:b12 AS CHAR(2000)))",
+    {
+     "b0": "A-",
+     "b1": "ok",
+     "b2": "1",
+     "b3": "2.5",
+     "b4": "x\\_%",
+     "b5": "1",
+     "b6": "2",
+     "b7": "2024-01-01",
+     "b8": "a",
+     "b9": "b",
+     "b10": "a",
+     "b11": "b",
+     "b12": "c"
+    }
+   ],
+   "probe": [
+    "SELECT 1 FROM (SELECT RTRIM(t.\"BRANCH\", ' '), CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END, TO_CHAR(t.\"AMT\", 'FM99999990.00'), t.\"ST\", TO_CHAR(t.\"OPENED\", 'SYYYY-MM-DD\"T\"HH24:MI:SS'), TO_CHAR(SYS_EXTRACT_UTC(t.\"SEEN\"), 'SYYYY-MM-DD\"T\"HH24:MI:SS.FF9'), TO_CHAR(t.\"RATE\"), CASE WHEN (COALESCE(LENGTH(t.\"NOTE\"), 0) + COALESCE(LENGTH(t.\"DOC\"), 0) > 16777216) THEN NULL ELSE t.\"NOTE\" END, t.\"RAW\", CASE WHEN (COALESCE(LENGTH(t.\"NOTE\"), 0) + COALESCE(LENGTH(t.\"DOC\"), 0) > 16777216) THEN NULL ELSE JSON_SERIALIZE(t.\"DOC\" RETURNING CLOB) END, TO_CHAR(t.\"FLAG\"), TO_CHAR(t.\"SPAN\"), TO_CHAR(t.\"AT\", 'SYYYY-MM-DD\"T\"HH24:MI:SS.FF9'), CASE WHEN (COALESCE(LENGTH(t.\"NOTE\"), 0) + COALESCE(LENGTH(t.\"DOC\"), 0) > 16777216) THEN 1 ELSE 0 END, t.\"BRANCH\", t.\"ST\" FROM \"APP\".\"Accounts\" t WHERE RTRIM(t.\"BRANCH\", ' ') IS NOT NULL AND CASE WHEN LTRIM(TO_CHAR(t.\"NO\", 'TM9'), '0123456789') IS NULL AND TO_CHAR(t.\"NO\", 'TM9') IS NOT NULL THEN :b0 || LPAD(TO_CHAR(t.\"NO\", 'TM9'), GREATEST(6, LENGTH(TO_CHAR(t.\"NO\", 'TM9'))), '0') END IS NOT NULL AND TO_CHAR(t.\"AMT\", 'FM99999990.00') IS NOT NULL AND (t.\"ST\" = CAST(:b1 AS CHAR(2000)) AND ( t.\"RATE\" BETWEEN TO_NUMBER(:b2) AND TO_NUMBER(:b3) OR t.\"NOTE\" NOT LIKE :b4 ESCAPE '\\' ) AND t.\"NO\" IN ( TO_NUMBER(:b5) , TO_NUMBER(:b6) ) AND t.\"OPENED\" < TO_DATE(:b7, 'YYYY-MM-DD HH24:MI:SS') AND t.\"RAW\" IS NOT NULL AND t.\"FLAG\" AND t.\"ST\" IN ( CAST(:b8 AS CHAR(2000)) , CAST(:b9 AS CHAR(2000)) ) AND t.\"ST\" BETWEEN CAST(:b10 AS CHAR(2000)) AND CAST(:b11 AS CHAR(2000)) AND t.\"ST\" < CAST(:b12 AS CHAR(2000)))) WHERE 1 = 0",
+    {
+     "b0": "A-",
+     "b1": "ok",
+     "b2": "1",
+     "b3": "2.5",
+     "b4": "x\\_%",
+     "b5": "1",
+     "b6": "2",
+     "b7": "2024-01-01",
+     "b8": "a",
+     "b9": "b",
+     "b10": "a",
+     "b11": "b",
+     "b12": "c"
+    }
+   ]
+  }
+ }
+}

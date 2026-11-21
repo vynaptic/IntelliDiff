@@ -1,0 +1,22 @@
+description: >
+  GraphQL signals a missing entity in a 200 body ({"data": {"character": null}}). A 2xx is a
+  not-found only when the side's notFound.when is true, and ABSENT only when the target also
+  declares that status with an absence shape the body matches. Side b's entity exists: its 200
+  is listed in notFound but the predicate is false, so it is an ordinary document.
+sides:
+  a: &graphql
+    select: $.data.character
+    notFound: {status: [200], when: "has(body.data.character) && body.data.character == null"}
+  b: *graphql
+targets:
+  a: &declared
+    authoritativeAbsence: {status: [200], shapes: [null_character]}
+    absenceShapes: {null_character: "!has(body.errors) && body.data.character == null"}
+  b: *declared
+a:
+  body: '{"data": {"character": null}}'
+b:
+  body: '{"data": {"character": {"id": "1", "name": "Rick Sanchez"}}}'
+expect:
+  a: ABSENT
+  b: COMPLETE

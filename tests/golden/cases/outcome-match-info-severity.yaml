@@ -1,0 +1,17 @@
+description: >
+  A field rule that rates its value changes INFO keeps the finding, but a key whose findings are all
+  INFO is MATCH. Field rules rate value changes only: the same field missing would stay MEDIUM.
+compare:
+  fields:
+    - {path: $.lastSeen, severity: INFO}
+a:
+  body: '{"code": "ORG-000123", "lastSeen": "2026-09-23"}'
+b:
+  body: '{"code": "ORG-000123", "lastSeen": "2026-09-24"}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  outcome: MATCH
+  findings:
+    - finding: [/lastSeen, $.lastSeen, value_changed, null]
+      taxonomy: [VALUE_MISMATCH, INFO]

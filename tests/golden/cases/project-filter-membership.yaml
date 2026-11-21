@@ -1,0 +1,21 @@
+description: >
+  valueFilter runs on both sides; a member present on both sides but selected on one side only
+  is FILTER_MEMBERSHIP (MEDIUM), not missing_in_b. A member filtered on the only side that has
+  it produces nothing.
+compare:
+  arrays:
+    - {path: $.links, mode: keyed, key: [to]}
+  valueFilter: "!(path == '$.links[*]' && value.status == 'inactive')"
+a:
+  body: '{"links": [{"to": "E1", "status": "active"}, {"to": "E2", "status": "active"}]}'
+b:
+  body: |
+    {"links": [{"to": "E1", "status": "active"}, {"to": "E2", "status": "inactive"},
+               {"to": "E3", "status": "inactive"}]}
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - finding: [/links/E2, "$.links[*]", missing_in_b, FILTER_MEMBERSHIP]
+      severity: MEDIUM
+      direction: a_only

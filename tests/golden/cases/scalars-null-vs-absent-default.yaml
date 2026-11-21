@@ -1,0 +1,11 @@
+description: By default an explicit null and an absent field are different states.
+a:
+  body: '{"a": null, "b": 1, "c": null}'
+b:
+  body: '{"b": 1, "c": null, "d": null}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/a, $.a, missing_in_b, null]
+    - [/d, $.d, extra_in_b, null]

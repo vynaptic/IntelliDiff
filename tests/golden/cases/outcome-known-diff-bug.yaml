@@ -1,0 +1,26 @@
+description: >
+  A bug rule is tried before an accepted one that matches the same finding, whatever their ids, so
+  a defect being fixed is never hidden behind an accepted rule. The key is KNOWN_DIFF, a known bug.
+knownDiffs:
+  - id: KD-0001
+    when: "path == '$.limit'"
+    classification: accepted
+    reason: Limits are rounded differently by the new service.
+    ticket: ORG-1002
+  - id: KD-0002
+    when: "path == '$.limit' && change_type == 'value_changed'"
+    classification: bug
+    reason: The new service drops the cents of a limit; a fix is scheduled.
+    ticket: ORG-1003
+a:
+  body: '{"code": "ORG-000123", "limit": 100.50}'
+b:
+  body: '{"code": "ORG-000123", "limit": 100}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  outcome: KNOWN_DIFF
+  findings:
+    - finding: [/limit, $.limit, value_changed, null]
+      taxonomy: [VALUE_MISMATCH, MEDIUM]
+      rule: KD-0002

@@ -1,0 +1,8 @@
+# An unsigned build of this checkout (docs/deployment.md), tagged with the Compose project's name, so two
+# checkouts on one machine share no image; after taking new source: docker compose up -d --build
+x-image: &image "${COMPOSE_PROJECT_NAME:-deltasleuth}:source"
+services:
+  app:
+    build: {context: .., dockerfile: deploy/Dockerfile}
+    image: *image
+  migrate: {image: *image}

@@ -1,0 +1,16 @@
+description: >
+  notFound.when recognises a not-found signalled in a 200 body, but a 200 is never an
+  authoritative absence status, so it is absence_unconfirmed; a false predicate carries on.
+sides:
+  a: &nf {notFound: {status: [404], when: "has(body.found) && body.found == false"}}
+  b: *nf
+targets:
+  a: {authoritativeAbsence: {status: [404]}}
+  b: {authoritativeAbsence: {status: [404]}}
+a:
+  body: '{"found": false}'
+b:
+  body: '{"found": true, "x": 1}'
+expect:
+  a: INCOMPLETE absence_unconfirmed
+  b: COMPLETE

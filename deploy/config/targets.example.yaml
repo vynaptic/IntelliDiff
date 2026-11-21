@@ -1,0 +1,3 @@
+# Copy to targets.yaml, then declare your sources here or on the Targets screen.
+# Credentials belong in files referenced by secret_ref or dsn_ref. See docs/deployment.md.
+targets: {}

@@ -1,0 +1,6 @@
+description: circuit_open keeps its own reason; other transport errors are error_<side>.
+a: {status: null, error_class: circuit_open}
+b: {status: null, error_class: connect_error}
+expect:
+  a: ERROR circuit_open
+  b: ERROR error_b

@@ -1,0 +1,8 @@
+description: A repeated member name has undefined meaning (RFC 8259), so the side is INCOMPLETE.
+a:
+  body: '{"id": 1, "id": 2}'
+b:
+  body: '{"id": 1}'
+expect:
+  a: INCOMPLETE duplicate_member_name
+  b: COMPLETE

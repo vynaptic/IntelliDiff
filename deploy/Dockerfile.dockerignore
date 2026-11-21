@@ -1,0 +1,25 @@
+# The build context is the repository root: send only what the image copies, never secrets or keys.
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!LICENSE
+!deltasleuth
+!web
+!deploy/uv-requirements.txt
+!deploy/mirror-python.sh
+!deploy/mirror-build-requirements.txt
+!deploy/mirror-npm.mjs
+!deploy/mirror-apt.py
+**/.npmrc
+**/.netrc
+web/node_modules
+web/dist
+web/test
+**/__pycache__
+**/.DS_Store
+**/.env
+**/.env.*
+**/secrets
+**/*.key
+**/*.key.*

@@ -1,0 +1,283 @@
+/** DeltaSleuth UI: a hash-routed single page over API v1. */
+import { StrictMode, useEffect, useRef, useState, type FormEvent } from 'react';
+import { createRoot } from 'react-dom/client';
+import { Admin } from './Admin';
+import { Approvals } from './Approvals';
+import {
+  ApiError, LOGIN_EVENT, api, watchUse, type Health, type Licence, type Me, type Mode, type Notifications,
+} from './api';
+import { forget } from './building';
+import { DialogHost } from './Dialogs';
+import { KeyScreen } from './Key';
+import { LicenceScreen } from './Licence';
+import { Licensed, Who, message, useRoute } from './lib';
+import { crumbsOf, currentOf, navOf, titleOf } from './nav';
+import { NotificationsScreen } from './Notifications';
+import { PrecheckScreen, PrechecksScreen } from './Prechecks';
+import { bannerLines } from './notify';
+import { ReadinessBrief, ReadinessPair, ReadinessScreen } from './Readiness';
+import { RunScreen } from './Run';
+import { Runs } from './Runs';
+import { ScheduleScreen, SchedulesScreen } from './Schedules';
+import { TOKEN_HINT, addressHint } from './signin';
+import { SpecScreen, Specs } from './Specs';
+import { Targets } from './Targets';
+import { Err, Named } from './ui';
+import '@fontsource-variable/atkinson-hyperlegible-next/wght.css';
+import '@fontsource-variable/atkinson-hyperlegible-mono/wght.css';
+import './styles.css';
+
+// The callback's fixed codes; the page never shows text from the URL.
+const SIGN_IN_ERRORS: Record<string, string> = {
+  login_expired: 'The sign-in expired or was started in another tab. Sign in again.',
+  login_failed: 'The sign-in could not be completed.',
+  idp_unavailable: 'The identity provider cannot be reached. Try again later.',
+  access_denied: 'The identity provider refused the sign-in.',
+  idp_error: 'The identity provider reported an error.',
+  no_role: 'Your account has no DeltaSleuth role. Ask your administrator for access.',
+  groups_overage: 'Your account is in too many groups for the identity provider to list them. Ask your administrator.',
+  disabled: 'Your DeltaSleuth account is disabled.',
+};
+
+function SignIn({ mode, query, onSignedIn }: { mode: Mode; query: URLSearchParams; onSignedIn: (me: Me) => void }) {
+  const [error, setError] = useState<string>();
+  const code = query.get('error');
+  const shown = code && (Object.hasOwn(SIGN_IN_ERRORS, code) ? SIGN_IN_ERRORS[code] : 'The sign-in failed.');
+  const requestId = query.get('request_id') ?? '';
+  const hint = addressHint(error, location); // from the address bar alone
+
+  function sso() {
+    const hash = location.hash;
+    const next = !hash || hash.startsWith('#/signin') ? '#/runs' : hash; // never back to this page
+    location.assign('/v1/auth/login?next=' + encodeURIComponent(next));
+  }
+
+  async function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setError(undefined);
+    try {
+      onSignedIn(await api.tokenLogin(String(new FormData(e.currentTarget).get('token'))));
+    } catch (err) {
+      setError(message(err));
+    }
+  }
+
+  return (
+    <section className="panel login">
+      <h1>Sign in</h1>
+      <p className="muted">DeltaSleuth compares what two sources hold, key by key, and explains the differences.</p>
+      {query.get('signed_out') === '1' && <p>You are signed out.</p>}
+      {shown && (
+        <p className="error" role="alert">
+          {shown}
+          {/^Q-[0-9a-f]{16}$/.test(requestId) && (
+            <>
+              {' '}Quote <span className="mono">{requestId}</span> to your administrator.
+            </>
+          )}
+        </p>
+      )}
+      {mode === 'oidc' && <button className="primary" onClick={sso} autoFocus>Sign in with single sign-on</button>}
+      {mode === 'tokens' && (
+        <>
+          <form onSubmit={submit}>
+            <label>
+              API token <input name="token" type="password" autoComplete="current-password" required autoFocus />
+            </label>
+            <button className="primary">Sign in</button>
+            <Err error={error} />
+            {hint && <p className="muted">{hint}</p>}
+          </form>
+          <p className="muted">{TOKEN_HINT}</p>
+        </>
+      )}
+      {mode === 'none' && (
+        <p>
+          Developer mode needs no sign-in. <a href="#/runs">Continue</a>
+        </p>
+      )}
+    </section>
+  );
+}
+
+function App() {
+  const { parts, query } = useRoute();
+  const [screen, id, sub, key] = parts;
+  const [health, setHealth] = useState<Health>();
+  const [me, setMe] = useState<Me | null>(); // undefined while loading, null when signed out
+  const [error, setError] = useState<string>();
+  const [signIns, setSignIns] = useState(0); // remounts the screen so it loads again as the new caller
+  const [licence, setLicence] = useState<Licence>();
+  const [notify, setNotify] = useState<Notifications>();
+
+  useEffect(() => {
+    const onLogin = () => setMe(null);
+    addEventListener(LOGIN_EVENT, onLogin);
+    api
+      .health()
+      .then((h) => {
+        setHealth(h);
+        return api.me();
+      })
+      .then(setMe, (e) => {
+        if (!(e instanceof ApiError && e.status === 401)) setError(message(e)); // a 401 shows the sign-in
+      });
+    return () => removeEventListener(LOGIN_EVENT, onLogin);
+  }, []);
+
+  // The browser tab names the screen, and a new screen starts at its top; a filter or a tab of the same screen
+  // (the address's query) keeps the place.
+  const signedOut = me === null || screen === 'signin';
+  const path = parts.join('/');
+  useEffect(() => {
+    document.title = titleOf(signedOut ? ['signin'] : parts);
+  }, [path, signedOut]);
+  const first = useRef(true);
+  useEffect(() => {
+    if (!first.current) scrollTo(0, 0);
+    first.current = false;
+  }, [path]);
+
+  useEffect(() => {
+    if (me) api.licence().then(setLicence, () => setLicence(undefined)); // no banner if it fails
+    if (me) api.notifications().then(setNotify, () => setNotify(undefined)); // likewise
+  }, [me]);
+
+  function signedIn(who: Me) {
+    forget(); // a builder's unsaved work is the person's who left
+    setMe(who);
+    setSignIns((n) => n + 1);
+    if (screen === 'signin') location.hash = '#/runs';
+  }
+
+  async function signOut() {
+    setError(undefined);
+    let logoutUrl: string | null = null;
+    try {
+      logoutUrl = (await api.logout()).logout_url;
+    } catch (e) {
+      // 400 or 401: another tab already signed this browser out, so this one is signed out too
+      if (!(e instanceof ApiError && (e.status === 400 || e.status === 401))) {
+        setError(message(e));
+        return;
+      }
+    }
+    sessionStorage.clear();
+    forget();
+    setMe(null);
+    location.assign(logoutUrl ?? '#/signin?signed_out=1');
+  }
+
+  const can = (role: string) => !!me?.roles.includes(role);
+  const admin = can('admin') && me?.kind !== 'token'; // a token never holds admin
+  // An open build needs no licence: its screen leaves the bar for the page's foot.
+  const licensed = !!licence && licence.state !== 'open';
+  const nav = navOf({ sso: me?.mode === 'oidc', admin, notifications: !!notify?.enabled, licensed });
+  const current = currentOf(parts);
+  const crumbs = me && !signedOut ? crumbsOf(parts, Object.fromEntries(query)) : [];
+  const page =
+    !health || me === undefined ? null : signedOut ? (
+      <SignIn mode={health.auth} query={query} onSignedIn={signedIn} />
+    ) : screen === 'specs' && id ? (
+      <SpecScreen key={id} id={id} />
+    ) : screen === 'specs' ? (
+      <Specs />
+    ) : screen === 'targets' ? (
+      <Targets />
+    ) : screen === 'approvals' ? (
+      <Approvals key={id} id={id} query={query} />
+    ) : screen === 'admin' && admin ? (
+      <Admin tab={id} query={query} />
+    ) : screen === 'licence' ? (
+      <LicenceScreen />
+    ) : screen === 'notifications' ? (
+      <NotificationsScreen />
+    ) : screen === 'readiness' && id && sub === 'brief' ? (
+      <ReadinessBrief key={id} name={id} />
+    ) : screen === 'readiness' && id ? (
+      <ReadinessPair key={id} name={id} />
+    ) : screen === 'readiness' ? (
+      <ReadinessScreen query={query} />
+    ) : screen === 'schedules' && id ? (
+      <ScheduleScreen key={id} id={id} />
+    ) : screen === 'schedules' ? (
+      <SchedulesScreen query={query} />
+    ) : screen === 'prechecks' && id ? (
+      <PrecheckScreen key={id} id={id} pair={sub === 'pairs' ? key : undefined} />
+    ) : screen === 'prechecks' ? (
+      <PrechecksScreen query={query} />
+    ) : screen === 'runs' && id && sub === 'keys' && key ? (
+      <KeyScreen key={`${id}/${key}`} runId={id} keyMasked={key} query={query} />
+    ) : screen === 'runs' && id ? (
+      <RunScreen key={id} runId={id} query={query} />
+    ) : (
+      <Runs />
+    );
+  return (
+    <Who.Provider value={{ me: me ?? undefined, can }}>
+      <Licensed.Provider value={me ? licence : undefined}>
+        {health?.auth === 'none' && (
+          <p className="banner" role="note">
+            Developer mode: no sign-in, and every local user and process acts as admin. Never expose this port, directly
+            or through a reverse proxy or port forward.
+          </p>
+        )}
+        {me &&
+          licence?.warnings.map((line) => (
+            <p key={line} className="banner" role="note">
+              <a href="#/licence">{line}</a>
+            </p>
+          ))}
+        {me &&
+          bannerLines(notify).map((line) => (
+            <p key={line} className="banner" role="note">
+              <a href="#/notifications">{line}</a>
+            </p>
+          ))}
+        <nav className="top" aria-label="Screens">
+          <b>DeltaSleuth</b>
+          {me && (
+            <>
+              {nav.map((group) => (
+                <span className="group" key={group[0].screen}>
+                  {group.map((link) => (
+                    <a key={link.screen} href={`#/${link.screen}`} aria-current={link.screen === current ? 'page' : undefined}>
+                      {link.label}
+                    </a>
+                  ))}
+                </span>
+              ))}
+              <span className="who">
+                <Named name={me.name} actor={me.actor} />
+              </span>
+              {me.kind !== 'dev' && <button onClick={signOut}>Sign out</button>}
+            </>
+          )}
+        </nav>
+        <main key={signIns}>
+          <Err error={error} />
+          {crumbs.length > 0 && (
+            <nav className="crumbs" aria-label="Back to">
+              {crumbs.map((crumb) => <a key={crumb.href} href={crumb.href}>{crumb.label}</a>)}
+            </nav>
+          )}
+          {page}
+        </main>
+        {me && licence && !licensed && (
+          <footer className="muted">
+            <a href="#/licence">Licence</a>: this build needs none.
+          </footer>
+        )}
+      </Licensed.Provider>
+    </Who.Provider>
+  );
+}
+
+watchUse(window);
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <DialogHost>
+      <App />
+    </DialogHost>
+  </StrictMode>,
+);

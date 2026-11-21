@@ -1,0 +1,19 @@
+description: >
+  Predicates see every variable the spec loader declares: notFound.when in the documented
+  response.{status, headers, body} form, and a target absence shape over status and body.
+sides:
+  a: {notFound: {status: [404], when: "response.status == 200 && has(response.body.found) && !response.body.found"}}
+  b: {notFound: {status: [404]}}
+targets:
+  a: {authoritativeAbsence: {status: [404]}}
+  b:
+    authoritativeAbsence: {status: [404], shapes: [entity]}
+    absenceShapes: {entity: "status == 404 && has(body.code) && body.code == 'ENTITY_NOT_FOUND'"}
+a:
+  body: '{"found": false}'
+b:
+  status: 404
+  body: '{"code": "ENTITY_NOT_FOUND"}'
+expect:
+  a: INCOMPLETE absence_unconfirmed
+  b: ABSENT

@@ -1,0 +1,12 @@
+description: With nullEqualsAbsent an explicit null equals an absent field, but null still differs from 0.
+compare:
+  nullEqualsAbsent: true
+a:
+  body: '{"a": null, "b": 1, "e": null}'
+b:
+  body: '{"b": 1, "d": null, "e": 0}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/e, $.e, type_changed, null]

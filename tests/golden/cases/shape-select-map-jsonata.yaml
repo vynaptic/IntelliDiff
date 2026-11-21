@@ -1,0 +1,22 @@
+description: >
+  Side b has another response shape; select picks the payload and a JSONata map renames it to
+  side a's canonical shape, after which keyed members compare normally.
+compare:
+  arrays:
+    - {path: $.accounts, mode: keyed, key: [id]}
+sides:
+  b:
+    select: $.data
+    map: "{ 'customer_id': custId, 'name': fullName, 'accounts': [accts.{ 'id': acctNo, 'balance': bal }] }"
+a:
+  body: '{"customer_id": "C1", "name": "Ann", "accounts": [{"id": "A1", "balance": 10.5}]}'
+b:
+  body: |
+    {"data": {"custId": "C1", "fullName": "Ann",
+              "accts": [{"acctNo": "A1", "bal": 10.50}, {"acctNo": "A2", "bal": 1}]},
+     "status": "ok"}
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/accounts/A2, "$.accounts[*]", extra_in_b, null]

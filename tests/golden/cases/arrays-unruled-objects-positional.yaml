@@ -1,0 +1,15 @@
+description: >
+  An unruled array of objects is ordered: a shifted member cascades into position diffs,
+  which is why identity arrays should be keyed.
+a:
+  body: '{"items": [{"id": 1, "v": "a"}, {"id": 2, "v": "b"}]}'
+b:
+  body: '{"items": [{"id": 2, "v": "b"}, {"id": 3, "v": "c"}]}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/items/0/id, "$.items[*].id", value_changed, null]
+    - [/items/0/v, "$.items[*].v", value_changed, null]
+    - [/items/1/id, "$.items[*].id", value_changed, null]
+    - [/items/1/v, "$.items[*].v", value_changed, null]

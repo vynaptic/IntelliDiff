@@ -1,0 +1,15 @@
+description: >
+  Numbers pass through a JSONata map losslessly: values that differ only beyond double
+  precision stay different (a float round-trip would have made them equal).
+sides:
+  a: {map: "{ 'amount': amount, 'id': id }"}
+  b: {select: $.r, map: "{ 'amount': amount, 'id': id }"}
+a:
+  body: '{"amount": 12345678901234567890.123456789012345678901234567891, "id": 1}'
+b:
+  body: '{"r": {"amount": 12345678901234567890.123456789012345678901234567890, "id": 1.0}}'
+expect:
+  a: COMPLETE
+  b: COMPLETE
+  findings:
+    - [/amount, $.amount, value_changed, null]

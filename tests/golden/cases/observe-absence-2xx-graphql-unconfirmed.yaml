@@ -1,0 +1,21 @@
+description: >
+  A target confirms a 2xx absence only through a declared absence shape. Side a's target lists 200
+  without a shape, so the status alone proves nothing; side b's shape rejects a null that comes
+  with errors (a failed resolver, not a missing entity). Both are absence_unconfirmed.
+sides:
+  a: &graphql
+    select: $.data.character
+    notFound: {status: [200], when: "has(body.data.character) && body.data.character == null"}
+  b: *graphql
+targets:
+  a: {authoritativeAbsence: {status: [200]}}
+  b:
+    authoritativeAbsence: {status: [200], shapes: [null_character]}
+    absenceShapes: {null_character: "!has(body.errors) && body.data.character == null"}
+a:
+  body: '{"data": {"character": null}}'
+b:
+  body: '{"data": {"character": null}, "errors": [{"message": "resolver timeout"}]}'
+expect:
+  a: INCOMPLETE absence_unconfirmed
+  b: INCOMPLETE absence_unconfirmed

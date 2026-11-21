@@ -1,0 +1,6 @@
+description: Fetcher error classes timeout and http_429 are ERROR timeout / rate_limited.
+a: {status: null, error_class: timeout}
+b: {status: null, error_class: http_429}
+expect:
+  a: ERROR timeout
+  b: ERROR rate_limited
