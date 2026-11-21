@@ -81,6 +81,7 @@ EVIDENCE_WRITES = frozenset(
 )
 REFUSALS = 10  # times a key goes back unread for reads refused unsent before it is judged as read
 REFUSED_WAIT_S = 1.0  # the least wait of a key handed back so
+HAND_BACK_S = 5.0  # how long a stopping worker's slot waits to hand its keys back before it ends
 log = logging.getLogger("deltasleuth.runner.worker")  # the worker's lines, whichever of its parts writes them
 
 
@@ -247,10 +248,21 @@ class Slots:
                 await self._renewed(owner)
 
     async def _release(self, owner: str) -> bool:
+        """Hand back the keys ``owner`` holds. A slot cancelled meanwhile (its worker stopping) waits up to
+        ``HAND_BACK_S`` for the hand-back before it ends, so a clean stop leaves no key leased until its lease
+        expires."""
+        handing = asyncio.ensure_future(self._hand_back(owner))
+        try:
+            await asyncio.shield(handing)
+        except asyncio.CancelledError:
+            await asyncio.wait({handing}, timeout=HAND_BACK_S)
+            raise
+        return True
+
+    async def _hand_back(self, owner: str) -> None:
         with contextlib.suppress(Exception):
             async with self.ctx.pool.connection() as conn:
                 await repo.release_leases(conn, owner)
-        return True
 
     async def _process(self, run: _Run, rows: list[repo.Row], owner: str) -> bool:
         """Open the group's leased rows, then read, judge and save one pass of each key, saved together;

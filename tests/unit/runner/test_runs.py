@@ -390,6 +390,34 @@ async def test_an_evidence_store_that_cannot_write_pauses_the_run_until_resumed(
     assert (run["status"], run["stop_reason"], run["counters"]["match"]) == ("completed", None, 2)
 
 
+async def test_a_worker_that_stops_as_a_slot_hands_its_keys_back_waits_for_it(
+    harness: Harness, service: ScriptedService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A worker that stops while a slot hands its keys back (here, of a run whose evidence cannot be written)
+    waits for the hand-back: no key stays leased until its lease expires."""
+    service.both("K001", doc("K001"), doc("K001"))
+    handing, release_leases = asyncio.Event(), repo.release_leases
+
+    async def slowly(conn: Any, owner: str) -> int:
+        handing.set()
+        await asyncio.sleep(0.2)
+        return await release_leases(conn, owner)
+
+    def full(path: Path, data: bytes) -> None:
+        raise OSError(errno.ENOSPC, "No space left on device", str(path))
+
+    monkeypatch.setattr(store, "write_synced", full)
+    monkeypatch.setattr(repo, "release_leases", slowly)
+    run_id = await create_run(harness.ctx, await harness.spec(spec_text(["K001"])), "batch", who=TESTER)
+    stop = asyncio.Event()
+    working = asyncio.create_task(run_worker(harness.ctx, stop=stop))
+    await asyncio.wait_for(handing.wait(), 30)
+    stop.set()  # the slot is cancelled as it hands the key back
+    await working
+    async with harness.ctx.pool.connection() as conn:
+        assert (await repo.cycle_counts(conn, run_id))["keys"] == {"pending": 1}
+
+
 async def test_an_os_error_outside_the_evidence_store_still_fails_the_run(
     harness: Harness, service: ScriptedService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
